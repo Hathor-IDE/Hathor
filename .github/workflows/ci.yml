@@ -1,0 +1,76 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  # -------------------------------------------------------------------------
+  # Job 1: Build and run pure engine tests (no JUCE, no audio hardware)
+  # Runs on Ubuntu to keep CI fast; macOS covered by full-build job.
+  # -------------------------------------------------------------------------
+  engine-tests:
+    name: Engine Tests (Ubuntu)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y cmake ninja-build
+
+      - name: Configure (engine-tests only)
+        run: |
+          cmake -S . -B build \
+            -G Ninja \
+            -DCMAKE_BUILD_TYPE=Debug
+
+      - name: Build hathor-engine-tests
+        run: cmake --build build --target hathor-engine-tests --parallel
+
+      - name: Run tests
+        run: ctest --test-dir build -V --output-on-failure
+
+  # -------------------------------------------------------------------------
+  # Job 2: Full build (engine + audio app) on macOS
+  # -------------------------------------------------------------------------
+  full-build:
+    name: Full Build (macOS)
+    runs-on: macos-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure (full build)
+        run: |
+          cmake -S . -B build \
+            -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build all targets
+        run: cmake --build build --parallel
+
+  # -------------------------------------------------------------------------
+  # Job 3: Windows best-effort (engine tests only)
+  # Failures do not block CI.
+  # -------------------------------------------------------------------------
+  windows-best-effort:
+    name: Engine Tests (Windows, best-effort)
+    runs-on: windows-latest
+    continue-on-error: true
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure (engine-tests only)
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
+
+      - name: Build hathor-engine-tests
+        run: cmake --build build --target hathor-engine-tests --config Debug
+
+      - name: Run tests
+        run: ctest --test-dir build -C Debug -V --output-on-failure
