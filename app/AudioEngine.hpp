@@ -19,28 +19,12 @@
 
 // App
 #include "SampleBank.hpp"
+#include "SlotState.hpp"
 #include "VoicePool.hpp"
 
 // ---------------------------------------------------------------------------
-// SlotState — bundles a compiled Pattern<ParamMap> with its pre-allocated
-// event buffer so the audio thread never needs to resize anything.
+// SlotState — see app/SlotState.hpp
 // ---------------------------------------------------------------------------
-//
-// The eventBuffer is sized exactly once on the worker thread via
-//   eventBuffer.resize(pattern->maxEventsPerCycle())
-// and is never resized again. The audio callback passes a std::span view of
-// this storage into pattern->query(), honouring the zero-allocation invariant.
-//
-// Requirements: 11.1–11.4, 13.2
-
-struct SlotState {
-    std::shared_ptr<hathor::Pattern<hathor::ParamMap>> pattern;
-    std::vector<hathor::Event<hathor::ParamMap>>       eventBuffer;
-    // The canonical mini-notation string (from the pretty-printer).
-    // Used by list-patterns. Set on the worker thread; read on the main thread
-    // only after the atomic store/load fence.
-    std::string notation;
-};
 
 // ---------------------------------------------------------------------------
 // AudioEngine
@@ -48,6 +32,9 @@ struct SlotState {
 //
 // Wraps juce::AudioDeviceManager for device management and implements the
 // JUCE audio callback (juce::AudioIODeviceCallback).
+//
+// Also inherits AudioEngineFacade so the control/ layer can use it
+// without depending on JUCE headers.
 //
 // Thread model:
 //   Audio thread   — getNextAudioBlock(); no mutex, no heap alloc
@@ -63,7 +50,9 @@ struct SlotState {
 //   8.1–8.5          — device management
 // ---------------------------------------------------------------------------
 
-class AudioEngine : public juce::AudioIODeviceCallback {
+#include "AudioEngineFacade.hpp"
+
+class AudioEngine : public AudioEngineFacade, public juce::AudioIODeviceCallback {
 public:
     /// Maximum number of named pattern slots (Req 13.2).
     static constexpr int kNumSlots = 16;
@@ -96,20 +85,20 @@ public:
     // ------------------------------------------------------------------
 
     /// Start the cycle clock (no-op if already running).
-    void play() noexcept;
+    void play() noexcept override;
 
     /// Halt the cycle clock and immediately silence all voices.
-    void stop() noexcept;
+    void stop() noexcept override;
 
     /// Set the tempo. Clamped to [20, 400] BPM (Req 14.3, 14.4).
     /// The new value takes effect at the start of the next audio callback (Req 9.5).
-    void setBpm(double bpm) noexcept;
+    void setBpm(double bpm) noexcept override;
 
     /// Returns the current BPM.
-    double getBpm() const noexcept;
+    double getBpm() const noexcept override;
 
     /// Returns true if the transport is currently running.
-    bool isRunning() const noexcept;
+    bool isRunning() const noexcept override;
 
     // ------------------------------------------------------------------
     // Hot-swap slot API (called from WorkerThread — Req 11.1–11.5, 13.1–13.4)
@@ -118,22 +107,22 @@ public:
     /// Map a slot name to a 0-based index in slots_[].
     /// Returns -1 if the name does not correspond to a registered slot.
     /// Slots are auto-registered on first use (up to kNumSlots).
-    int findOrAddSlot(const std::string& name);
+    int findOrAddSlot(const std::string& name) override;
 
     /// Store a new SlotState into slot index @p idx (worker thread, release order).
-    void storeSlot(int idx, std::shared_ptr<SlotState> state) noexcept;
+    void storeSlot(int idx, std::shared_ptr<SlotState> state) noexcept override;
 
     /// Clear a slot (worker thread). Returns false if idx is out of range.
-    bool clearSlot(int idx) noexcept;
+    bool clearSlot(int idx) noexcept override;
 
     /// Returns the number of registered slot names (for list-patterns).
-    int slotCount() const noexcept;
+    int slotCount() const noexcept override;
 
     /// Returns the slot name for a given index (empty string if unregistered).
-    std::string slotName(int idx) const;
+    std::string slotName(int idx) const override;
 
     /// Loads a slot's current SlotState (acquire order). May return nullptr.
-    std::shared_ptr<SlotState> loadSlot(int idx) const noexcept;
+    std::shared_ptr<SlotState> loadSlot(int idx) const noexcept override;
 
     // ------------------------------------------------------------------
     // juce::AudioIODeviceCallback interface
