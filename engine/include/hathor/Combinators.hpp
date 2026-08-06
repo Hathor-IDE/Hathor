@@ -126,7 +126,7 @@ Pattern<T> fastcat(std::vector<Pattern<T>> patterns)
     auto pats = std::make_shared<std::vector<Pattern<T>>>(std::move(patterns));
     auto rN = std::make_shared<Rational>(static_cast<int64_t>(N));
 
-    auto fn = [pats, rN, maxEvents](Arc arc, std::span<Event<T>> out) -> std::size_t
+    auto fn = [pats, rN](Arc arc, std::span<Event<T>> out) -> std::size_t
     {
         const std::size_t N2 = pats->size();
         std::size_t total = 0;

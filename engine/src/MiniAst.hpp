@@ -1,0 +1,77 @@
+// Copyright (C) 2024 Hathor Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+#ifndef HATHOR_MINIAST_HPP
+#define HATHOR_MINIAST_HPP
+
+/**
+ * MiniAst.hpp — internal AST for the mini-notation parser.
+ *
+ * This header is INTERNAL to engine/src/ and must NOT be included from
+ * any public engine/include/hathor/ header.
+ *
+ * Requirement references: 5.1, 5.2
+ */
+
+#include <string>
+#include <vector>
+#include <memory>
+#include <variant>
+
+namespace hathor {
+
+// Forward declaration so MiniNodePtr can reference MiniNode.
+struct MiniNode;
+using MiniNodePtr = std::unique_ptr<MiniNode>;
+
+// ---------------------------------------------------------------------------
+// AST node alternatives
+// ---------------------------------------------------------------------------
+
+/// A leaf token: "bd", "sn", "~", etc.
+struct MiniAtom {
+    std::string token;
+};
+
+/// A space-separated or [...] sequence — lowers to fastcat.
+struct MiniSeq {
+    std::vector<MiniNodePtr> steps;
+    bool                     bracketed = false; ///< true if written as [...]
+};
+
+/// An <...> slow sequence — lowers to slowcat.
+struct MiniSlowSeq {
+    std::vector<MiniNodePtr> steps;
+};
+
+/// child*N — lowers to fast(N, child).
+struct MiniFast {
+    MiniNodePtr child;
+    int         factor; ///< N > 0
+};
+
+/// child/N — lowers to slow(N, child).
+struct MiniSlow {
+    MiniNodePtr child;
+    int         factor; ///< N > 0
+};
+
+/// child!N — lowers to fastcat of N copies.
+struct MiniRep {
+    MiniNodePtr child;
+    int         count; ///< N > 0
+};
+
+// ---------------------------------------------------------------------------
+// Polymorphic node
+// ---------------------------------------------------------------------------
+
+struct MiniNode
+    : std::variant<MiniAtom, MiniSeq, MiniSlowSeq, MiniFast, MiniSlow, MiniRep>
+{
+    using variant::variant;
+};
+
+} // namespace hathor
+
+#endif // HATHOR_MINIAST_HPP

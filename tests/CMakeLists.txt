@@ -7,6 +7,8 @@ add_executable(hathor-engine-tests
     test_parammap.cpp
     test_pattern.cpp
     test_combinators.cpp
+    test_miniparser.cpp
+    test_prettyprinter.cpp
 )
 
 target_link_libraries(hathor-engine-tests
