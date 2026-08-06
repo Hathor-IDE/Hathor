@@ -7,6 +7,7 @@ add_library(hathor-engine STATIC
     src/Combinators.cpp
     src/MiniParser.cpp
     src/PrettyPrinter.cpp
+    src/PatternCompiler.cpp
 )
 
 target_include_directories(hathor-engine
