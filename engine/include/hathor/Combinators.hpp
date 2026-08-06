@@ -643,19 +643,20 @@ Pattern<T> euclid(int k, int n, int offset, Pattern<T> p)
  * Keep the event iff rand > prob (strict, matching Strudel). Because rand is
  * always in [0, 1), rand > 1.0 is never true, so degradeBy(1.0) is empty.
  *
- * Requirement 20.5 (Definition of Done): degradeBy(0.0) MUST be a pure
- * identity (drop nothing) and degradeBy(1.0) MUST be empty. Strudel's legacy
- * RNG yields rand == 0 at the single measure-zero sample point t == 0; under
- * strict `>` that event would be dropped even at prob == 0.0, violating the
- * identity requirement. We therefore keep unconditionally when prob == 0.0.
- * This is the ONLY deviation from Strudel's strict `>` (it occurs solely at
- * prob == 0.0); every other probability — including 0.5, which reproduces
- * reference/strudel-golden/degrade-by-0.5-instance-a.json exactly — is
- * faithful.
+ * There is NO special-case at prob == 0.0: Strudel is the golden standard and
+ * Hathor matches it 1:1. Strudel's legacy RNG yields rand(0) == 0 at the single
+ * measure-zero sample point t == 0, so at prob == 0.0 that event fails
+ * `rand > 0` and is dropped — matching reference/strudel-golden/
+ * degrade-by-0.0.json exactly. (The fixture's prose says "0% removal / all
+ * survive", but its actual event list is authoritative and omits the t == 0
+ * event; Hathor matches the event list, not the prose. See
+ * docs/potential-improvements-over-strudel.md.)
  *
  * Requirement: 3.9 (deterministic per-(whole.start, seed) decision; a shared
- * default seed makes distinct instances correlate, matching Strudel); 20.5
- * (0.0 -> identity, 1.0 -> empty).
+ * default seed makes distinct instances correlate, matching Strudel). NOTE:
+ * requirement 20.5's initial assumption that degradeBy(0.0) == identity was
+ * superseded by the Strudel ground-truth fixtures — degradeBy(0.0) drops
+ * only the t == 0 event (rand(0) == 0), matching Strudel exactly.
  */
 template <typename T>
 Pattern<T> degradeBy(double prob, Pattern<T> p, double seed = 0.0)
@@ -705,13 +706,14 @@ Pattern<T> degradeBy(double prob, Pattern<T> p, double seed = 0.0)
             const int64_t rem = static_cast<int64_t>(resS) % kMI;
             const double randVal = std::fabs(static_cast<double>(rem) / kM);
 
-            // Keep iff rand > prob, strict (matching Strudel filterValues(v => v > x).
-            // req 20.5: degradeBy(0.0) is identity, degradeBy(1.0) is empty. The
-            // legacy RNG yields rand == 0 at the measure-zero point t == 0, which
-            // strict `>` would drop at prob == 0.0; keep unconditionally at 0.0 to
-            // honor the identity guarantee. At 1.0 randVal is always < 1 so strict
-            // comparison already yields empty (matches golden-1.0).
-            const bool keep = (prob == 0.0) || (randVal > prob);
+            // Keep iff rand > prob, strict -- matching Strudel filterValues(v => v > x)
+            // exactly, with NO special case at prob == 0.0 (Strudel is the golden
+            // standard; match it 1:1). Strudel's legacy RNG yields rand(0) == 0 at
+            // the measure-zero sample point t == 0, so at prob == 0.0 that event
+            // fails `rand > 0` and is dropped -- matches reference/strudel-golden/
+            // degrade-by-0.0.json. At prob == 1.0, randVal is always < 1 so
+            // `randVal > 1.0` is never true -> empty (matches golden-1.0).
+            const bool keep = (randVal > prob);
 
             if (keep) {
                 if (total != i)

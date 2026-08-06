@@ -399,19 +399,31 @@ TEST_CASE("euclid: throws on invalid arguments", "[combinators][euclid]")
 // Test: degradeBy
 // ---------------------------------------------------------------------------
 
-TEST_CASE("degradeBy 0.0 = original events (all kept)", "[combinators][degradeBy]")
+TEST_CASE("degradeBy 0.0 matches Strudel golden-0.0 (drops t=0, keeps rest)", "[combinators][degradeBy]")
 {
-    // Query over [0,10) → 10 events from pure
-    auto p = pure<std::string>("x");
+    // Ground truth: reference/strudel-golden/degrade-by-0.0.json (Strudel 1.2.6),
+    // query arc [0,1) over "bd*8". The fixture lists 7 events at whole.start
+    // 1/8, 1/4, 3/8, 1/2, 5/8, 3/4, 7/8 -- i.e. the event at t == 0 is DROPPED
+    // (Strudel's legacy RNG yields rand(0) == 0, failing strict `rand > 0`).
+    // Hathor matches Strudel 1:1, so degradeBy(0.0, fast(bd,8)) over [0,1)
+    // must reproduce those 7 events exactly -- NOT an identity.
+    auto p = fast(Rational{8}, pure<std::string>("bd"));
     auto degraded = degradeBy(0.0, p);
 
     auto buffer = makeBuffer<std::string>(20);
-    Arc arc{Rational{0}, Rational{10}};
+    Arc arc{Rational{0}, Rational{1}};
     std::size_t count = degraded.query(arc, buffer);
 
-    // 0% degradation: all 10 events kept
-    REQUIRE(count == 10);
+    REQUIRE(count == 7);
+    const Rational expected[7] = {
+        Rational{1, 8}, Rational{1, 4}, Rational{3, 8}, Rational{1, 2},
+        Rational{5, 8}, Rational{3, 4}, Rational{7, 8}
+    };
+    for (std::size_t i = 0; i < count; ++i) {
+        REQUIRE(buffer[i].whole.start == expected[i]);
+    }
 }
+
 
 TEST_CASE("degradeBy 1.0 = empty (all removed)", "[combinators][degradeBy]")
 {
@@ -444,7 +456,7 @@ TEST_CASE("degradeBy: deterministic — repeated queries produce identical resul
 
 TEST_CASE("degradeBy: two default-seed instances are correlated (identical events)", "[combinators][degradeBy]")
 {
-    // Per Requirement 20.5 / degradeBy.md: degradeBy with the default seed (0,
+    // Per degradeBy.md / Strudel ground truth: degradeBy with the default seed (0,
     // matching Strudel's randSeed default) is a deterministic function of
     // (whole.start, seed). Two independently-constructed instances sharing the
     // default seed MUST therefore produce identical event lists at the same
