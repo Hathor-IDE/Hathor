@@ -33,10 +33,15 @@ struct MiniAtom {
     std::string token;
 };
 
-/// A space-separated or [...] sequence — lowers to fastcat.
+/// A space-separated or [...] sequence — lowers to stepcat (equal weights).
 struct MiniSeq {
     std::vector<MiniNodePtr> steps;
     bool                     bracketed = false; ///< true if written as [...]
+};
+
+/// A comma-separated sequence — lowers to stack (all play concurrently).
+struct MiniStack {
+    std::vector<MiniNodePtr> steps;
 };
 
 /// An <...> slow sequence — lowers to slowcat.
@@ -75,7 +80,7 @@ struct MiniEuclid {
 // ---------------------------------------------------------------------------
 
 struct MiniNode
-    : std::variant<MiniAtom, MiniSeq, MiniSlowSeq, MiniFast, MiniSlow, MiniRep, MiniEuclid>
+    : std::variant<MiniAtom, MiniSeq, MiniStack, MiniSlowSeq, MiniFast, MiniSlow, MiniRep, MiniEuclid>
 {
     using variant::variant;
 };

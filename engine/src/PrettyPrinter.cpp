@@ -52,6 +52,14 @@ static std::string printNode(const MiniNode& node, bool nested)
             }
             return inner;
         }
+        else if constexpr (std::is_same_v<T, MiniStack>) {
+            std::string inner;
+            for (std::size_t i = 0; i < alt.steps.size(); ++i) {
+                if (i > 0) inner += ", ";
+                inner += printNode(*alt.steps[i], true);
+            }
+            return inner;
+        }
         else if constexpr (std::is_same_v<T, MiniSlowSeq>) {
             std::string inner = joinSteps(alt.steps, true);
             return "<" + inner + ">";
@@ -84,7 +92,7 @@ static std::string printNode(const MiniNode& node, bool nested)
         else {
             return std::string{};
         }
-    }, static_cast<const std::variant<MiniAtom, MiniSeq, MiniSlowSeq, MiniFast, MiniSlow, MiniRep, MiniEuclid>&>(node));
+    }, static_cast<const std::variant<MiniAtom, MiniSeq, MiniStack, MiniSlowSeq, MiniFast, MiniSlow, MiniRep, MiniEuclid>&>(node));
 }
 
 // ---------------------------------------------------------------------------

@@ -362,20 +362,30 @@ struct Parser {
 
     // -----------------------------------------------------------------------
     // parsePattern — top-level sequence of elements.
+    //
+    // Space-separated elements form a sequential pattern (stepcat).
+    // Comma-separated elements form a stack (all play concurrently).
     // -----------------------------------------------------------------------
     std::variant<MiniNodePtr, ParseError> parsePattern()
     {
-        std::vector<MiniNodePtr> steps;
+        // Collect comma groups: each is a vector of space-separated elements.
+        std::vector<std::vector<MiniNodePtr>> groups;
+        std::vector<MiniNodePtr> current;
+
+        // Parse leading commas / first element.
+        if (check(TokenKind::TK_COMMA)) {
+            advance();
+            groups.push_back({});
+            current.clear();
+        }
 
         while (!at_end()) {
-            // Stop if we hit a closing bracket/angle that belongs to an
-            // outer parseElement call.
             if (check(TokenKind::TK_RBRACKET) || check(TokenKind::TK_RANGLE))
                 break;
 
-            // In Strudel's mini-notation, commas act as sequence separators
-            // (synonymous with spaces).  Skip them.
             if (check(TokenKind::TK_COMMA)) {
+                groups.push_back(std::move(current));
+                current.clear();
                 advance();
                 continue;
             }
@@ -383,18 +393,42 @@ struct Parser {
             auto res = parseElement();
             if (std::holds_alternative<ParseError>(res))
                 return res;
-            steps.push_back(std::move(std::get<MiniNodePtr>(res)));
+            current.push_back(std::move(std::get<MiniNodePtr>(res)));
         }
 
-        if (steps.empty()) {
+        // Push the last group.
+        groups.push_back(std::move(current));
+
+        // Check for empty groups (leading/trailing/consecutive commas).
+        std::size_t nonEmpty = 0;
+        for (auto& g : groups)
+            if (!g.empty()) ++nonEmpty;
+
+        if (nonEmpty == 0)
             return ParseError{0, "empty pattern"};
+
+        // If only one non-empty group, it's a space-separated sequence (no commas).
+        if (nonEmpty == 1) {
+            for (auto& g : groups) {
+                if (g.empty()) continue;
+                if (g.size() == 1)
+                    return std::move(g[0]);
+                return std::make_unique<MiniNode>(MiniSeq{std::move(g), false});
+            }
         }
 
-        if (steps.size() == 1) {
-            return std::move(steps[0]);
+        // Multiple non-empty groups → MiniStack.
+        std::vector<MiniNodePtr> stackChildren;
+        for (auto& g : groups) {
+            if (g.empty()) continue;
+            if (g.size() == 1)
+                stackChildren.push_back(std::move(g[0]));
+            else
+                stackChildren.push_back(
+                    std::make_unique<MiniNode>(MiniSeq{std::move(g), true}));
         }
 
-        return std::make_unique<MiniNode>(MiniSeq{std::move(steps)});
+        return std::make_unique<MiniNode>(MiniStack{std::move(stackChildren)});
     }
 };
 
@@ -432,30 +466,28 @@ static Pattern<std::string> lowerNode(const MiniNode& node)
             if (alt.steps.size() == 1)
                 return lowerNode(*alt.steps[0]);
 
-            // Expand MiniRep children inline so that "bd!3 sn" lowers to
-            // fastcat(bd, bd, bd, sn) rather than fastcat(fastcat(bd,bd,bd), sn).
-            // In Strudel, "!N" repeats the element N times in the same sequence.
-            std::vector<Pattern<std::string>> pats;
-            std::size_t totalSteps = 0;
-            for (const auto& step : alt.steps) {
-                if (std::holds_alternative<MiniRep>(*step)) {
-                    totalSteps += static_cast<std::size_t>(
-                        std::get<MiniRep>(*step).count);
-                } else {
-                    ++totalSteps;
-                }
-            }
-            pats.reserve(totalSteps);
+            // Lower to stepcat with weights: MiniRep contributes its count
+            // as the weight, normal elements contribute weight 1.
+            // "bd!3 sn" → stepcat([(3, fastcat(bd,bd,bd)), (1, sn)])
+            std::vector<std::pair<int, Pattern<std::string>>> wp;
             for (const auto& step : alt.steps) {
                 if (std::holds_alternative<MiniRep>(*step)) {
                     const auto& rep = std::get<MiniRep>(*step);
+                    // MiniRep!N lowers to fastcat of N copies of the child.
+                    std::vector<Pattern<std::string>> copies;
+                    copies.reserve(static_cast<std::size_t>(rep.count));
                     for (int i = 0; i < rep.count; ++i)
-                        pats.push_back(lowerNode(*rep.child));
+                        copies.push_back(lowerNode(*rep.child));
+                    wp.emplace_back(rep.count, fastcat(std::move(copies)));
                 } else {
-                    pats.push_back(lowerNode(*step));
+                    wp.emplace_back(1, lowerNode(*step));
                 }
             }
-            return fastcat(std::move(pats));
+            return stepcat(std::move(wp));
+        }
+        else if constexpr (std::is_same_v<T, MiniStack>) {
+            // Comma-separated → stack
+            return stack(lowerChildren(alt.steps));
         }
         else if constexpr (std::is_same_v<T, MiniSlowSeq>) {
             if (alt.steps.size() == 1)
@@ -469,7 +501,7 @@ static Pattern<std::string> lowerNode(const MiniNode& node)
             return slow(Rational{static_cast<int64_t>(alt.factor)}, lowerNode(*alt.child));
         }
         else if constexpr (std::is_same_v<T, MiniRep>) {
-            // child!N → fastcat of N copies
+            // Standalone MiniRep (not inside MiniSeq) → fastcat of N copies.
             std::vector<Pattern<std::string>> copies;
             copies.reserve(static_cast<std::size_t>(alt.count));
             for (int i = 0; i < alt.count; ++i)
@@ -485,9 +517,8 @@ static Pattern<std::string> lowerNode(const MiniNode& node)
             // Should never reach here.
             return pure(std::string{});
         }
-    }, static_cast<const std::variant<MiniAtom, MiniSeq, MiniSlowSeq, MiniFast, MiniSlow, MiniRep, MiniEuclid>&>(node));
+    }, static_cast<const std::variant<MiniAtom, MiniSeq, MiniStack, MiniSlowSeq, MiniFast, MiniSlow, MiniRep, MiniEuclid>&>(node));
 }
-
 
 
 // ---------------------------------------------------------------------------

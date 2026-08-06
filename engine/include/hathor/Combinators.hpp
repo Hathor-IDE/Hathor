@@ -97,14 +97,197 @@ Pattern<T> stack(std::vector<Pattern<T>> patterns)
 }
 
 // ---------------------------------------------------------------------------
-// fastcat
+// fastGap — compress pattern into 1/factor of each cycle (gap left at end)
+// ---------------------------------------------------------------------------
+
+/**
+ * fastGap(factor, p) — compress pattern time by factor, leaving the remaining
+ * (1 - 1/factor) portion of each cycle empty.
+ *
+ * This is the building block of stepcat/fastcat.  Unlike fast(), which scales
+ * the query arc linearly (and thus loses the absolute cycle number), fastGap
+ * preserves the absolute cycle: for a full cycle [c, c+1) it queries the inner
+ * pattern with [c, c+1] (same cycle), so sub-patterns like slowcat that depend
+ * on the cycle number receive the correct value.
+ *
+ * Implementation: for query arc [s, e) within cycle c, the position within the
+ * cycle is scaled by factor (capped at the cycle boundary) to produce the inner
+ * query span; returned events have their arcs scaled back by 1/factor.
+ *
+ * Throws std::invalid_argument if factor <= 0.
+ *
+ * Requirement: 3.6
+ */
+template <typename T>
+Pattern<T> fastGap(Rational factor, Pattern<T> p)
+{
+    if (factor.num <= 0)
+        throw std::invalid_argument("fastGap: factor must be positive");
+
+    auto inner  = std::make_shared<Pattern<T>>(std::move(p));
+    auto fac    = std::make_shared<Rational>(factor);
+    auto invFac = std::make_shared<Rational>(Rational{1} / factor);
+
+    // maxEventsPerCycle: ceil(factor) * inner budget (full-cycle query at
+    // factor>1 compresses inner to fewer events; at factor<1 it expands).
+    int64_t innerMax = static_cast<int64_t>(p.maxEventsPerCycle());
+    int64_t ceilF    = (factor.num + factor.den - 1) / factor.den;
+    std::size_t maxEvents = static_cast<std::size_t>(ceilF * innerMax);
+
+    auto fn = [inner, fac, invFac](Arc arc, std::span<Event<T>> out) -> std::size_t
+    {
+        int64_t cycleStart = detail::floorRational(arc.start);
+        int64_t cycleEnd   = detail::floorRational(arc.end);
+        if (Rational{cycleEnd} < arc.end)
+            ++cycleEnd;
+
+        std::size_t total = 0;
+
+        for (int64_t c = cycleStart; c < cycleEnd; ++c) {
+            Rational cR{c};
+            Rational cNext{c + 1};
+
+            // The portion of this cycle covered by the query arc.
+            Arc queryInCycle = Arc{cR, cNext}.intersect(arc);
+            if (queryInCycle.isEmpty()) continue;
+
+            // Scale query position within the cycle by factor, capped at 1.
+            Rational bpos = (queryInCycle.start - cR) * (*fac);
+            Rational epos = (queryInCycle.end   - cR) * (*fac);
+            if (epos > Rational{1}) epos = Rational{1};
+            if (bpos >= Rational{1}) continue;  // starts beyond compressed region
+
+            // Query the inner pattern with a span that PRESERVES the cycle
+            // number (absolute time within [cR, cNext]).
+            Arc scaledQuery{cR + bpos, cR + epos};
+            if (scaledQuery.isEmpty()) continue;
+
+            auto sub  = out.subspan(total);
+            std::size_t got = inner->query(scaledQuery, sub);
+
+            // Scale event arcs back by 1/factor within each cycle.
+            for (std::size_t j = 0; j < got; ++j) {
+                auto& ev = out[total + j];
+                Rational ec{static_cast<int64_t>(detail::floorRational(ev.whole.start))};
+                Rational eb = ec + (ev.whole.start - ec) * (*invFac);
+                Rational ee = ec + (ev.whole.end   - ec) * (*invFac);
+                if (ee > ec + Rational{1}) ee = ec + Rational{1};
+                ev.whole  = Arc{eb, ee};
+
+                Rational aeb = ec + (ev.active.start - ec) * (*invFac);
+                Rational aee = ec + (ev.active.end   - ec) * (*invFac);
+                if (aee > ec + Rational{1}) aee = ec + Rational{1};
+                ev.active = Arc{aeb, aee};
+            }
+            total += got;
+        }
+        return total;
+    };
+
+    return Pattern<T>{std::move(fn), maxEvents};
+}
+
+// ---------------------------------------------------------------------------
+// late / early — shift pattern in time
+// ---------------------------------------------------------------------------
+
+/**
+ * late(offset, p) — shift pattern to start later in time.
+ *
+ * Equivalent to Strudel's late(): query time is advanced by offset (so the
+ * pattern sees an earlier portion of the timeline), and event times are shifted
+ * forward by offset.  In practice: arc query is shifted by -offset, events are
+ * shifted by +offset.
+ *
+ * Requirement: 3.12
+ */
+template <typename T>
+Pattern<T> late(Rational offset, Pattern<T> p)
+{
+    std::size_t maxEvents = p.maxEventsPerCycle();
+    auto inner  = std::make_shared<Pattern<T>>(std::move(p));
+    auto off    = std::make_shared<Rational>(offset);
+
+    auto fn = [inner, off](Arc arc, std::span<Event<T>> out) -> std::size_t
+    {
+        // Query earlier (shift arc by -offset).
+        Arc queryArc{arc.start - *off, arc.end - *off};
+        std::size_t got = inner->query(queryArc, out);
+        // Shift events later (by +offset).
+        for (std::size_t i = 0; i < got; ++i) {
+            auto& ev = out[i];
+            ev.whole.start  = ev.whole.start  + *off;
+            ev.whole.end    = ev.whole.end    + *off;
+            ev.active.start = ev.active.start + *off;
+            ev.active.end   = ev.active.end   + *off;
+        }
+        return got;
+    };
+
+    return Pattern<T>{std::move(fn), maxEvents};
+}
+
+// ---------------------------------------------------------------------------
+// stepcat — weighted sequence (Strudel timeCat semantics)
+// ---------------------------------------------------------------------------
+
+/**
+ * stepcat(weightedPatterns) — sequence N patterns by dividing each cycle into
+ * slots proportional to their weights.
+ *
+ * Pattern i occupies the slice [begin_i/total, end_i/total) of each cycle,
+ * where begin_i = sum of weights[0..i-1] and total = sum of all weights.
+ *
+ * Each sub-pattern is compressed into its slot via fastGap (which preserves
+ * cycle numbers, so nested slowcat works correctly) and then shifted by
+ * late().  All compressed patterns are stacked, so events are grouped by
+ * sub-pattern (all of pattern 0's events first, then all of pattern 1's, etc.).
+ *
+ * Throws std::invalid_argument if the list is empty.
+ *
+ * Requirement: 3.6
+ */
+template <typename T>
+Pattern<T> stepcat(std::vector<std::pair<int, Pattern<T>>> weightedPatterns)
+{
+    if (weightedPatterns.empty())
+        throw std::invalid_argument("stepcat: patterns list must not be empty");
+
+    int totalWeight = 0;
+    for (const auto& [w, _] : weightedPatterns)
+        totalWeight += w;
+
+    std::vector<Pattern<T>> compressed;
+    compressed.reserve(weightedPatterns.size());
+    std::size_t maxEvents = 0;
+    int begin = 0;
+    for (auto& [w, pat] : weightedPatterns) {
+        Rational slotStart{Rational{begin, totalWeight}};
+        Rational factor{Rational{totalWeight, w}};  // 1 / slotLen
+
+        // _compress(slotStart, slotStart+slotLen) =
+        //   fastGap(factor, pat).late(slotStart)
+        Pattern<T> cp = fastGap(factor, pat);
+        cp = late(slotStart, std::move(cp));
+
+        maxEvents += cp.maxEventsPerCycle();
+        compressed.push_back(std::move(cp));
+        begin += w;
+    }
+
+    return stack<T>(std::move(compressed));
+}
+
+// ---------------------------------------------------------------------------
+// fastcat — equal-weight sequence (thin wrapper over stepcat)
 // ---------------------------------------------------------------------------
 
 /**
  * fastcat(patterns) — sequence N patterns by dividing each cycle evenly.
  *
  * Pattern i occupies the slice [i/N, (i+1)/N) of each cycle.
- * Time is scaled so each sub-pattern sees a full [0,1) window.
+ * Implemented as stepcat with all weights = 1, so it preserves cycle numbers
+ * for nested sub-patterns (e.g. slowcat inside fastcat).
  *
  * Throws std::invalid_argument if patterns is empty.
  * Requirement: 3.2
@@ -115,77 +298,12 @@ Pattern<T> fastcat(std::vector<Pattern<T>> patterns)
     if (patterns.empty())
         throw std::invalid_argument("fastcat: patterns list must not be empty");
 
-    const std::size_t N = patterns.size();
+    std::vector<std::pair<int, Pattern<T>>> wp;
+    wp.reserve(patterns.size());
+    for (auto& p : patterns)
+        wp.emplace_back(1, std::move(p));
 
-    // maxEventsPerCycle: each sub-pattern contributes its max (they share cycle time).
-    std::size_t maxEvents = 0;
-    for (const auto& p : patterns)
-        maxEvents += p.maxEventsPerCycle();
-
-    auto pats = std::make_shared<std::vector<Pattern<T>>>(std::move(patterns));
-    auto rN = std::make_shared<Rational>(static_cast<int64_t>(N));
-
-    auto fn = [pats, rN](Arc arc, std::span<Event<T>> out) -> std::size_t
-    {
-        const std::size_t N2 = pats->size();
-        std::size_t total = 0;
-
-        // Find the range of integer cycles touched by the query arc.
-        int64_t cycleStart = detail::floorRational(arc.start);
-        int64_t cycleEnd   = detail::floorRational(arc.end);
-        // Include the cycle that contains arc.end if it's not exactly on a boundary.
-        if (Rational{cycleEnd} < arc.end)
-            ++cycleEnd;
-
-        // Iterate sub-pattern-first (matching Strudel's behaviour): for each
-        // sub-pattern, query it across ALL matching cycles before moving to
-        // the next sub-pattern. This produces events grouped by sub-pattern
-        // rather than grouped by cycle.
-        for (std::size_t i = 0; i < N2; ++i) {
-            Rational sliceOffset{static_cast<int64_t>(i), static_cast<int64_t>(N2)};
-            Rational sliceLen{1, static_cast<int64_t>(N2)};
-
-            for (int64_t c = cycleStart; c < cycleEnd; ++c) {
-                if (total >= out.size()) goto done;
-
-                Rational cR{c};
-
-                Rational sliceStart = cR + sliceOffset;
-                Rational sliceEnd   = sliceStart + sliceLen;
-                Arc sliceArc{sliceStart, sliceEnd};
-
-                // Intersection of query arc with this slot.
-                Arc queryInSlice = sliceArc.intersect(arc);
-                if (queryInSlice.isEmpty()) continue;
-
-                // Scale the intersected arc into the sub-pattern's own [0,1) time:
-                //   innerArc = (queryInSlice - sliceStart) * N
-                Rational innerStart = (queryInSlice.start - sliceStart) * (*rN);
-                Rational innerEnd   = (queryInSlice.end   - sliceStart) * (*rN);
-                Arc innerArc{innerStart, innerEnd};
-
-                // Query the sub-pattern with a temporary buffer.
-                // We write directly into the remaining output span.
-                auto sub = out.subspan(total);
-                std::size_t got = (*pats)[i].query(innerArc, sub);
-
-                // Un-scale the event arcs back to outer time.
-                for (std::size_t j = 0; j < got; ++j) {
-                    auto& ev = out[total + j];
-                    // whole and active arcs: divide by N, then add sliceStart.
-                    ev.whole.start  = ev.whole.start  / (*rN) + sliceStart;
-                    ev.whole.end    = ev.whole.end    / (*rN) + sliceStart;
-                    ev.active.start = ev.active.start / (*rN) + sliceStart;
-                    ev.active.end   = ev.active.end   / (*rN) + sliceStart;
-                }
-                total += got;
-            }
-        }
-        done:
-        return total;
-    };
-
-    return Pattern<T>{std::move(fn), maxEvents};
+    return stepcat<T>(std::move(wp));
 }
 
 // ---------------------------------------------------------------------------
