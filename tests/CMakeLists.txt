@@ -6,6 +6,7 @@ add_executable(hathor-engine-tests
     test_rational.cpp
     test_parammap.cpp
     test_pattern.cpp
+    test_combinators.cpp
 )
 
 target_link_libraries(hathor-engine-tests
