@@ -1,6 +1,8 @@
 // Copyright (C) 2024 Hathor Contributors
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-#include "hathor/Rational.hpp"
+// All Rational implementation is inline in the header (Rational.hpp).
+// This translation unit exists so CMake's add_library list stays consistent
+// and to ensure the header compiles as part of the engine static library.
 
-// Implementation placeholder — full implementation in Task 2
+#include "hathor/Rational.hpp"

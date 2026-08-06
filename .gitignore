@@ -33,6 +33,7 @@ install_manifest.txt
 .vs/
 .vscode/
 *.iml
+.kiro/
 *.swp
 *.swo
 *~

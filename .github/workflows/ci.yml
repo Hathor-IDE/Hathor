@@ -9,7 +9,8 @@ on:
 jobs:
   # -------------------------------------------------------------------------
   # Job 1: Build and run pure engine tests (no JUCE, no audio hardware)
-  # Runs on Ubuntu to keep CI fast; macOS covered by full-build job.
+  # HATHOR_BUILD_APP=OFF skips the app/ subdirectory entirely so no JUCE
+  # download or compilation is needed. This job runs on every push.
   # -------------------------------------------------------------------------
   engine-tests:
     name: Engine Tests (Ubuntu)
@@ -23,11 +24,12 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y cmake ninja-build
 
-      - name: Configure (engine-tests only)
+      - name: Configure (engine-tests only, no JUCE)
         run: |
           cmake -S . -B build \
             -G Ninja \
-            -DCMAKE_BUILD_TYPE=Debug
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DHATHOR_BUILD_APP=OFF
 
       - name: Build hathor-engine-tests
         run: cmake --build build --target hathor-engine-tests --parallel
@@ -37,6 +39,7 @@ jobs:
 
   # -------------------------------------------------------------------------
   # Job 2: Full build (engine + audio app) on macOS
+  # JUCE 8.0.4 is required for macOS 15 / Xcode 16 compatibility.
   # -------------------------------------------------------------------------
   full-build:
     name: Full Build (macOS)
@@ -45,10 +48,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Configure (full build)
+      - name: Configure (full build with JUCE)
         run: |
           cmake -S . -B build \
-            -DCMAKE_BUILD_TYPE=Release
+            -DCMAKE_BUILD_TYPE=Release \
+            -DHATHOR_BUILD_APP=ON
 
       - name: Build all targets
         run: cmake --build build --parallel
@@ -65,9 +69,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Configure (engine-tests only)
+      - name: Configure (engine-tests only, no JUCE)
         run: |
-          cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
+          cmake -S . -B build `
+            -DCMAKE_BUILD_TYPE=Debug `
+            -DHATHOR_BUILD_APP=OFF
 
       - name: Build hathor-engine-tests
         run: cmake --build build --target hathor-engine-tests --config Debug
