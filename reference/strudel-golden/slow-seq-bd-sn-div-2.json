@@ -1,0 +1,321 @@
+{
+  "description": "slow applied to a sequence via \"[bd sn]/2\". Tests slow stretching of a sub-sequence across two cycles.",
+  "mini_notation": "[bd sn]/2",
+  "strudel_version_or_commit": "1.2.6",
+  "arcs_used": [
+    [
+      [
+        0,
+        1
+      ],
+      [
+        1,
+        1
+      ]
+    ],
+    [
+      [
+        0,
+        1
+      ],
+      [
+        1,
+        4
+      ]
+    ],
+    [
+      [
+        1,
+        4
+      ],
+      [
+        1,
+        2
+      ]
+    ],
+    [
+      [
+        1,
+        2
+      ],
+      [
+        3,
+        4
+      ]
+    ],
+    [
+      [
+        3,
+        4
+      ],
+      [
+        1,
+        1
+      ]
+    ],
+    [
+      [
+        0,
+        1
+      ],
+      [
+        2,
+        1
+      ]
+    ]
+  ],
+  "queries": [
+    {
+      "arc": [
+        [
+          0,
+          1
+        ],
+        [
+          1,
+          1
+        ]
+      ],
+      "events": [
+        {
+          "whole": [
+            [
+              0,
+              1
+            ],
+            [
+              1,
+              1
+            ]
+          ],
+          "active": [
+            [
+              0,
+              1
+            ],
+            [
+              1,
+              1
+            ]
+          ],
+          "value": "bd"
+        }
+      ],
+      "error": null
+    },
+    {
+      "arc": [
+        [
+          0,
+          1
+        ],
+        [
+          1,
+          4
+        ]
+      ],
+      "events": [
+        {
+          "whole": [
+            [
+              0,
+              1
+            ],
+            [
+              1,
+              1
+            ]
+          ],
+          "active": [
+            [
+              0,
+              1
+            ],
+            [
+              1,
+              4
+            ]
+          ],
+          "value": "bd"
+        }
+      ],
+      "error": null
+    },
+    {
+      "arc": [
+        [
+          1,
+          4
+        ],
+        [
+          1,
+          2
+        ]
+      ],
+      "events": [
+        {
+          "whole": [
+            [
+              0,
+              1
+            ],
+            [
+              1,
+              1
+            ]
+          ],
+          "active": [
+            [
+              1,
+              4
+            ],
+            [
+              1,
+              2
+            ]
+          ],
+          "value": "bd"
+        }
+      ],
+      "error": null
+    },
+    {
+      "arc": [
+        [
+          1,
+          2
+        ],
+        [
+          3,
+          4
+        ]
+      ],
+      "events": [
+        {
+          "whole": [
+            [
+              0,
+              1
+            ],
+            [
+              1,
+              1
+            ]
+          ],
+          "active": [
+            [
+              1,
+              2
+            ],
+            [
+              3,
+              4
+            ]
+          ],
+          "value": "bd"
+        }
+      ],
+      "error": null
+    },
+    {
+      "arc": [
+        [
+          3,
+          4
+        ],
+        [
+          1,
+          1
+        ]
+      ],
+      "events": [
+        {
+          "whole": [
+            [
+              0,
+              1
+            ],
+            [
+              1,
+              1
+            ]
+          ],
+          "active": [
+            [
+              3,
+              4
+            ],
+            [
+              1,
+              1
+            ]
+          ],
+          "value": "bd"
+        }
+      ],
+      "error": null
+    },
+    {
+      "arc": [
+        [
+          0,
+          1
+        ],
+        [
+          2,
+          1
+        ]
+      ],
+      "events": [
+        {
+          "whole": [
+            [
+              0,
+              1
+            ],
+            [
+              1,
+              1
+            ]
+          ],
+          "active": [
+            [
+              0,
+              1
+            ],
+            [
+              1,
+              1
+            ]
+          ],
+          "value": "bd"
+        },
+        {
+          "whole": [
+            [
+              1,
+              1
+            ],
+            [
+              2,
+              1
+            ]
+          ],
+          "active": [
+            [
+              1,
+              1
+            ],
+            [
+              2,
+              1
+            ]
+          ],
+          "value": "sn"
+        }
+      ],
+      "error": null
+    }
+  ],
+  "precision_note": "Time values are serialized as exact [numerator, denominator] integer pairs extracted from Strudel internal fraction.js Fraction instances (s*n/d). These are exact rationals, so consumers may compare with exact equality."
+}

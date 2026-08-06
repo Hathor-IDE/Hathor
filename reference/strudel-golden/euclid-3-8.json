@@ -1,0 +1,435 @@
+{
+  "description": "euclid rhythm via mini \"bd(3,8)\". Tests the euclidean rhythm generator (3 pulses over 8 steps).",
+  "mini_notation": "bd(3,8)",
+  "strudel_version_or_commit": "1.2.6",
+  "arcs_used": [
+    [
+      [
+        0,
+        1
+      ],
+      [
+        1,
+        1
+      ]
+    ],
+    [
+      [
+        0,
+        1
+      ],
+      [
+        1,
+        4
+      ]
+    ],
+    [
+      [
+        1,
+        4
+      ],
+      [
+        1,
+        2
+      ]
+    ],
+    [
+      [
+        1,
+        2
+      ],
+      [
+        3,
+        4
+      ]
+    ],
+    [
+      [
+        3,
+        4
+      ],
+      [
+        1,
+        1
+      ]
+    ],
+    [
+      [
+        0,
+        1
+      ],
+      [
+        2,
+        1
+      ]
+    ]
+  ],
+  "queries": [
+    {
+      "arc": [
+        [
+          0,
+          1
+        ],
+        [
+          1,
+          1
+        ]
+      ],
+      "events": [
+        {
+          "whole": [
+            [
+              0,
+              1
+            ],
+            [
+              1,
+              8
+            ]
+          ],
+          "active": [
+            [
+              0,
+              1
+            ],
+            [
+              1,
+              8
+            ]
+          ],
+          "value": "bd"
+        },
+        {
+          "whole": [
+            [
+              3,
+              8
+            ],
+            [
+              1,
+              2
+            ]
+          ],
+          "active": [
+            [
+              3,
+              8
+            ],
+            [
+              1,
+              2
+            ]
+          ],
+          "value": "bd"
+        },
+        {
+          "whole": [
+            [
+              3,
+              4
+            ],
+            [
+              7,
+              8
+            ]
+          ],
+          "active": [
+            [
+              3,
+              4
+            ],
+            [
+              7,
+              8
+            ]
+          ],
+          "value": "bd"
+        }
+      ],
+      "error": null
+    },
+    {
+      "arc": [
+        [
+          0,
+          1
+        ],
+        [
+          1,
+          4
+        ]
+      ],
+      "events": [
+        {
+          "whole": [
+            [
+              0,
+              1
+            ],
+            [
+              1,
+              8
+            ]
+          ],
+          "active": [
+            [
+              0,
+              1
+            ],
+            [
+              1,
+              8
+            ]
+          ],
+          "value": "bd"
+        }
+      ],
+      "error": null
+    },
+    {
+      "arc": [
+        [
+          1,
+          4
+        ],
+        [
+          1,
+          2
+        ]
+      ],
+      "events": [
+        {
+          "whole": [
+            [
+              3,
+              8
+            ],
+            [
+              1,
+              2
+            ]
+          ],
+          "active": [
+            [
+              3,
+              8
+            ],
+            [
+              1,
+              2
+            ]
+          ],
+          "value": "bd"
+        }
+      ],
+      "error": null
+    },
+    {
+      "arc": [
+        [
+          1,
+          2
+        ],
+        [
+          3,
+          4
+        ]
+      ],
+      "events": [],
+      "error": null
+    },
+    {
+      "arc": [
+        [
+          3,
+          4
+        ],
+        [
+          1,
+          1
+        ]
+      ],
+      "events": [
+        {
+          "whole": [
+            [
+              3,
+              4
+            ],
+            [
+              7,
+              8
+            ]
+          ],
+          "active": [
+            [
+              3,
+              4
+            ],
+            [
+              7,
+              8
+            ]
+          ],
+          "value": "bd"
+        }
+      ],
+      "error": null
+    },
+    {
+      "arc": [
+        [
+          0,
+          1
+        ],
+        [
+          2,
+          1
+        ]
+      ],
+      "events": [
+        {
+          "whole": [
+            [
+              0,
+              1
+            ],
+            [
+              1,
+              8
+            ]
+          ],
+          "active": [
+            [
+              0,
+              1
+            ],
+            [
+              1,
+              8
+            ]
+          ],
+          "value": "bd"
+        },
+        {
+          "whole": [
+            [
+              3,
+              8
+            ],
+            [
+              1,
+              2
+            ]
+          ],
+          "active": [
+            [
+              3,
+              8
+            ],
+            [
+              1,
+              2
+            ]
+          ],
+          "value": "bd"
+        },
+        {
+          "whole": [
+            [
+              3,
+              4
+            ],
+            [
+              7,
+              8
+            ]
+          ],
+          "active": [
+            [
+              3,
+              4
+            ],
+            [
+              7,
+              8
+            ]
+          ],
+          "value": "bd"
+        },
+        {
+          "whole": [
+            [
+              1,
+              1
+            ],
+            [
+              9,
+              8
+            ]
+          ],
+          "active": [
+            [
+              1,
+              1
+            ],
+            [
+              9,
+              8
+            ]
+          ],
+          "value": "bd"
+        },
+        {
+          "whole": [
+            [
+              11,
+              8
+            ],
+            [
+              3,
+              2
+            ]
+          ],
+          "active": [
+            [
+              11,
+              8
+            ],
+            [
+              3,
+              2
+            ]
+          ],
+          "value": "bd"
+        },
+        {
+          "whole": [
+            [
+              7,
+              4
+            ],
+            [
+              15,
+              8
+            ]
+          ],
+          "active": [
+            [
+              7,
+              4
+            ],
+            [
+              15,
+              8
+            ]
+          ],
+          "value": "bd"
+        }
+      ],
+      "error": null
+    }
+  ],
+  "precision_note": "Time values are serialized as exact [numerator, denominator] integer pairs extracted from Strudel internal fraction.js Fraction instances (s*n/d). These are exact rationals, so consumers may compare with exact equality."
+}

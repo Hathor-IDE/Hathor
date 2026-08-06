@@ -1,0 +1,154 @@
+{
+  "description": "degradeBy(1.0, \"bd*8\") -- edge case: 100% removal, so no events survive (empty result). Queried over the standard arcs.",
+  "mini_notation": null,
+  "strudel_version_or_commit": "1.2.6",
+  "arcs_used": [
+    [
+      [
+        0,
+        1
+      ],
+      [
+        1,
+        1
+      ]
+    ],
+    [
+      [
+        0,
+        1
+      ],
+      [
+        1,
+        4
+      ]
+    ],
+    [
+      [
+        1,
+        4
+      ],
+      [
+        1,
+        2
+      ]
+    ],
+    [
+      [
+        1,
+        2
+      ],
+      [
+        3,
+        4
+      ]
+    ],
+    [
+      [
+        3,
+        4
+      ],
+      [
+        1,
+        1
+      ]
+    ],
+    [
+      [
+        0,
+        1
+      ],
+      [
+        2,
+        1
+      ]
+    ]
+  ],
+  "queries": [
+    {
+      "arc": [
+        [
+          0,
+          1
+        ],
+        [
+          1,
+          1
+        ]
+      ],
+      "events": [],
+      "error": null
+    },
+    {
+      "arc": [
+        [
+          0,
+          1
+        ],
+        [
+          1,
+          4
+        ]
+      ],
+      "events": [],
+      "error": null
+    },
+    {
+      "arc": [
+        [
+          1,
+          4
+        ],
+        [
+          1,
+          2
+        ]
+      ],
+      "events": [],
+      "error": null
+    },
+    {
+      "arc": [
+        [
+          1,
+          2
+        ],
+        [
+          3,
+          4
+        ]
+      ],
+      "events": [],
+      "error": null
+    },
+    {
+      "arc": [
+        [
+          3,
+          4
+        ],
+        [
+          1,
+          1
+        ]
+      ],
+      "events": [],
+      "error": null
+    },
+    {
+      "arc": [
+        [
+          0,
+          1
+        ],
+        [
+          2,
+          1
+        ]
+      ],
+      "events": [],
+      "error": null
+    }
+  ],
+  "precision_note": "Time values are serialized as exact [numerator, denominator] integer pairs extracted from Strudel internal fraction.js Fraction instances (s*n/d). These are exact rationals, so consumers may compare with exact equality."
+}

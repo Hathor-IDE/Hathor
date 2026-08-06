@@ -1,0 +1,702 @@
+{
+  "description": "degradeBy(0.5, \"bd*16\") -- first of two independently-constructed instances, queried over [0,4). Used together with degrade-by-0.5-instance-b.json to test whether two independent instances are correlated.",
+  "mini_notation": null,
+  "strudel_version_or_commit": "1.2.6",
+  "arcs_used": [
+    [
+      [
+        0,
+        1
+      ],
+      [
+        4,
+        1
+      ]
+    ]
+  ],
+  "queries": [
+    {
+      "arc": [
+        [
+          0,
+          1
+        ],
+        [
+          4,
+          1
+        ]
+      ],
+      "events": [
+        {
+          "whole": [
+            [
+              1,
+              16
+            ],
+            [
+              1,
+              8
+            ]
+          ],
+          "active": [
+            [
+              1,
+              16
+            ],
+            [
+              1,
+              8
+            ]
+          ],
+          "value": "bd"
+        },
+        {
+          "whole": [
+            [
+              1,
+              8
+            ],
+            [
+              3,
+              16
+            ]
+          ],
+          "active": [
+            [
+              1,
+              8
+            ],
+            [
+              3,
+              16
+            ]
+          ],
+          "value": "bd"
+        },
+        {
+          "whole": [
+            [
+              5,
+              16
+            ],
+            [
+              3,
+              8
+            ]
+          ],
+          "active": [
+            [
+              5,
+              16
+            ],
+            [
+              3,
+              8
+            ]
+          ],
+          "value": "bd"
+        },
+        {
+          "whole": [
+            [
+              13,
+              16
+            ],
+            [
+              7,
+              8
+            ]
+          ],
+          "active": [
+            [
+              13,
+              16
+            ],
+            [
+              7,
+              8
+            ]
+          ],
+          "value": "bd"
+        },
+        {
+          "whole": [
+            [
+              15,
+              16
+            ],
+            [
+              1,
+              1
+            ]
+          ],
+          "active": [
+            [
+              15,
+              16
+            ],
+            [
+              1,
+              1
+            ]
+          ],
+          "value": "bd"
+        },
+        {
+          "whole": [
+            [
+              1,
+              1
+            ],
+            [
+              17,
+              16
+            ]
+          ],
+          "active": [
+            [
+              1,
+              1
+            ],
+            [
+              17,
+              16
+            ]
+          ],
+          "value": "bd"
+        },
+        {
+          "whole": [
+            [
+              17,
+              16
+            ],
+            [
+              9,
+              8
+            ]
+          ],
+          "active": [
+            [
+              17,
+              16
+            ],
+            [
+              9,
+              8
+            ]
+          ],
+          "value": "bd"
+        },
+        {
+          "whole": [
+            [
+              9,
+              8
+            ],
+            [
+              19,
+              16
+            ]
+          ],
+          "active": [
+            [
+              9,
+              8
+            ],
+            [
+              19,
+              16
+            ]
+          ],
+          "value": "bd"
+        },
+        {
+          "whole": [
+            [
+              5,
+              4
+            ],
+            [
+              21,
+              16
+            ]
+          ],
+          "active": [
+            [
+              5,
+              4
+            ],
+            [
+              21,
+              16
+            ]
+          ],
+          "value": "bd"
+        },
+        {
+          "whole": [
+            [
+              23,
+              16
+            ],
+            [
+              3,
+              2
+            ]
+          ],
+          "active": [
+            [
+              23,
+              16
+            ],
+            [
+              3,
+              2
+            ]
+          ],
+          "value": "bd"
+        },
+        {
+          "whole": [
+            [
+              3,
+              2
+            ],
+            [
+              25,
+              16
+            ]
+          ],
+          "active": [
+            [
+              3,
+              2
+            ],
+            [
+              25,
+              16
+            ]
+          ],
+          "value": "bd"
+        },
+        {
+          "whole": [
+            [
+              15,
+              8
+            ],
+            [
+              31,
+              16
+            ]
+          ],
+          "active": [
+            [
+              15,
+              8
+            ],
+            [
+              31,
+              16
+            ]
+          ],
+          "value": "bd"
+        },
+        {
+          "whole": [
+            [
+              31,
+              16
+            ],
+            [
+              2,
+              1
+            ]
+          ],
+          "active": [
+            [
+              31,
+              16
+            ],
+            [
+              2,
+              1
+            ]
+          ],
+          "value": "bd"
+        },
+        {
+          "whole": [
+            [
+              2,
+              1
+            ],
+            [
+              33,
+              16
+            ]
+          ],
+          "active": [
+            [
+              2,
+              1
+            ],
+            [
+              33,
+              16
+            ]
+          ],
+          "value": "bd"
+        },
+        {
+          "whole": [
+            [
+              17,
+              8
+            ],
+            [
+              35,
+              16
+            ]
+          ],
+          "active": [
+            [
+              17,
+              8
+            ],
+            [
+              35,
+              16
+            ]
+          ],
+          "value": "bd"
+        },
+        {
+          "whole": [
+            [
+              37,
+              16
+            ],
+            [
+              19,
+              8
+            ]
+          ],
+          "active": [
+            [
+              37,
+              16
+            ],
+            [
+              19,
+              8
+            ]
+          ],
+          "value": "bd"
+        },
+        {
+          "whole": [
+            [
+              19,
+              8
+            ],
+            [
+              39,
+              16
+            ]
+          ],
+          "active": [
+            [
+              19,
+              8
+            ],
+            [
+              39,
+              16
+            ]
+          ],
+          "value": "bd"
+        },
+        {
+          "whole": [
+            [
+              41,
+              16
+            ],
+            [
+              21,
+              8
+            ]
+          ],
+          "active": [
+            [
+              41,
+              16
+            ],
+            [
+              21,
+              8
+            ]
+          ],
+          "value": "bd"
+        },
+        {
+          "whole": [
+            [
+              43,
+              16
+            ],
+            [
+              11,
+              4
+            ]
+          ],
+          "active": [
+            [
+              43,
+              16
+            ],
+            [
+              11,
+              4
+            ]
+          ],
+          "value": "bd"
+        },
+        {
+          "whole": [
+            [
+              11,
+              4
+            ],
+            [
+              45,
+              16
+            ]
+          ],
+          "active": [
+            [
+              11,
+              4
+            ],
+            [
+              45,
+              16
+            ]
+          ],
+          "value": "bd"
+        },
+        {
+          "whole": [
+            [
+              45,
+              16
+            ],
+            [
+              23,
+              8
+            ]
+          ],
+          "active": [
+            [
+              45,
+              16
+            ],
+            [
+              23,
+              8
+            ]
+          ],
+          "value": "bd"
+        },
+        {
+          "whole": [
+            [
+              51,
+              16
+            ],
+            [
+              13,
+              4
+            ]
+          ],
+          "active": [
+            [
+              51,
+              16
+            ],
+            [
+              13,
+              4
+            ]
+          ],
+          "value": "bd"
+        },
+        {
+          "whole": [
+            [
+              13,
+              4
+            ],
+            [
+              53,
+              16
+            ]
+          ],
+          "active": [
+            [
+              13,
+              4
+            ],
+            [
+              53,
+              16
+            ]
+          ],
+          "value": "bd"
+        },
+        {
+          "whole": [
+            [
+              55,
+              16
+            ],
+            [
+              7,
+              2
+            ]
+          ],
+          "active": [
+            [
+              55,
+              16
+            ],
+            [
+              7,
+              2
+            ]
+          ],
+          "value": "bd"
+        },
+        {
+          "whole": [
+            [
+              57,
+              16
+            ],
+            [
+              29,
+              8
+            ]
+          ],
+          "active": [
+            [
+              57,
+              16
+            ],
+            [
+              29,
+              8
+            ]
+          ],
+          "value": "bd"
+        },
+        {
+          "whole": [
+            [
+              29,
+              8
+            ],
+            [
+              59,
+              16
+            ]
+          ],
+          "active": [
+            [
+              29,
+              8
+            ],
+            [
+              59,
+              16
+            ]
+          ],
+          "value": "bd"
+        },
+        {
+          "whole": [
+            [
+              59,
+              16
+            ],
+            [
+              15,
+              4
+            ]
+          ],
+          "active": [
+            [
+              59,
+              16
+            ],
+            [
+              15,
+              4
+            ]
+          ],
+          "value": "bd"
+        },
+        {
+          "whole": [
+            [
+              15,
+              4
+            ],
+            [
+              61,
+              16
+            ]
+          ],
+          "active": [
+            [
+              15,
+              4
+            ],
+            [
+              61,
+              16
+            ]
+          ],
+          "value": "bd"
+        },
+        {
+          "whole": [
+            [
+              31,
+              8
+            ],
+            [
+              63,
+              16
+            ]
+          ],
+          "active": [
+            [
+              31,
+              8
+            ],
+            [
+              63,
+              16
+            ]
+          ],
+          "value": "bd"
+        }
+      ],
+      "error": null
+    }
+  ],
+  "precision_note": "Time values are serialized as exact [numerator, denominator] integer pairs extracted from Strudel internal fraction.js Fraction instances (s*n/d). These are exact rationals, so consumers may compare with exact equality."
+}
