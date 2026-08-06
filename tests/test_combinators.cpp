@@ -305,20 +305,24 @@ TEST_CASE("iter: arc rotates by 1/N each cycle", "[combinators][iter]")
     REQUIRE(buffer[1].value == "b");
     REQUIRE(buffer[1].whole.start == Rational{1, 2});
 
-    // Cycle 1: shift = 1/2 → query shifted arc [1/2, 3/2) into fastcat
-    //   inner [1/2, 1) → b, inner [1, 3/2) → a of cycle 2
-    // After shifting results back by +1/2:
-    //   b moves from inner [1/2,1) → outer [1, 3/2) but wait, we add shift to results:
-    //   b: inner whole [1/2,1) + 1/2 = [1, 3/2) which is in cycle 1's context [1,2)
-    // Actually querying [1,2) with iter(2) should give us shifted events in that outer arc.
+    // Cycle 1: shift = 1/2. early(1/2) → query arc [1,2) shifted to [3/2, 5/2).
+    // inner fastcat("a","b") over [3/2, 5/2):
+    //   "a" (slot 0) produces event at [2, 5/2) (cycle 2's first slot)
+    //   "b" (slot 1) produces event at [3/2, 2) (cycle 1's second slot)
+    // After un-shifting by 1/2:
+    //   "a" whole = [3/2, 2), "b" whole = [1, 3/2)
+    // Events are returned in sub-pattern/stack order (a first, b second),
+    // NOT sorted by start time. This matches Strudel's output order per
+    // reference/strudel-golden/iter-4-bd-sn-hh-cp.json which shows cycle-1
+    // events in stack order (the slot that wrapped around comes last).
     std::size_t c1 = iterated.query(Arc{Rational{1}, Rational{2}}, buffer);
     REQUIRE(c1 == 2);
+    // a at [3/2, 2) — sub-pattern order: "a" is pattern 0 → comes first
+    REQUIRE(buffer[0].value == "a");
+    REQUIRE(buffer[0].whole.start == Rational{3, 2});
     // b at [1, 3/2)
-    REQUIRE(buffer[0].value == "b");
-    REQUIRE(buffer[0].whole.start == Rational{1});
-    // a at [3/2, 2)
-    REQUIRE(buffer[1].value == "a");
-    REQUIRE(buffer[1].whole.start == Rational{3, 2});
+    REQUIRE(buffer[1].value == "b");
+    REQUIRE(buffer[1].whole.start == Rational{1});
 }
 
 TEST_CASE("iter: throws if n <= 0", "[combinators][iter]")
@@ -376,14 +380,19 @@ TEST_CASE("euclid: offset rotates rhythm", "[combinators][euclid]")
     std::size_t count = rhythm.query(Arc{Rational{0}, Rational{1}}, buffer);
 
     REQUIRE(count == 3);
-    // Bjorklund(3,8) onsets at steps {0,3,6}.
-    // offset=2: step i fires if rhythm[(i+2)%8] is set.
-    // rhythm[2]=false, rhythm[3]=true → step 1 fires (1/8)
-    // rhythm[5]=false, rhythm[6]=true → step 4 fires (4/8 = 1/2)
-    // rhythm[8%8=0]=true → step 6 fires (6/8 = 3/4)
-    REQUIRE(buffer[0].whole.start == Rational{1, 8});
-    REQUIRE(buffer[1].whole.start == Rational{1, 2});
-    REQUIRE(buffer[2].whole.start == Rational{3, 4});
+    // Bjorklund(3,8) → mask = [1,0,0,1,0,0,1,0], onsets at {0,3,6}.
+    // Strudel's euclidRot does rotate(mask, -offset), which means
+    // step i fires if mask[(i - offset + n) % n] is set.
+    // Ground truth: reference/strudel-golden/euclid-7-16-2.json confirms
+    // Strudel uses this (i - offset) convention.
+    //
+    // For offset=2, mask[(i-2+8)%8]:
+    //   i=0: mask[6]=1 → fires at 0/8
+    //   i=2: mask[0]=1 → fires at 2/8 = 1/4
+    //   i=5: mask[3]=1 → fires at 5/8
+    REQUIRE(buffer[0].whole.start == Rational{0});
+    REQUIRE(buffer[1].whole.start == Rational{1, 4});
+    REQUIRE(buffer[2].whole.start == Rational{5, 8});
 }
 
 TEST_CASE("euclid: throws on invalid arguments", "[combinators][euclid]")

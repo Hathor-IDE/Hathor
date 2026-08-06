@@ -200,14 +200,18 @@ TEST_CASE("parse replicate bd!3", "[miniparser]")
 
 TEST_CASE("parse tilde silence", "[miniparser]")
 {
+    // Ground truth: reference/strudel-golden/rest-bd-sn.json — "bd ~ sn ~"
+    // queried over [1/4, 1/2) (the first ~ slot) returns ZERO events.
+    // The mini-notation-grammar.md confirms: "~" maps to silence (no event
+    // emitted), not to an event carrying a "~" value. The parser is correct;
+    // this test was originally wrong to expect 1 event.
     auto result = parseMini("~");
     auto& cp = asCP(result);
 
     Arc arc{Rational{0}, Rational{1}};
     auto events = queryToVec(cp.pattern, arc);
 
-    REQUIRE(events.size() == 1);
-    CHECK(events[0].value == "~");
+    REQUIRE(events.size() == 0);
 }
 
 // ---------------------------------------------------------------------------
@@ -280,12 +284,24 @@ TEST_CASE("parse nested bracket with fast modifier", "[miniparser]")
     Arc arc{Rational{0}, Rational{1}};
     auto events = queryToVec(cp.pattern, arc);
 
-    // [bd sn] = 2 events per cycle; *2 doubles speed → 4 events per cycle.
+    // [bd sn]*2 = fast(2, fastcat(bd, sn)) → 4 events per cycle.
+    // Ground truth: reference/strudel-golden/fast-seq-bd-sn-star-2.json
+    // Strudel returns events in stack/sub-pattern order (not time order):
+    //   bd at [0, 1/4), bd at [1/2, 3/4),   -- bd sub-pattern events first
+    //   sn at [1/4, 1/2), sn at [3/4, 1)    -- sn sub-pattern events second
     REQUIRE(events.size() == 4);
     CHECK(events[0].value == "bd");
-    CHECK(events[1].value == "sn");
-    CHECK(events[2].value == "bd");
+    CHECK(events[0].whole.start == Rational{0});
+    CHECK(events[0].whole.end   == Rational{1, 4});
+    CHECK(events[1].value == "bd");
+    CHECK(events[1].whole.start == Rational{1, 2});
+    CHECK(events[1].whole.end   == Rational{3, 4});
+    CHECK(events[2].value == "sn");
+    CHECK(events[2].whole.start == Rational{1, 4});
+    CHECK(events[2].whole.end   == Rational{1, 2});
     CHECK(events[3].value == "sn");
+    CHECK(events[3].whole.start == Rational{3, 4});
+    CHECK(events[3].whole.end   == Rational{1});
 }
 
 // ---------------------------------------------------------------------------

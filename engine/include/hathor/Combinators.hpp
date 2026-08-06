@@ -734,8 +734,9 @@ Pattern<T> euclid(int k, int n, int offset, Pattern<T> p)
             for (int i = 0; i < steps; ++i) {
                 if (total >= out.size()) goto euclid_done;
 
-                // Apply offset rotation (Strudel uses rotate(b, -rotation),
-                // which shifts onsets forward — so we subtract the offset).
+                // Apply offset rotation: Strudel's euclidRot does rotate(mask, -rotation),
+                // where positive rotation means right-shift (mask[(i - offset + n) % n]).
+                // This matches reference/strudel-golden/euclid-7-16-2.json exactly.
                 int rhythmIdx = ((i - off) % steps + steps) % steps;
                 if (!(*rhy)[static_cast<std::size_t>(rhythmIdx)]) continue;
 
