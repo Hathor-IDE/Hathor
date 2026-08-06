@@ -25,7 +25,6 @@
 #include <stdexcept>
 #include <cmath>
 #include <cstdint>
-#include <atomic>
 #include <algorithm>
 
 #include "hathor/Pattern.hpp"
@@ -609,63 +608,112 @@ Pattern<T> euclid(int k, int n, int offset, Pattern<T> p)
 // ---------------------------------------------------------------------------
 
 /**
- * degradeBy(prob, p) — stochastically remove events with probability `prob`.
+ * degradeBy(prob, p, seed = 0) — stochastically remove each event of `p` with
+ * probability `prob` (i.e. keep each event with probability 1 - prob).
  *
- * Uses a deterministic hash of (whole.start.num, whole.start.den, salt) so
- * that identical queries to the same instance produce identical results, but
- * two separate degradeBy instances are uncorrelated (different salts).
+ * Correlated-by-default matches Strudel's reference semantics (see
+ * reference/strudel-golden/degrade-by-*.json and
+ * docs/pattern-semantics/degradeBy.md). A future decorrelating variant,
+ * matching Strudel's `?` mini-notation operator (which applies a small
+ * per-instance time offset via `rand.early(0.0003*seed)`), may be added later
+ * if needed — do not add it speculatively now.
  *
- * Keep event if: hash(num, den, salt) > UINT64_MAX * prob
+ * The keep/drop decision replicates Strudel's *legacy* random signal exactly
+ * (packages/core/signal.mjs, legacy mode, randSeed default 0 = rand). Strudel
+ * samples `rand` at the event's begin time (whole.start) and keeps the event
+ * when the sampled value is strictly `> prob`, i.e. filterValues(v => v > x).
  *
- * The salt is assigned from a static atomic counter at construction time,
- * giving each degradeBy node a unique identity.
+ * IMPORTANT — in legacy mode the seed is combined as a TIME OFFSET before
+ * the hash (t_eff = t + seed), NOT as a separate hash lane. (Separate hash
+ * lanes are the 'precise' RNG mode; degradeBy uses legacy mode so the decision
+ * is a deterministic hash of the sample time `whole.start` plus the seed,
+ * matching the golden fixtures which were generated with the default seed.)
  *
- * Requirement: 3.9
+ * Legacy RNG (signal.mjs: __timeToRands / __intSeedToRand / __xorwise, n = 1):
+ *
+ *   t_eff = t + seed
+ *   s0    = trunc( frac(t_eff / 300) * 2^29 )   // 0 <= s0 < 2^29
+ *   x     = xorwise(s0)                        // 32-bit xorshift
+ *   rand  = | (x % 2^29) / 2^29 |              // in [0, 1)
+ *
+ *   where xorwise (32-bit signed arithmetic; JS `>>` is ARITHMETIC and
+ *   sign-propagating):
+ *     a = (x << 13) ^ x ; b = (a >> 17) ^ a ; return (b << 5) ^ b
+ *
+ * Keep the event iff rand > prob (strict, matching Strudel). Because rand is
+ * always in [0, 1), rand > 1.0 is never true, so degradeBy(1.0) is empty.
+ *
+ * Requirement 20.5 (Definition of Done): degradeBy(0.0) MUST be a pure
+ * identity (drop nothing) and degradeBy(1.0) MUST be empty. Strudel's legacy
+ * RNG yields rand == 0 at the single measure-zero sample point t == 0; under
+ * strict `>` that event would be dropped even at prob == 0.0, violating the
+ * identity requirement. We therefore keep unconditionally when prob == 0.0.
+ * This is the ONLY deviation from Strudel's strict `>` (it occurs solely at
+ * prob == 0.0); every other probability — including 0.5, which reproduces
+ * reference/strudel-golden/degrade-by-0.5-instance-a.json exactly — is
+ * faithful.
+ *
+ * Requirement: 3.9 (deterministic per-(whole.start, seed) decision; a shared
+ * default seed makes distinct instances correlate, matching Strudel); 20.5
+ * (0.0 -> identity, 1.0 -> empty).
  */
 template <typename T>
-Pattern<T> degradeBy(double prob, Pattern<T> p)
+Pattern<T> degradeBy(double prob, Pattern<T> p, double seed = 0.0)
 {
-    // Assign a unique salt for this combinator instance.
-    static std::atomic<uint64_t> saltCounter{1};
-    uint64_t salt = saltCounter.fetch_add(1, std::memory_order_relaxed);
-
     std::size_t maxEvents = p.maxEventsPerCycle();
     auto inner = std::make_shared<Pattern<T>>(std::move(p));
-    double keepProb = 1.0 - prob;  // probability to KEEP an event
 
-    auto fn = [inner, salt, keepProb](Arc arc, std::span<Event<T>> out) -> std::size_t
+    auto fn = [inner, prob, seed](Arc arc, std::span<Event<T>> out) -> std::size_t
     {
-        // Query the inner pattern into a local scratch region of the output span.
-        // We do an in-place filter.
+        // Query the inner pattern into the output span (in-place filter).
         std::size_t got = inner->query(arc, out);
         std::size_t total = 0;
 
+        // Strudel legacy RNG constants (signal.mjs: __frac / __intSeedToRand).
+        constexpr double kM  = static_cast<double>(0x20000000u);   // 2^29 = 536870912
+        constexpr int64_t kMI = static_cast<int64_t>(0x20000000LL); // 2^29
+
         for (std::size_t i = 0; i < got; ++i) {
-            const auto& ev = out[i];
+            const Event<T>& ev = out[i];
 
-            // Hash: xxhash64-style mixing of (num, den, salt).
-            uint64_t h = salt;
-            // Mix in whole.start.num
-            h ^= static_cast<uint64_t>(ev.whole.start.num) * UINT64_C(11400714785074694791);
-            h = (h << 31) | (h >> 33);
-            h *= UINT64_C(14029467366897019727);
-            // Mix in whole.start.den
-            h ^= static_cast<uint64_t>(ev.whole.start.den) * UINT64_C(11400714785074694791);
-            h = (h << 27) | (h >> 37);
-            h *= UINT64_C(14029467366897019727);
-            // Final avalanche
-            h ^= h >> 33;
-            h *= UINT64_C(0xff51afd7ed558ccd);
-            h ^= h >> 33;
-            h *= UINT64_C(0xc4ceb9fe1a85ec53);
-            h ^= h >> 33;
+            // Sample Strudel's legacy `rand` signal at the event's whole.start.
+            // In legacy mode the seed is combined as a TIME OFFSET (t + seed)
+            // BEFORE the xorshift hash, NOT as a separate hash lane.
+            //   t_eff = t + seed
+            //   s0    = trunc( frac(t_eff / 300) * 2^29 )   // 0 <= s0 < 2^29
+            //   x     = xorwise(s0)                        // 32-bit xorshift
+            //   rand  = | (x % 2^29) / 2^29 |              // in [0, 1)
+            const double t = ev.whole.start.toDouble();
+            const double x = (t + seed) / 300.0;
+            const double frac = x - std::trunc(x);              // __frac(x), in [0,1) for x >= 0
+            const double scaled = frac * kM;                    // __frac(x) * 2^29
+            const int64_t s0i = static_cast<int64_t>(std::trunc(scaled)); // trunc -> int
+            const uint32_t s0 = static_cast<uint32_t>(s0i);     // Int32 coercion (mod 2^32)
 
-            // Keep if h / UINT64_MAX <= keepProb
-            // Equivalently: keep if h <= UINT64_MAX * keepProb
-            // Use double comparison to avoid integer overflow.
-            constexpr double kMaxU64 = static_cast<double>(UINT64_MAX);
-            double normalised = static_cast<double>(h) / kMaxU64;
-            if (normalised <= keepProb) {
+            // __xorwise (32-bit signed arithmetic; JS `>>` is ARITHMETIC /
+            // sign-propagating, so emulate it with a sign-bit fill since C++
+            // `>>` on unsigned is logical):
+            //   a = (x << 13) ^ x ; b = (a >> 17) ^ a ; return (b << 5) ^ b
+            const uint32_t a = (s0 << 13) ^ s0;
+            const uint32_t aShifted = (a >> 17) | ((a & 0x80000000u) ? 0xFFFF8000u : 0u);
+            const uint32_t b = aShifted ^ a;
+            const uint32_t res = (b << 5) ^ b;
+            const int32_t resS = static_cast<int32_t>(res);
+
+            // __intSeedToRand: (x % 2^29) / 2^29, then Math.abs -> [0, 1).
+            // C++ `%` is truncated (sign of dividend), matching JS `%`.
+            const int64_t rem = static_cast<int64_t>(resS) % kMI;
+            const double randVal = std::fabs(static_cast<double>(rem) / kM);
+
+            // Keep iff rand > prob, strict (matching Strudel filterValues(v => v > x).
+            // req 20.5: degradeBy(0.0) is identity, degradeBy(1.0) is empty. The
+            // legacy RNG yields rand == 0 at the measure-zero point t == 0, which
+            // strict `>` would drop at prob == 0.0; keep unconditionally at 0.0 to
+            // honor the identity guarantee. At 1.0 randVal is always < 1 so strict
+            // comparison already yields empty (matches golden-1.0).
+            const bool keep = (prob == 0.0) || (randVal > prob);
+
+            if (keep) {
                 if (total != i)
                     out[total] = std::move(out[i]);
                 ++total;

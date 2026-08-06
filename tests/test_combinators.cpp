@@ -442,36 +442,35 @@ TEST_CASE("degradeBy: deterministic — repeated queries produce identical resul
     REQUIRE(count1 == count2);
 }
 
-TEST_CASE("degradeBy: two instances are uncorrelated (different salts)", "[combinators][degradeBy]")
+TEST_CASE("degradeBy: two default-seed instances are correlated (identical events)", "[combinators][degradeBy]")
 {
-    // Create 5 pairs of degradeBy instances and check that at least 4 pairs differ.
-    // (Statistically, with 50% degradation and 50 samples, getting identical
-    // results from different salts is unlikely. Checking 5 pairs allows one
-    // spurious match without failing the property.)
-    int differingPairs = 0;
-    for (int trial = 0; trial < 5; ++trial) {
-        auto p = pure<std::string>("x");
-        auto degraded1 = degradeBy(0.5, p);
-        auto degraded2 = degradeBy(0.5, p);
+    // Per Requirement 20.5 / degradeBy.md: degradeBy with the default seed (0,
+    // matching Strudel's randSeed default) is a deterministic function of
+    // (whole.start, seed). Two independently-constructed instances sharing the
+    // default seed MUST therefore produce identical event lists at the same
+    // positions (see degrade-by-0.5-instance-a.json == degrade-by-0.5-instance-b.json
+    // in reference/strudel-golden). This also confirms the deprecated
+    // per-instance auto-incrementing salt counter has been removed.
+    auto p = pure<std::string>("x");
+    auto degraded1 = degradeBy(0.5, p);
+    auto degraded2 = degradeBy(0.5, p);  // distinct instance, default seed = 0
 
-        auto buffer1 = makeBuffer<std::string>(100);
-        auto buffer2 = makeBuffer<std::string>(100);
+    auto buffer1 = makeBuffer<std::string>(100);
+    auto buffer2 = makeBuffer<std::string>(100);
 
-        Arc arc{Rational{trial * 50}, Rational{(trial + 1) * 50}};  // Different arcs per trial
-        std::size_t count1 = degraded1.query(arc, buffer1);
-        std::size_t count2 = degraded2.query(arc, buffer2);
+    Arc arc{Rational{0}, Rational{50}};  // inner: 50 events at whole.start = 0..49
+    std::size_t count1 = degraded1.query(arc, buffer1);
+    std::size_t count2 = degraded2.query(arc, buffer2);
 
-        // Both should be roughly half (generous window).
-        REQUIRE(count1 >= 10);
-        REQUIRE(count1 <= 40);
-        REQUIRE(count2 >= 10);
-        REQUIRE(count2 <= 40);
-
-        if (count1 != count2)
-            ++differingPairs;
+    // Correlation: identical counts ...
+    REQUIRE(count1 == count2);
+    // ... and identical event positions, in production order.
+    for (std::size_t i = 0; i < count1; ++i) {
+        REQUIRE(buffer1[i].whole.start == buffer2[i].whole.start);
     }
 
-    // At least 4 out of 5 pairs should differ (probability of all 5 being
-    // identical with different salts is astronomically low).
-    REQUIRE(differingPairs >= 4);
+    // Sanity: 0.5 degradation of 50 events yields a real (non-trivial) subset --
+    // not identity (all kept) and not empty (all dropped).
+    REQUIRE(count1 > 0);
+    REQUIRE(count1 < 50);
 }
