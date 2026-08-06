@@ -17,7 +17,7 @@
 #   0  — test passed (median latency < 100 ms)
 #   1  — test failed (median too high, parse error, or binary not found)
 
-set -euo pipefail
+set -eu
 
 # ---------------------------------------------------------------------------
 # Arguments
@@ -27,150 +27,128 @@ SAMPLES_PATH="${2:-}"
 PING_COUNT=100
 MAX_MEDIAN_MS=100
 
-if [[ -z "$HATHOR_BIN" ]]; then
+if [ -z "$HATHOR_BIN" ]; then
     echo "[FAIL] Usage: $0 <hathor_binary> [<samples_path>]" >&2
     exit 1
 fi
 
-if [[ ! -x "$HATHOR_BIN" ]]; then
+if [ ! -x "$HATHOR_BIN" ]; then
     echo "[FAIL] hathor binary not found or not executable: $HATHOR_BIN" >&2
     exit 1
 fi
 
 # Default samples path relative to this script's location (repo root/samples)
-if [[ -z "$SAMPLES_PATH" ]]; then
-    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [ -z "$SAMPLES_PATH" ]; then
+    SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
     SAMPLES_PATH="$(cd "$SCRIPT_DIR/../.." && pwd)/samples"
 fi
 
-if [[ ! -d "$SAMPLES_PATH" ]]; then
+if [ ! -d "$SAMPLES_PATH" ]; then
     echo "[FAIL] samples directory not found: $SAMPLES_PATH" >&2
     exit 1
 fi
 
 # ---------------------------------------------------------------------------
-# JSON field extraction helper (prefers jq, falls back to grep+sed)
+# Use Python for reliable bidirectional subprocess I/O
 # ---------------------------------------------------------------------------
-extract_field() {
-    local json="$1"
-    local field="$2"
-    if command -v jq &>/dev/null; then
-        echo "$json" | jq -r ".$field // empty" 2>/dev/null
-    else
-        # Portable fallback: extract numeric or string value after "field":
-        echo "$json" | sed -n "s/.*\"${field}\":[[:space:]]*\([0-9.]*\).*/\1/p" | head -1
-    fi
-}
+python3 - "$HATHOR_BIN" "$SAMPLES_PATH" "$PING_COUNT" "$MAX_MEDIAN_MS" <<'PYEOF'
+import sys, subprocess, json, time, os
 
-# ---------------------------------------------------------------------------
-# Launch hathor and wait for the ready event
-# ---------------------------------------------------------------------------
-TMPDIR_WORK="$(mktemp -d)"
-FIFO_IN="$TMPDIR_WORK/stdin.fifo"
-FIFO_OUT="$TMPDIR_WORK/stdout.fifo"
-mkfifo "$FIFO_IN"
-mkfifo "$FIFO_OUT"
+hathor_bin   = sys.argv[1]
+samples_path = sys.argv[2]
+ping_count   = int(sys.argv[3])
+max_median   = int(sys.argv[4])
 
-cleanup() {
-    # Kill hathor child process if still running
-    if [[ -n "${HATHOR_PID:-}" ]] && kill -0 "$HATHOR_PID" 2>/dev/null; then
-        kill "$HATHOR_PID" 2>/dev/null || true
-        wait "$HATHOR_PID" 2>/dev/null || true
-    fi
-    rm -rf "$TMPDIR_WORK"
-}
-trap cleanup EXIT
+proc = subprocess.Popen(
+    [hathor_bin, "--samples", samples_path],
+    stdin=subprocess.PIPE,
+    stdout=subprocess.PIPE,
+    stderr=subprocess.DEVNULL,
+)
+os.set_blocking(proc.stdout.fileno(), False)
 
-# Launch hathor with stdin/stdout connected to named pipes
-"$HATHOR_BIN" --samples "$SAMPLES_PATH" < "$FIFO_IN" > "$FIFO_OUT" 2>/dev/null &
-HATHOR_PID=$!
+def readline_timeout(proc, timeout=5.0):
+    """Read a line from proc.stdout with a wall-clock timeout (non-blocking)."""
+    deadline = time.time() + timeout
+    buf = b""
+    while time.time() < deadline:
+        try:
+            ch = proc.stdout.read(1)
+            if ch is None:
+                time.sleep(0.001)
+                continue
+            if not ch:
+                break
+            buf += ch
+            if ch == b"\n":
+                break
+        except BlockingIOError:
+            time.sleep(0.001)
+    return buf.decode(errors="replace").rstrip("\n")
 
-# Open the write-end of the stdin pipe (keeps it open so hathor doesn't see EOF)
-exec 3>"$FIFO_IN"
+# Wait for ready event
+ready_line = readline_timeout(proc, 5.0)
+try:
+    ev = json.loads(ready_line)
+    if ev.get("event") != "ready":
+        print(f"[FAIL] Unexpected first line: {ready_line}", file=sys.stderr)
+        proc.kill()
+        sys.exit(1)
+except json.JSONDecodeError:
+    print(f"[FAIL] Could not parse ready event: {ready_line!r}", file=sys.stderr)
+    proc.kill()
+    sys.exit(1)
 
-# Wait for the {"event":"ready"} line (timeout = 5 seconds)
-READY=0
-TIMEOUT=5
-START_WAIT=$SECONDS
-while IFS= read -r -t 1 line 2>/dev/null <"$FIFO_OUT" || true; do
-    if echo "$line" | grep -q '"event".*"ready"'; then
-        READY=1
-        break
-    fi
-    if (( SECONDS - START_WAIT >= TIMEOUT )); then
-        break
-    fi
-done
+# Send ping_count pings and collect latency_ms values
+latencies = []
+for i in range(1, ping_count + 1):
+    proc.stdin.write(b"ping\n")
+    proc.stdin.flush()
+    resp_line = readline_timeout(proc, 2.0)
+    if not resp_line:
+        print(f"[FAIL] Timed out waiting for ping response #{i}", file=sys.stderr)
+        proc.kill()
+        sys.exit(1)
+    try:
+        resp = json.loads(resp_line)
+    except json.JSONDecodeError:
+        print(f"[FAIL] ping #{i} response is not valid JSON: {resp_line!r}", file=sys.stderr)
+        proc.kill()
+        sys.exit(1)
+    if resp.get("ok") is not True:
+        print(f"[FAIL] ping #{i} returned ok=false: {resp_line}", file=sys.stderr)
+        proc.kill()
+        sys.exit(1)
+    lat = resp.get("latency_ms")
+    if lat is None:
+        print(f"[FAIL] ping #{i} missing latency_ms field: {resp_line}", file=sys.stderr)
+        proc.kill()
+        sys.exit(1)
+    latencies.append(float(lat))
 
-if [[ "$READY" -ne 1 ]]; then
-    echo "[FAIL] hathor did not emit {\"event\":\"ready\"} within ${TIMEOUT}s" >&2
-    exit 1
-fi
+# Send quit
+proc.stdin.write(b"quit\n")
+proc.stdin.flush()
+try:
+    proc.wait(timeout=3)
+except subprocess.TimeoutExpired:
+    proc.kill()
 
-# ---------------------------------------------------------------------------
-# Send 100 ping commands and collect latency values
-# ---------------------------------------------------------------------------
-declare -a LATENCIES
+# Compute median
+latencies.sort()
+n = len(latencies)
+if n % 2 == 1:
+    median = latencies[n // 2]
+else:
+    median = (latencies[n // 2 - 1] + latencies[n // 2]) / 2.0
 
-for (( i = 1; i <= PING_COUNT; i++ )); do
-    # Write ping to hathor's stdin
-    echo "ping" >&3
+median_int = int(median)
+print(f"[INFO] Sent {ping_count} pings — median latency: {median_int} ms (limit: {max_median} ms)")
 
-    # Read the response line (timeout 2 s per ping)
-    response=""
-    if IFS= read -r -t 2 response <"$FIFO_OUT" 2>/dev/null; then
-        :
-    else
-        echo "[FAIL] Timed out waiting for ping response #${i}" >&2
-        exit 1
-    fi
-
-    # Validate ok:true
-    ok_val="$(extract_field "$response" "ok")"
-    if [[ "$ok_val" != "true" ]]; then
-        echo "[FAIL] ping #${i} returned ok=false: $response" >&2
-        exit 1
-    fi
-
-    # Extract latency_ms
-    lat="$(extract_field "$response" "latency_ms")"
-    if [[ -z "$lat" ]]; then
-        echo "[FAIL] ping #${i} missing latency_ms field: $response" >&2
-        exit 1
-    fi
-
-    LATENCIES+=("$lat")
-done
-
-# Close stdin pipe — tells hathor EOF
-exec 3>&-
-
-# ---------------------------------------------------------------------------
-# Compute median of collected latencies
-# ---------------------------------------------------------------------------
-N=${#LATENCIES[@]}
-if [[ "$N" -eq 0 ]]; then
-    echo "[FAIL] No latency samples collected" >&2
-    exit 1
-fi
-
-# Sort numerically and pick the median (integer arithmetic via awk)
-MEDIAN=$(printf '%s\n' "${LATENCIES[@]}" | sort -n | awk -v n="$N" '
-    BEGIN { mid = int(n/2) }
-    NR == mid+1 { if (n % 2 == 1) { print $1; exit } else { val = $1 } }
-    NR == mid+2 { print (val + $1) / 2; exit }
-    NR == n && n == 1 { print $1 }
-')
-
-# Truncate to integer for comparison
-MEDIAN_INT=$(echo "$MEDIAN" | awk '{print int($1)}')
-
-echo "[INFO] Sent ${PING_COUNT} pings — median latency: ${MEDIAN_INT} ms (limit: ${MAX_MEDIAN_MS} ms)"
-
-if (( MEDIAN_INT < MAX_MEDIAN_MS )); then
-    echo "[PASS] ACP latency test passed"
-    exit 0
-else
-    echo "[FAIL] Median latency ${MEDIAN_INT} ms >= ${MAX_MEDIAN_MS} ms limit" >&2
-    exit 1
-fi
+if median_int < max_median:
+    print("[PASS] ACP latency test passed")
+    sys.exit(0)
+else:
+    print(f"[FAIL] Median latency {median_int} ms >= {max_median} ms limit", file=sys.stderr)
+    sys.exit(1)
+PYEOF

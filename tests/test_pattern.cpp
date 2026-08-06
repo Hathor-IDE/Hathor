@@ -89,7 +89,7 @@ queryPureString(const Pattern<std::string>& pat, Arc arc)
 // TEST SUITE: pure — arc coverage
 // ---------------------------------------------------------------------------
 
-TEST_CASE("pure: query over [0,1) produces one event", "[pattern][pure]")
+TEST_CASE("pure: query over 0-1 produces one event", "[pattern][pure]")
 {
     // Requirements: 1.1, 1.3
     auto pat = pure(std::string("bd"));
@@ -110,7 +110,7 @@ TEST_CASE("pure: query over [0,1) produces one event", "[pattern][pure]")
     CHECK(events[0].value == "bd");
 }
 
-TEST_CASE("pure: query over [0,2) produces two events", "[pattern][pure]")
+TEST_CASE("pure: query over 0-2 produces two events", "[pattern][pure]")
 {
     // Requirements: 1.1, 1.4
     auto pat = pure(std::string("bd"));
@@ -133,7 +133,7 @@ TEST_CASE("pure: query over [0,2) produces two events", "[pattern][pure]")
     CHECK(events[1].active.end   == R(2));
 }
 
-TEST_CASE("pure: query over [1/4, 3/4) produces one clipped event", "[pattern][pure]")
+TEST_CASE("pure: query over 1_4 to 3_4 produces one clipped event", "[pattern][pure]")
 {
     // Requirements: 1.3, 7.1
     // Arc [1/4, 3/4) overlaps only cycle 0 ([0,1)).
@@ -156,7 +156,7 @@ TEST_CASE("pure: query over [1/4, 3/4) produces one clipped event", "[pattern][p
     CHECK(events[0].value == "bd");
 }
 
-TEST_CASE("pure: multi-cycle query [0,3) produces 3 events", "[pattern][pure]")
+TEST_CASE("pure: multi-cycle query 0-3 produces 3 events", "[pattern][pure]")
 {
     // Requirements: 1.4
     auto pat = pure(std::string("sn"));

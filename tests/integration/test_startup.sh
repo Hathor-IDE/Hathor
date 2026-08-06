@@ -51,8 +51,6 @@ fi
 # ---------------------------------------------------------------------------
 # Portable high-resolution timestamp (milliseconds)
 # ---------------------------------------------------------------------------
-# On macOS use date with %s%3N if available (GNU coreutils gdate), otherwise
-# fall back to python3/perl for sub-second precision, or plain seconds.
 now_ms() {
     if command -v python3 &>/dev/null; then
         python3 -c "import time; print(int(time.time() * 1000))"
@@ -61,7 +59,6 @@ now_ms() {
     elif date --version 2>&1 | grep -q GNU; then
         date +%s%3N
     else
-        # macOS date: no %3N support — use seconds * 1000
         echo $(( $(date +%s) * 1000 ))
     fi
 }
@@ -70,38 +67,26 @@ now_ms() {
 # Spawn hathor and measure time to ready
 # ---------------------------------------------------------------------------
 TMPDIR_WORK="$(mktemp -d)"
-FIFO_IN="$TMPDIR_WORK/stdin.fifo"
-mkfifo "$FIFO_IN"
+STDOUT_FILE="$TMPDIR_WORK/stdout.txt"
+touch "$STDOUT_FILE"
 
+# Use a background 'sleep' process as stdin to keep hathor from seeing EOF.
+# This is more portable than FIFO on macOS (avoids FIFO blocking-open issues).
+STDIN_HOLDER_PID=""
 cleanup() {
-    if [[ -n "${HATHOR_PID:-}" ]] && kill -0 "$HATHOR_PID" 2>/dev/null; then
+    [[ -n "${STDIN_HOLDER_PID:-}" ]] && kill "$STDIN_HOLDER_PID" 2>/dev/null || true
+    [[ -n "${HATHOR_PID:-}" ]] && kill -0 "$HATHOR_PID" 2>/dev/null && {
         kill "$HATHOR_PID" 2>/dev/null || true
         wait "$HATHOR_PID" 2>/dev/null || true
-    fi
+    }
     rm -rf "$TMPDIR_WORK"
 }
 trap cleanup EXIT
 
-# Record start time just before spawning
+# Use process substitution to provide infinite stdin without a FIFO
+# (keeps stdin open; hathor blocks waiting for commands but sees no EOF)
 T_START="$(now_ms)"
-
-# Launch hathor; connect stdin to a named pipe (keeps it open)
-# stdout is read directly through process substitution
-"$HATHOR_BIN" --samples "$SAMPLES_PATH" < "$FIFO_IN" &
-HATHOR_PID=$!
-
-# Drain hathor's stdout line-by-line looking for the ready event
-# Use a background subshell that reads /proc/PID/fd/1 — not portable.
-# Instead, redirect stdout to a temp file and poll.
-STDOUT_FILE="$TMPDIR_WORK/stdout.txt"
-touch "$STDOUT_FILE"
-
-# Relaunch with stdout going to a file (simpler and portable)
-kill "$HATHOR_PID" 2>/dev/null || true
-wait "$HATHOR_PID" 2>/dev/null || true
-
-T_START="$(now_ms)"
-"$HATHOR_BIN" --samples "$SAMPLES_PATH" < "$FIFO_IN" > "$STDOUT_FILE" 2>/dev/null &
+"$HATHOR_BIN" --samples "$SAMPLES_PATH" < <(sleep 30) > "$STDOUT_FILE" 2>/dev/null &
 HATHOR_PID=$!
 
 # Poll for the ready line, up to TIMEOUT_S seconds
@@ -112,6 +97,11 @@ while (( $(now_ms) < DEADLINE )); do
         FOUND_READY=1
         T_READY="$(now_ms)"
         break
+    fi
+    # Check that hathor is still alive
+    if ! kill -0 "$HATHOR_PID" 2>/dev/null; then
+        echo "[FAIL] hathor exited before emitting ready event" >&2
+        exit 1
     fi
     sleep 0.05
 done

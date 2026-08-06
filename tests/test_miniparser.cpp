@@ -252,7 +252,7 @@ TEST_CASE("parse error empty input", "[miniparser]")
 // Combination: "bd sn [hh hh] cp"
 // ---------------------------------------------------------------------------
 
-TEST_CASE("parse combination bd sn [hh hh] cp", "[miniparser]")
+TEST_CASE("parse combination bd sn hh-sub cp", "[miniparser]")
 {
     auto result = parseMini("bd sn [hh hh] cp");
     auto& cp = asCP(result);

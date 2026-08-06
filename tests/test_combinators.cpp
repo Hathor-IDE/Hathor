@@ -96,7 +96,7 @@ TEST_CASE("fastcat: empty list throws", "[combinators][fastcat]")
     REQUIRE_THROWS_AS(fastcat<std::string>({}), std::invalid_argument);
 }
 
-TEST_CASE("fastcat: event count over [0,1) equals sum of sub-patterns", "[combinators][fastcat]")
+TEST_CASE("fastcat: event count over 0-1 equals sum of sub-patterns", "[combinators][fastcat]")
 {
     auto p1 = pure<int>(1);
     auto p2 = pure<int>(2);

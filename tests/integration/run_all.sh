@@ -18,31 +18,31 @@
 #   0  — all tests passed
 #   1  — one or more tests failed
 
-set -uo pipefail
+set -eu
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 HATHOR_BIN="${1:-}"
 SAMPLES_PATH="${2:-}"
 
 # ---------------------------------------------------------------------------
 # Validate arguments
 # ---------------------------------------------------------------------------
-if [[ -z "$HATHOR_BIN" ]]; then
+if [ -z "$HATHOR_BIN" ]; then
     echo "[FAIL] Usage: $0 <hathor_binary> [<samples_path>]" >&2
     exit 1
 fi
 
-if [[ ! -x "$HATHOR_BIN" ]]; then
+if [ ! -x "$HATHOR_BIN" ]; then
     echo "[FAIL] hathor binary not found or not executable: $HATHOR_BIN" >&2
     exit 1
 fi
 
-if [[ -z "$SAMPLES_PATH" ]]; then
+if [ -z "$SAMPLES_PATH" ]; then
     # Default: two levels up from tests/integration/ → repo root/samples
     SAMPLES_PATH="$(cd "$SCRIPT_DIR/../.." && pwd)/samples"
 fi
 
-if [[ ! -d "$SAMPLES_PATH" ]]; then
+if [ ! -d "$SAMPLES_PATH" ]; then
     echo "[FAIL] samples directory not found: $SAMPLES_PATH" >&2
     exit 1
 fi
@@ -50,15 +50,14 @@ fi
 # ---------------------------------------------------------------------------
 # List of test scripts (in order)
 # ---------------------------------------------------------------------------
-TESTS=(
-    "test_startup.sh"
-    "test_latency.sh"
-    "test_protocol.sh"
-)
+TESTS="test_startup.sh test_latency.sh test_protocol.sh"
 
 PASS_COUNT=0
 FAIL_COUNT=0
-declare -A RESULTS
+# Result tracking via plain strings (bash 3.2 compatible, no associative array)
+RESULT_STARTUP="SKIP"
+RESULT_LATENCY="SKIP"
+RESULT_PROTOCOL="SKIP"
 
 echo "============================================="
 echo "  Hathor Integration Tests"
@@ -70,23 +69,30 @@ echo ""
 # ---------------------------------------------------------------------------
 # Run each test
 # ---------------------------------------------------------------------------
-for test_script in "${TESTS[@]}"; do
+for test_script in $TESTS; do
     test_path="$SCRIPT_DIR/$test_script"
 
-    if [[ ! -f "$test_path" ]]; then
+    if [ ! -f "$test_path" ]; then
         echo "[SKIP] $test_script (file not found)" >&2
-        RESULTS["$test_script"]="SKIP"
-        (( FAIL_COUNT++ )) || true
+        FAIL_COUNT=$((FAIL_COUNT + 1))
         continue
     fi
 
     echo "--- Running: $test_script ---"
     if bash "$test_path" "$HATHOR_BIN" "$SAMPLES_PATH"; then
-        RESULTS["$test_script"]="PASS"
-        (( PASS_COUNT++ )) || true
+        case "$test_script" in
+            test_startup.sh)  RESULT_STARTUP="PASS" ;;
+            test_latency.sh)  RESULT_LATENCY="PASS" ;;
+            test_protocol.sh) RESULT_PROTOCOL="PASS" ;;
+        esac
+        PASS_COUNT=$((PASS_COUNT + 1))
     else
-        RESULTS["$test_script"]="FAIL"
-        (( FAIL_COUNT++ )) || true
+        case "$test_script" in
+            test_startup.sh)  RESULT_STARTUP="FAIL" ;;
+            test_latency.sh)  RESULT_LATENCY="FAIL" ;;
+            test_protocol.sh) RESULT_PROTOCOL="FAIL" ;;
+        esac
+        FAIL_COUNT=$((FAIL_COUNT + 1))
     fi
     echo ""
 done
@@ -94,17 +100,16 @@ done
 # ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
-TOTAL=$(( PASS_COUNT + FAIL_COUNT ))
+TOTAL=$((PASS_COUNT + FAIL_COUNT))
 echo "============================================="
 echo "  Summary: ${PASS_COUNT}/${TOTAL} tests passed"
 echo "---------------------------------------------"
-for test_script in "${TESTS[@]}"; do
-    status="${RESULTS[$test_script]:-SKIP}"
-    printf "  %-35s %s\n" "$test_script" "$status"
-done
+printf "  %-35s %s\n" "test_startup.sh"  "$RESULT_STARTUP"
+printf "  %-35s %s\n" "test_latency.sh"  "$RESULT_LATENCY"
+printf "  %-35s %s\n" "test_protocol.sh" "$RESULT_PROTOCOL"
 echo "============================================="
 
-if [[ "$FAIL_COUNT" -eq 0 ]]; then
+if [ "$FAIL_COUNT" -eq 0 ]; then
     echo ""
     echo "[PASS] All integration tests passed"
     exit 0

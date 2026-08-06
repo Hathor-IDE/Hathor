@@ -40,10 +40,15 @@ else()
     target_compile_options(hathor-engine-tests PRIVATE -Wall -Wextra -Werror)
 endif()
 
-# Register tests with CTest
+# Register tests with CTest.
+# DISCOVERY_MODE PRE_TEST avoids the bracket-escaping problem that occurs
+# when test names contain "[" or "]" characters (e.g. "query over [0,1)").
+# With POST_BUILD (the default) Catch2 escapes those names and CTest then
+# fails to match them back. PRE_TEST discovers tests at test-run time,
+# which never has this problem.
 include(CTest)
 include(Catch)
-catch_discover_tests(hathor-engine-tests)
+catch_discover_tests(hathor-engine-tests DISCOVERY_MODE PRE_TEST)
 
 # ---------------------------------------------------------------------------
 # Integration tests (require the full hathor binary; skipped if app is off)
