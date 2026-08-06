@@ -19,11 +19,11 @@
 AudioEngine::AudioEngine(const SampleBank& bank)
     : bank_(bank)
 {
-    // Initialise all slot atomics to nullptr (default shared_ptr).
-    // std::atomic<shared_ptr<T>> zero-initialises to nullptr by default, but
-    // be explicit for clarity.
+    // Initialise all slot shared_ptrs to nullptr (default).
     for (int i = 0; i < kNumSlots; ++i) {
-        slots_[i].store(nullptr, std::memory_order_relaxed);
+        std::atomic_store_explicit(&slots_[i],
+                                   std::shared_ptr<SlotState>{},
+                                   std::memory_order_relaxed);
         slotNames_[i].clear();
     }
 }
@@ -137,14 +137,16 @@ void AudioEngine::storeSlot(int idx, std::shared_ptr<SlotState> state) noexcept
         return;
     // Worker thread: release ordering so the audio thread sees the full SlotState
     // before it reads through the loaded pointer (Req 11.1, 11.2).
-    slots_[idx].store(std::move(state), std::memory_order_release);
+    std::atomic_store_explicit(&slots_[idx], std::move(state), std::memory_order_release);
 }
 
 bool AudioEngine::clearSlot(int idx) noexcept
 {
     if (idx < 0 || idx >= kNumSlots)
         return false;
-    slots_[idx].store(nullptr, std::memory_order_release);
+    std::atomic_store_explicit(&slots_[idx],
+                               std::shared_ptr<SlotState>{},
+                               std::memory_order_release);
     return true;
 }
 
@@ -164,7 +166,7 @@ std::shared_ptr<SlotState> AudioEngine::loadSlot(int idx) const noexcept
 {
     if (idx < 0 || idx >= kNumSlots)
         return nullptr;
-    return slots_[idx].load(std::memory_order_acquire);
+    return std::atomic_load_explicit(&slots_[idx], std::memory_order_acquire);
 }
 
 // ---------------------------------------------------------------------------
@@ -285,7 +287,7 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
     for (int i = 0; i < kNumSlots; ++i) {
         // Acquire-load: ensures we see a fully-constructed SlotState (Req 11.2).
         std::shared_ptr<SlotState> state =
-            slots_[i].load(std::memory_order_acquire);
+            std::atomic_load_explicit(&slots_[i], std::memory_order_acquire);
 
         if (!state || !state->pattern)
             continue;

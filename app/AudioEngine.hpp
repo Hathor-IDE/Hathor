@@ -165,9 +165,15 @@ private:
     // ------------------------------------------------------------------
     // Hot-swap slots (Req 11.1–11.4, 13.2)
     // ------------------------------------------------------------------
-    // Each element is an atomic<shared_ptr<SlotState>>.
-    // Worker writes with release; audio thread reads with acquire.
-    std::atomic<std::shared_ptr<SlotState>> slots_[kNumSlots];
+    // std::atomic<std::shared_ptr<T>> is not supported on Apple Clang's libc++
+    // (no C++20 specialization in the SDK's headers). We use the C++11/14
+    // free-function API (std::atomic_store / std::atomic_load) on plain
+    // shared_ptr objects instead, which provides the same acquire/release
+    // semantics via an internal lock.
+    //
+    // Worker writes with std::atomic_store_explicit(..., release);
+    // Audio thread reads with std::atomic_load_explicit(..., acquire).
+    std::shared_ptr<SlotState> slots_[kNumSlots];
 
     // Slot name registry — written only on the main/worker thread.
     // Protected by the same "only modified before slot is used" convention.
