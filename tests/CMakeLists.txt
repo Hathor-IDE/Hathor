@@ -44,3 +44,8 @@ endif()
 include(CTest)
 include(Catch)
 catch_discover_tests(hathor-engine-tests)
+
+# ---------------------------------------------------------------------------
+# Integration tests (require the full hathor binary; skipped if app is off)
+# ---------------------------------------------------------------------------
+add_subdirectory(integration)
