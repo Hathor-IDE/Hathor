@@ -82,7 +82,7 @@ Pattern<T> stack(std::vector<Pattern<T>> patterns)
     // can be cheaply copied without re-allocating.
     auto pats = std::make_shared<std::vector<Pattern<T>>>(std::move(patterns));
 
-    auto fn = [pats, maxEvents](Arc arc, std::span<Event<T>> out) -> std::size_t
+    auto fn = [pats](Arc arc, std::span<Event<T>> out) -> std::size_t
     {
         std::size_t total = 0;
         for (const auto& p : *pats) {
@@ -137,25 +137,25 @@ Pattern<T> fastcat(std::vector<Pattern<T>> patterns)
         if (Rational{cycleEnd} < arc.end)
             ++cycleEnd;
 
-        for (int64_t c = cycleStart; c < cycleEnd; ++c) {
-            Rational cR{c};
-            Rational cNext{c + 1};
+        // Iterate sub-pattern-first (matching Strudel's behaviour): for each
+        // sub-pattern, query it across ALL matching cycles before moving to
+        // the next sub-pattern. This produces events grouped by sub-pattern
+        // rather than grouped by cycle.
+        for (std::size_t i = 0; i < N2; ++i) {
+            Rational sliceOffset{static_cast<int64_t>(i), static_cast<int64_t>(N2)};
+            Rational sliceLen{1, static_cast<int64_t>(N2)};
 
-            // Arc of this full cycle, clipped to the query arc.
-            Arc cycleArc{cR, cNext};
-            Arc queryInCycle = cycleArc.intersect(arc);
-            if (queryInCycle.isEmpty()) continue;
-
-            // Iterate over each sub-pattern slot [i/N, (i+1)/N) within this cycle.
-            for (std::size_t i = 0; i < N2; ++i) {
+            for (int64_t c = cycleStart; c < cycleEnd; ++c) {
                 if (total >= out.size()) goto done;
 
-                Rational sliceStart = cR + Rational{static_cast<int64_t>(i),   static_cast<int64_t>(N2)};
-                Rational sliceEnd   = cR + Rational{static_cast<int64_t>(i+1), static_cast<int64_t>(N2)};
+                Rational cR{c};
+
+                Rational sliceStart = cR + sliceOffset;
+                Rational sliceEnd   = sliceStart + sliceLen;
                 Arc sliceArc{sliceStart, sliceEnd};
 
                 // Intersection of query arc with this slot.
-                Arc queryInSlice = sliceArc.intersect(queryInCycle);
+                Arc queryInSlice = sliceArc.intersect(arc);
                 if (queryInSlice.isEmpty()) continue;
 
                 // Scale the intersected arc into the sub-pattern's own [0,1) time:
@@ -274,7 +274,11 @@ Pattern<T> fast(Rational factor, Pattern<T> p)
     if (factor.num <= 0)
         throw std::invalid_argument("fast: factor must be positive");
 
-    std::size_t maxEvents = p.maxEventsPerCycle();
+    // Scale maxEventsPerCycle: fast(f, p) over one outer cycle queries p over
+    // f cycles, so the per-cycle event budget is ceil(f) * inner.maxEventsPerCycle().
+    int64_t innerMax = static_cast<int64_t>(p.maxEventsPerCycle());
+    int64_t ceilF = (factor.num + factor.den - 1) / factor.den;  // ceil(factor)
+    std::size_t maxEvents = static_cast<std::size_t>(ceilF * innerMax);
     auto inner = std::make_shared<Pattern<T>>(std::move(p));
     auto fac   = std::make_shared<Rational>(factor);
 
@@ -418,17 +422,35 @@ Pattern<T> every(int n, std::function<Pattern<T>(Pattern<T>)> f, Pattern<T> p)
 
     auto fn = [base, xform, period](Arc arc, std::span<Event<T>> out) -> std::size_t
     {
-        int64_t cycle = detail::floorRational(arc.start);
-        // Determine which pattern to use based on the cycle.
-        // Use proper modulo for potentially negative cycles.
-        int64_t mod = cycle % static_cast<int64_t>(period);
-        if (mod < 0) mod += static_cast<int64_t>(period);
+        // Iterate over each integer cycle touched by the query arc.
+        // On cycle c where c % n == 0: use the transformed pattern.
+        // On other cycles: use the base pattern.
+        int64_t cycleStart = detail::floorRational(arc.start);
+        int64_t cycleEnd   = detail::floorRational(arc.end);
+        if (Rational{cycleEnd} < arc.end)
+            ++cycleEnd;
 
-        if (mod == 0) {
-            return xform->query(arc, out);
-        } else {
-            return base->query(arc, out);
+        std::size_t total = 0;
+
+        for (int64_t c = cycleStart; c < cycleEnd; ++c) {
+            if (total >= out.size()) break;
+
+            Rational cR{c};
+            Rational cNext{c + 1};
+            Arc cycleArc{cR, cNext};
+            Arc queryInCycle = cycleArc.intersect(arc);
+            if (queryInCycle.isEmpty()) continue;
+
+            int64_t mod = c % static_cast<int64_t>(period);
+            if (mod < 0) mod += static_cast<int64_t>(period);
+
+            auto sub = out.subspan(total);
+            std::size_t got = (mod == 0)
+                ? xform->query(queryInCycle, sub)
+                : base->query(queryInCycle, sub);
+            total += got;
         }
+        return total;
     };
 
     return Pattern<T>{std::move(fn), maxEvents};
@@ -453,32 +475,53 @@ Pattern<T> iter(int n, Pattern<T> p)
     if (n <= 0)
         throw std::invalid_argument("iter: n must be positive");
 
+    // iter(n, p) == slowcat of p.early(i/n) for i in 0..n-1.
+    // On cycle c, shift = Rational(c % n, n); query p over (arc + shift),
+    // then shift events back by -shift (matching Strudel's early()).
     std::size_t maxEvents = p.maxEventsPerCycle();
     auto inner = std::make_shared<Pattern<T>>(std::move(p));
     int  period = n;
 
     auto fn = [inner, period](Arc arc, std::span<Event<T>> out) -> std::size_t
     {
-        int64_t cycle = detail::floorRational(arc.start);
+        // Iterate over each integer cycle touched by the query arc.
+        int64_t cycleStart = detail::floorRational(arc.start);
+        int64_t cycleEnd   = detail::floorRational(arc.end);
+        if (Rational{cycleEnd} < arc.end)
+            ++cycleEnd;
 
-        // shift = (cycle % n) / n, with proper wrap for negative cycles.
-        int64_t mod = cycle % static_cast<int64_t>(period);
-        if (mod < 0) mod += static_cast<int64_t>(period);
-        Rational shift{mod, static_cast<int64_t>(period)};
+        std::size_t total = 0;
 
-        // Shift the query arc backwards by shift, query p, shift results forwards.
-        Arc shiftedArc{arc.start - shift, arc.end - shift};
-        std::size_t got = inner->query(shiftedArc, out);
+        for (int64_t c = cycleStart; c < cycleEnd; ++c) {
+            if (total >= out.size()) break;
 
-        // Shift event arcs back by adding shift.
-        for (std::size_t i = 0; i < got; ++i) {
-            auto& ev = out[i];
-            ev.whole.start  = ev.whole.start  + shift;
-            ev.whole.end    = ev.whole.end    + shift;
-            ev.active.start = ev.active.start + shift;
-            ev.active.end   = ev.active.end   + shift;
+            Rational cR{c};
+            Rational cNext{c + 1};
+            Arc cycleArc{cR, cNext};
+            Arc queryInCycle = cycleArc.intersect(arc);
+            if (queryInCycle.isEmpty()) continue;
+
+            // shift = (c % n) / n
+            int64_t mod = c % static_cast<int64_t>(period);
+            if (mod < 0) mod += static_cast<int64_t>(period);
+            Rational shift{mod, static_cast<int64_t>(period)};
+
+            // early(shift): query time += shift, event time -= shift
+            Arc queryTime{queryInCycle.start + shift, queryInCycle.end + shift};
+            auto sub = out.subspan(total);
+            std::size_t got = inner->query(queryTime, sub);
+
+            // Shift event arcs back by shift.
+            for (std::size_t j = 0; j < got; ++j) {
+                auto& ev = out[total + j];
+                ev.whole.start  = ev.whole.start  - shift;
+                ev.whole.end    = ev.whole.end    - shift;
+                ev.active.start = ev.active.start - shift;
+                ev.active.end   = ev.active.end   - shift;
+            }
+            total += got;
         }
-        return got;
+        return total;
     };
 
     return Pattern<T>{std::move(fn), maxEvents};
@@ -557,7 +600,7 @@ Pattern<T> euclid(int k, int n, int offset, Pattern<T> p)
     int  steps = n;
     int  off   = normOffset;
 
-    auto fn = [inner, rhy, steps, off, maxEvents]
+    auto fn = [inner, rhy, steps, off]
               (Arc arc, std::span<Event<T>> out) -> std::size_t
     {
         int64_t cycleStart = detail::floorRational(arc.start);
@@ -573,8 +616,9 @@ Pattern<T> euclid(int k, int n, int offset, Pattern<T> p)
             for (int i = 0; i < steps; ++i) {
                 if (total >= out.size()) goto euclid_done;
 
-                // Apply offset rotation.
-                int rhythmIdx = (i + off) % steps;
+                // Apply offset rotation (Strudel uses rotate(b, -rotation),
+                // which shifts onsets forward — so we subtract the offset).
+                int rhythmIdx = ((i - off) % steps + steps) % steps;
                 if (!(*rhy)[static_cast<std::size_t>(rhythmIdx)]) continue;
 
                 // Step i occupies [c + i/n, c + (i+1)/n).

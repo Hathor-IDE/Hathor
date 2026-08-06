@@ -71,10 +71,20 @@ static std::string printNode(const MiniNode& node, bool nested)
             std::string childStr = printNode(*alt.child, true);
             return childStr + "!" + std::to_string(alt.count);
         }
+        else if constexpr (std::is_same_v<T, MiniEuclid>) {
+            // child(pulses, steps[, rotation])
+            std::string childStr = printNode(*alt.child, true);
+            std::string result = childStr + "(" + std::to_string(alt.pulses)
+                               + ", " + std::to_string(alt.steps);
+            if (alt.rotation != 0)
+                result += ", " + std::to_string(alt.rotation);
+            result += ")";
+            return result;
+        }
         else {
             return std::string{};
         }
-    }, static_cast<const std::variant<MiniAtom, MiniSeq, MiniSlowSeq, MiniFast, MiniSlow, MiniRep>&>(node));
+    }, static_cast<const std::variant<MiniAtom, MiniSeq, MiniSlowSeq, MiniFast, MiniSlow, MiniRep, MiniEuclid>&>(node));
 }
 
 // ---------------------------------------------------------------------------

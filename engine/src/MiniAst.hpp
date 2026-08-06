@@ -62,12 +62,20 @@ struct MiniRep {
     int         count; ///< N > 0
 };
 
+/// child(pulses, steps[, rotation]) — lowers to euclid.
+struct MiniEuclid {
+    MiniNodePtr child;
+    int         pulses;   ///< number of onsets (>= 0)
+    int         steps;    ///< total steps (must be > 0)
+    int         rotation; ///< rotation in steps (default 0)
+};
+
 // ---------------------------------------------------------------------------
 // Polymorphic node
 // ---------------------------------------------------------------------------
 
 struct MiniNode
-    : std::variant<MiniAtom, MiniSeq, MiniSlowSeq, MiniFast, MiniSlow, MiniRep>
+    : std::variant<MiniAtom, MiniSeq, MiniSlowSeq, MiniFast, MiniSlow, MiniRep, MiniEuclid>
 {
     using variant::variant;
 };

@@ -56,6 +56,9 @@ enum class TokenKind {
     TK_BANG,
     TK_INT,
     TK_TILDE,
+    TK_LPAREN,   ///< (
+    TK_RPAREN,   ///< )
+    TK_COMMA,    ///< ,
     TK_EOF,
     TK_ERROR
 };
@@ -74,6 +77,7 @@ static bool isSpecial(char c) noexcept
     case '<': case '>':
     case '*': case '/': case '!':
     case '~':
+    case '(': case ')': case ',':
         return true;
     default:
         return false;
@@ -105,6 +109,9 @@ static std::vector<Token> tokenise(std::string_view input)
         if (c == '/') { tokens.push_back({TokenKind::TK_SLASH,    input.substr(i, 1), i}); ++i; continue; }
         if (c == '!') { tokens.push_back({TokenKind::TK_BANG,     input.substr(i, 1), i}); ++i; continue; }
         if (c == '~') { tokens.push_back({TokenKind::TK_TILDE,    input.substr(i, 1), i}); ++i; continue; }
+        if (c == '(') { tokens.push_back({TokenKind::TK_LPAREN,   input.substr(i, 1), i}); ++i; continue; }
+        if (c == ')') { tokens.push_back({TokenKind::TK_RPAREN,   input.substr(i, 1), i}); ++i; continue; }
+        if (c == ',') { tokens.push_back({TokenKind::TK_COMMA,    input.substr(i, 1), i}); ++i; continue; }
 
         // Integer literal: one or more decimal digits.
         if (std::isdigit(static_cast<unsigned char>(c))) {
@@ -284,6 +291,67 @@ struct Parser {
                     return err(symPos, "expected positive integer after '!'");
                 child = std::make_unique<MiniNode>(MiniRep{std::move(child), n});
             }
+            // ---- Euclid postfix: child(pulses, steps[, rotation]) ----
+            else if (check(TokenKind::TK_LPAREN)) {
+                std::size_t parenPos = peek().pos;
+                advance(); // consume '('
+
+                // Parse pulses: non-negative integer.
+                if (!check(TokenKind::TK_INT))
+                    return err(parenPos, "expected integer for euclid pulses after '('");
+                const Token& tPulses = advance();
+                int pulses = 0;
+                {
+                    auto [ptr, ec] = std::from_chars(
+                        tPulses.text.data(),
+                        tPulses.text.data() + tPulses.text.size(), pulses);
+                    if (ec != std::errc{})
+                        return err(tPulses.pos, "invalid integer for euclid pulses");
+                    (void)ptr;
+                }
+
+                // Parse ','
+                if (!check(TokenKind::TK_COMMA))
+                    return err(parenPos, "expected ',' after euclid pulses");
+                advance(); // consume ','
+
+                // Parse steps: positive integer.
+                if (!check(TokenKind::TK_INT))
+                    return err(parenPos, "expected integer for euclid steps after ','");
+                const Token& tSteps = advance();
+                int steps = 0;
+                {
+                    auto [ptr, ec] = std::from_chars(
+                        tSteps.text.data(),
+                        tSteps.text.data() + tSteps.text.size(), steps);
+                    if (ec != std::errc{} || steps <= 0)
+                        return err(tSteps.pos, "expected positive integer for euclid steps");
+                    (void)ptr;
+                }
+
+                // Parse optional rotation: ',' + integer
+                int rotation = 0;
+                if (check(TokenKind::TK_COMMA)) {
+                    advance(); // consume ','
+                    if (!check(TokenKind::TK_INT))
+                        return err(parenPos, "expected integer for euclid rotation after ','");
+                    const Token& tRot = advance();
+                    auto [ptr, ec] = std::from_chars(
+                        tRot.text.data(),
+                        tRot.text.data() + tRot.text.size(), rotation);
+                    if (ec != std::errc())
+                        return err(tRot.pos, "invalid integer for euclid rotation");
+                    (void)ptr;
+                }
+
+                // Parse ')'
+                if (!check(TokenKind::TK_RPAREN))
+                    return err(parenPos, "expected ')' after euclid parameters");
+                advance(); // consume ')'
+
+                child = std::make_unique<MiniNode>(
+                    MiniEuclid{std::move(child), pulses, steps, rotation});
+            }
             else {
                 break;
             }
@@ -304,6 +372,13 @@ struct Parser {
             // outer parseElement call.
             if (check(TokenKind::TK_RBRACKET) || check(TokenKind::TK_RANGLE))
                 break;
+
+            // In Strudel's mini-notation, commas act as sequence separators
+            // (synonymous with spaces).  Skip them.
+            if (check(TokenKind::TK_COMMA)) {
+                advance();
+                continue;
+            }
 
             auto res = parseElement();
             if (std::holds_alternative<ParseError>(res))
@@ -344,12 +419,43 @@ static Pattern<std::string> lowerNode(const MiniNode& node)
         using T = std::decay_t<decltype(alt)>;
 
         if constexpr (std::is_same_v<T, MiniAtom>) {
+            // In Strudel, "~" (rest/silence) produces no events.
+            if (alt.token == "~") {
+                return Pattern<std::string>{
+                    [](Arc, std::span<Event<std::string>>) -> std::size_t { return 0; },
+                    0
+                };
+            }
             return pure(alt.token);
         }
         else if constexpr (std::is_same_v<T, MiniSeq>) {
             if (alt.steps.size() == 1)
                 return lowerNode(*alt.steps[0]);
-            return fastcat(lowerChildren(alt.steps));
+
+            // Expand MiniRep children inline so that "bd!3 sn" lowers to
+            // fastcat(bd, bd, bd, sn) rather than fastcat(fastcat(bd,bd,bd), sn).
+            // In Strudel, "!N" repeats the element N times in the same sequence.
+            std::vector<Pattern<std::string>> pats;
+            std::size_t totalSteps = 0;
+            for (const auto& step : alt.steps) {
+                if (std::holds_alternative<MiniRep>(*step)) {
+                    totalSteps += static_cast<std::size_t>(
+                        std::get<MiniRep>(*step).count);
+                } else {
+                    ++totalSteps;
+                }
+            }
+            pats.reserve(totalSteps);
+            for (const auto& step : alt.steps) {
+                if (std::holds_alternative<MiniRep>(*step)) {
+                    const auto& rep = std::get<MiniRep>(*step);
+                    for (int i = 0; i < rep.count; ++i)
+                        pats.push_back(lowerNode(*rep.child));
+                } else {
+                    pats.push_back(lowerNode(*step));
+                }
+            }
+            return fastcat(std::move(pats));
         }
         else if constexpr (std::is_same_v<T, MiniSlowSeq>) {
             if (alt.steps.size() == 1)
@@ -370,11 +476,16 @@ static Pattern<std::string> lowerNode(const MiniNode& node)
                 copies.push_back(lowerNode(*alt.child));
             return fastcat(std::move(copies));
         }
+        else if constexpr (std::is_same_v<T, MiniEuclid>) {
+            // child(pulses, steps[, rotation]) → euclid
+            return euclid(alt.pulses, alt.steps, alt.rotation,
+                          lowerNode(*alt.child));
+        }
         else {
             // Should never reach here.
             return pure(std::string{});
         }
-    }, static_cast<const std::variant<MiniAtom, MiniSeq, MiniSlowSeq, MiniFast, MiniSlow, MiniRep>&>(node));
+    }, static_cast<const std::variant<MiniAtom, MiniSeq, MiniSlowSeq, MiniFast, MiniSlow, MiniRep, MiniEuclid>&>(node));
 }
 
 
