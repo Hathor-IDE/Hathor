@@ -5,7 +5,7 @@
  * Main.cpp — Hathor entry point.
  *
  * Initialisation order (§2.5):
- *   1. Parse CLI args (--samples required, --bpm optional, default 120).
+ *   1. Parse CLI args (--samples required, --bpm optional, --agent optional).
  *   2. Register audio formats and load SampleBank at 44100 Hz default rate.
  *   3. Construct AudioEngine.
  *   4. Install SIGTERM / SIGINT handlers.
@@ -13,11 +13,15 @@
  *   6. Write {"event":"ready","version":"0.1.0"} to stdout.
  *   7. ControlInterface::run() — blocking stdin loop; exits on EOF.
  *
- * Requirements: 8.1–8.5, 12.1–12.5, 14.1–14.6, 16.1–16.5
+ * Agent path resolution order (Req 32.1):
+ *   --agent <path>  →  HATHOR_AGENT env var  →  persisted PropertiesFile value  →  ""
+ *
+ * Requirements: 8.1–8.5, 12.1–12.5, 14.1–14.6, 16.1–16.5, 32.1
  */
 
 // JUCE — must come before any app headers that transitively pull in JUCE
 #include <juce_audio_formats/juce_audio_formats.h>
+#include <juce_core/juce_core.h>
 
 // App subsystems
 #include "AudioEngine.hpp"
@@ -49,6 +53,17 @@ static std::atomic<bool> g_shouldQuit{false};
 
 /// Non-owning pointer to the AudioEngine, set before installing handlers.
 static AudioEngine* g_audioEngine = nullptr;
+
+/// Resolved agent executable path, set once during startup (Req 32.1).
+/// Accessed by getAgentExePath() below.
+static std::string g_agentExePath;
+
+/// Returns the resolved agent executable path set at startup (Req 32.1).
+/// Empty string means no agent is configured.
+const std::string& getAgentExePath() noexcept
+{
+    return g_agentExePath;
+}
 
 /// Signal handler — async-signal-safe: calls _exit() after a best-effort
 /// stop of any active audio voices.
@@ -87,6 +102,7 @@ int main(int argc, char* argv[])
     double      initialBpm  = 120.0;
     bool        hasBpm      = false;
     std::string capturePath;
+    std::string agentPathArg; ///< value of --agent flag (empty if not supplied)
 
     for (int i = 1; i < argc; ++i) {
         const std::string arg(argv[i]);
@@ -103,8 +119,68 @@ int main(int argc, char* argv[])
             }
         } else if (arg == "--capture-to-file" && i + 1 < argc) {
             capturePath = argv[++i];
+        } else if (arg == "--agent" && i + 1 < argc) {
+            agentPathArg = argv[++i];
         }
     }
+
+    // -----------------------------------------------------------------------
+    // 1b. Resolve agent executable path (Req 32.1)
+    //
+    // Priority: --agent flag > HATHOR_AGENT env var > persisted XML properties
+    //           file > empty string (defer agent startup).
+    //
+    // Persistence uses juce::File + juce::XmlDocument (both in juce_core,
+    // already linked) to avoid adding juce_data_structures as a dependency.
+    // -----------------------------------------------------------------------
+    const juce::File propsDir  = juce::File::getSpecialLocation(
+                                     juce::File::userApplicationDataDirectory)
+                                 .getChildFile("Hathor");
+    const juce::File propsFile = propsDir.getChildFile("hathor.xml");
+
+    // Load persisted XML properties.
+    std::unique_ptr<juce::XmlElement> propsXml;
+    if (propsFile.existsAsFile()) {
+        propsXml = juce::XmlDocument::parse(propsFile);
+    }
+    if (!propsXml || propsXml->getTagName() != "HathorProperties") {
+        propsXml = std::make_unique<juce::XmlElement>("HathorProperties");
+    }
+
+    std::string resolvedAgentPath;
+
+    if (!agentPathArg.empty()) {
+        // --agent flag takes highest priority.
+        resolvedAgentPath = agentPathArg;
+    } else {
+        // Fall back to HATHOR_AGENT environment variable.
+        const char* envAgent = std::getenv("HATHOR_AGENT");
+        if (envAgent && envAgent[0] != '\0') {
+            resolvedAgentPath = envAgent;
+        } else {
+            // Fall back to persisted XML value.
+            resolvedAgentPath =
+                propsXml->getStringAttribute("agentExePath").toStdString();
+        }
+    }
+
+    // Persist the resolved path for future launches.
+    propsXml->setAttribute("agentExePath", juce::String(resolvedAgentPath));
+    propsDir.createDirectory();
+    propsXml->writeTo(propsFile, {});
+
+    if (resolvedAgentPath.empty()) {
+        std::cerr << "[hathor] info: no agent configured — "
+                     "ChatSidebar will show 'No agent configured'.\n";
+        std::cerr << "[hathor] info: set --agent <path> or "
+                     "HATHOR_AGENT env var to enable AI chat.\n";
+    } else {
+        std::cerr << "[hathor] info: agent executable: "
+                  << resolvedAgentPath << '\n';
+    }
+
+    // Store in the global accessor so AcpAgentSession::start() can retrieve it.
+    g_agentExePath = resolvedAgentPath;
 
     if (samplesPath.empty()) {
         std::cerr << "[hathor] error: --samples <path> is required\n";

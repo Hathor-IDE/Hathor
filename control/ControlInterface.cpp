@@ -19,7 +19,6 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
-#include <charconv>
 #include <chrono>
 #include <cstdlib>
 #include <iostream>
@@ -261,10 +260,16 @@ void ControlInterface::handleSetGain(std::string_view arg)
         return;
     }
 
-    // Parse as float via std::from_chars (no locale, no exception).
+    // Parse as float. std::from_chars for floating-point is not available on
+    // Apple Clang libc++ (only integers); use std::stof instead.
     float val = 0.f;
-    auto [ptr, ec] = std::from_chars(arg.data(), arg.data() + arg.size(), val);
-    if (ec != std::errc{} || ptr != arg.data() + arg.size()) {
+    try {
+        std::size_t pos = 0;
+        val = std::stof(std::string(arg), &pos);
+        if (pos != arg.size()) {
+            throw std::invalid_argument("trailing characters");
+        }
+    } catch (...) {
         respond({
             {"ok",    false},
             {"cmd",   "set-gain"},

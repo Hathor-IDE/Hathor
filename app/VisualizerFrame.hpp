@@ -65,8 +65,12 @@ struct VisualizerFrame {
     /// Number of valid entries in events[] (always ≤ kMaxFrameEvents).
     uint32_t eventCount = 0;
 
-    /// Event payload — only entries [0, eventCount) are valid.
-    std::array<Event<ParamMap>, kMaxFrameEvents> events{};
+    /// Event payload storage — only entries [0, eventCount) are valid.
+    /// Raw byte storage avoids default-constructing Event<ParamMap>
+    /// (Rational has no default constructor). The ring buffer write/read
+    /// paths use placement-new and explicit destruction.
+    alignas(Event<ParamMap>)
+        std::byte eventStorage[kMaxFrameEvents * sizeof(Event<ParamMap>)];
 
     // Non-copyable (atomic member); ring buffer manages slots in-place.
     VisualizerFrame()                                  = default;
@@ -74,6 +78,18 @@ struct VisualizerFrame {
     VisualizerFrame& operator=(const VisualizerFrame&) = delete;
     VisualizerFrame(VisualizerFrame&&)                 = delete;
     VisualizerFrame& operator=(VisualizerFrame&&)      = delete;
+
+    /// Access the events array (non-const).
+    Event<ParamMap>* events() noexcept
+    {
+        return reinterpret_cast<Event<ParamMap>*>(eventStorage);
+    }
+
+    /// Access the events array (const).
+    const Event<ParamMap>* events() const noexcept
+    {
+        return reinterpret_cast<const Event<ParamMap>*>(eventStorage);
+    }
 };
 
 // ---------------------------------------------------------------------------
@@ -138,10 +154,17 @@ public:
         frame.sequence.store(seq | 1u, std::memory_order_release);
 
         // Copy payload — partial copy only (Req 28.8).
+        // Destroy any previously-constructed events in this slot first,
+        // then placement-new the new ones.
+        Event<ParamMap>* dst = frame.events();
+        const uint32_t prevCount = frame.eventCount;
+        for (uint32_t i = 0; i < prevCount; ++i)
+            dst[i].~Event();
+
         frame.cyclePos   = cyclePos;
         frame.eventCount = eventCount;
         for (uint32_t i = 0; i < eventCount; ++i)
-            frame.events[i] = events[i];
+            new (&dst[i]) Event<ParamMap>(events[i]);
 
         // Seqlock: mark complete (even, incremented by 2).
         frame.sequence.store(seq + 2u, std::memory_order_release);
@@ -194,8 +217,9 @@ public:
         const uint32_t ec = frame.eventCount;
         const uint32_t safeEc = (ec <= static_cast<uint32_t>(kMaxFrameEvents))
                                     ? ec : static_cast<uint32_t>(kMaxFrameEvents);
+        const Event<ParamMap>* src = frame.events();
         for (uint32_t i = 0; i < safeEc; ++i)
-            eventsOut[i] = frame.events[i];
+            eventsOut[i] = src[i];
 
         // Seqlock: read sequence after copying.
         const uint32_t s1 = frame.sequence.load(std::memory_order_acquire);

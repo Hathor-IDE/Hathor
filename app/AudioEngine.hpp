@@ -188,11 +188,11 @@ private:
     // Visualizer ring buffer (Req 28.1, 28.3, 28.4, 28.5, 28.8)
     // ------------------------------------------------------------------
     /// Pre-allocated SPSC ring buffer; written by audio thread, read by UITimer.
-    SpscRingBuffer<128>   vizRingBuffer_;
+    hathor::SpscRingBuffer<128>   vizRingBuffer_;
 
 public:
     /// Accessor for the UI timer to drain visualizer frames (non-const ref).
-    SpscRingBuffer<128>& visualizerBuffer() noexcept { return vizRingBuffer_; }
+    hathor::SpscRingBuffer<128>& visualizerBuffer() noexcept { return vizRingBuffer_; }
 
 private:
 

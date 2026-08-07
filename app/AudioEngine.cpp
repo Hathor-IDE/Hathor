@@ -352,9 +352,15 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
     // ------------------------------------------------------------------
     // Step 3: For each slot, query the pattern and schedule voices.
     // Accumulate fired events for the visualizer ring buffer (Req 28.3, 28.8).
-    // firedEvents is a stack array — no heap allocation.
+    // Use raw aligned storage so we avoid default-constructing Event<ParamMap>
+    // (Rational has no default constructor). Only indices [0, firedEventCount)
+    // are constructed; we explicitly destroy them after the write.
     // ------------------------------------------------------------------
-    hathor::Event<hathor::ParamMap> firedEvents[hathor::kMaxFrameEvents];
+    alignas(hathor::Event<hathor::ParamMap>)
+        std::byte firedEventStorage[hathor::kMaxFrameEvents
+                                    * sizeof(hathor::Event<hathor::ParamMap>)];
+    auto* firedEvents = reinterpret_cast<hathor::Event<hathor::ParamMap>*>(
+                            firedEventStorage);
     uint32_t firedEventCount = 0;
 
     for (int i = 0; i < kNumSlots; ++i) {
@@ -388,8 +394,10 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
             voicePool_.trigger(ev.value, bank_, sampleOffset, clockNow);
 
             // Accumulate for the visualizer (no alloc, capped at kMaxFrameEvents).
-            if (firedEventCount < static_cast<uint32_t>(hathor::kMaxFrameEvents))
-                firedEvents[firedEventCount++] = ev;
+            if (firedEventCount < static_cast<uint32_t>(hathor::kMaxFrameEvents)) {
+                new (&firedEvents[firedEventCount]) hathor::Event<hathor::ParamMap>(ev);
+                ++firedEventCount;
+            }
         }
     }
 
@@ -435,6 +443,10 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
             (static_cast<double>(sampleRate) * 60.0);
         vizRingBuffer_.write(currentCyclePos, firedEventCount, firedEvents);
     }
+
+    // Explicitly destroy the placement-new'd elements (Req 7.1 — no heap).
+    for (uint32_t i = 0; i < firedEventCount; ++i)
+        firedEvents[i].~Event();
 
     // ------------------------------------------------------------------
     // Step 5: Advance the sample clock by exactly bufferSize (Req 9.4).
