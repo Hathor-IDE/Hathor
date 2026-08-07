@@ -108,13 +108,11 @@ std::variant<HathorFile, ParseFileError> parseHathorFile(std::string_view conten
 
     // Find first non-empty line.
     std::string_view firstNonEmpty;
-    int firstNonEmptyLineNo = 0;
     {
         std::string_view line;
         while (nextLine(line)) {
             if (!isBlankLine(line)) {
-                firstNonEmpty       = line;
-                firstNonEmptyLineNo = lineNumber;
+                firstNonEmpty = line;
                 break;
             }
         }
@@ -135,11 +133,14 @@ std::variant<HathorFile, ParseFileError> parseHathorFile(std::string_view conten
     }
 
     // --- Step 3: Read key = value lines until first blank line ---
+    // Track whether we actually found the closing blank line (Req 24.8).
+    bool foundClosingBlank = false;
     {
         std::string_view line;
         while (nextLine(line)) {
             if (isBlankLine(line)) {
                 // Blank line consumed — body is everything that remains.
+                foundClosingBlank = true;
                 break;
             }
 
@@ -156,21 +157,34 @@ std::variant<HathorFile, ParseFileError> parseHathorFile(std::string_view conten
             if (key == "slot") {
                 result.front.slot = std::string(value);
             } else if (key == "bpm") {
-                // Parse float via std::from_chars (C++17).
+                // Parse float. std::from_chars for double is not available on Apple Clang
+                // (libc++ on macOS does not implement the floating-point overloads of
+                // from_chars as of Xcode 15). Fall back to strtod, which is equally
+                // fast for this non-hot-path use. We construct a temporary null-terminated
+                // string because strtod requires it.
                 double bpmVal = 0.0;
-                // from_chars for floating-point requires at least C++17; available on
-                // all target compilers.  We need a null-terminated range so fall back
-                // to strtod via a temporary string only if from_chars is not available.
-                // Both LLVM and GCC support from_chars<double> since C++17 mode.
-                const char* beg = value.data();
-                const char* end = value.data() + value.size();
-                auto [ptr, ec]  = std::from_chars(beg, end, bpmVal);
+                {
+                    // Copy to a null-terminated temporary so strtod can work.
+                    const std::string tmp(value);
+                    char* endPtr = nullptr;
+                    errno = 0;
+                    bpmVal = std::strtod(tmp.c_str(), &endPtr);
 
-                if (ec != std::errc{} || ptr != end) {
-                    return ParseFileError{
-                        lineNumber,
-                        "Invalid bpm value: '" + std::string(value) + "'"
-                    };
+                    // Verify the entire string was consumed and no error occurred.
+                    const bool consumedAll = (endPtr == tmp.c_str() + tmp.size());
+                    if (!consumedAll || errno == ERANGE) {
+                        return ParseFileError{
+                            lineNumber,
+                            "Invalid bpm value: '" + std::string(value) + "'"
+                        };
+                    }
+                    if (endPtr == tmp.c_str()) {
+                        // No digits consumed — strtod returned 0 with no progress.
+                        return ParseFileError{
+                            lineNumber,
+                            "Invalid bpm value: '" + std::string(value) + "'"
+                        };
+                    }
                 }
 
                 if (bpmVal < 20.0 || bpmVal > 400.0) {
@@ -190,6 +204,14 @@ std::variant<HathorFile, ParseFileError> parseHathorFile(std::string_view conten
             }
             // else: unknown key — silently ignore (forward-compatibility, Req 24.3 rule 4).
         }
+    }
+
+    // Req 24.8: a [hathor] block without a closing blank line is malformed.
+    if (!foundClosingBlank) {
+        return ParseFileError{
+            lineNumber,
+            "Missing closing blank line after front-matter block"
+        };
     }
 
     // Everything from the current position onwards is the body.

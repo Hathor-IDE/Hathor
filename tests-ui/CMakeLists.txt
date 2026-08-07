@@ -34,6 +34,7 @@ add_executable(hathor-ui-tests
     test_spsc_ring_buffer.cpp
     test_hathor_file_parser.cpp
     test_mini_tokeniser.cpp
+    ${CMAKE_SOURCE_DIR}/ui/HathorFileParser.cpp
 )
 
 target_compile_features(hathor-ui-tests PRIVATE cxx_std_20)
@@ -44,6 +45,7 @@ target_include_directories(hathor-ui-tests
     PRIVATE
         ${CMAKE_SOURCE_DIR}/app
         ${CMAKE_SOURCE_DIR}/engine/include
+        ${CMAKE_SOURCE_DIR}/ui
 )
 
 target_link_libraries(hathor-ui-tests
