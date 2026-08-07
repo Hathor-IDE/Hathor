@@ -24,12 +24,14 @@
 // Task 3.4: EditorArea is now implemented — include the real header.
 #include "EditorArea.hpp"
 
-// The following headers are not yet created (sibling tasks 3.8, 5.1).
-// Stub definitions below allow MainWindow to compile until those tasks land.
+// Task 3.8: VisualizerPanel is now implemented — include the real header.
+#include "VisualizerPanel.hpp"
+
+// The following headers are not yet created (sibling task 5.1).
+// Stub definitions below allow MainWindow to compile until that task lands.
 // Uncomment each #include as the corresponding task is completed:
 //
 // TODO: include ui/ChatSidebar.hpp when available       (task 5.1)
-// TODO: include ui/VisualizerPanel.hpp when available   (task 3.8)
 
 // UITimer (task 3.7) — real implementation is now available.
 #include "UITimer.hpp"
@@ -41,18 +43,6 @@ namespace hathor::ui {
 class ChatSidebar : public juce::Component {
 public:
     ChatSidebar(AudioEngine&, hathor::control::ControlInterface&) {}
-};
-} // namespace hathor::ui
-#endif
-
-#ifndef HATHOR_VISUALIZER_PANEL_DEFINED
-#define HATHOR_VISUALIZER_PANEL_DEFINED
-namespace hathor::ui {
-/// Stub VisualizerPanel — replaced by VisualizerPanel.hpp (task 3.8).
-class VisualizerPanel : public juce::Component {
-public:
-    explicit VisualizerPanel(AudioEngine&) {}
-    void updateFrame(double, const std::vector<hathor::Event<hathor::ParamMap>>&) {}
 };
 } // namespace hathor::ui
 #endif

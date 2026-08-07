@@ -28,7 +28,7 @@
 #include "../app/AudioEngine.hpp"       // AudioEngine
 
 // Forward-declare the two panel types that may not yet be implemented.
-// When VisualizerPanel.hpp (task 3.8) and SliderPanel.hpp (task 3.9) exist,
+// When VisualizerPanel.hpp (task 3.8, now done) and SliderPanel.hpp (task 3.9) exist,
 // MainWindow.cpp will include them before including UITimer.hpp; the
 // definitions below (in UITimer.cpp) are protected by include-guards so they
 // will not conflict.

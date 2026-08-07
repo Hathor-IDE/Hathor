@@ -9,39 +9,20 @@
  * Stub panel classes are defined here (under include-guards) for tasks that
  * are not yet implemented:
  *
- *   HATHOR_VISUALIZER_PANEL_DEFINED  — VisualizerPanel (task 3.8)
  *   HATHOR_SLIDER_PANEL_DEFINED      — SliderPanel     (task 3.9)
  *
  * When those headers land, the include-guard prevents the stubs from being
  * re-defined, and MainWindow.cpp (and any other TU) can include the real
  * headers before including UITimer.hpp.
  *
- * TODO (task 3.8): replace stub with  #include "VisualizerPanel.hpp"
  * TODO (task 3.9): replace stub with  #include "SliderPanel.hpp"
  */
 
 #include "UITimer.hpp"
 
-// ---------------------------------------------------------------------------
-// VisualizerPanel stub — replaced by VisualizerPanel.hpp (task 3.8)
-// ---------------------------------------------------------------------------
-#ifndef HATHOR_VISUALIZER_PANEL_DEFINED
-#define HATHOR_VISUALIZER_PANEL_DEFINED
-#include <juce_gui_basics/juce_gui_basics.h>
-
-namespace hathor::ui {
-/// Stub VisualizerPanel — replaced by VisualizerPanel.hpp (task 3.8).
-class VisualizerPanel : public juce::Component {
-public:
-    explicit VisualizerPanel(AudioEngine&) {}
-
-    /// Called by UITimer with the latest cycle position and fired events.
-    /// The real implementation stores the data and calls repaint().
-    void updateFrame(double /*latestCyclePos*/,
-                     const std::vector<hathor::Event<hathor::ParamMap>>& /*events*/) {}
-};
-} // namespace hathor::ui
-#endif  // HATHOR_VISUALIZER_PANEL_DEFINED
+// Task 3.8: VisualizerPanel is now implemented — include real header.
+// Must be included before UITimer.hpp's forward declaration resolves.
+#include "VisualizerPanel.hpp"
 
 // ---------------------------------------------------------------------------
 // SliderPanel stub — replaced by SliderPanel.hpp (task 3.9)
