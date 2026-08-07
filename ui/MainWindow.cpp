@@ -21,34 +21,16 @@
 #include "ActivityRibbon.hpp"   // task 3.2 — implemented
 #include "ExplorerPanel.hpp"    // task 3.2 — implemented
 
-// The following headers are not yet created (sibling tasks 3.4–3.8).
+// Task 3.4: EditorArea is now implemented — include the real header.
+#include "EditorArea.hpp"
+
+// The following headers are not yet created (sibling tasks 3.5–3.8).
 // Stub definitions below allow MainWindow to compile until those tasks land.
 // Uncomment each #include as the corresponding task is completed:
 //
-// TODO: include ui/EditorArea.hpp when available        (task 3.4)
 // TODO: include ui/ChatSidebar.hpp when available       (task 5.1)
 // TODO: include ui/VisualizerPanel.hpp when available   (task 3.8)
 // TODO: include ui/UITimer.hpp when available           (task 3.7)
-
-// ---------------------------------------------------------------------------
-// Compile-time stubs for not-yet-implemented child components.
-//
-// Each stub is in its own anonymous block so it is replaced automatically
-// once the real header is uncommented above.  The guards use a flag that the
-// real header will define so duplicate-definition errors are caught at the
-// seam.
-// ---------------------------------------------------------------------------
-
-#ifndef HATHOR_EDITOR_AREA_DEFINED
-#define HATHOR_EDITOR_AREA_DEFINED
-namespace hathor::ui {
-/// Stub EditorArea — replaced by EditorArea.hpp (task 3.4).
-class EditorArea : public juce::Component {
-public:
-    EditorArea(AudioEngine&, hathor::control::ControlInterface&) {}
-};
-} // namespace hathor::ui
-#endif
 
 #ifndef HATHOR_CHAT_SIDEBAR_DEFINED
 #define HATHOR_CHAT_SIDEBAR_DEFINED

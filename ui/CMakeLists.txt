@@ -37,6 +37,8 @@ target_sources(hathor-ui
         ActivityRibbon.cpp
         ExplorerPanel.cpp
         HathorFileParser.cpp
+        HathorTab.cpp         # task 3.4
+        EditorArea.cpp        # task 3.4
         # App-layer sources (AudioEngine, SampleBank, VoicePool live in app/,
         # not in a linkable static lib — include them directly here)
         ${CMAKE_SOURCE_DIR}/app/AudioEngine.cpp
