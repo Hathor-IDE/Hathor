@@ -36,6 +36,11 @@ target_sources(hathor-ui
         MainWindow.cpp
         ActivityRibbon.cpp
         ExplorerPanel.cpp
+        # App-layer sources (AudioEngine, SampleBank, VoicePool live in app/,
+        # not in a linkable static lib — include them directly here)
+        ${CMAKE_SOURCE_DIR}/app/AudioEngine.cpp
+        ${CMAKE_SOURCE_DIR}/app/SampleBank.cpp
+        ${CMAKE_SOURCE_DIR}/app/VoicePool.cpp
 )
 
 target_include_directories(hathor-ui
@@ -57,6 +62,8 @@ target_link_libraries(hathor-ui
         juce::juce_gui_basics
         juce::juce_gui_extra
         juce::juce_audio_devices
+        juce::juce_audio_formats
+        juce::juce_audio_basics
         juce::juce_core
         nlohmann_json::nlohmann_json
 )

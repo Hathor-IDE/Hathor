@@ -67,7 +67,7 @@ public:
                 "--samples <path> is required.\n\nUsage: hathor-ui --samples <path> [--bpm <n>]",
                 "OK",
                 nullptr,
-                juce::ModalCallbackFunction::create([this](int) { quit(); }));
+                juce::ModalCallbackFunction::create([](int) { juce::JUCEApplication::getInstance()->quit(); }));
             return;
         }
 
@@ -86,7 +86,7 @@ public:
                 juce::String("Failed to load samples: ") + ex.what(),
                 "OK",
                 nullptr,
-                juce::ModalCallbackFunction::create([this](int) { quit(); }));
+                juce::ModalCallbackFunction::create([](int) { juce::JUCEApplication::getInstance()->quit(); }));
             return;
         }
 
@@ -103,7 +103,7 @@ public:
                 juce::String("Audio device error: ") + initError,
                 "OK",
                 nullptr,
-                juce::ModalCallbackFunction::create([this](int) { quit(); }));
+                juce::ModalCallbackFunction::create([](int) { juce::JUCEApplication::getInstance()->quit(); }));
             return;
         }
 
