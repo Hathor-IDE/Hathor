@@ -17,7 +17,7 @@ namespace hathor::ui {
 
 HathorTab::HathorTab(int slotIndex)
     : slotIndex_(slotIndex)
-    , editor_(document_, nullptr) // no tokeniser yet — wired in task 3.5
+    , editor_(document_, &tokeniser_) // MiniNotationTokeniser wired in task 3.5
 {
     // -----------------------------------------------------------------------
     // Editor font: monospaced, ≥ 12 pt (Req 22.1)

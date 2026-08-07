@@ -16,6 +16,8 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <juce_gui_extra/juce_gui_extra.h>
 
+#include "MiniNotationTokeniser.hpp"
+
 #include <optional>
 #include <functional>
 
@@ -131,6 +133,7 @@ private:
     std::optional<std::string> displayLabel_; ///< from front-matter `label`
     bool                       unsavedDot_{ false };
 
+    MiniNotationTokeniser       tokeniser_;
     juce::CodeDocument          document_;
     juce::CodeEditorComponent   editor_;
 

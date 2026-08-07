@@ -1,0 +1,228 @@
+// Copyright (C) 2024 Hathor Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+/**
+ * MiniNotationTokeniser.cpp — implementation of MiniNotationTokeniser.
+ *
+ * Requirements: 27.3, 27.5, 22.4
+ */
+
+#include "MiniNotationTokeniser.hpp"
+
+#include <cctype>
+#include <string_view>
+
+namespace hathor::ui {
+
+// ---------------------------------------------------------------------------
+// Static helpers
+// ---------------------------------------------------------------------------
+
+juce::String MiniNotationTokeniser::peekLineText(juce::CodeDocument::Iterator it)
+{
+    juce::String line;
+    while (!it.isEOF() && it.peekNextChar() != '\n')
+        line += it.nextChar();
+    return line;
+}
+
+int MiniNotationTokeniser::colourIndexForKind(hathor::TokenKind kind) noexcept
+{
+    using K = hathor::TokenKind;
+    switch (kind)
+    {
+        case K::TK_ATOM:                        return 0;
+        case K::TK_INT:                         return 1;
+        case K::TK_TILDE:                       return 2;
+        case K::TK_LBRACKET: case K::TK_RBRACKET:
+        case K::TK_LANGLE:   case K::TK_RANGLE: return 3;
+        case K::TK_STAR: case K::TK_SLASH:
+        case K::TK_BANG:                        return 4;
+        case K::TK_LPAREN: case K::TK_RPAREN:
+        case K::TK_COMMA:                       return 5;
+        case K::TK_ERROR:                       return 6;
+        case K::TK_EOF:
+        default:                                return 0;
+    }
+}
+
+bool MiniNotationTokeniser::isFrontMatterLine(const juce::String& line) noexcept
+{
+    // Trim leading whitespace for the check
+    const juce::String trimmed = line.trim();
+
+    // [hathor] header
+    if (trimmed == "[hathor]")
+        return true;
+
+    // key = value  or  key=value  (simple TOML-like front-matter)
+    // Require at least one non-whitespace char before '='
+    const int eqPos = trimmed.indexOfChar('=');
+    if (eqPos > 0)
+    {
+        // Verify the LHS is a valid identifier-ish key (letters, digits, _, -)
+        const juce::String key = trimmed.substring(0, eqPos).trim();
+        if (key.isNotEmpty())
+        {
+            bool validKey = true;
+            for (int i = 0; i < key.length(); ++i)
+            {
+                const juce::juce_wchar c = key[i];
+                if (!juce::CharacterFunctions::isLetterOrDigit(c) && c != '_' && c != '-')
+                {
+                    validKey = false;
+                    break;
+                }
+            }
+            if (validKey)
+                return true;
+        }
+    }
+
+    return false;
+}
+
+// ---------------------------------------------------------------------------
+// readNextToken
+// ---------------------------------------------------------------------------
+
+int MiniNotationTokeniser::readNextToken(juce::CodeDocument::Iterator& iterator)
+{
+    if (iterator.isEOF())
+        return 0;
+
+    const int lineNum    = iterator.getLine();
+    const int colStart   = iterator.toPosition().getIndexInLine();
+
+    // -----------------------------------------------------------------------
+    // Reset front-matter tracking state at the very beginning of the document
+    // (line 0, col 0).  JUCE calls this tokeniser from scratch for every
+    // repaint, so stale state from a previous paint pass must be cleared.
+    // -----------------------------------------------------------------------
+    if (lineNum == 0 && colStart == 0)
+    {
+        inFrontMatter_  = true;
+        frontMatterDone_ = false;
+        sawHathorHeader_ = false;
+    }
+
+    // -----------------------------------------------------------------------
+    // Build / retrieve cached line text (Req 27.5)
+    // Only re-tokenise when we move to a new line.
+    // -----------------------------------------------------------------------
+    if (lineNum != lastLineNum_)
+    {
+        juce::String lineText = peekLineText(iterator);
+        std::string  lineStd  = lineText.toStdString();
+
+        // -------------------------------------------------------------------
+        // Front-matter detection (Req 22.4)
+        // -------------------------------------------------------------------
+        if (!frontMatterDone_)
+        {
+            // If line 0 is NOT the [hathor] header and NOT a key=value line,
+            // there is no front-matter at all — treat whole document as body.
+            if (lineNum == 0 && !isFrontMatterLine(lineText))
+            {
+                frontMatterDone_ = true;
+                inFrontMatter_   = false;
+            }
+            else if (lineText.trim().isEmpty())
+            {
+                // First blank line after the header ends the front-matter.
+                frontMatterDone_ = true;
+                inFrontMatter_   = false;
+            }
+            else if (isFrontMatterLine(lineText))
+            {
+                if (lineText.trim() == "[hathor]")
+                    sawHathorHeader_ = true;
+                inFrontMatter_ = true;
+            }
+            else
+            {
+                // Non-matching, non-blank line while still scanning header:
+                // front-matter ends here.
+                frontMatterDone_ = true;
+                inFrontMatter_   = false;
+            }
+        }
+        else
+        {
+            inFrontMatter_ = false;
+        }
+
+        // -------------------------------------------------------------------
+        // Cache the tokenised result for this line (Req 27.5)
+        // -------------------------------------------------------------------
+        if (lineStd != lastLine_)
+        {
+            lastLine_   = lineStd;
+            lastTokens_ = hathor::tokenise(lastLine_);
+        }
+        lastLineNum_ = lineNum;
+    }
+
+    // -----------------------------------------------------------------------
+    // Front-matter lines — advance by 1 and return colour 0 (Req 22.4)
+    // -----------------------------------------------------------------------
+    if (inFrontMatter_)
+    {
+        iterator.nextChar();
+        return 0;
+    }
+
+    // -----------------------------------------------------------------------
+    // Find the token at colStart
+    // -----------------------------------------------------------------------
+    for (const auto& tok : lastTokens_)
+    {
+        if (tok.kind == hathor::TokenKind::TK_EOF)
+        {
+            // EOF sentinel — advance by 1 and return 0
+            iterator.nextChar();
+            return 0;
+        }
+
+        if (static_cast<int>(tok.pos) == colStart)
+        {
+            // Advance the iterator by exactly token.text.size() chars
+            const int len = static_cast<int>(tok.text.size());
+            for (int i = 0; i < len; ++i)
+                iterator.nextChar();
+
+            return colourIndexForKind(tok.kind);
+        }
+    }
+
+    // No token found at this position (e.g. whitespace gap) — advance by 1
+    iterator.nextChar();
+    return 0;
+}
+
+// ---------------------------------------------------------------------------
+// createColourScheme / getDefaultColourScheme
+// ---------------------------------------------------------------------------
+
+juce::CodeEditorComponent::ColourScheme MiniNotationTokeniser::getDefaultColourScheme()
+{
+    // 7 named token types matching the colour index mapping in Req 27.3
+    static const struct { const char* name; juce::uint32 colour; } entries[] =
+    {
+        { "Atom",         0xffd4d4d4 }, // 0 — light grey (default text)
+        { "Integer",      0xffb5cea8 }, // 1 — soft green
+        { "Rest/Tilde",   0xff569cd6 }, // 2 — blue
+        { "Bracket",      0xffffd700 }, // 3 — gold
+        { "Operator",     0xffc586c0 }, // 4 — purple
+        { "Paren/Comma",  0xff9cdcfe }, // 5 — light blue
+        { "Error",        0xfff44747 }, // 6 — red
+    };
+
+    juce::CodeEditorComponent::ColourScheme scheme;
+    for (const auto& e : entries)
+        scheme.set(e.name, juce::Colour(e.colour));
+
+    return scheme;
+}
+
+} // namespace hathor::ui
