@@ -27,25 +27,15 @@
 // Task 3.8: VisualizerPanel is now implemented — include the real header.
 #include "VisualizerPanel.hpp"
 
-// The following headers are not yet created (sibling task 5.1).
-// Stub definitions below allow MainWindow to compile until that task lands.
-// Uncomment each #include as the corresponding task is completed:
-//
-// TODO: include ui/ChatSidebar.hpp when available       (task 5.1)
+// Task 3.9: SliderPanel is now implemented — include the real header.
+// (SliderPanel.hpp is already included transitively via ChatSidebar.hpp)
+
+// ChatSidebar and AcpAgentSession are now fully implemented (task 5.1).
+#include "ChatSidebar.hpp"
+#include "AcpAgentSession.hpp"
 
 // UITimer (task 3.7) — real implementation is now available.
 #include "UITimer.hpp"
-
-#ifndef HATHOR_CHAT_SIDEBAR_DEFINED
-#define HATHOR_CHAT_SIDEBAR_DEFINED
-namespace hathor::ui {
-/// Stub ChatSidebar — replaced by ChatSidebar.hpp (task 5.1).
-class ChatSidebar : public juce::Component {
-public:
-    ChatSidebar(AudioEngine&, hathor::control::ControlInterface&) {}
-};
-} // namespace hathor::ui
-#endif
 
 // ==========================================================================
 // HathorLookAndFeel
@@ -279,7 +269,9 @@ HathorLookAndFeel::HathorLookAndFeel()
 // ---------------------------------------------------------------------------
 
 MainWindow::MainWindow(AudioEngine& audio,
-                       hathor::control::ControlInterface& ci)
+                       hathor::control::ControlInterface& ci,
+                       std::string agentExePath,
+                       std::string hathorMcpPath)
     : juce::DocumentWindow(
           "Hathor",
           juce::Colour(HathorLookAndFeel::kColourBackground),
@@ -298,10 +290,6 @@ MainWindow::MainWindow(AudioEngine& audio,
     // -----------------------------------------------------------------------
     // Instantiate child components (Req 20.1, 20.4)
     // These are JUCE native components — no embedded webview / Electron.
-    //
-    // ActivityRibbon and ExplorerPanel use their default constructors (task 3.2).
-    // EditorArea, ChatSidebar, VisualizerPanel, UITimer use stub constructors
-    // until their respective tasks are implemented.
     // -----------------------------------------------------------------------
     activityRibbon_  = std::make_unique<hathor::ui::ActivityRibbon>();
     editorArea_      = std::make_unique<hathor::ui::EditorArea>(audio_, ci_);
@@ -310,6 +298,22 @@ MainWindow::MainWindow(AudioEngine& audio,
 
     // Task 3.9: Create real SliderPanel with ControlInterface for dispatching.
     sliderPanel_ = std::make_unique<hathor::ui::SliderPanel>(ci_);
+
+    // -----------------------------------------------------------------------
+    // Create AcpAgentSession and wire it to ChatSidebar (Req 32.1, 32.3)
+    // -----------------------------------------------------------------------
+    agentSession_ = std::make_unique<hathor::ui::AcpAgentSession>();
+
+    // Determine the project directory (cwd at launch time).
+    const std::string projectDir =
+        juce::File::getCurrentWorkingDirectory().getFullPathName().toStdString();
+
+    // Wire all callbacks before start() — setSession() registers the handlers.
+    chatSidebar_->setSession(*agentSession_, agentExePath, projectDir, hathorMcpPath);
+
+    // Start the session if a path was provided (Req 32.1).
+    if (!agentExePath.empty())
+        agentSession_->start(agentExePath, projectDir, hathorMcpPath);
 
     // Add child components to the content component (DocumentWindow wraps one
     // content component; we use a plain Component as the layout host).
@@ -351,6 +355,10 @@ MainWindow::MainWindow(AudioEngine& audio,
 
 MainWindow::~MainWindow()
 {
+    // Stop the agent session before destroying components it references (Req 32.8).
+    if (agentSession_)
+        agentSession_->stop();
+
     // Stop the timer before destroying components it references.
     if (uiTimer_)
         uiTimer_->stopTimer();

@@ -57,7 +57,7 @@ MessageBubble::MessageBubble(const juce::String& text, Role role)
     label_.setReadOnly(true);
     label_.setScrollbarsShown(false);
     label_.setCaretVisible(false);
-    label_.setFont(juce::Font(13.0f));
+    label_.setFont(juce::Font(juce::FontOptions{}.withHeight(13.0f)));
     label_.setColour(juce::TextEditor::backgroundColourId,
                      juce::Colour(0));
     label_.setColour(juce::TextEditor::outlineColourId,
@@ -89,7 +89,7 @@ int MessageBubble::preferredHeight(int width) const
 
     // Use a temporary AttributedString to measure line wrapping.
     juce::AttributedString as;
-    as.append(label_.getText(), juce::Font(13.0f), juce::Colour(colours::kText));
+    as.append(label_.getText(), juce::Font(juce::FontOptions{}.withHeight(13.0f)), juce::Colour(colours::kText));
     as.setWordWrap(juce::AttributedString::byWord);
     as.setJustification(juce::Justification::topLeft);
 
@@ -185,7 +185,7 @@ ChatSidebar::ChatSidebar(AudioEngine& /*audio*/,
     // Status label (hidden by default)
     // -----------------------------------------------------------------------
     addChildComponent(statusLabel_);
-    statusLabel_.setFont(juce::Font(12.0f));
+    statusLabel_.setFont(juce::Font(juce::FontOptions{}.withHeight(12.0f)));
     statusLabel_.setColour(juce::Label::backgroundColourId,
                            juce::Colour(colours::kError).withAlpha(0.2f));
     statusLabel_.setColour(juce::Label::textColourId,
@@ -242,7 +242,7 @@ ChatSidebar::ChatSidebar(AudioEngine& /*audio*/,
     inputField_.setMultiLine(false);
     inputField_.setReturnKeyStartsNewLine(false);
     inputField_.setScrollbarsShown(false);
-    inputField_.setFont(juce::Font(13.0f));
+    inputField_.setFont(juce::Font(juce::FontOptions{}.withHeight(13.0f)));
     inputField_.setColour(juce::TextEditor::backgroundColourId,
                            juce::Colour(colours::kSurface));
     inputField_.setColour(juce::TextEditor::textColourId,

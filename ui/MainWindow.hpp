@@ -48,15 +48,17 @@
 // Task 3.9: SliderPanel is now implemented — include the real header.
 #include "SliderPanel.hpp"
 
+// ChatSidebar and AcpAgentSession are now fully implemented (task 5.1).
+#include "ChatSidebar.hpp"
+#include "AcpAgentSession.hpp"
+
 // ---------------------------------------------------------------------------
 // Forward declarations — child components not yet implemented
-// (ChatSidebar: task 5.1, EditorArea: task 3.4,
-//  VisualizerPanel: task 3.8, UITimer: task 3.7)
+// (EditorArea: task 3.4, VisualizerPanel: task 3.8, UITimer: task 3.7)
 // ---------------------------------------------------------------------------
 namespace hathor::ui {
 
 class EditorArea;
-class ChatSidebar;
 class VisualizerPanel;
 class UITimer;
 
@@ -107,12 +109,18 @@ public:
     /**
      * Construct the main application window.
      *
-     * @param audio  Reference to the fully-initialised AudioEngine (device
-     *               must already be open so UITimer can start immediately).
-     * @param ci     Reference to the ControlInterface for dispatching commands.
+     * @param audio          Reference to the fully-initialised AudioEngine (device
+     *                       must already be open so UITimer can start immediately).
+     * @param ci             Reference to the ControlInterface for dispatching commands.
+     * @param agentExePath   Absolute path to the ACP agent executable (empty = no agent).
+     * @param hathorMcpPath  Absolute path to the hathor-mcp sidecar (empty = no MCP).
+     *
+     * Requirements: 32.1
      */
-    explicit MainWindow(AudioEngine& audio,
-                        hathor::control::ControlInterface& ci);
+    MainWindow(AudioEngine& audio,
+               hathor::control::ControlInterface& ci,
+               std::string agentExePath  = {},
+               std::string hathorMcpPath = {});
 
     ~MainWindow() override;
 
@@ -168,6 +176,11 @@ private:
     /// Real SliderPanel — created in the constructor with ci_.
     /// Passed to UITimer for bidirectional BPM/gain sync (Req 26.4, 26.9).
     std::unique_ptr<hathor::ui::SliderPanel>       sliderPanel_;
+
+    /// ACP agent session — created in the constructor and wired to ChatSidebar.
+    /// Owned by MainWindow; stopped in the destructor before child destruction.
+    /// Requirements: 32.1, 32.3
+    std::unique_ptr<hathor::ui::AcpAgentSession>   agentSession_;
 
     // -----------------------------------------------------------------------
     // Engine references

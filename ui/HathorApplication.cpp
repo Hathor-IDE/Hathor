@@ -15,6 +15,8 @@
  * Requirements: 20.4, 20.5, 31.1, 32.1
  */
 
+#include <cstdlib>
+
 #include <juce_audio_devices/juce_audio_devices.h>
 #include <juce_audio_formats/juce_audio_formats.h>
 #include <juce_gui_basics/juce_gui_basics.h>
@@ -49,7 +51,8 @@ public:
         args.addTokens(commandLine, true);
 
         std::string samplesPath;
-        double      initialBpm = 120.0;
+        double      initialBpm   = 120.0;
+        std::string agentExePath;
 
         for (int i = 0; i < args.size(); ++i)
         {
@@ -57,6 +60,16 @@ public:
                 samplesPath = args[++i].toStdString();
             else if (args[i] == "--bpm" && i + 1 < args.size())
                 initialBpm = args[++i].getDoubleValue();
+            else if (args[i] == "--agent" && i + 1 < args.size())
+                agentExePath = args[++i].toStdString();
+        }
+
+        // Fall back to HATHOR_AGENT env var if --agent was not provided (Req 32.1).
+        if (agentExePath.empty())
+        {
+            const char* envAgent = std::getenv("HATHOR_AGENT");
+            if (envAgent != nullptr)
+                agentExePath = envAgent;
         }
 
         if (samplesPath.empty())
@@ -64,7 +77,7 @@ public:
             juce::AlertWindow::showMessageBoxAsync(
                 juce::AlertWindow::WarningIcon,
                 "Hathor",
-                "--samples <path> is required.\n\nUsage: hathor-ui --samples <path> [--bpm <n>]",
+                "--samples <path> is required.\n\nUsage: hathor-ui --samples <path> [--bpm <n>] [--agent <path>]",
                 "OK",
                 nullptr,
                 juce::ModalCallbackFunction::create([](int) { juce::JUCEApplication::getInstance()->quit(); }));
@@ -112,8 +125,17 @@ public:
         // called directly from UI components on the worker thread pool).
         ci_ = std::make_unique<hathor::control::ControlInterface>(*audio_, *bank_);
 
+        // Resolve hathor-mcp path: look for it as a sibling of the executable.
+        // If not present, pass empty string — ChatSidebar will still work but
+        // tool calls won't be forwarded (Req 32.1).
+        const std::string hathorMcpPath =
+            juce::File::getSpecialLocation(juce::File::currentExecutableFile)
+                .getSiblingFile("hathor-mcp")
+                .getFullPathName()
+                .toStdString();
+
         // Create and show the main window.
-        mainWindow_ = std::make_unique<MainWindow>(*audio_, *ci_);
+        mainWindow_ = std::make_unique<MainWindow>(*audio_, *ci_, agentExePath, hathorMcpPath);
     }
 
     void shutdown() override
