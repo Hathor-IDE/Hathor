@@ -24,8 +24,12 @@
 // Must be included before UITimer.hpp's forward declaration resolves.
 #include "VisualizerPanel.hpp"
 
+// Task 3.9: SliderPanel is now implemented — include real header.
+// HATHOR_SLIDER_PANEL_DEFINED is set by SliderPanel.hpp, suppressing the stub below.
+#include "SliderPanel.hpp"
+
 // ---------------------------------------------------------------------------
-// SliderPanel stub — replaced by SliderPanel.hpp (task 3.9)
+// SliderPanel stub — suppressed by HATHOR_SLIDER_PANEL_DEFINED (task 3.9 done)
 // ---------------------------------------------------------------------------
 #ifndef HATHOR_SLIDER_PANEL_DEFINED
 #define HATHOR_SLIDER_PANEL_DEFINED

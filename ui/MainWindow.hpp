@@ -45,11 +45,13 @@
 #include "ActivityRibbon.hpp"   // task 3.2 — implemented
 #include "ExplorerPanel.hpp"    // task 3.2 — implemented
 
+// Task 3.9: SliderPanel is now implemented — include the real header.
+#include "SliderPanel.hpp"
+
 // ---------------------------------------------------------------------------
 // Forward declarations — child components not yet implemented
 // (ChatSidebar: task 5.1, EditorArea: task 3.4,
-//  VisualizerPanel: task 3.8, UITimer: task 3.7,
-//  SliderPanel: task 3.9)
+//  VisualizerPanel: task 3.8, UITimer: task 3.7)
 // ---------------------------------------------------------------------------
 namespace hathor::ui {
 
@@ -59,31 +61,6 @@ class VisualizerPanel;
 class UITimer;
 
 } // namespace hathor::ui
-
-// ---------------------------------------------------------------------------
-// SliderPanel stub — used by MainWindow until SliderPanel.hpp (task 3.9)
-// lands and ChatSidebar hosts the real instance.
-// The include-guard matches the one in UITimer.cpp so only one definition
-// is compiled per translation unit.
-// ---------------------------------------------------------------------------
-#ifndef HATHOR_SLIDER_PANEL_DEFINED
-#define HATHOR_SLIDER_PANEL_DEFINED
-#include <juce_gui_basics/juce_gui_basics.h>
-namespace hathor::ui {
-/// Stub SliderPanel — replaced by SliderPanel.hpp (task 3.9).
-class SliderPanel : public juce::Component {
-public:
-    SliderPanel() = default;
-    int   bpmDisplayValue() const  { return bpmDisplay_; }
-    float gainDisplayValue() const { return gainDisplay_; }
-    void  setBpmDisplay(int bpm)   { bpmDisplay_  = bpm; }
-    void  setGainDisplay(float g)  { gainDisplay_ = g; }
-private:
-    int   bpmDisplay_  = 120;
-    float gainDisplay_ = 1.0f;
-};
-} // namespace hathor::ui
-#endif  // HATHOR_SLIDER_PANEL_DEFINED
 
 // ---------------------------------------------------------------------------
 // HathorLookAndFeel — dark theme (Req 20.2, 20.4)
@@ -188,10 +165,9 @@ private:
     std::unique_ptr<hathor::ui::VisualizerPanel>   visualizerPanel_;
     std::unique_ptr<hathor::ui::UITimer>            uiTimer_;
 
-    /// Stub slider panel used until task 3.9 (SliderPanel) is implemented.
-    /// When ChatSidebar hosts the real SliderPanel, replace this with a
-    /// reference to that instance and remove this member.
-    hathor::ui::SliderPanel sliderPanelStub_;
+    /// Real SliderPanel — created in the constructor with ci_.
+    /// Passed to UITimer for bidirectional BPM/gain sync (Req 26.4, 26.9).
+    std::unique_ptr<hathor::ui::SliderPanel>       sliderPanel_;
 
     // -----------------------------------------------------------------------
     // Engine references

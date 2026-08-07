@@ -308,6 +308,9 @@ MainWindow::MainWindow(AudioEngine& audio,
     chatSidebar_     = std::make_unique<hathor::ui::ChatSidebar>(audio_, ci_);
     visualizerPanel_ = std::make_unique<hathor::ui::VisualizerPanel>(audio_);
 
+    // Task 3.9: Create real SliderPanel with ControlInterface for dispatching.
+    sliderPanel_ = std::make_unique<hathor::ui::SliderPanel>(ci_);
+
     // Add child components to the content component (DocumentWindow wraps one
     // content component; we use a plain Component as the layout host).
     auto* content = new juce::Component();
@@ -334,14 +337,12 @@ MainWindow::MainWindow(AudioEngine& audio,
     // Signature: UITimer(SpscRingBuffer<128>&, VisualizerPanel&,
     //                    SliderPanel&, AudioEngine&)
     //
-    // sliderPanelStub_ is a stub SliderPanel (task 3.9 not yet implemented).
-    // When SliderPanel.hpp lands and ChatSidebar hosts the real panel,
-    // pass the real reference here and remove sliderPanelStub_.
+    // sliderPanel_ is the real SliderPanel (task 3.9 now implemented).
     // -----------------------------------------------------------------------
     uiTimer_ = std::make_unique<hathor::ui::UITimer>(
         audio_.visualizerBuffer(),
         *visualizerPanel_,
-        sliderPanelStub_,
+        *sliderPanel_,
         audio_);
     uiTimer_->startTimerHz(60);
 
