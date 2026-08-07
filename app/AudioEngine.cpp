@@ -164,6 +164,21 @@ bool AudioEngine::isRunning() const noexcept
 }
 
 // ---------------------------------------------------------------------------
+// Master gain (Req 26.5, 26.6)
+// ---------------------------------------------------------------------------
+
+void AudioEngine::setMasterGain(float g) noexcept
+{
+    // Clamp to [0.0, 2.0]; relaxed ordering — continuous fader, no sync dep.
+    masterGain_.store(std::clamp(g, 0.f, 2.f), std::memory_order_relaxed);
+}
+
+float AudioEngine::getMasterGain() const noexcept
+{
+    return masterGain_.load(std::memory_order_relaxed);
+}
+
+// ---------------------------------------------------------------------------
 // Hot-swap slot API
 // ---------------------------------------------------------------------------
 
@@ -336,7 +351,12 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
 
     // ------------------------------------------------------------------
     // Step 3: For each slot, query the pattern and schedule voices.
+    // Accumulate fired events for the visualizer ring buffer (Req 28.3, 28.8).
+    // firedEvents is a stack array — no heap allocation.
     // ------------------------------------------------------------------
+    hathor::Event<hathor::ParamMap> firedEvents[hathor::kMaxFrameEvents];
+    uint32_t firedEventCount = 0;
+
     for (int i = 0; i < kNumSlots; ++i) {
         // Acquire-load: ensures we see a fully-constructed SlotState (Req 11.2).
         std::shared_ptr<SlotState> state =
@@ -366,6 +386,10 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
 
             // Trigger the voice (Req 9.3).
             voicePool_.trigger(ev.value, bank_, sampleOffset, clockNow);
+
+            // Accumulate for the visualizer (no alloc, capped at kMaxFrameEvents).
+            if (firedEventCount < static_cast<uint32_t>(hathor::kMaxFrameEvents))
+                firedEvents[firedEventCount++] = ev;
         }
     }
 
@@ -377,6 +401,19 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
     }
 
     // ------------------------------------------------------------------
+    // Step 4a: Apply master gain to the mixed output (Req 26.5, 26.6).
+    // Relaxed load is sufficient — continuous fader, no sync dependency.
+    // ------------------------------------------------------------------
+    const float gain = masterGain_.load(std::memory_order_relaxed);
+    if (gain != 1.0f) {
+        for (int ch = 0; ch < numOutputChannels; ++ch) {
+            if (outputChannelData[ch])
+                juce::FloatVectorOperations::multiply(
+                    outputChannelData[ch], gain, numSamples);
+        }
+    }
+
+    // ------------------------------------------------------------------
     // Step 4b: Capture mixed output to WAV file if capture is open.
     // ------------------------------------------------------------------
     if (captureOpen_.load(std::memory_order_acquire) && captureWriter_ && left && right) {
@@ -384,6 +421,19 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
         // const float* channel pointers.
         const float* channels[2] = { left, right };
         captureWriter_->writeFromFloatArrays(channels, 2, numSamples);
+    }
+
+    // ------------------------------------------------------------------
+    // Step 4c: Publish visualizer frame to SPSC ring buffer (Req 28.3, 28.8).
+    //
+    // currentCyclePos uses the Phase 1 Req 9.4 double-conversion formula:
+    //   cyclePos = (sampleClock * bpm) / (sampleRate * 60)
+    // ------------------------------------------------------------------
+    {
+        const double currentCyclePos =
+            (static_cast<double>(clockNow) * bpm) /
+            (static_cast<double>(sampleRate) * 60.0);
+        vizRingBuffer_.write(currentCyclePos, firedEventCount, firedEvents);
     }
 
     // ------------------------------------------------------------------

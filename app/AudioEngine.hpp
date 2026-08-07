@@ -22,6 +22,7 @@
 #include "SampleBank.hpp"
 #include "SlotState.hpp"
 #include "VoicePool.hpp"
+#include "VisualizerFrame.hpp"
 
 // ---------------------------------------------------------------------------
 // SlotState — see app/SlotState.hpp
@@ -102,6 +103,16 @@ public:
     bool isRunning() const noexcept override;
 
     // ------------------------------------------------------------------
+    // Master gain (Req 26.5, 26.6, 26.7, 26.8)
+    // ------------------------------------------------------------------
+
+    /// Set the master output gain. Clamped to [0.0, 2.0] (relaxed ordering).
+    void setMasterGain(float g) noexcept override;
+
+    /// Get the current master output gain (relaxed ordering).
+    float getMasterGain() const noexcept override;
+
+    // ------------------------------------------------------------------
     // Hot-swap slot API (called from WorkerThread — Req 11.1–11.5, 13.1–13.4)
     // ------------------------------------------------------------------
 
@@ -165,6 +176,25 @@ private:
     std::atomic<double>   bpm_{120.0};        ///< current tempo
     std::atomic<bool>     running_{true};     ///< transport running flag
     std::atomic<int>      sampleRate_{44100}; ///< set when device opens
+
+    // ------------------------------------------------------------------
+    // Master gain (Req 26.5, 26.6)
+    // ------------------------------------------------------------------
+    /// Linear amplitude multiplier applied to the mixed output before capture.
+    /// Range [0.0, 2.0]; relaxed ordering — continuous fader, no sync dependency.
+    std::atomic<float>    masterGain_{1.0f};
+
+    // ------------------------------------------------------------------
+    // Visualizer ring buffer (Req 28.1, 28.3, 28.4, 28.5, 28.8)
+    // ------------------------------------------------------------------
+    /// Pre-allocated SPSC ring buffer; written by audio thread, read by UITimer.
+    SpscRingBuffer<128>   vizRingBuffer_;
+
+public:
+    /// Accessor for the UI timer to drain visualizer frames (non-const ref).
+    SpscRingBuffer<128>& visualizerBuffer() noexcept { return vizRingBuffer_; }
+
+private:
 
     // ------------------------------------------------------------------
     // Hot-swap slots (Req 11.1–11.4, 13.2)

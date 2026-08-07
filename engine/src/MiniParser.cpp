@@ -9,6 +9,7 @@
  */
 
 #include "hathor/MiniParser.hpp"
+#include "hathor/MiniTokeniser.hpp"
 #include "MiniAst.hpp"
 #include "hathor/Combinators.hpp"
 #include "hathor/Pattern.hpp"
@@ -45,30 +46,6 @@ CompiledPattern& CompiledPattern::operator=(CompiledPattern&&) noexcept = defaul
 // Tokeniser
 // ---------------------------------------------------------------------------
 
-enum class TokenKind {
-    TK_ATOM,
-    TK_LBRACKET,
-    TK_RBRACKET,
-    TK_LANGLE,
-    TK_RANGLE,
-    TK_STAR,
-    TK_SLASH,
-    TK_BANG,
-    TK_INT,
-    TK_TILDE,
-    TK_LPAREN,   ///< (
-    TK_RPAREN,   ///< )
-    TK_COMMA,    ///< ,
-    TK_EOF,
-    TK_ERROR
-};
-
-struct Token {
-    TokenKind        kind;
-    std::string_view text; ///< slice of input (for TK_ATOM / TK_INT)
-    std::size_t      pos;  ///< byte position in input
-};
-
 /// Set of characters that are single-character special tokens (not part of atoms).
 static bool isSpecial(char c) noexcept
 {
@@ -85,7 +62,7 @@ static bool isSpecial(char c) noexcept
 }
 
 /// Tokenise `input` into a flat token list. Single-pass, no regex.
-static std::vector<Token> tokenise(std::string_view input)
+std::vector<Token> tokenise(std::string_view input)
 {
     std::vector<Token> tokens;
     std::size_t i = 0;

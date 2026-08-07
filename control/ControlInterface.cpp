@@ -19,6 +19,7 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <charconv>
 #include <chrono>
 #include <cstdlib>
 #include <iostream>
@@ -131,6 +132,8 @@ void ControlInterface::dispatch(std::string_view rawLine)
         handleListPatterns();
     } else if (cmd == "bpm") {
         handleBpm(trim(rest));
+    } else if (cmd == "set-gain") {
+        handleSetGain(trim(rest));
     } else if (cmd == "clear-pattern") {
         handleClearPattern(trim(rest));
     } else if (cmd == "set-pattern") {
@@ -240,6 +243,44 @@ void ControlInterface::handleBpm(std::string_view arg)
         {"ok",  true},
         {"cmd", "bpm"},
         {"bpm", bpm}
+    });
+}
+
+// ---------------------------------------------------------------------------
+// handleSetGain() — Req 26.7, 26.8
+// ---------------------------------------------------------------------------
+
+void ControlInterface::handleSetGain(std::string_view arg)
+{
+    if (arg.empty()) {
+        respond({
+            {"ok",    false},
+            {"cmd",   "set-gain"},
+            {"error", "missing gain argument"}
+        });
+        return;
+    }
+
+    // Parse as float via std::from_chars (no locale, no exception).
+    float val = 0.f;
+    auto [ptr, ec] = std::from_chars(arg.data(), arg.data() + arg.size(), val);
+    if (ec != std::errc{} || ptr != arg.data() + arg.size()) {
+        respond({
+            {"ok",    false},
+            {"cmd",   "set-gain"},
+            {"error", "invalid value"}
+        });
+        return;
+    }
+
+    // Clamp to [0.0, 2.0] — out-of-range values are clamped, not rejected (Req 26.8).
+    const float clamped = std::clamp(val, 0.f, 2.f);
+    audio_.setMasterGain(clamped);
+
+    respond({
+        {"ok",   true},
+        {"cmd",  "set-gain"},
+        {"gain", clamped}
     });
 }
 

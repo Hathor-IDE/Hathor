@@ -86,6 +86,9 @@ private:
     /// ping  (Req 14.6)
     void handlePing(std::chrono::steady_clock::time_point receiveTime);
 
+    /// set-gain <value>  (Req 26.7, 26.8)
+    void handleSetGain(std::string_view arg);
+
     /// quit  (Req 16.5)
     void handleQuit();
 

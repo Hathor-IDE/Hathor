@@ -39,6 +39,14 @@ public:
     virtual double getBpm()  const noexcept = 0;
     virtual bool   isRunning() const noexcept = 0;
 
+    // --- Master gain (Req 26.5, 26.6) ---
+
+    /// Set the master output gain (clamped to [0.0, 2.0], relaxed ordering).
+    virtual void  setMasterGain(float g) noexcept = 0;
+
+    /// Get the current master output gain (relaxed ordering).
+    virtual float getMasterGain() const noexcept = 0;
+
     // --- Hot-swap slot API ---
 
     /// Map a slot name to a 0-based index. Returns -1 if not found and the

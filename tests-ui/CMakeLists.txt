@@ -3,43 +3,56 @@
 #
 # tests-ui/CMakeLists.txt
 #
-# Currently defines the acp_spike target only (Task 0.1).
-# The full hathor-ui-tests target (linking hathor-engine + Catch2) is defined
-# in Task 1.5.
+# Defines:
+#   acp_spike         — Task 0.1 transport spike
+#   hathor-ui-tests   — Task 1.5 PBT / headless tests (Req 31.3, 31.4)
 #
-# Build the spike:
-#   mkdir -p build && cd build && cmake .. && cmake --build . --target acp_spike
-#
-# Run the spike:
-#   ./build/tests-ui/acp_spike
+# No JUCE audio device dependency — all tests run headless.
 
 # ---------------------------------------------------------------------------
 # acp_spike — Task 0.1
-#
-# Validates:
-#   (a) Bidirectional stdio with a subprocess via posix_spawn + pipes
-#   (b) JSON-RPC 2.0 ACP message serialisation / parsing with nlohmann/json
-#   (c) Unix domain socket listener/client round-trip
-#
-# Deliberately does NOT link JUCE — validates the hathor-mcp no-JUCE constraint
-# (Requirement 31).
 # ---------------------------------------------------------------------------
-
 add_executable(acp_spike
     test_acp_spike.cpp
 )
 
 target_compile_features(acp_spike PRIVATE cxx_std_20)
 
-target_compile_options(acp_spike PRIVATE
-    -Wall
-    -Wextra
-    -Wpedantic
-)
+target_compile_options(acp_spike PRIVATE -Wall -Wextra -Wpedantic)
 
-target_link_libraries(acp_spike PRIVATE
-    nlohmann_json::nlohmann_json
-)
+target_link_libraries(acp_spike PRIVATE nlohmann_json::nlohmann_json)
 
-# Register with CTest so `ctest` can run it
 add_test(NAME acp_spike COMMAND acp_spike)
+
+# ---------------------------------------------------------------------------
+# hathor-ui-tests — headless PBT runner (Req 31.3, 31.4)
+#
+# Links hathor-engine + Catch2 only; no JUCE audio device.
+# Sources: property tests P1 (SPSC ring buffer), P2 (HathorFile), P3 (tokeniser).
+# ---------------------------------------------------------------------------
+add_executable(hathor-ui-tests
+    test_spsc_ring_buffer.cpp
+    test_hathor_file_parser.cpp
+    test_mini_tokeniser.cpp
+)
+
+target_compile_features(hathor-ui-tests PRIVATE cxx_std_20)
+
+target_compile_options(hathor-ui-tests PRIVATE -Wall -Wextra -Werror)
+
+target_include_directories(hathor-ui-tests
+    PRIVATE
+        ${CMAKE_SOURCE_DIR}/app
+        ${CMAKE_SOURCE_DIR}/engine/include
+)
+
+target_link_libraries(hathor-ui-tests
+    PRIVATE
+        hathor-engine
+        Catch2::Catch2WithMain
+)
+
+# Register all Catch2 tests with CTest.
+include(CTest)
+include(Catch)
+catch_discover_tests(hathor-ui-tests)
