@@ -24,6 +24,7 @@
 #include "ChatSidebar.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <string>
 
 namespace hathor::ui {
@@ -43,6 +44,109 @@ namespace colours {
     static constexpr juce::uint32 kAgentBubble = 0xff252526;
     static constexpr juce::uint32 kBorder      = 0xff3c3c3c;
     static constexpr juce::uint32 kReconnect   = 0xff5a3020;
+}
+
+// ===========================================================================
+// AsciiArtHeader — generative ASCII decoration (Req 25.4)
+// ===========================================================================
+
+AsciiArtHeader::AsciiArtHeader()
+{
+    // Repaint at ~4 Hz — decorative only, no need to drive at 60 Hz.
+    startTimerHz(4);
+}
+
+void AsciiArtHeader::paint(juce::Graphics& g)
+{
+    const int w = getWidth();
+    const int h = getHeight();
+
+    if (w <= 0 || h <= 0)
+        return;
+
+    // Dark background matching sidebar surface.
+    g.fillAll(juce::Colour(colours::kBackground));
+
+    // Bottom separator line.
+    g.setColour(juce::Colour(colours::kBorder));
+    g.drawHorizontalLine(h - 1, 0.0f, static_cast<float>(w));
+
+    // -----------------------------------------------------------------------
+    // Generative ASCII art: two rows of characters whose brightness varies
+    // according to a sine wave modulated by the current phase_.
+    //
+    // The pattern cycles through a small palette of box-drawing / block
+    // characters. Character selection is deterministic per column so the
+    // output is stable between repaints (only the brightness shifts).
+    //
+    // No heap allocation: everything uses local char arrays and JUCE stack
+    // temporaries. No mutex, no atomic, no audio-thread interaction.
+    // -----------------------------------------------------------------------
+
+    // Character palette: ordered by visual density (sparse → dense).
+    static constexpr const char* kChars[] = {
+        " ", ".", "·", "·", ":", ";", "+", "=",
+        "#", "*", "■", "▪", "░", "▒", "▓"
+    };
+    static constexpr int kNumChars = static_cast<int>(std::size(kChars));
+
+    // Accent and dim colour derived from the existing palette.
+    const juce::Colour accent  = juce::Colour(colours::kAccent);
+    const juce::Colour dimText = juce::Colour(colours::kText).withAlpha(0.35f);
+
+    // Monospaced font, small.
+    const juce::Font font(juce::FontOptions(juce::Font::getDefaultMonospacedFontName(),
+                                            11.0f, juce::Font::plain));
+    g.setFont(font);
+
+    // Approximate character cell width/height.
+    const int cellW = 10;
+    const int cellH = 14;
+
+    const int cols = std::max(1, w / cellW);
+    const int rows = std::max(1, (h - 2) / cellH);  // -2 for the separator
+
+    for (int row = 0; row < rows; ++row)
+    {
+        const float rowOffset = static_cast<float>(row) * 1.3f;
+
+        for (int col = 0; col < cols; ++col)
+        {
+            // Sine wave across the column with phase offset from animation.
+            const float x  = static_cast<float>(col) / static_cast<float>(std::max(1, cols - 1));
+            const float t  = phase_ + x * 6.28318f + rowOffset;
+            // Two-frequency superposition for a more complex pattern.
+            const float v  = 0.5f * (std::sin(t) + std::sin(t * 2.0f + 0.9f)) * 0.5f + 0.5f;
+
+            // Map v → character index.
+            const int idx = static_cast<int>(v * static_cast<float>(kNumChars - 1));
+            const int clampedIdx = std::max(0, std::min(idx, kNumChars - 1));
+
+            // Alternate accent / dim colouring per character using a simple
+            // hash of (row + col) — gives a scattered look without randomness.
+            const bool useAccent = ((row * 7 + col * 13) % 5 == 0) && (v > 0.55f);
+            g.setColour(useAccent ? accent.withAlpha(0.7f) : dimText);
+
+            const juce::Rectangle<int> cell(col * cellW, row * cellH, cellW, cellH);
+            g.drawText(juce::String::fromUTF8(kChars[clampedIdx]),
+                       cell,
+                       juce::Justification::centred,
+                       false);
+        }
+    }
+}
+
+void AsciiArtHeader::timerCallback()
+{
+    // Advance the phase slightly each tick.
+    phase_ += 0.18f;
+
+    // Keep phase in [0, 2π) to avoid float drift over long sessions.
+    constexpr float kTwoPi = 6.28318530f;
+    if (phase_ >= kTwoPi)
+        phase_ -= kTwoPi;
+
+    repaint();
 }
 
 // ===========================================================================
@@ -182,6 +286,11 @@ ChatSidebar::ChatSidebar(AudioEngine& /*audio*/,
                          hathor::control::ControlInterface& ci)
 {
     // -----------------------------------------------------------------------
+    // ASCII art header (Req 25.4 — decorative, LOW PRIORITY / NON-BLOCKING)
+    // -----------------------------------------------------------------------
+    addAndMakeVisible(asciiHeader_);
+
+    // -----------------------------------------------------------------------
     // Status label (hidden by default)
     // -----------------------------------------------------------------------
     addChildComponent(statusLabel_);
@@ -320,6 +429,9 @@ void ChatSidebar::resized()
 {
     auto b = getLocalBounds();
 
+    // ASCII art header — always visible at top (Req 25.4).
+    asciiHeader_.setBounds(b.removeFromTop(kAsciiArtH));
+
     // Status label (conditionally shown at top)
     if (statusVisible_)
     {
@@ -354,7 +466,7 @@ void ChatSidebar::resized()
 
 void ChatSidebar::paint(juce::Graphics& g)
 {
-    // Background fill
+    // Background fill (below the ASCII art header)
     g.fillAll(juce::Colour(colours::kSurface));
 
     // 1 px left border (separates sidebar from editor area)

@@ -59,6 +59,39 @@
 namespace hathor::ui {
 
 // ---------------------------------------------------------------------------
+// AsciiArtHeader — decorative generative ASCII art (Req 25.4)
+// ---------------------------------------------------------------------------
+
+/**
+ * Renders decorative procedural ASCII art in the ChatSidebar panel header.
+ *
+ * The art is generative: a simple sine-based pattern that cycles through
+ * different character sets and phases. No heap allocation on paint, no
+ * heavy computation.
+ *
+ * Requirement 25.4: LOW PRIORITY / NON-BLOCKING — this component is fully
+ * optional and must not gate any other Phase 2 work.
+ */
+class AsciiArtHeader : public juce::Component,
+                       public juce::Timer
+{
+public:
+    AsciiArtHeader();
+
+    void paint(juce::Graphics& g) override;
+
+    /// Preferred height for this header.
+    static constexpr int kPreferredHeight = 48;
+
+private:
+    void timerCallback() override;
+
+    float phase_ = 0.0f;  ///< Animation phase counter
+
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(AsciiArtHeader)
+};
+
+// ---------------------------------------------------------------------------
 // MessageBubble — one message entry in the history view
 // ---------------------------------------------------------------------------
 
@@ -240,6 +273,7 @@ private:
     static constexpr int kPermissionH  = 120;  ///< Permission prompt height
     static constexpr int kInputH       = 36;   ///< Chat input field height
     static constexpr int kSliderH      = 80;   ///< SliderPanel height
+    static constexpr int kAsciiArtH    = AsciiArtHeader::kPreferredHeight;  ///< ASCII art header height
 
     // -----------------------------------------------------------------------
     // Members
@@ -252,6 +286,9 @@ private:
     std::string agentExePath_;
     std::string projectDir_;
     std::string mcpPath_;
+
+    // ASCII art header — decorative, generative (Req 25.4)
+    AsciiArtHeader asciiHeader_;
 
     // Status bar (errors / info)
     juce::Label statusLabel_;
