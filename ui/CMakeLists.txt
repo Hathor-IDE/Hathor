@@ -32,7 +32,10 @@ juce_add_gui_app(hathor-ui
 
 target_sources(hathor-ui
     PRIVATE
+        HathorApplication.cpp
         MainWindow.cpp
+        ActivityRibbon.cpp
+        ExplorerPanel.cpp
 )
 
 target_include_directories(hathor-ui
@@ -50,6 +53,7 @@ target_compile_options(hathor-ui PRIVATE -Wall -Wextra -Werror)
 target_link_libraries(hathor-ui
     PRIVATE
         hathor-engine
+        hathor-control
         juce::juce_gui_basics
         juce::juce_gui_extra
         juce::juce_audio_devices
