@@ -4,14 +4,17 @@
 /**
  * EditorArea.cpp — multi-tab code editor region implementation.
  *
- * Requirements: 22.1–22.3, 22.5–22.7, 24.4
+ * Requirements: 22.1–22.3, 22.5–22.7, 23.1–23.7, 24.4
  */
 
 #include "EditorArea.hpp"
 #include "HathorFileParser.hpp"
 #include "AudioEngine.hpp"
 
+#include <nlohmann/json.hpp>
+
 #include <algorithm>
+#include <optional>
 
 namespace hathor::ui {
 
@@ -200,9 +203,6 @@ EditorArea::EditorArea(AudioEngine& audio,
     : audio_(audio)
     , ci_(ci)
 {
-    // ci_ is used in task 3.6 (eval keybindings). Suppress the unused warning
-    // until then.
-    (void)ci_;
     // Status bar styling
     statusBar_.setFont(juce::Font(juce::FontOptions{}.withHeight(12.0f)));
     statusBar_.setColour(juce::Label::backgroundColourId, juce::Colour(0xff252526));
@@ -245,6 +245,7 @@ bool EditorArea::openUntitledTab()
 
     auto tab = std::make_unique<HathorTab>(slot);
     wireUnsavedCallback(*tab);
+    installKeyListenerForTab(*tab);
     addAndMakeVisible(*tab);
     tabs_.push_back(std::move(tab));
 
@@ -319,6 +320,7 @@ bool EditorArea::openFile(const juce::File& file)
     tab->clearUnsavedDot();
 
     wireUnsavedCallback(*tab);
+    installKeyListenerForTab(*tab);
     addAndMakeVisible(*tab);
     tabs_.push_back(std::move(tab));
 
@@ -475,6 +477,15 @@ void EditorArea::removeTabAt(int index)
     if (index < 0 || index >= static_cast<int>(tabs_.size()))
         return;
 
+    // Remove key listener from the editor before removing the tab.
+    if (index < static_cast<int>(keyListeners_.size()))
+    {
+        auto& kl = keyListeners_[static_cast<std::size_t>(index)];
+        tabs_[static_cast<std::size_t>(index)]->editor()
+            .removeKeyListener(kl.get());
+        keyListeners_.erase(keyListeners_.begin() + index);
+    }
+
     // Remove the component from the hierarchy before erasing.
     removeChildComponent(tabs_[static_cast<std::size_t>(index)].get());
     tabs_.erase(tabs_.begin() + index);
@@ -519,6 +530,185 @@ void EditorArea::wireUnsavedCallback(HathorTab& tab)
 void EditorArea::refreshTabBar()
 {
     tabBar_.rebuild(tabs_, activeIndex_);
+}
+
+// ===========================================================================
+// Eval helpers (Req 23.1–23.7)
+// ===========================================================================
+
+// ---------------------------------------------------------------------------
+// installKeyListenerForTab
+// ---------------------------------------------------------------------------
+
+void EditorArea::installKeyListenerForTab(HathorTab& tab)
+{
+    auto listener = std::make_unique<TabKeyListener>(*this, &tab);
+    tab.editor().addKeyListener(listener.get());
+    keyListeners_.push_back(std::move(listener));
+}
+
+// ---------------------------------------------------------------------------
+// handleKeyPress — intercepts Ctrl+Enter and Ctrl+Alt+Enter (Req 23.1–23.6)
+// ---------------------------------------------------------------------------
+
+bool EditorArea::handleKeyPress(const juce::KeyPress& key, HathorTab* tab)
+{
+    const bool isEnter = (key.getKeyCode() == juce::KeyPress::returnKey);
+
+    if (!isEnter)
+        return false; // Req 23.6: only these two keystrokes trigger eval
+
+    const bool ctrlHeld = key.getModifiers().isCtrlDown();
+    const bool altHeld  = key.getModifiers().isAltDown();
+
+    // Only handle Ctrl+Enter or Ctrl+Alt+Enter.
+    if (!ctrlHeld)
+        return false;
+
+    // Determine slot name from the AudioEngine (e.g. "d0").
+    // If the engine hasn't registered the slot yet, derive a default name.
+    juce::String slotName;
+    const std::string engineName = audio_.slotName(tab->slotIndex());
+    if (!engineName.empty())
+        slotName = juce::String(engineName);
+    else
+        slotName = "d" + juce::String(tab->slotIndex()); // fallback
+
+    if (altHeld)
+    {
+        // Ctrl+Alt+Enter — evaluate entire buffer (Req 23.3)
+        const juce::String text = tab->document().getAllContent();
+        evalOnWorkerThread(tab, slotName, text);
+        return true;
+    }
+
+    // Ctrl+Enter — evaluate Eval_Block (Req 23.1, 23.2)
+    const int cursorLine = tab->editor().getCaretPos().getLineNumber();
+    const auto block = extractEvalBlock(tab->document(), cursorLine);
+
+    if (!block.has_value())
+    {
+        // Cursor is on a blank line (Req 23.2)
+        showStatus("Cursor is on a blank line \xe2\x80\x94 nothing to evaluate");
+        return true;
+    }
+
+    evalOnWorkerThread(tab, slotName, *block);
+    return true;
+}
+
+// ---------------------------------------------------------------------------
+// extractEvalBlock — maximal contiguous non-blank lines containing cursorLine
+// ---------------------------------------------------------------------------
+
+std::optional<juce::String>
+EditorArea::extractEvalBlock(const juce::CodeDocument& doc,
+                             int cursorLine) noexcept
+{
+    const int totalLines = doc.getNumLines();
+
+    if (cursorLine < 0 || cursorLine >= totalLines)
+        return std::nullopt;
+
+    // Helper: true if a line contains at least one non-whitespace character.
+    auto isNonBlank = [&](int lineNum) -> bool
+    {
+        if (lineNum < 0 || lineNum >= totalLines)
+            return false;
+        const juce::String lineText = doc.getLine(lineNum);
+        for (int i = 0; i < lineText.length(); ++i)
+        {
+            const juce::juce_wchar c = lineText[i];
+            if (c != ' ' && c != '\t' && c != '\r' && c != '\n')
+                return true;
+        }
+        return false;
+    };
+
+    // Cursor line is blank → no eval block (Req 23.2)
+    if (!isNonBlank(cursorLine))
+        return std::nullopt;
+
+    // Walk upward to find the block start.
+    int blockStart = cursorLine;
+    while (blockStart > 0 && isNonBlank(blockStart - 1))
+        --blockStart;
+
+    // Walk downward to find the block end (inclusive).
+    int blockEnd = cursorLine;
+    while (blockEnd < totalLines - 1 && isNonBlank(blockEnd + 1))
+        ++blockEnd;
+
+    // Collect lines verbatim, joined by newlines.
+    juce::String result;
+    for (int ln = blockStart; ln <= blockEnd; ++ln)
+    {
+        if (ln > blockStart)
+            result += "\n";
+        // getLine() includes the trailing newline — strip it for clean joining.
+        juce::String line = doc.getLine(ln);
+        while (line.endsWithChar('\n') || line.endsWithChar('\r'))
+            line = line.dropLastCharacters(1);
+        result += line;
+    }
+
+    return result;
+}
+
+// ---------------------------------------------------------------------------
+// evalOnWorkerThread — enqueue set-pattern job with UI callback (Req 23.7)
+// ---------------------------------------------------------------------------
+
+void EditorArea::evalOnWorkerThread(HathorTab* tab,
+                                    const juce::String& slotName,
+                                    const juce::String& text)
+{
+    // Capture raw pointer to tab. The tab is owned by tabs_ and will only
+    // be removed on the JUCE message thread. The lambda below always
+    // re-dispatches to the message thread via callAsync, so by the time
+    // clearUnsavedDot() or showStatus() runs, we can check whether the tab
+    // is still in tabs_.
+    HathorTab* tabPtr = tab;
+
+    ci_.enqueueSetPattern(
+        slotName.toStdString(),
+        text.toStdString(),
+        [this, tabPtr](nlohmann::json resp)
+        {
+            // Worker thread — marshal result to JUCE message thread.
+            juce::MessageManager::callAsync(
+                [this, tabPtr, resp = std::move(resp)]() mutable
+                {
+                    // Verify the tab is still open (it could have been closed
+                    // while compilation was in progress).
+                    bool tabStillOpen = false;
+                    for (const auto& t : tabs_)
+                    {
+                        if (t.get() == tabPtr)
+                        {
+                            tabStillOpen = true;
+                            break;
+                        }
+                    }
+
+                    const bool ok = resp.value("ok", false);
+
+                    if (ok)
+                    {
+                        // Req 23.4 — clear unsaved dot and repaint tab bar.
+                        if (tabStillOpen)
+                            tabPtr->clearUnsavedDot();
+                        // clearUnsavedDot fires onUnsavedDotChanged → refreshTabBar
+                    }
+                    else
+                    {
+                        // Req 23.5 — show error in status bar; do not touch pattern.
+                        const std::string errMsg =
+                            resp.value("error", "unknown error");
+                        showStatus("Error: " + juce::String(errMsg));
+                    }
+                });
+        });
 }
 
 } // namespace hathor::ui

@@ -99,7 +99,11 @@ void WorkerThread::workerLoop()
                 {"error",    err.message},
                 {"position", static_cast<int>(err.position)}
             };
-            onComplete_(std::move(resp));
+            // Use per-job callback if supplied (UI eval path), otherwise global.
+            if (job.onComplete)
+                job.onComplete(std::move(resp));
+            else
+                onComplete_(std::move(resp));
             continue;
         }
 
@@ -128,7 +132,11 @@ void WorkerThread::workerLoop()
                 {"slot",  job.slotName},
                 {"error", "no free slot available (maximum 16 slots reached)"}
             };
-            onComplete_(std::move(resp));
+            // Use per-job callback if supplied (UI eval path), otherwise global.
+            if (job.onComplete)
+                job.onComplete(std::move(resp));
+            else
+                onComplete_(std::move(resp));
             continue;
         }
 
@@ -163,7 +171,12 @@ void WorkerThread::workerLoop()
             {"slot",                  job.slotName},
             {"event_count_per_cycle", static_cast<int>(maxEvents)}
         };
-        onComplete_(std::move(resp));
+
+        // Use per-job callback if supplied (UI eval path), otherwise global.
+        if (job.onComplete)
+            job.onComplete(std::move(resp));
+        else
+            onComplete_(std::move(resp));
     }
 }
 

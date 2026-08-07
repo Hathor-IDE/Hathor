@@ -149,6 +149,18 @@ void ControlInterface::dispatch(std::string_view rawLine)
 }
 
 // ---------------------------------------------------------------------------
+// enqueueSetPattern() — UI eval path (Req 23.7)
+// ---------------------------------------------------------------------------
+
+void ControlInterface::enqueueSetPattern(
+    const std::string& slotName,
+    const std::string& notation,
+    std::function<void(nlohmann::json)> onComplete)
+{
+    impl_->worker.enqueue(CompileJob{slotName, notation, std::move(onComplete)});
+}
+
+// ---------------------------------------------------------------------------
 // run() — blocking stdin reader loop (Req 12.1, 16.2)
 // ---------------------------------------------------------------------------
 

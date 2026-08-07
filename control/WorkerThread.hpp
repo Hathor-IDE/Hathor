@@ -35,6 +35,11 @@ namespace hathor::control {
 struct CompileJob {
     std::string slotName;  ///< Destination slot name
     std::string notation;  ///< Raw mini-notation string
+
+    /// Optional per-job response callback (used by UI eval path — Req 23.7).
+    /// If set, this callback is invoked instead of the WorkerThread's global
+    /// onComplete_. The callback is invoked on the worker thread.
+    std::function<void(nlohmann::json)> onComplete;
 };
 
 /**

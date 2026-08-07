@@ -14,8 +14,11 @@
  */
 
 #include <chrono>
+#include <functional>
 #include <string>
 #include <string_view>
+
+#include <nlohmann/json.hpp>
 
 // Forward declarations — full headers are only needed in the .cpp.
 class AudioEngineFacade;
@@ -61,6 +64,44 @@ public:
      * Requirement: 12.4, 12.5
      */
     void dispatch(std::string_view line);
+
+    /**
+     * Enqueue a `set-pattern` job directly on the worker thread with a
+     * per-job response callback.  Used by the UI eval path (Req 23.7) so
+     * the result can be marshalled to the JUCE message thread without going
+     * through stdout.
+     *
+     * @param slotName   Destination slot name (e.g. "d0").
+     * @param notation   Raw mini-notation string.
+     * @param onComplete Callback invoked on the worker thread with the JSON
+     *                   result.  Must marshal to the message thread if it
+     *                   touches JUCE components.
+     *
+     * Requirement: 23.7
+     */
+    void enqueueSetPattern(const std::string& slotName,
+                           const std::string& notation,
+                           std::function<void(nlohmann::json)> onComplete);
+
+    /**
+     * UI-facing dispatch: same routing as dispatch(), but instead of writing
+     * the JSON response to stdout, the response is delivered to @p onResult
+     * called on the worker thread (for async commands like set-pattern) or
+     * on the calling thread (for synchronous commands like bpm, set-gain).
+     *
+     * MUST be called on a worker thread, never on the JUCE message thread
+     * (Req 23.7).
+     *
+     * @param line      The command line (e.g. "set-pattern d0 bd sn").
+     * @param onResult  Callback invoked with the JSON response.
+     *                  For set-pattern, called on the WorkerThread after
+     *                  pattern compilation completes. For other commands,
+     *                  called synchronously before this function returns.
+     *
+     * Requirements: 23.1, 23.3, 23.7
+     */
+    void dispatchWithCallback(std::string_view line,
+                              std::function<void(nlohmann::json)> onResult);
 
 private:
     // --- Command handlers ---------------------------------------------------

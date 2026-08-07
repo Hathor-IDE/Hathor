@@ -11,7 +11,7 @@
  *   - Custom tab bar (drawn manually) showing label + unsaved-dot indicator
  *   - A juce::Label status bar at the bottom for error messages
  *
- * Key behaviours (requirements 22.2, 22.3, 22.5, 22.6, 22.7, 24.4):
+ * Key behaviours (requirements 22.2, 22.3, 22.5, 22.6, 22.7, 23.1–23.7, 24.4):
  *   - Tab labels: front-matter `label` → filename stem → "untitled-<slot>"
  *   - Tab switching: immediately swaps visible HathorTab component; the
  *     previously-evaluated slot continues playing (no AudioEngine call here)
@@ -20,8 +20,10 @@
  *     if all 16 slots are occupied
  *   - Tab close with unsaved changes: shows Save / Discard / Cancel modal;
  *     Cancel keeps the tab open
+ *   - Ctrl+Enter: evaluate Eval_Block on worker thread (Req 23.1, 23.2)
+ *   - Ctrl+Alt+Enter: evaluate entire buffer on worker thread (Req 23.3)
  *
- * Requirements: 22.1–22.3, 22.5–22.7, 24.4
+ * Requirements: 22.1–22.3, 22.5–22.7, 23.1–23.7, 24.4
  */
 
 // Guard so MainWindow.cpp stub is replaced when this header is included.
@@ -197,6 +199,23 @@ public:
     void resized() override;
     void paint(juce::Graphics& g) override;
 
+    // -----------------------------------------------------------------------
+    // Key handler — routes Ctrl+Enter and Ctrl+Alt+Enter (Req 23.1–23.7)
+    // -----------------------------------------------------------------------
+    /**
+     * Handle a key press for the active editor.
+     *
+     * Called by the active HathorTab's CodeEditorComponent via a custom
+     * KeyListener installed at construction. This component intercepts
+     * Ctrl+Enter and Ctrl+Alt+Enter before JUCE's default editor handling.
+     *
+     * Returns true if the key was consumed (eval triggered or blank-line
+     * warning shown), false otherwise.
+     *
+     * Req 23.6: no other keystroke triggers pattern evaluation.
+     */
+    bool handleKeyPress(const juce::KeyPress& key, HathorTab* tab);
+
 private:
     // -----------------------------------------------------------------------
     // Internal helpers
@@ -222,6 +241,75 @@ private:
     void refreshTabBar();
 
     // -----------------------------------------------------------------------
+    // Eval helpers (Req 23.1–23.7)
+    // -----------------------------------------------------------------------
+
+    /**
+     * Extract the Eval_Block — maximal contiguous run of non-blank lines
+     * containing the cursor's line — and return it as a single string.
+     * Returns nullopt if the cursor is on a blank line (Req 23.2).
+     */
+    static std::optional<juce::String> extractEvalBlock(
+        const juce::CodeDocument& doc,
+        int cursorLine) noexcept;
+
+    /**
+     * Dispatch `set-pattern <slotName> <text>` on the worker thread.
+     * On completion, if ok==true clears the tab's unsaved dot and repaints
+     * the tab bar; if ok==false shows the error field in the status bar.
+     * (Req 23.4, 23.5, 23.7)
+     *
+     * @param tab      The source tab (must outlive the lambda — it is
+     *                 ref-counted via weak ownership check on JUCE message
+     *                 thread via callAsync).
+     * @param slotName AudioEngine slot name string (e.g. "d0").
+     * @param text     Mini-notation text to compile.
+     */
+    void evalOnWorkerThread(HathorTab* tab,
+                            const juce::String& slotName,
+                            const juce::String& text);
+
+    // -----------------------------------------------------------------------
+    // Per-tab KeyListener — bridges CodeEditorComponent key events into
+    // EditorArea::handleKeyPress (Req 23.1–23.7)
+    // -----------------------------------------------------------------------
+
+    /**
+     * TabKeyListener
+     *
+     * Installed on a HathorTab's CodeEditorComponent so that Ctrl+Enter /
+     * Ctrl+Alt+Enter are intercepted before the editor's built-in handling.
+     *
+     * Forwards only to EditorArea::handleKeyPress(); all other keys return
+     * false immediately (Req 23.6).
+     */
+    class TabKeyListener : public juce::KeyListener
+    {
+    public:
+        TabKeyListener(EditorArea& owner, HathorTab* tab)
+            : owner_(owner), tab_(tab) {}
+
+        bool keyPressed(const juce::KeyPress& key,
+                        juce::Component* /*source*/) override
+        {
+            return owner_.handleKeyPress(key, tab_);
+        }
+
+        bool keyStateChanged(bool /*isKeyDown*/,
+                             juce::Component* /*source*/) override
+        {
+            return false;
+        }
+
+    private:
+        EditorArea& owner_;
+        HathorTab*  tab_;
+    };
+
+    /// Install a TabKeyListener on a newly created tab's editor.
+    void installKeyListenerForTab(HathorTab& tab);
+
+    // -----------------------------------------------------------------------
     // Layout constants
     // -----------------------------------------------------------------------
     static constexpr int kStatusBarHeight = 22;
@@ -238,6 +326,9 @@ private:
     // -----------------------------------------------------------------------
     std::vector<std::unique_ptr<HathorTab>>  tabs_;
     int                                      activeIndex_{ -1 };
+
+    /// One key-listener per tab (parallel to tabs_); owns the listener objects.
+    std::vector<std::unique_ptr<TabKeyListener>> keyListeners_;
 
     // -----------------------------------------------------------------------
     // References (not owned)
