@@ -113,12 +113,6 @@ public:
 
     ~MainWindow() override;
 
-    // Non-copyable / non-movable.
-    MainWindow(const MainWindow&)            = delete;
-    MainWindow& operator=(const MainWindow&) = delete;
-    MainWindow(MainWindow&&)                 = delete;
-    MainWindow& operator=(MainWindow&&)      = delete;
-
     // -----------------------------------------------------------------------
     // juce::DocumentWindow overrides
     // -----------------------------------------------------------------------
@@ -139,7 +133,7 @@ private:
 
     /// Restore or compute the initial window bounds (Req 20.5).
     /// Falls back to centred 1024×768 if stored bounds are off-screen.
-    juce::Rectangle<int> resolveInitialBounds() const;
+    juce::Rectangle<int> resolveInitialBounds();
 
     /// Returns true if @p bounds is at least partially visible on a connected
     /// display — used to decide whether to use stored bounds (Req 20.5).

@@ -9,6 +9,10 @@
 
 #include "MainWindow.hpp"
 
+// juce_gui_extra is needed for juce::CodeEditorComponent colour IDs used in
+// HathorLookAndFeel (CodeEditorComponent lives in juce_gui_extra, not juce_gui_basics).
+#include <juce_gui_extra/juce_gui_extra.h>
+
 // ---------------------------------------------------------------------------
 // Real child component headers (include when available)
 // ---------------------------------------------------------------------------
@@ -454,10 +458,10 @@ juce::PropertiesFile::Options MainWindow::makePropertiesOptions()
 // resolveInitialBounds() (Req 20.5)
 // ---------------------------------------------------------------------------
 
-juce::Rectangle<int> MainWindow::resolveInitialBounds() const
+juce::Rectangle<int> MainWindow::resolveInitialBounds()
 {
     // Default: centred 1024×768.
-    auto defaultBounds = [this]() -> juce::Rectangle<int>
+    auto defaultBounds = []() -> juce::Rectangle<int>
     {
         return juce::Desktop::getInstance()
                    .getDisplays()
