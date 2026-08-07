@@ -19,6 +19,8 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <functional>
 
+#include "HathorLookAndFeel.hpp"
+
 namespace hathor::ui {
 
 /// Identifies which side panel (if any) is currently active.
@@ -68,11 +70,13 @@ public:
 
 private:
     //==========================================================================
-    // Colours
-    static constexpr juce::uint32 kBgColour     = 0xff252526u; ///< ribbon background
-    static constexpr juce::uint32 kAccentColour  = 0xff0078d4u; ///< VS Code blue
-    static constexpr juce::uint32 kTextColour    = 0xffccccccu; ///< inactive icon text
-    static constexpr juce::uint32 kSepColour     = 0xff3c3c3cu; ///< 1 px rule colour
+    // Colours — sourced from HathorLookAndFeel design tokens (single source
+    // of truth). No hardcoded values here.
+    //==========================================================================
+    static constexpr juce::uint32 kBgColour     = HathorLookAndFeel::Colours::background;
+    static constexpr juce::uint32 kAccentColour  = HathorLookAndFeel::Colours::accent;
+    static constexpr juce::uint32 kTextColour    = HathorLookAndFeel::Colours::textSecondary;
+    static constexpr juce::uint32 kSepColour     = HathorLookAndFeel::Colours::surfaceHighest;
 
     //==========================================================================
     // Button geometry constants

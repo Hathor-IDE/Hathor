@@ -44,6 +44,7 @@
 
 // UI
 #include "HathorTab.hpp"
+#include "HathorLookAndFeel.hpp"
 
 namespace hathor::ui {
 
@@ -109,15 +110,15 @@ private:
     std::vector<TabGeometry> geom_;
     int activeIndex_{ -1 };
 
-    // Colours
-    static constexpr juce::uint32 kBgColour      = 0xff252526u;
-    static constexpr juce::uint32 kActiveBg      = 0xff1e1e1eu;
-    static constexpr juce::uint32 kInactiveBg    = 0xff2d2d2du;
-    static constexpr juce::uint32 kTextColour    = 0xffd4d4d4u;
-    static constexpr juce::uint32 kActiveText    = 0xffffffffu;
-    static constexpr juce::uint32 kDotColour     = 0xffe8a835u; ///< amber unsaved dot
-    static constexpr juce::uint32 kCloseColour   = 0xff858585u;
-    static constexpr juce::uint32 kSepColour     = 0xff3c3c3cu;
+    // Colours — sourced from HathorLookAndFeel design tokens
+    static constexpr juce::uint32 kBgColour      = HathorLookAndFeel::Colours::background;
+    static constexpr juce::uint32 kActiveBg      = HathorLookAndFeel::Colours::surface;
+    static constexpr juce::uint32 kInactiveBg    = HathorLookAndFeel::Colours::background;
+    static constexpr juce::uint32 kTextColour    = HathorLookAndFeel::Colours::textSecondary;
+    static constexpr juce::uint32 kActiveText    = HathorLookAndFeel::Colours::textPrimary;
+    static constexpr juce::uint32 kDotColour     = HathorLookAndFeel::Colours::warning; ///< amber unsaved dot
+    static constexpr juce::uint32 kCloseColour   = HathorLookAndFeel::Colours::textSecondary;
+    static constexpr juce::uint32 kSepColour     = HathorLookAndFeel::Colours::surfaceHighest;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(TabBarComponent)
 };

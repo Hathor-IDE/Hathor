@@ -21,6 +21,8 @@
 #include <functional>
 #include <vector>
 
+#include "HathorLookAndFeel.hpp"
+
 namespace hathor::ui {
 
 /**
@@ -62,13 +64,15 @@ public:
 
 private:
     //==========================================================================
-    // Colours
-    static constexpr juce::uint32 kBgColour       = 0xff1e1e1eu; ///< dark bg
-    static constexpr juce::uint32 kHeaderBgColour  = 0xff252526u; ///< slightly lighter header
-    static constexpr juce::uint32 kHeaderTextColour = 0xffccccccu; ///< header label
-    static constexpr juce::uint32 kItemTextColour   = 0xffd4d4d4u; ///< file name text
-    static constexpr juce::uint32 kSelBgColour      = 0xff094771u; ///< selected row bg (VS Code blue-dark)
-    static constexpr juce::uint32 kSelTextColour    = 0xffffffffu; ///< selected row text
+    // Colours — sourced from HathorLookAndFeel design tokens (single source
+    // of truth).
+    //==========================================================================
+    static constexpr juce::uint32 kBgColour       = HathorLookAndFeel::Colours::background;
+    static constexpr juce::uint32 kHeaderBgColour = HathorLookAndFeel::Colours::surfaceLow;
+    static constexpr juce::uint32 kHeaderTextColour = HathorLookAndFeel::Colours::textSecondary;
+    static constexpr juce::uint32 kItemTextColour   = HathorLookAndFeel::Colours::textPrimary;
+    static constexpr juce::uint32 kSelBgColour      = HathorLookAndFeel::Colours::surfaceLow;
+    static constexpr juce::uint32 kSelTextColour    = HathorLookAndFeel::Colours::textPrimary;
 
     //==========================================================================
     // Layout

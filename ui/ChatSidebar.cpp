@@ -22,6 +22,7 @@
  */
 
 #include "ChatSidebar.hpp"
+#include "HathorLookAndFeel.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -30,20 +31,20 @@
 namespace hathor::ui {
 
 // ===========================================================================
-// Colour constants (consistent with HathorLookAndFeel in MainWindow.cpp)
+// Colour constants — sourced from HathorLookAndFeel design tokens
 // ===========================================================================
 
 namespace colours {
-    static constexpr juce::uint32 kBackground  = 0xff1e1e1e;
-    static constexpr juce::uint32 kSurface     = 0xff252526;
-    static constexpr juce::uint32 kText        = 0xffd4d4d4;
-    static constexpr juce::uint32 kAccent      = 0xff569cd6;
-    static constexpr juce::uint32 kError       = 0xffcd3131;
-    static constexpr juce::uint32 kWarning     = 0xffe0a020;
-    static constexpr juce::uint32 kUserBubble  = 0xff2a3040;
-    static constexpr juce::uint32 kAgentBubble = 0xff252526;
-    static constexpr juce::uint32 kBorder      = 0xff3c3c3c;
-    static constexpr juce::uint32 kReconnect   = 0xff5a3020;
+    static constexpr juce::uint32 kBackground  = HathorLookAndFeel::Colours::background;
+    static constexpr juce::uint32 kSurface     = HathorLookAndFeel::Colours::surfaceContainer;
+    static constexpr juce::uint32 kText        = HathorLookAndFeel::Colours::textPrimary;
+    static constexpr juce::uint32 kAccent      = HathorLookAndFeel::Colours::accent;
+    static constexpr juce::uint32 kError       = HathorLookAndFeel::Colours::error;
+    static constexpr juce::uint32 kWarning     = HathorLookAndFeel::Colours::warning;
+    static constexpr juce::uint32 kUserBubble  = HathorLookAndFeel::Colours::surfaceContainer;
+    static constexpr juce::uint32 kAgentBubble = HathorLookAndFeel::Colours::surfaceContainer;
+    static constexpr juce::uint32 kBorder      = HathorLookAndFeel::Colours::surfaceHighest;
+    static constexpr juce::uint32 kReconnect   = 0xff5a3020; // distinct from palette (error state)
 }
 
 // ===========================================================================
@@ -95,8 +96,7 @@ void AsciiArtHeader::paint(juce::Graphics& g)
     const juce::Colour dimText = juce::Colour(colours::kText).withAlpha(0.35f);
 
     // Monospaced font, small.
-    const juce::Font font(juce::FontOptions(juce::Font::getDefaultMonospacedFontName(),
-                                            11.0f, juce::Font::plain));
+    const juce::Font font = HathorLookAndFeel::fontRegular(11.0f);
     g.setFont(font);
 
     // Approximate character cell width/height.
@@ -161,7 +161,7 @@ MessageBubble::MessageBubble(const juce::String& text, Role role)
     label_.setReadOnly(true);
     label_.setScrollbarsShown(false);
     label_.setCaretVisible(false);
-    label_.setFont(juce::Font(juce::FontOptions{}.withHeight(13.0f)));
+    label_.setFont(HathorLookAndFeel::fontRegular(13.0f));
     label_.setColour(juce::TextEditor::backgroundColourId,
                      juce::Colour(0));
     label_.setColour(juce::TextEditor::outlineColourId,
@@ -193,7 +193,7 @@ int MessageBubble::preferredHeight(int width) const
 
     // Use a temporary AttributedString to measure line wrapping.
     juce::AttributedString as;
-    as.append(label_.getText(), juce::Font(juce::FontOptions{}.withHeight(13.0f)), juce::Colour(colours::kText));
+    as.append(label_.getText(), HathorLookAndFeel::fontRegular(13.0f), juce::Colour(colours::kText));
     as.setWordWrap(juce::AttributedString::byWord);
     as.setJustification(juce::Justification::topLeft);
 
@@ -294,11 +294,11 @@ ChatSidebar::ChatSidebar(AudioEngine& /*audio*/,
     // Status label (hidden by default)
     // -----------------------------------------------------------------------
     addChildComponent(statusLabel_);
-    statusLabel_.setFont(juce::Font(juce::FontOptions{}.withHeight(12.0f)));
+    statusLabel_.setFont(HathorLookAndFeel::fontMedium(HathorLookAndFeel::Typography::labelMd));
     statusLabel_.setColour(juce::Label::backgroundColourId,
                            juce::Colour(colours::kError).withAlpha(0.2f));
     statusLabel_.setColour(juce::Label::textColourId,
-                           juce::Colour(colours::kError));
+                           juce::Colour(colours::kText)); // use textPrimary for WCAG AA contrast on the red-tinted bg
     statusLabel_.setJustificationType(juce::Justification::centredLeft);
     statusLabel_.setBorderSize(juce::BorderSize<int>(0, 6, 0, 6));
 
@@ -351,7 +351,7 @@ ChatSidebar::ChatSidebar(AudioEngine& /*audio*/,
     inputField_.setMultiLine(false);
     inputField_.setReturnKeyStartsNewLine(false);
     inputField_.setScrollbarsShown(false);
-    inputField_.setFont(juce::Font(juce::FontOptions{}.withHeight(13.0f)));
+    inputField_.setFont(HathorLookAndFeel::fontRegular(13.0f));
     inputField_.setColour(juce::TextEditor::backgroundColourId,
                            juce::Colour(colours::kSurface));
     inputField_.setColour(juce::TextEditor::textColourId,

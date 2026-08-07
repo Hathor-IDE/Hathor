@@ -17,6 +17,7 @@
 #include <juce_gui_extra/juce_gui_extra.h>
 
 #include "MiniNotationTokeniser.hpp"
+#include "HathorLookAndFeel.hpp"
 
 #include <optional>
 #include <functional>

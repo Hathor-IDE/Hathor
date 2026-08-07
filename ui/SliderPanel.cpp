@@ -8,6 +8,7 @@
  */
 
 #include "SliderPanel.hpp"
+#include "HathorLookAndFeel.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -43,8 +44,10 @@ void SliderPanel::setupBpmSlider()
     // BPM label (Req 26.1)
     // -----------------------------------------------------------------------
     bpmLabel_.setText("BPM", juce::dontSendNotification);
-    bpmLabel_.setFont(juce::Font(juce::FontOptions{}.withHeight(11.0f)));
-    bpmLabel_.setColour(juce::Label::textColourId, juce::Colour(0xffd4d4d4));
+    bpmLabel_.setFont(HathorLookAndFeel::fontMedium(
+        HathorLookAndFeel::Typography::labelMd));
+    bpmLabel_.setColour(juce::Label::textColourId,
+                        juce::Colour(HathorLookAndFeel::Colours::textSecondary));
     bpmLabel_.setJustificationType(juce::Justification::centredLeft);
 
     // -----------------------------------------------------------------------
@@ -89,8 +92,10 @@ void SliderPanel::setupGainSlider()
     // Gain label (Req 26.1)
     // -----------------------------------------------------------------------
     gainLabel_.setText("Gain", juce::dontSendNotification);
-    gainLabel_.setFont(juce::Font(juce::FontOptions{}.withHeight(11.0f)));
-    gainLabel_.setColour(juce::Label::textColourId, juce::Colour(0xffd4d4d4));
+    gainLabel_.setFont(HathorLookAndFeel::fontMedium(
+        HathorLookAndFeel::Typography::labelMd));
+    gainLabel_.setColour(juce::Label::textColourId,
+                         juce::Colour(HathorLookAndFeel::Colours::textSecondary));
     gainLabel_.setJustificationType(juce::Justification::centredLeft);
 
     // -----------------------------------------------------------------------
@@ -185,8 +190,8 @@ void SliderPanel::resized()
 
 void SliderPanel::paint(juce::Graphics& g)
 {
-    // Dark surface background — matches ChatSidebar's bottom zone.
-    g.fillAll(juce::Colour(0xff252526));
+    // Dark surface background matching ChatSidebar's bottom zone.
+    g.fillAll(juce::Colour(HathorLookAndFeel::Colours::surfaceLow));
 }
 
 } // namespace hathor::ui

@@ -18,16 +18,16 @@ namespace hathor::ui {
 ExplorerPanel::ExplorerPanel()
     : listBox_("Explorer", this)
 {
-    // Header label
+    // Header label — label-md: 11px, Medium 500, letter-spacing 0.05em (mockup)
     headerLabel_.setText("EXPLORER", juce::dontSendNotification);
-    headerLabel_.setFont(juce::Font(juce::FontOptions{}.withHeight(11.0f).withStyle("Bold")));
+    headerLabel_.setFont(HathorLookAndFeel::fontMedium(11.0f));
     headerLabel_.setColour(juce::Label::textColourId, juce::Colour(kHeaderTextColour));
     headerLabel_.setJustificationType(juce::Justification::centredLeft);
     addAndMakeVisible(headerLabel_);
 
     // List box
     listBox_.setColour(juce::ListBox::backgroundColourId, juce::Colour(kBgColour));
-    listBox_.setColour(juce::ListBox::outlineColourId, juce::Colour(0x00000000u)); // no border
+    listBox_.setColour(juce::ListBox::outlineColourId, juce::Colours::transparentBlack); // no border
     listBox_.setRowHeight(kRowHeight);
     listBox_.setOutlineThickness(0);
     addAndMakeVisible(listBox_);
@@ -97,7 +97,7 @@ void ExplorerPanel::paint(juce::Graphics& g)
     // Background
     g.fillAll(juce::Colour(kBgColour));
 
-    // Header background — slightly lighter than panel bg
+    // Header background — slightly lighter than panel bg (surface-container-low)
     g.setColour(juce::Colour(kHeaderBgColour));
     g.fillRect(0, 0, getWidth(), kHeaderHeight);
 }
@@ -131,7 +131,7 @@ void ExplorerPanel::paintListBoxItem(int rowNumber, juce::Graphics& g,
         : juce::Colour(kItemTextColour);
 
     g.setColour(textCol);
-    g.setFont(juce::Font(juce::FontOptions{}.withHeight(13.0f)));
+    g.setFont(HathorLookAndFeel::fontRegular(13.0f));
     g.drawText(name,
                juce::Rectangle<int>(8, 0, width - 8, height),
                juce::Justification::centredLeft,

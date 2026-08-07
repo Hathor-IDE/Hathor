@@ -34,6 +34,7 @@ target_sources(hathor-ui
     PRIVATE
         HathorApplication.cpp
         MainWindow.cpp
+        HathorLookAndFeel.cpp
         ActivityRibbon.cpp
         ExplorerPanel.cpp
         HathorFileParser.cpp
@@ -65,10 +66,22 @@ target_compile_features(hathor-ui PRIVATE cxx_std_20)
 
 target_compile_options(hathor-ui PRIVATE -Wall -Wextra -Werror)
 
+# ---------------------------------------------------------------------------
+# Embedded font resources (Req 5) — JetBrains Mono, 4 weights
+# ---------------------------------------------------------------------------
+juce_add_binary_data(hathor_font_data
+    SOURCES
+        ${CMAKE_CURRENT_SOURCE_DIR}/resources/JetBrainsMono-Regular.ttf
+        ${CMAKE_CURRENT_SOURCE_DIR}/resources/JetBrainsMono-Medium.ttf
+        ${CMAKE_CURRENT_SOURCE_DIR}/resources/JetBrainsMono-SemiBold.ttf
+        ${CMAKE_CURRENT_SOURCE_DIR}/resources/JetBrainsMono-Bold.ttf
+)
+
 target_link_libraries(hathor-ui
     PRIVATE
         hathor-engine
         hathor-control
+        hathor_font_data
         juce::juce_gui_basics
         juce::juce_gui_extra
         juce::juce_audio_devices

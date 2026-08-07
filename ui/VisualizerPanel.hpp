@@ -36,6 +36,9 @@
 #include "../engine/include/hathor/Event.hpp"
 #include "../engine/include/hathor/ParamMap.hpp"
 
+// Design system
+#include "HathorLookAndFeel.hpp"
+
 // Forward-declare AudioEngine — VisualizerPanel only accepts it as a constructor
 // parameter for API uniformity; it MUST NOT store or dereference the reference
 // (Req 29.2).  The full header is only needed in the .cpp.
@@ -124,13 +127,13 @@ private:
                        float phase) const;
 
     // -----------------------------------------------------------------------
-    // Colours
+    // Colours — sourced from HathorLookAndFeel design tokens
     // -----------------------------------------------------------------------
-    static constexpr juce::uint32 kBgColour      = 0xff1a1a1a;  ///< slightly lighter than main bg
-    static constexpr juce::uint32 kAccentColour   = 0xff569cd6;  ///< blue pulse / waveform
-    static constexpr juce::uint32 kGridDimColour  = 0xff2a2a2a;  ///< dim cell background
-    static constexpr juce::uint32 kGridFlashColour= 0xffffffff;  ///< cell flash white
-    static constexpr juce::uint32 kIdleRingColour = 0xff3a3a3a;  ///< dim idle ring
+    static constexpr juce::uint32 kBgColour      = HathorLookAndFeel::Colours::surface;
+    static constexpr juce::uint32 kAccentColour   = HathorLookAndFeel::Colours::accent;
+    static constexpr juce::uint32 kGridDimColour  = HathorLookAndFeel::Colours::surfaceHigh;
+    static constexpr juce::uint32 kGridFlashColour= HathorLookAndFeel::Colours::accent;
+    static constexpr juce::uint32 kIdleRingColour = HathorLookAndFeel::Colours::surfaceHighest;
 
     // -----------------------------------------------------------------------
     // Step grid dimensions

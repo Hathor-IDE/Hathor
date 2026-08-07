@@ -8,6 +8,7 @@
  */
 
 #include "ActivityRibbon.hpp"
+#include "HathorLookAndFeel.hpp"
 
 namespace hathor::ui {
 
@@ -63,7 +64,7 @@ void ActivityRibbon::resized()
 
 void ActivityRibbon::paint(juce::Graphics& g)
 {
-    // Background
+    // Background — deepest surface level (surface-container-lowest)
     g.fillAll(juce::Colour(kBgColour));
 
     // Navigation buttons
@@ -82,10 +83,10 @@ void ActivityRibbon::paintButton(juce::Graphics& g, const RibbonButton& btn) con
 {
     const bool isActive = (btn.panel != Panel::None) && (btn.panel == activePanel_);
 
-    // Accent highlight pill for active button
+    // Accent highlight bar for active button
     if (isActive)
     {
-        // Draw a 3 px left-edge accent bar (VS Code style)
+        // 3 px left-edge accent bar (VS Code style, green accent from mockup)
         g.setColour(juce::Colour(kAccentColour));
         g.fillRect(juce::Rectangle<int>(0, btn.bounds.getY(), 3, kButtonSize));
 
@@ -100,7 +101,7 @@ void ActivityRibbon::paintButton(juce::Graphics& g, const RibbonButton& btn) con
         : juce::Colour(kTextColour);
 
     g.setColour(textCol);
-    g.setFont(juce::Font(juce::FontOptions{}.withHeight(14.0f).withStyle("Bold")));
+    g.setFont(HathorLookAndFeel::fontBold(14.0f));
     g.drawText(btn.label, btn.bounds, juce::Justification::centred, false);
 }
 

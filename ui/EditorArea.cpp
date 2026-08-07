@@ -101,7 +101,7 @@ void TabBarComponent::paint(juce::Graphics& g)
         // Bottom border for inactive, top accent line for active
         if (isActive)
         {
-            g.setColour(juce::Colour(0xff569cd6)); // accent blue top line
+            g.setColour(juce::Colour(HathorLookAndFeel::Colours::accent)); // accent green top line
             g.fillRect(tg.bounds.getX(), tg.bounds.getY(),
                        tg.bounds.getWidth(), 2);
         }
@@ -131,13 +131,13 @@ void TabBarComponent::paint(juce::Graphics& g)
                                              labelRight - labelLeft,
                                              tg.bounds.getHeight());
         g.setColour(juce::Colour(isActive ? kActiveText : kTextColour));
-        g.setFont(juce::Font(juce::FontOptions{}.withHeight(12.0f)));
+        g.setFont(HathorLookAndFeel::fontMedium(12.0f));
         g.drawText(tg.label, labelRect,
                    juce::Justification::centredLeft, true);
 
         // Close button (×)
         g.setColour(juce::Colour(kCloseColour));
-        g.setFont(juce::Font(juce::FontOptions{}.withHeight(11.0f)));
+        g.setFont(HathorLookAndFeel::fontMedium(11.0f));
         g.drawText(juce::CharPointer_UTF8("\xC3\x97"), // × U+00D7
                    tg.closeBtnBounds,
                    juce::Justification::centred, false);
@@ -203,10 +203,10 @@ EditorArea::EditorArea(AudioEngine& audio,
     : audio_(audio)
     , ci_(ci)
 {
-    // Status bar styling
-    statusBar_.setFont(juce::Font(juce::FontOptions{}.withHeight(12.0f)));
-    statusBar_.setColour(juce::Label::backgroundColourId, juce::Colour(0xff252526));
-    statusBar_.setColour(juce::Label::textColourId,       juce::Colour(0xffd4d4d4));
+    // Status bar styling — label-md: 11px, Medium 500 (mockup)
+    statusBar_.setFont(HathorLookAndFeel::fontMedium(HathorLookAndFeel::Typography::labelMd));
+    statusBar_.setColour(juce::Label::backgroundColourId, juce::Colour(HathorLookAndFeel::Colours::surfaceLow));
+    statusBar_.setColour(juce::Label::textColourId,       juce::Colour(HathorLookAndFeel::Colours::textSecondary));
     statusBar_.setJustificationType(juce::Justification::centredLeft);
 
     // Tab bar callbacks
@@ -435,7 +435,7 @@ void EditorArea::resized()
 
 void EditorArea::paint(juce::Graphics& g)
 {
-    g.fillAll(juce::Colour(0xff1e1e1e));
+    g.fillAll(juce::Colour(HathorLookAndFeel::Colours::surface));
 }
 
 // ---------------------------------------------------------------------------

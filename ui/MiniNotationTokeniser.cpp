@@ -206,16 +206,19 @@ int MiniNotationTokeniser::readNextToken(juce::CodeDocument::Iterator& iterator)
 
 juce::CodeEditorComponent::ColourScheme MiniNotationTokeniser::getDefaultColourScheme()
 {
-    // 7 named token types matching the colour index mapping in Req 27.3
+    // Syntax colour scheme — VS Code Dark+ theme colors (matching the Stitch
+    // mockup's code example inline styles). These are code syntax colors,
+    // not UI design tokens — they must remain consistent with the code
+    // highlighting shown in the mockup.
     static const struct { const char* name; juce::uint32 colour; } entries[] =
     {
-        { "Atom",         0xffd4d4d4 }, // 0 — light grey (default text)
-        { "Integer",      0xffb5cea8 }, // 1 — soft green
-        { "Rest/Tilde",   0xff569cd6 }, // 2 — blue
-        { "Bracket",      0xffffd700 }, // 3 — gold
-        { "Operator",     0xffc586c0 }, // 4 — purple
-        { "Paren/Comma",  0xff9cdcfe }, // 5 — light blue
-        { "Error",        0xfff44747 }, // 6 — red
+        { "Atom",         0xffd4d4d4 }, // 0 — light grey (default text, code)
+        { "Integer",      0xffb5cea8 }, // 1 — soft green (literal values)
+        { "Rest/Tilde",   0xff569cd6 }, // 2 — blue (rest operators)
+        { "Bracket",      0xffffd700 }, // 3 — gold (angle brackets, brackets)
+        { "Operator",     0xffc586c0 }, // 4 — purple (star, slash, bang)
+        { "Paren/Comma",  0xff9cdcfe }, // 5 — light blue (parens, commas)
+        { "Error",        0xfff44747 }, // 6 — red (syntax errors)
     };
 
     juce::CodeEditorComponent::ColourScheme scheme;

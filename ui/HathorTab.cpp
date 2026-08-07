@@ -8,6 +8,7 @@
  */
 
 #include "HathorTab.hpp"
+#include "HathorLookAndFeel.hpp"
 
 namespace hathor::ui {
 
@@ -20,28 +21,26 @@ HathorTab::HathorTab(int slotIndex)
     , editor_(document_, &tokeniser_) // MiniNotationTokeniser wired in task 3.5
 {
     // -----------------------------------------------------------------------
-    // Editor font: monospaced, ≥ 12 pt (Req 22.1)
+    // Editor font: JetBrains Mono, 13 pt (code-default from mockup, Req 22.1)
     // -----------------------------------------------------------------------
-    editor_.setFont(juce::Font(juce::FontOptions{}
-                                   .withName(juce::Font::getDefaultMonospacedFontName())
-                                   .withHeight(13.0f)));
+    editor_.setFont(HathorLookAndFeel::fontRegular(
+        HathorLookAndFeel::Typography::codeDefault));
 
     // -----------------------------------------------------------------------
-    // Dark background colours (Req 22.1, 20.2)
-    // Background (0xff1e1e1e) and text (0xffd4d4d4) are set via the global
-    // HathorLookAndFeel; the local overrides here ensure correctness even if
-    // this component is used outside of MainWindow's look-and-feel scope.
+    // Dark background colours (Req 22.1, 20.2) — sourced from design tokens.
+    // These local overrides ensure correctness even if this component is
+    // used outside of MainWindow's look-and-feel scope.
     // -----------------------------------------------------------------------
     editor_.setColour(juce::CodeEditorComponent::backgroundColourId,
-                      juce::Colour(0xff1e1e1e));
+                      juce::Colour(HathorLookAndFeel::Colours::surface));
     editor_.setColour(juce::CodeEditorComponent::defaultTextColourId,
-                      juce::Colour(0xffd4d4d4));
+                      juce::Colour(HathorLookAndFeel::Colours::codeText));
     editor_.setColour(juce::CodeEditorComponent::highlightColourId,
-                      juce::Colour(0xff569cd6).withAlpha(0.3f));
+                      juce::Colour(HathorLookAndFeel::Colours::accent).withAlpha(0.3f));
     editor_.setColour(juce::CodeEditorComponent::lineNumberBackgroundId,
-                      juce::Colour(0xff252526));
+                      juce::Colour(HathorLookAndFeel::Colours::surfaceLow));
     editor_.setColour(juce::CodeEditorComponent::lineNumberTextId,
-                      juce::Colour(0xff858585));
+                      juce::Colour(HathorLookAndFeel::Colours::codeLineNum));
 
     // -----------------------------------------------------------------------
     // Register as a CodeDocument listener so we can detect edits (Req 22.5)

@@ -11,6 +11,7 @@
  */
 
 #include "PermissionPromptComponent.hpp"
+#include "HathorLookAndFeel.hpp"
 
 namespace hathor::ui {
 
@@ -29,7 +30,7 @@ PermissionPromptComponent::PermissionPromptComponent(int requestId,
     // Prompt label
     // -----------------------------------------------------------------------
     promptLabel_.setText("Agent is requesting permission:", juce::dontSendNotification);
-    promptLabel_.setColour(juce::Label::textColourId, juce::Colours::white);
+    promptLabel_.setColour(juce::Label::textColourId, juce::Colour(HathorLookAndFeel::Colours::textPrimary));
     promptLabel_.setJustificationType(juce::Justification::centredLeft);
     addAndMakeVisible(promptLabel_);
 
@@ -38,7 +39,7 @@ PermissionPromptComponent::PermissionPromptComponent(int requestId,
     // -----------------------------------------------------------------------
     countdownLabel_.setText(juce::String(secondsLeft_) + "s",
                             juce::dontSendNotification);
-    countdownLabel_.setColour(juce::Label::textColourId, juce::Colour(0xffaaaaaa));
+    countdownLabel_.setColour(juce::Label::textColourId, juce::Colour(HathorLookAndFeel::Colours::textSecondary));
     countdownLabel_.setJustificationType(juce::Justification::centredRight);
     addAndMakeVisible(countdownLabel_);
 
@@ -134,11 +135,11 @@ void PermissionPromptComponent::paint(juce::Graphics& g)
 {
     // Slightly lighter background rectangle to visually distinguish the prompt
     // from normal chat bubbles.
-    g.setColour(juce::Colour(0xff2a2a3a));
+    g.setColour(juce::Colour(HathorLookAndFeel::Colours::surfaceHigh));
     g.fillRoundedRectangle(getLocalBounds().toFloat(), 6.f);
 
     // Subtle border.
-    g.setColour(juce::Colour(0xff444466));
+    g.setColour(juce::Colour(HathorLookAndFeel::Colours::surfaceHighest));
     g.drawRoundedRectangle(getLocalBounds().toFloat().reduced(0.5f), 6.f, 1.f);
 }
 

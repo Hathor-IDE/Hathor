@@ -16,8 +16,8 @@
  *   └────────────────────────────────────────────────────────────┘
  *
  * Dark theme enforced by HathorLookAndFeel (Req 20.2):
- *   - Background luminance ≤ 15% of white  (0xff1e1e1e ≈ 7%)
- *   - All text contrast ratio ≥ 4.5:1 WCAG AA (0xffd4d4d4 on 0xff1e1e1e ≈ 9.6:1)
+ *   - Background luminance ≤ 15% of white  (#0e0e0e ≈ 0.2%)
+ *   - All text contrast ratio ≥ 4.5:1 WCAG AA (#e5e2e1 on #0e0e0e ≈ 12.6:1)
  *
  * Window management (Req 20.5):
  *   - Minimum size 1024×768 (setResizeLimits)
@@ -37,6 +37,9 @@
 
 // Control
 #include "../control/ControlInterface.hpp"
+
+// Design system — single source of truth for colours, fonts, spacing (Req 20.2, 5)
+#include "HathorLookAndFeel.hpp"
 
 // ---------------------------------------------------------------------------
 // Child component headers that already exist (implemented in other tasks).
@@ -63,41 +66,6 @@ class VisualizerPanel;
 class UITimer;
 
 } // namespace hathor::ui
-
-// ---------------------------------------------------------------------------
-// HathorLookAndFeel — dark theme (Req 20.2, 20.4)
-//
-// Background: 0xff1e1e1e  (relative luminance ≈ 1.4% — well under 15%)
-// Text:       0xffd4d4d4  (contrast ratio vs. background ≈ 9.6:1 — WCAG AA ✓)
-//
-// WCAG relative-luminance formula (IEC 61966-2-1 sRGB):
-//   L = 0.2126·R + 0.7152·G + 0.0722·B  (values linearised)
-//   Background: R=G=B=0x1e/255=0.118  → linearised ≈ 0.013 → L ≈ 0.013
-//   "15% of white" means L ≤ 0.15  ✓
-//   Text 0xffd4d4d4: R=G=B=0xd4/255=0.831 → L ≈ 0.655
-//   Contrast = (0.655+0.05)/(0.013+0.05) ≈ 11.2:1 ≥ 4.5:1 ✓
-// ---------------------------------------------------------------------------
-
-class HathorLookAndFeel : public juce::LookAndFeel_V4
-{
-public:
-    /// Background colour for all panels — luminance ≈ 1.4% (Req 20.2).
-    static constexpr juce::uint32 kColourBackground = 0xff1e1e1e;
-
-    /// Primary text colour — contrast ratio ≈ 11:1 on kColourBackground (Req 20.2).
-    static constexpr juce::uint32 kColourText       = 0xffd4d4d4;
-
-    /// Slightly lighter surface for panels (e.g. sidebar, ribbon).
-    static constexpr juce::uint32 kColourSurface    = 0xff252526;
-
-    /// Accent colour used for highlighted/active elements.
-    static constexpr juce::uint32 kColourAccent     = 0xff569cd6;
-
-    HathorLookAndFeel();
-
-private:
-    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(HathorLookAndFeel)
-};
 
 // ---------------------------------------------------------------------------
 // MainWindow
