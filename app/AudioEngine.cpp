@@ -33,6 +33,7 @@ AudioEngine::~AudioEngine()
     // Shut down the device before releasing resources.
     deviceManager_.removeAudioCallback(this);
     deviceManager_.closeAudioDevice();
+    closeCapture();
 }
 
 // ---------------------------------------------------------------------------
@@ -75,6 +76,58 @@ std::string AudioEngine::initialise()
     }
 
     return {}; // success
+}
+
+// ---------------------------------------------------------------------------
+// File capture (Req 20.1/20.2 automated regression path)
+// ---------------------------------------------------------------------------
+
+std::string AudioEngine::openCapture(const std::string& path)
+{
+    const int rate = sampleRate_.load(std::memory_order_relaxed);
+    if (rate <= 0)
+        return "openCapture called before sample rate is known (call after initialise())";
+
+    juce::File outFile(path);
+    outFile.getParentDirectory().createDirectory();
+
+    auto stream = std::make_unique<juce::FileOutputStream>(outFile);
+    if (stream->failedToOpen())
+        return std::string("Could not open capture file: ") + path;
+
+    // Overwrite any existing file.
+    stream->setPosition(0);
+    stream->truncate();
+
+    // Create a stereo 16-bit PCM WAV writer at the actual device rate.
+    // Use WavAudioFormat directly — no AudioFormatManager needed.
+    juce::WavAudioFormat wavFormat;
+    auto* writer = wavFormat.createWriterFor(
+        stream.get(),
+        static_cast<double>(rate),
+        /*numChannels=*/    2,
+        /*bitsPerSample=*/  16,
+        /*metadataValues=*/ {},
+        /*qualityOption=*/  0
+    );
+    if (!writer) {
+        return std::string("WavAudioFormat::createWriterFor failed for: ") + path;
+    }
+
+    // writer takes ownership of the stream; release our unique_ptr.
+    (void)stream.release();
+    captureWriter_.reset(writer);
+    captureOpen_.store(true, std::memory_order_release);
+
+    std::fprintf(stderr, "[AudioEngine] Capturing audio to: %s\n", path.c_str());
+    std::fflush(stderr);
+    return {};
+}
+
+void AudioEngine::closeCapture()
+{
+    captureOpen_.store(false, std::memory_order_release);
+    captureWriter_.reset();   // flushes and closes the WAV file
 }
 
 // ---------------------------------------------------------------------------
@@ -321,6 +374,16 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
     // ------------------------------------------------------------------
     if (left && right) {
         voicePool_.mix(left, right, numSamples);
+    }
+
+    // ------------------------------------------------------------------
+    // Step 4b: Capture mixed output to WAV file if capture is open.
+    // ------------------------------------------------------------------
+    if (captureOpen_.load(std::memory_order_acquire) && captureWriter_ && left && right) {
+        // AudioFormatWriter::writeFromFloatArrays expects a non-owning array of
+        // const float* channel pointers.
+        const float* channels[2] = { left, right };
+        captureWriter_->writeFromFloatArrays(channels, 2, numSamples);
     }
 
     // ------------------------------------------------------------------

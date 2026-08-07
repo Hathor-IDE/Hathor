@@ -11,6 +11,7 @@
 
 // JUCE
 #include <juce_audio_devices/juce_audio_devices.h>
+#include <juce_audio_formats/juce_audio_formats.h>
 
 // Engine
 #include "hathor/Event.hpp"
@@ -136,6 +137,20 @@ public:
                                          int                                numSamples,
                                          const juce::AudioIODeviceCallbackContext& context) override;
 
+    // ------------------------------------------------------------------
+    // File capture (--capture-to-file <path>.wav)
+    // ------------------------------------------------------------------
+
+    /// Open a WAV file for capturing audio output.
+    /// Must be called BEFORE initialise() so the device rate is known, or after
+    /// initialise() with the actual sample rate. Returns an error string on failure.
+    /// Once open, every mixed buffer is written to the file in addition to
+    /// the live device output.
+    [[nodiscard]] std::string openCapture(const std::string& path);
+
+    /// Flush and close the capture file. Called from main thread on shutdown.
+    void closeCapture();
+
 private:
     // ------------------------------------------------------------------
     // Subsystem references
@@ -175,4 +190,13 @@ private:
     // JUCE device manager
     // ------------------------------------------------------------------
     juce::AudioDeviceManager deviceManager_;
+
+    // ------------------------------------------------------------------
+    // File capture (optional, --capture-to-file)
+    // ------------------------------------------------------------------
+    // Opened/closed on the main thread (before device starts / after device stops).
+    // Written from the audio thread after the mix step.
+    // No locking needed: lifecycle is strictly main-thread-controlled.
+    std::unique_ptr<juce::AudioFormatWriter> captureWriter_;
+    std::atomic<bool>                        captureOpen_{false};
 };

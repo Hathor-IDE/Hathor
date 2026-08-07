@@ -49,11 +49,26 @@ macro(add_integration_test test_name script_name)
 endmacro()
 
 # ---------------------------------------------------------------------------
-# Individual test registrations (15.1, 15.2, 15.3)
+# Individual test registrations (15.1, 15.2, 15.3, 20.1/20.2)
 # ---------------------------------------------------------------------------
 add_integration_test(latency  test_latency.sh)
 add_integration_test(startup  test_startup.sh)
 add_integration_test(protocol test_protocol.sh)
+
+# Audio quality tests (Req 20.1 / 20.2) — use synthetic sample bank so they
+# are self-contained and CI-safe.  Pass an empty SAMPLES_PATH so the script
+# generates its own synthetic bank.
+add_test(
+    NAME    "integration/audio"
+    COMMAND bash
+            "${CMAKE_CURRENT_SOURCE_DIR}/test_audio.sh"
+            "$<TARGET_FILE:hathor>"
+            # No samples arg — script generates synthetic sine-tone bank
+)
+set_tests_properties("integration/audio" PROPERTIES
+    TIMEOUT 120
+    LABELS  "integration"
+)
 
 # ---------------------------------------------------------------------------
 # Convenience target: run all three via the run_all.sh wrapper

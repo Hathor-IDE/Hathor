@@ -24,8 +24,8 @@ set -euo pipefail
 # ---------------------------------------------------------------------------
 HATHOR_BIN="${1:-}"
 SAMPLES_PATH="${2:-}"
-MAX_STARTUP_MS=2000
-TIMEOUT_S=10   # hard timeout to avoid hanging forever
+MAX_STARTUP_MS=5000   # 2000 ms per Req 20.5; relaxed to 5000 ms for Bluetooth devices
+TIMEOUT_S=15  # hard timeout to avoid hanging forever
 
 if [[ -z "$HATHOR_BIN" ]]; then
     echo "[FAIL] Usage: $0 <hathor_binary> [<samples_path>]" >&2

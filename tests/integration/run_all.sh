@@ -50,7 +50,7 @@ fi
 # ---------------------------------------------------------------------------
 # List of test scripts (in order)
 # ---------------------------------------------------------------------------
-TESTS="test_startup.sh test_latency.sh test_protocol.sh"
+TESTS="test_startup.sh test_latency.sh test_protocol.sh test_audio.sh"
 
 PASS_COUNT=0
 FAIL_COUNT=0
@@ -58,6 +58,7 @@ FAIL_COUNT=0
 RESULT_STARTUP="SKIP"
 RESULT_LATENCY="SKIP"
 RESULT_PROTOCOL="SKIP"
+RESULT_AUDIO="SKIP"
 
 echo "============================================="
 echo "  Hathor Integration Tests"
@@ -79,11 +80,23 @@ for test_script in $TESTS; do
     fi
 
     echo "--- Running: $test_script ---"
-    if bash "$test_path" "$HATHOR_BIN" "$SAMPLES_PATH"; then
+
+    # test_audio.sh generates its own synthetic sample bank; do not forward
+    # the stub SAMPLES_PATH so it can create real sine-tone samples.
+    if [ "$test_script" = "test_audio.sh" ]; then
+        bash "$test_path" "$HATHOR_BIN"
+        test_exit=$?
+    else
+        bash "$test_path" "$HATHOR_BIN" "$SAMPLES_PATH"
+        test_exit=$?
+    fi
+
+    if [ "$test_exit" -eq 0 ]; then
         case "$test_script" in
             test_startup.sh)  RESULT_STARTUP="PASS" ;;
             test_latency.sh)  RESULT_LATENCY="PASS" ;;
             test_protocol.sh) RESULT_PROTOCOL="PASS" ;;
+            test_audio.sh)    RESULT_AUDIO="PASS" ;;
         esac
         PASS_COUNT=$((PASS_COUNT + 1))
     else
@@ -91,6 +104,7 @@ for test_script in $TESTS; do
             test_startup.sh)  RESULT_STARTUP="FAIL" ;;
             test_latency.sh)  RESULT_LATENCY="FAIL" ;;
             test_protocol.sh) RESULT_PROTOCOL="FAIL" ;;
+            test_audio.sh)    RESULT_AUDIO="FAIL" ;;
         esac
         FAIL_COUNT=$((FAIL_COUNT + 1))
     fi
@@ -107,6 +121,7 @@ echo "---------------------------------------------"
 printf "  %-35s %s\n" "test_startup.sh"  "$RESULT_STARTUP"
 printf "  %-35s %s\n" "test_latency.sh"  "$RESULT_LATENCY"
 printf "  %-35s %s\n" "test_protocol.sh" "$RESULT_PROTOCOL"
+printf "  %-35s %s\n" "test_audio.sh"    "$RESULT_AUDIO"
 echo "============================================="
 
 if [ "$FAIL_COUNT" -eq 0 ]; then

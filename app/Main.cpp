@@ -59,9 +59,19 @@ static void signalHandler(int /*sig*/) noexcept
     // acceptable and recommended practice for clean audio shutdown.
     if (g_audioEngine) {
         g_audioEngine->stop();
+        g_audioEngine->closeCapture();  // flush WAV file before exit
     }
     // _exit is async-signal-safe; std::exit is not.
     _exit(0);
+}
+
+/// atexit handler — flushes the WAV capture file when std::exit(0) is called
+/// (e.g. from ControlInterface quit/EOF path).
+static void atExitHandler() noexcept
+{
+    if (g_audioEngine) {
+        g_audioEngine->closeCapture();
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -74,8 +84,9 @@ int main(int argc, char* argv[])
     // 1. Parse CLI arguments
     // -----------------------------------------------------------------------
     std::string samplesPath;
-    double      initialBpm = 120.0;
-    bool        hasBpm     = false;
+    double      initialBpm  = 120.0;
+    bool        hasBpm      = false;
+    std::string capturePath;
 
     for (int i = 1; i < argc; ++i) {
         const std::string arg(argv[i]);
@@ -90,6 +101,8 @@ int main(int argc, char* argv[])
                           << argv[i] << '\n';
                 return 1;
             }
+        } else if (arg == "--capture-to-file" && i + 1 < argc) {
+            capturePath = argv[++i];
         }
     }
 
@@ -135,6 +148,7 @@ int main(int argc, char* argv[])
     g_audioEngine = &audio;
     std::signal(SIGTERM, signalHandler);
     std::signal(SIGINT,  signalHandler);
+    std::atexit(atExitHandler);  // flushes WAV capture on std::exit()
 
     // -----------------------------------------------------------------------
     // 5. Initialise the audio device (opens hardware, reports rate + buffer)
@@ -151,6 +165,19 @@ int main(int argc, char* argv[])
         });
 
         return 1;
+    }
+
+    // -----------------------------------------------------------------------
+    // 5b. Open WAV capture file if requested (--capture-to-file)
+    //     Must be after initialise() so the sample rate is known.
+    // -----------------------------------------------------------------------
+    if (!capturePath.empty()) {
+        const std::string captureErr = audio.openCapture(capturePath);
+        if (!captureErr.empty()) {
+            std::cerr << "[hathor] warning: could not open capture file: "
+                      << captureErr << '\n';
+            // Non-fatal — proceed without capture.
+        }
     }
 
     // -----------------------------------------------------------------------
