@@ -24,13 +24,15 @@
 // Task 3.4: EditorArea is now implemented — include the real header.
 #include "EditorArea.hpp"
 
-// The following headers are not yet created (sibling tasks 3.5–3.8).
+// The following headers are not yet created (sibling tasks 3.8, 5.1).
 // Stub definitions below allow MainWindow to compile until those tasks land.
 // Uncomment each #include as the corresponding task is completed:
 //
 // TODO: include ui/ChatSidebar.hpp when available       (task 5.1)
 // TODO: include ui/VisualizerPanel.hpp when available   (task 3.8)
-// TODO: include ui/UITimer.hpp when available           (task 3.7)
+
+// UITimer (task 3.7) — real implementation is now available.
+#include "UITimer.hpp"
 
 #ifndef HATHOR_CHAT_SIDEBAR_DEFINED
 #define HATHOR_CHAT_SIDEBAR_DEFINED
@@ -50,18 +52,7 @@ namespace hathor::ui {
 class VisualizerPanel : public juce::Component {
 public:
     explicit VisualizerPanel(AudioEngine&) {}
-};
-} // namespace hathor::ui
-#endif
-
-#ifndef HATHOR_UI_TIMER_DEFINED
-#define HATHOR_UI_TIMER_DEFINED
-namespace hathor::ui {
-/// Stub UITimer — replaced by UITimer.hpp (task 3.7).
-class UITimer : public juce::Timer {
-public:
-    UITimer(AudioEngine&, hathor::ui::VisualizerPanel&) {}
-    void timerCallback() override {}
+    void updateFrame(double, const std::vector<hathor::Event<hathor::ParamMap>>&) {}
 };
 } // namespace hathor::ui
 #endif
@@ -349,8 +340,19 @@ MainWindow::MainWindow(AudioEngine& audio,
     // -----------------------------------------------------------------------
     // Start UITimer at 60 Hz — audio device is open at this point (Req 28.5)
     // UITimer drains the visualizer ring buffer and syncs slider displays.
+    //
+    // Signature: UITimer(SpscRingBuffer<128>&, VisualizerPanel&,
+    //                    SliderPanel&, AudioEngine&)
+    //
+    // sliderPanelStub_ is a stub SliderPanel (task 3.9 not yet implemented).
+    // When SliderPanel.hpp lands and ChatSidebar hosts the real panel,
+    // pass the real reference here and remove sliderPanelStub_.
     // -----------------------------------------------------------------------
-    uiTimer_ = std::make_unique<hathor::ui::UITimer>(audio_, *visualizerPanel_);
+    uiTimer_ = std::make_unique<hathor::ui::UITimer>(
+        audio_.visualizerBuffer(),
+        *visualizerPanel_,
+        sliderPanelStub_,
+        audio_);
     uiTimer_->startTimerHz(60);
 
     setVisible(true);
