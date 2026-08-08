@@ -81,132 +81,360 @@ juce::Font HathorLookAndFeel::fontBold(float height) noexcept
 }
 
 // ===========================================================================
-// Constructor — sets every JUCE colour ID from design tokens
+// Palette — runtime design-token value-type (A1 design-token engine)
+// ===========================================================================
+
+Palette Palette::defaultPalette() noexcept
+{
+    return Palette{
+        /* background        */ juce::Colour(0xff0e0e0eu),
+        /* surface           */ juce::Colour(0xff131313u),
+        /* surfaceLow        */ juce::Colour(0xff1c1b1bu),
+        /* surfaceContainer  */ juce::Colour(0xff201f1fu),
+        /* surfaceHigh       */ juce::Colour(0xff2a2a2au),
+        /* surfaceHighest    */ juce::Colour(0xff353534u),
+        /* surfaceBright     */ juce::Colour(0xff3a3939u),
+
+        /* textPrimary       */ juce::Colour(0xffe5e2e1u),
+        /* textSecondary     */ juce::Colour(0xffb9ccb2u),
+        /* textMuted         */ juce::Colour(0xff858585u),
+        /* textDisabled      */ juce::Colour(0xff666666u),
+
+        /* accent            */ juce::Colour(0xff00ff41u),
+        /* accentDim         */ juce::Colour(0xff00e639u),
+        /* accentOn          */ juce::Colour(0xff003907u),
+
+        /* error             */ juce::Colour(0xffff5f56u),
+        /* warning           */ juce::Colour(0xffe0a020u),
+
+        /* codeText          */ juce::Colour(0xffd4d4d4u),
+        /* codeComment       */ juce::Colour(0xff6a9955u),
+        /* codeKeyword       */ juce::Colour(0xff569cd6u),
+        /* codeType          */ juce::Colour(0xff4ec9b0u),
+        /* codeString        */ juce::Colour(0xffce9178u),
+        /* codeFunction      */ juce::Colour(0xffdcdcaau),
+        /* codeMacro         */ juce::Colour(0xffc586c0u),
+        /* codeBracket       */ juce::Colour(0xffffd700u),
+        /* codeLineNum       */ juce::Colour(0xff858585u),
+    };
+}
+
+// ===========================================================================
+// Constructor — initialises the default palette and applies all colour IDs
 // ===========================================================================
 
 HathorLookAndFeel::HathorLookAndFeel()
+    : currentPalette_(Palette::defaultPalette())
 {
-    using C = HathorLookAndFeel::Colours;
+    applyPaletteToColours();
+}
+
+// ===========================================================================
+// Palette management — runtime switching (A1 design-token engine)
+// ===========================================================================
+
+void HathorLookAndFeel::setPalette(const Palette& newPalette)
+{
+    currentPalette_ = newPalette;
+    applyPaletteToColours();
+    sendLookAndFeelChange();
+}
+
+// ===========================================================================
+// applyPaletteToColours — single place where palette tokens map to JUCE
+// colour IDs.  Called from the constructor and setPalette().
+// ===========================================================================
+
+void HathorLookAndFeel::applyPaletteToColours() noexcept
+{
+    const Palette& p = currentPalette_;
 
     // -----------------------------------------------------------------------
     // Window / component backgrounds
     // -----------------------------------------------------------------------
-    setColour(juce::ResizableWindow::backgroundColourId,  juce::Colour(C::background));
-    setColour(juce::DocumentWindow::backgroundColourId,   juce::Colour(C::background));
+    setColour(juce::ResizableWindow::backgroundColourId,  p.background);
+    setColour(juce::DocumentWindow::backgroundColourId,   p.background);
 
     // -----------------------------------------------------------------------
     // Generic component / label text
     // -----------------------------------------------------------------------
-    setColour(juce::Label::textColourId,       juce::Colour(C::textPrimary));
-    setColour(juce::Label::backgroundColourId, juce::Colour(C::background));
+    setColour(juce::Label::textColourId,       p.textPrimary);
+    setColour(juce::Label::backgroundColourId, p.background);
 
     // -----------------------------------------------------------------------
     // TextEditor (chat input, search bar, etc.)
     // -----------------------------------------------------------------------
-    setColour(juce::TextEditor::backgroundColourId,    juce::Colour(C::surfaceHigh));
-    setColour(juce::TextEditor::textColourId,          juce::Colour(C::textPrimary));
-    setColour(juce::TextEditor::outlineColourId,       juce::Colour(C::surfaceHighest));
-    setColour(juce::TextEditor::focusedOutlineColourId, juce::Colour(C::accent));
-    setColour(juce::TextEditor::highlightColourId,     juce::Colour(C::accent).withAlpha(0.4f));
-    setColour(juce::TextEditor::highlightedTextColourId, juce::Colour(C::background));
-    setColour(juce::CaretComponent::caretColourId,     juce::Colour(C::accent));
+    setColour(juce::TextEditor::backgroundColourId,    p.surfaceHigh);
+    setColour(juce::TextEditor::textColourId,          p.textPrimary);
+    setColour(juce::TextEditor::outlineColourId,       p.surfaceHighest);
+    setColour(juce::TextEditor::focusedOutlineColourId, p.accent);
+    setColour(juce::TextEditor::highlightColourId,     p.accent.withAlpha(0.4f));
+    setColour(juce::TextEditor::highlightedTextColourId, p.background);
+    setColour(juce::CaretComponent::caretColourId,     p.accent);
 
     // -----------------------------------------------------------------------
     // ListBox / TreeView (Explorer panel)
     // -----------------------------------------------------------------------
-    setColour(juce::ListBox::backgroundColourId,  juce::Colour(C::background));
+    setColour(juce::ListBox::backgroundColourId,  p.background);
     setColour(juce::ListBox::outlineColourId,     juce::Colours::transparentBlack);
 
-    setColour(juce::TreeView::backgroundColourId,             juce::Colour(C::background));
-    setColour(juce::TreeView::linesColourId,                   juce::Colour(C::surfaceHighest));
-    setColour(juce::TreeView::selectedItemBackgroundColourId, juce::Colour(C::surfaceLow));
+    setColour(juce::TreeView::backgroundColourId,             p.background);
+    setColour(juce::TreeView::linesColourId,                  p.surfaceHighest);
+    setColour(juce::TreeView::selectedItemBackgroundColourId, p.surfaceLow);
 
     // -----------------------------------------------------------------------
     // CodeEditorComponent
     // -----------------------------------------------------------------------
-    setColour(juce::CodeEditorComponent::backgroundColourId,  juce::Colour(C::surface));
-    setColour(juce::CodeEditorComponent::defaultTextColourId, juce::Colour(C::codeText));
-    setColour(juce::CodeEditorComponent::highlightColourId,   juce::Colour(C::accent).withAlpha(0.3f));
-    setColour(juce::CodeEditorComponent::lineNumberBackgroundId, juce::Colour(C::surfaceLow));
-    setColour(juce::CodeEditorComponent::lineNumberTextId,    juce::Colour(C::codeLineNum));
+    setColour(juce::CodeEditorComponent::backgroundColourId,  p.surface);
+    setColour(juce::CodeEditorComponent::defaultTextColourId, p.codeText);
+    setColour(juce::CodeEditorComponent::highlightColourId,   p.accent.withAlpha(0.3f));
+    setColour(juce::CodeEditorComponent::lineNumberBackgroundId, p.surfaceLow);
+    setColour(juce::CodeEditorComponent::lineNumberTextId,    p.codeLineNum);
 
     // -----------------------------------------------------------------------
     // TabbedComponent / TabbedButtonBar
     // -----------------------------------------------------------------------
-    setColour(juce::TabbedComponent::backgroundColourId,  juce::Colour(C::background));
-    setColour(juce::TabbedComponent::outlineColourId,    juce::Colour(C::surfaceHighest));
-    setColour(juce::TabbedButtonBar::tabTextColourId,    juce::Colour(C::textSecondary));
-    setColour(juce::TabbedButtonBar::tabOutlineColourId, juce::Colour(C::surfaceHighest));
-    setColour(juce::TabbedButtonBar::frontTextColourId, juce::Colour(C::textPrimary));
+    setColour(juce::TabbedComponent::backgroundColourId,  p.background);
+    setColour(juce::TabbedComponent::outlineColourId,    p.surfaceHighest);
+    setColour(juce::TabbedButtonBar::tabTextColourId,    p.textSecondary);
+    setColour(juce::TabbedButtonBar::tabOutlineColourId, p.surfaceHighest);
+    setColour(juce::TabbedButtonBar::frontTextColourId, p.textPrimary);
 
     // -----------------------------------------------------------------------
     // ScrollBar
     // -----------------------------------------------------------------------
     setColour(juce::ScrollBar::backgroundColourId, juce::Colours::transparentBlack);
-    setColour(juce::ScrollBar::thumbColourId,      juce::Colour(C::surfaceHighest));
-    setColour(juce::ScrollBar::trackColourId,      juce::Colour(C::background));
+    setColour(juce::ScrollBar::thumbColourId,      p.surfaceHighest);
+    setColour(juce::ScrollBar::trackColourId,      p.background);
 
     // -----------------------------------------------------------------------
     // Slider
     // -----------------------------------------------------------------------
-    setColour(juce::Slider::backgroundColourId,          juce::Colour(C::surfaceHigh));
-    setColour(juce::Slider::thumbColourId,               juce::Colour(C::textPrimary));
-    setColour(juce::Slider::trackColourId,               juce::Colour(C::surfaceHighest));
-    setColour(juce::Slider::rotarySliderFillColourId,    juce::Colour(C::accent));
-    setColour(juce::Slider::rotarySliderOutlineColourId, juce::Colour(C::surfaceHighest));
-    setColour(juce::Slider::textBoxTextColourId,        juce::Colour(C::textPrimary));
-    setColour(juce::Slider::textBoxBackgroundColourId,  juce::Colour(C::surfaceHigh));
-    setColour(juce::Slider::textBoxOutlineColourId,     juce::Colour(C::surfaceHighest));
-    setColour(juce::Slider::textBoxHighlightColourId,   juce::Colour(C::accent).withAlpha(0.4f));
+    setColour(juce::Slider::backgroundColourId,          p.surfaceHigh);
+    setColour(juce::Slider::thumbColourId,               p.textPrimary);
+    setColour(juce::Slider::trackColourId,               p.surfaceHighest);
+    setColour(juce::Slider::rotarySliderFillColourId,    p.accent);
+    setColour(juce::Slider::rotarySliderOutlineColourId, p.surfaceHighest);
+    setColour(juce::Slider::textBoxTextColourId,        p.textPrimary);
+    setColour(juce::Slider::textBoxBackgroundColourId,  p.surfaceHigh);
+    setColour(juce::Slider::textBoxOutlineColourId,     p.surfaceHighest);
+    setColour(juce::Slider::textBoxHighlightColourId,   p.accent.withAlpha(0.4f));
 
     // -----------------------------------------------------------------------
     // ComboBox
     // -----------------------------------------------------------------------
-    setColour(juce::ComboBox::backgroundColourId, juce::Colour(C::surfaceHigh));
-    setColour(juce::ComboBox::textColourId,     juce::Colour(C::textPrimary));
-    setColour(juce::ComboBox::outlineColourId,  juce::Colour(C::surfaceHighest));
-    setColour(juce::ComboBox::buttonColourId,   juce::Colour(C::surfaceHigh));
-    setColour(juce::ComboBox::arrowColourId,    juce::Colour(C::textPrimary));
+    setColour(juce::ComboBox::backgroundColourId, p.surfaceHigh);
+    setColour(juce::ComboBox::textColourId,     p.textPrimary);
+    setColour(juce::ComboBox::outlineColourId,  p.surfaceHighest);
+    setColour(juce::ComboBox::buttonColourId,   p.surfaceHigh);
+    setColour(juce::ComboBox::arrowColourId,    p.textPrimary);
 
     // -----------------------------------------------------------------------
     // PopupMenu
     // -----------------------------------------------------------------------
-    setColour(juce::PopupMenu::backgroundColourId,             juce::Colour(C::surfaceContainer));
-    setColour(juce::PopupMenu::textColourId,                   juce::Colour(C::textPrimary));
-    setColour(juce::PopupMenu::highlightedBackgroundColourId,  juce::Colour(C::accent).withAlpha(0.3f));
-    setColour(juce::PopupMenu::highlightedTextColourId,        juce::Colour(C::background));
-    setColour(juce::PopupMenu::headerTextColourId,             juce::Colour(C::textMuted));
+    setColour(juce::PopupMenu::backgroundColourId,             p.surfaceContainer);
+    setColour(juce::PopupMenu::textColourId,                   p.textPrimary);
+    setColour(juce::PopupMenu::highlightedBackgroundColourId,  p.accent.withAlpha(0.3f));
+    setColour(juce::PopupMenu::highlightedTextColourId,        p.background);
+    setColour(juce::PopupMenu::headerTextColourId,             p.textMuted);
 
     // -----------------------------------------------------------------------
     // AlertWindow / DialogWindow
     // -----------------------------------------------------------------------
-    setColour(juce::AlertWindow::backgroundColourId,  juce::Colour(C::surfaceContainer));
-    setColour(juce::AlertWindow::textColourId,        juce::Colour(C::textPrimary));
-    setColour(juce::AlertWindow::outlineColourId,     juce::Colour(C::surfaceHighest));
+    setColour(juce::AlertWindow::backgroundColourId,  p.surfaceContainer);
+    setColour(juce::AlertWindow::textColourId,        p.textPrimary);
+    setColour(juce::AlertWindow::outlineColourId,     p.surfaceHighest);
 
-    setColour(juce::DialogWindow::backgroundColourId, juce::Colour(C::surfaceContainer));
-    setColour(juce::DialogWindow::textColourId,       juce::Colour(C::textPrimary));
+    setColour(juce::DialogWindow::backgroundColourId, p.surfaceContainer);
+    setColour(juce::DialogWindow::textColourId,       p.textPrimary);
 
     // -----------------------------------------------------------------------
     // TextButton
     // -----------------------------------------------------------------------
-    setColour(juce::TextButton::buttonColourId,   juce::Colour(C::surfaceHigh));
-    setColour(juce::TextButton::buttonOnColourId, juce::Colour(C::accent));
-    setColour(juce::TextButton::textColourOffId,  juce::Colour(C::textPrimary));
-    setColour(juce::TextButton::textColourOnId,   juce::Colour(C::background));
+    setColour(juce::TextButton::buttonColourId,   p.surfaceHigh);
+    setColour(juce::TextButton::buttonOnColourId, p.accent);
+    setColour(juce::TextButton::textColourOffId,  p.textPrimary);
+    setColour(juce::TextButton::textColourOnId,   p.background);
 
     // -----------------------------------------------------------------------
     // TooltipWindow
     // -----------------------------------------------------------------------
-    setColour(juce::TooltipWindow::backgroundColourId, juce::Colour(C::surfaceContainer));
-    setColour(juce::TooltipWindow::textColourId,       juce::Colour(C::textPrimary));
-    setColour(juce::TooltipWindow::outlineColourId,    juce::Colour(C::surfaceHighest));
+    setColour(juce::TooltipWindow::backgroundColourId, p.surfaceContainer);
+    setColour(juce::TooltipWindow::textColourId,       p.textPrimary);
+    setColour(juce::TooltipWindow::outlineColourId,    p.surfaceHighest);
 
     // -----------------------------------------------------------------------
     // PropertyComponent / PropertyPanel
     // -----------------------------------------------------------------------
-    setColour(juce::PropertyComponent::backgroundColourId, juce::Colour(C::background));
-    setColour(juce::PropertyComponent::labelTextColourId,  juce::Colour(C::textSecondary));
+    setColour(juce::PropertyComponent::backgroundColourId, p.background);
+    setColour(juce::PropertyComponent::labelTextColourId,  p.textSecondary);
+}
+
+// ===========================================================================
+// Font family substitution — intercept all default-font requests
+// ===========================================================================
+
+juce::Typeface::Ptr HathorLookAndFeel::getTypefaceForFont(const juce::Font& font)
+{
+    const juce::String family = font.getTypefaceName().trim();
+
+    // Intercept requests for:
+    //   - No specific family (empty / system default sans-serif)
+    //   - The system default monospaced font (e.g. Menlo, Monaco)
+    //   - Explicit "JetBrains Mono" requests
+    if (family.isEmpty()
+        || family == juce::Font::getDefaultSansSerifFontName()
+        || family == juce::Font::getDefaultMonospacedFontName()
+        || family.containsIgnoreCase("jetbrains"))
+    {
+        const int styleFlags = font.getStyleFlags();
+
+        if ((styleFlags & juce::Font::bold) != 0)
+            return boldTypeface();
+
+        return regularTypeface();
+    }
+
+    // For any other family, fall through to the base class.
+    return juce::LookAndFeel_V4::getTypefaceForFont(font);
+}
+
+// ===========================================================================
+// getTextButtonFont — JetBrains Mono Bold for text buttons
+// ===========================================================================
+
+juce::Font HathorLookAndFeel::getTextButtonFont(juce::TextButton& /*button*/,
+                                                 int buttonHeight)
+{
+    // Use Medium weight at ~55% of button height for label-sized text.
+    const float h = static_cast<float>(buttonHeight) * 0.55f;
+    return HathorLookAndFeel::fontMedium(juce::jmax(h, 10.0f));
+}
+
+// ===========================================================================
+// drawButtonBackground — dark theme button with green accent
+// ===========================================================================
+
+void HathorLookAndFeel::drawButtonBackground(juce::Graphics& g,
+                                              juce::Button& button,
+                                              const juce::Colour& /*backgroundColour*/,
+                                              bool shouldDrawButtonAsHighlighted,
+                                              bool shouldDrawButtonAsDown)
+{
+    const Palette& p = currentPalette_;
+
+    const juce::Rectangle<float> bounds = button.getLocalBounds().toFloat();
+
+    juce::Colour bg;
+
+    if (button.getToggleState())
+        bg = p.accent;                                // active = green
+    else if (shouldDrawButtonAsDown)
+        bg = p.surfaceContainer;                     // pressed = slightly lighter
+    else if (shouldDrawButtonAsHighlighted)
+        bg = p.surfaceLow;                           // hover = subtle tint
+    else
+        bg = p.surfaceHigh;                          // default
+
+    g.setColour(bg);
+    g.fillRoundedRectangle(bounds, HathorLookAndFeel::Radius::small);
+}
+
+// ===========================================================================
+// drawButtonText — green on active, primary text on inactive
+// ===========================================================================
+
+void HathorLookAndFeel::drawButtonText(juce::Graphics& g,
+                                       juce::TextButton& button,
+                                       bool shouldDrawButtonAsHighlighted,
+                                       bool shouldDrawButtonAsDown)
+{
+    const Palette& p = currentPalette_;
+
+    juce::Colour textCol = p.textPrimary;
+
+    if (button.getToggleState())
+        textCol = p.background; // green bg + dark text when on
+
+    // Get the button's font via the LookAndFeel hook (JetBrains Mono).
+    juce::Font font = getTextButtonFont(button, button.getHeight());
+
+    if (shouldDrawButtonAsHighlighted || shouldDrawButtonAsDown)
+        font = HathorLookAndFeel::fontBold(font.getHeight());
+    else
+        font = HathorLookAndFeel::fontRegular(font.getHeight());
+
+    g.setColour(textCol);
+    g.setFont(font);
+
+    const juce::Rectangle<int> bounds = button.getLocalBounds();
+    g.drawFittedText(button.getButtonText(), bounds,
+                     juce::Justification::centred, 1, 1.0f);
+}
+
+// ===========================================================================
+// drawLinearSlider — pill-track aesthetic from the mockup
+// ===========================================================================
+
+void HathorLookAndFeel::drawLinearSlider(juce::Graphics& g,
+                                          int x, int y, int width, int height,
+                                          float sliderPos,
+                                          float /*minSliderPos*/, float /*maxSliderPos*/,
+                                          juce::Slider::SliderStyle /*style*/,
+                                          juce::Slider& /*slider*/)
+{
+    const Palette& p = currentPalette_;
+
+    const bool isHorizontal = (width > height);
+    const int  thumbSize    = isHorizontal ? 12 : 12;
+    const float trackH       = isHorizontal ? 4.0f : static_cast<float>(width);
+
+    const float trackY = y + (height - trackH) / 2.0f;
+    juce::Rectangle<float> trackRect(x, trackY, width, trackH);
+
+    // Track background (pill shape)
+    g.setColour(p.surfaceHighest);
+    g.fillRoundedRectangle(trackRect, trackH / 2.0f);
+
+    // Filled portion
+    const float fillW = juce::jlimit(0.0f, static_cast<float>(width), sliderPos - x);
+    if (fillW > 0)
+    {
+        juce::Rectangle<float> fillRect(x, trackY, fillW, trackH);
+        g.setColour(p.accent);
+        g.fillRoundedRectangle(fillRect, trackH / 2.0f);
+    }
+
+    // Thumb (circle)
+    const float thumbX = juce::jlimit(static_cast<float>(x),
+                                       static_cast<float>(x + width),
+                                       sliderPos);
+    const float thumbY = y + height / 2.0f;
+    g.setColour(p.textPrimary);
+    g.fillEllipse(thumbX - thumbSize / 2.0f,
+                  thumbY - thumbSize / 2.0f,
+                  thumbSize, thumbSize);
+}
+
+// ===========================================================================
+// drawScrollbar — thin thumb, transparent track
+// ===========================================================================
+
+void HathorLookAndFeel::drawScrollbar(juce::Graphics& g,
+                                       juce::ScrollBar& /*scrollbar*/,
+                                       int x, int y, int width, int height,
+                                       bool /*isScrollbarVertical*/,
+                                       int /*thumbStartPosition*/, int /*thumbSize*/,
+                                       bool /*isMouseOver*/, bool /*isMouseDown*/)
+{
+    const Palette& p = currentPalette_;
+
+    // Track is transparent — let the parent background show through.
+    // Thumb: dim, 8 px wide, 4 px corner radius (matches mockup).
+    g.setColour(p.surfaceHighest);
+
+    juce::Rectangle<float> thumb(x, y, width, height);
+    g.fillRoundedRectangle(thumb, HathorLookAndFeel::Radius::small);
 }
 
 // ===========================================================================

@@ -110,16 +110,6 @@ private:
     std::vector<TabGeometry> geom_;
     int activeIndex_{ -1 };
 
-    // Colours — sourced from HathorLookAndFeel design tokens
-    static constexpr juce::uint32 kBgColour      = HathorLookAndFeel::Colours::background;
-    static constexpr juce::uint32 kActiveBg      = HathorLookAndFeel::Colours::surface;
-    static constexpr juce::uint32 kInactiveBg    = HathorLookAndFeel::Colours::background;
-    static constexpr juce::uint32 kTextColour    = HathorLookAndFeel::Colours::textSecondary;
-    static constexpr juce::uint32 kActiveText    = HathorLookAndFeel::Colours::textPrimary;
-    static constexpr juce::uint32 kDotColour     = HathorLookAndFeel::Colours::warning; ///< amber unsaved dot
-    static constexpr juce::uint32 kCloseColour   = HathorLookAndFeel::Colours::textSecondary;
-    static constexpr juce::uint32 kSepColour     = HathorLookAndFeel::Colours::surfaceHighest;
-
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(TabBarComponent)
 };
 

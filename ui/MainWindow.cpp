@@ -140,10 +140,8 @@ MainWindow::MainWindow(AudioEngine& audio,
             // implemented — do nothing, preserving active state.
         };
 
-    // -----------------------------------------------------------------------
     // Wire ExplorerPanel file clicks → EditorArea::openFile (H1)
-    // Clicking a .hathor file opens or recovers the corresponding tab.
-    // -----------------------------------------------------------------------
+    // Clicking a song opens or recovers the corresponding tab.
     explorerPanel_->onFileClicked =
         [this](const juce::File& file)
         {

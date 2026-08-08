@@ -72,6 +72,12 @@ public:
     /// Re-build the tree from the current directory.
     void refresh();
 
+    /// Restore the last-saved root directory from ApplicationProperties.
+    /// Called by MainWindow after setApplicationProperties(). If no
+    /// persisted directory exists, the current directory (cwd fallback)
+    /// is used. Rebuilds the tree in-place.
+    void restoreLastDirectoryAndRefresh();
+
     //==========================================================================
     // juce::Component overrides
     void paint(juce::Graphics& g) override;
