@@ -71,6 +71,7 @@ MainWindow::MainWindow(AudioEngine& audio,
     // These are JUCE native components — no embedded webview / Electron.
     // -----------------------------------------------------------------------
     activityRibbon_  = std::make_unique<hathor::ui::ActivityRibbon>();
+    explorerPanel_   = std::make_unique<hathor::ui::ExplorerPanel>();
     editorArea_      = std::make_unique<hathor::ui::EditorArea>(audio_, ci_);
     chatSidebar_     = std::make_unique<hathor::ui::ChatSidebar>(audio_, ci_);
     visualizerPanel_ = std::make_unique<hathor::ui::VisualizerPanel>(audio_);
@@ -112,13 +113,59 @@ MainWindow::MainWindow(AudioEngine& audio,
     if (!agentExePath.empty())
         agentSession_->start(agentExePath, projectDir, hathorMcpPath);
 
+    // -----------------------------------------------------------------------
+    // Wire ActivityRibbon panel toggles (H1: Explorer)
+    // The callback toggles the explorer open/closed and syncs the ribbon's
+    // active-button accent highlight via setActivePanel().
+    // -----------------------------------------------------------------------
+    activityRibbon_->onPanelToggled =
+        [this](hathor::ui::Panel panel)
+        {
+            // Only the Explorer is wired in H1; other panels are no-ops for now.
+            if (panel == hathor::ui::Panel::Explorer)
+            {
+                const bool wantsOpen = (activityRibbon_->activePanel() != hathor::ui::Panel::Explorer);
+                explorerPanel_->setVisible(wantsOpen);
+                activityRibbon_->setActivePanel(wantsOpen ? hathor::ui::Panel::Explorer : hathor::ui::Panel::None);
+                resized(); // re-lay-out editor area
+            }
+            else if (panel == hathor::ui::Panel::None)
+            {
+                // Settings button or external close: hide explorer if open.
+                explorerPanel_->setVisible(false);
+                activityRibbon_->setActivePanel(hathor::ui::Panel::None);
+                resized();
+            }
+            // Other panels (Search, VersionControl, AIAgent) are not yet
+            // implemented — do nothing, preserving active state.
+        };
+
+    // -----------------------------------------------------------------------
+    // Wire ExplorerPanel file clicks → EditorArea::openFile (H1)
+    // Clicking a .hathor file opens or recovers the corresponding tab.
+    // -----------------------------------------------------------------------
+    explorerPanel_->onFileClicked =
+        [this](const juce::File& file)
+        {
+            if (editorArea_)
+                editorArea_->openFile(file);
+        };
+
+    // Set the initial directory from the project directory.
+    explorerPanel_->setDirectory(juce::File(projectDir));
+
     // Add child components to the content component (DocumentWindow wraps one
     // content component; we use a plain Component as the layout host).
     auto* content = new juce::Component();
     content->addAndMakeVisible(*activityRibbon_);
+    content->addAndMakeVisible(*explorerPanel_);
     content->addAndMakeVisible(*editorArea_);
     content->addAndMakeVisible(*chatSidebar_);
     content->addAndMakeVisible(*visualizerPanel_);
+
+    // Explorer starts hidden; opens when the user clicks the Explorer button
+    // in the ActivityRibbon (H1).
+    explorerPanel_->setVisible(false);
 
     setContentOwned(content, false);
     setUsingNativeTitleBar(true);
@@ -184,7 +231,17 @@ void MainWindow::resized()
     if (activityRibbon_)
         activityRibbon_->setBounds(b.removeFromLeft(48));
 
-    // 2. Chat sidebar — fixed 320 px on the right (Req 20.1)
+    // 2. Explorer panel — fixed 240 px, immediately right of the ribbon,
+    //    only when visible (H1). When closed, the editor fills this space.
+    if (explorerPanel_)
+    {
+        if (explorerPanel_->isVisible())
+            explorerPanel_->setBounds(b.removeFromLeft(kExplorerWidth));
+        else
+            explorerPanel_->setBounds(juce::Rectangle<int>());
+    }
+
+    // 3. Chat sidebar — fixed 320 px on the right (Req 20.1)
     if (chatSidebar_)
         chatSidebar_->setBounds(b.removeFromRight(320));
 

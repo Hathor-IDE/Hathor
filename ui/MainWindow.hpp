@@ -48,6 +48,9 @@
 #include "ActivityRibbon.hpp"   // task 3.2 — implemented
 #include "ExplorerPanel.hpp"    // task 3.2 — implemented
 
+// Task 3.4: EditorArea is now implemented — include the real header.
+#include "EditorArea.hpp"
+
 // Task 3.9: SliderPanel is now implemented — include the real header.
 #include "SliderPanel.hpp"
 
@@ -57,11 +60,9 @@
 
 // ---------------------------------------------------------------------------
 // Forward declarations — child components not yet implemented
-// (EditorArea: task 3.4, VisualizerPanel: task 3.8, UITimer: task 3.7)
 // ---------------------------------------------------------------------------
 namespace hathor::ui {
 
-class EditorArea;
 class VisualizerPanel;
 class UITimer;
 
@@ -118,6 +119,12 @@ private:
     /// display — used to decide whether to use stored bounds (Req 20.5).
     static bool boundsIntersectsDisplays(const juce::Rectangle<int>& bounds);
 
+    // =========================================================================
+    // Layout constants
+    // =========================================================================
+    /// Width of the ExplorerPanel when open (H1).
+    static constexpr int kExplorerWidth = 240;
+
     // -----------------------------------------------------------------------
     // Dark theme
     // -----------------------------------------------------------------------
@@ -131,11 +138,11 @@ private:
     // -----------------------------------------------------------------------
     // Child components owned as unique_ptr so lifetime is tied to MainWindow.
     //
-    // ActivityRibbon and ExplorerPanel are concrete types (headers available).
-    // EditorArea, ChatSidebar, VisualizerPanel, UITimer are forward-declared
-    // and will be wired up as their tasks are completed.
+    // ActivityRibbon, ExplorerPanel, EditorArea, ChatSidebar,
+    // VisualizerPanel, and UITimer are concrete types (headers available).
     // -----------------------------------------------------------------------
     std::unique_ptr<hathor::ui::ActivityRibbon>   activityRibbon_;
+    std::unique_ptr<hathor::ui::ExplorerPanel>   explorerPanel_;
     std::unique_ptr<hathor::ui::EditorArea>        editorArea_;
     std::unique_ptr<hathor::ui::ChatSidebar>       chatSidebar_;
     std::unique_ptr<hathor::ui::VisualizerPanel>   visualizerPanel_;
