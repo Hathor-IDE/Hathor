@@ -240,7 +240,7 @@ EditorArea::~EditorArea()
 
 bool EditorArea::openUntitledTab()
 {
-    const int slot = nextFreeSlot(tabPointers());
+    const int slot = nextFreeSlot(buildHathorTabPointers());
     if (slot == -1)
     {
         // Req 22.6: all 16 slots occupied — show error, decline to open
@@ -303,7 +303,7 @@ bool EditorArea::openFile(const juce::File& file)
     if (slot == -1)
     {
         // No slot in front-matter (or engine rejected) → auto-assign (Req 24.4)
-        slot = nextFreeSlot(tabPointers());
+        slot = nextFreeSlot(buildHathorTabPointers());
         if (slot == -1)
         {
             showStatus("Error: all 16 pattern slots are occupied. Close a tab to open the file.");
@@ -409,6 +409,24 @@ bool EditorArea::closeTab(int index)
     return true;
 }
 
+void EditorArea::openSettingsTab(juce::ApplicationProperties* props)
+{
+    // If already open, just focus it.
+    if (settingsTab_ != nullptr)
+    {
+        activateTab(static_cast<int>(tabs_.size()));
+        return;
+    }
+
+    // Create the Settings tab (A2).
+    settingsTab_ = std::make_unique<SettingsComponent>(props);
+    addAndMakeVisible(*settingsTab_);
+    settingsTab_->setVisible(false);  // will be shown by activateTab
+
+    // Activate it (sets visibility, bounds, refreshTabBar).
+    activateTab(static_cast<int>(tabs_.size()));
+}
+
 HathorTab* EditorArea::activeTab() noexcept
 {
     if (activeIndex_ < 0 || activeIndex_ >= static_cast<int>(tabs_.size()))
@@ -436,6 +454,10 @@ void EditorArea::resized()
         if (tabs_[static_cast<std::size_t>(i)]->isVisible())
             tabs_[static_cast<std::size_t>(i)]->setBounds(b);
     }
+
+    // Settings tab (if active) also fills the same content area.
+    if (settingsActive_ && settingsTab_ != nullptr)
+        settingsTab_->setBounds(b);
 }
 
 void EditorArea::paint(juce::Graphics& g)
@@ -447,7 +469,31 @@ void EditorArea::paint(juce::Graphics& g)
 // Internal helpers
 // ---------------------------------------------------------------------------
 
-std::vector<HathorTab*> EditorArea::tabPointers() const
+std::vector<EditorArea::TabInfo> EditorArea::tabInfos() const
+{
+    std::vector<TabInfo> infos;
+
+    for (const auto& t : tabs_)
+    {
+        TabInfo info;
+        info.label      = t->tabLabel();
+        info.unsavedDot = t->hasUnsavedDot();
+        infos.push_back(std::move(info));
+    }
+
+    // Settings tab appears after all HathorTab tabs (if open).
+    if (settingsTab_ != nullptr)
+    {
+        TabInfo info;
+        info.label      = settingsTab_->tabLabel();
+        info.unsavedDot = settingsTab_->hasPendingChanges();
+        infos.push_back(std::move(info));
+    }
+
+    return infos;
+}
+
+std::vector<HathorTab*> EditorArea::buildHathorTabPointers() const
 {
     std::vector<HathorTab*> ptrs;
     ptrs.reserve(tabs_.size());
@@ -458,29 +504,93 @@ std::vector<HathorTab*> EditorArea::tabPointers() const
 
 void EditorArea::activateTab(int index)
 {
-    if (index < 0 || index >= static_cast<int>(tabs_.size()))
+    if (index < 0)
         return;
 
-    // Hide the previously active tab (Req 22.3 — don't interrupt the slot,
-    // just hide the component; AudioEngine keeps playing the old slot's pattern).
-    if (activeIndex_ >= 0 && activeIndex_ < static_cast<int>(tabs_.size()))
-        tabs_[static_cast<std::size_t>(activeIndex_)]->setVisible(false);
+    const int totalTabs = static_cast<int>(tabs_.size())
+                        + (settingsTab_ != nullptr ? 1 : 0);
+    if (index >= totalTabs)
+        return;
 
-    activeIndex_ = index;
-    auto* tab = tabs_[static_cast<std::size_t>(activeIndex_)].get();
-    tab->setVisible(true);
-    tab->setBounds(getLocalBounds()
-                       .withTrimmedTop(kTabBarHeight)
-                       .withTrimmedBottom(kStatusBarHeight));
-    tab->editor().grabKeyboardFocus();
+    // Hide the previously active content.
+    if (settingsActive_)
+    {
+        if (settingsTab_ != nullptr)
+            settingsTab_->setVisible(false);
+    }
+    else if (activeIndex_ >= 0 && activeIndex_ < static_cast<int>(tabs_.size()))
+    {
+        tabs_[static_cast<std::size_t>(activeIndex_)]->setVisible(false);
+    }
+
+    // Determine if we're activating the settings tab or a HathorTab.
+    const int hathorTabCount = static_cast<int>(tabs_.size());
+    if (index >= hathorTabCount)
+    {
+        // Settings tab.
+        settingsActive_ = true;
+        activeIndex_    = -1;  // no HathorTab active
+        if (settingsTab_ != nullptr)
+        {
+            settingsTab_->setVisible(true);
+            settingsTab_->setBounds(getLocalBounds()
+                                        .withTrimmedTop(kTabBarHeight)
+                                        .withTrimmedBottom(kStatusBarHeight));
+        }
+    }
+    else
+    {
+        // HathorTab.
+        settingsActive_ = false;
+        activeIndex_    = index;
+        auto* tab = tabs_[static_cast<std::size_t>(index)].get();
+        tab->setVisible(true);
+        tab->setBounds(getLocalBounds()
+                           .withTrimmedTop(kTabBarHeight)
+                           .withTrimmedBottom(kStatusBarHeight));
+        tab->editor().grabKeyboardFocus();
+    }
 
     refreshTabBar();
 }
 
 void EditorArea::removeTabAt(int index)
 {
-    if (index < 0 || index >= static_cast<int>(tabs_.size()))
+    const int hathorTabCount = static_cast<int>(tabs_.size());
+    const bool hasSettings   = (settingsTab_ != nullptr);
+    const int totalTabs      = hathorTabCount + (hasSettings ? 1 : 0);
+
+    if (index < 0 || index >= totalTabs)
         return;
+
+    // Closing the Settings tab (A2).
+    if (index >= hathorTabCount)
+    {
+        if (settingsTab_ != nullptr && settingsTab_->hasPendingChanges())
+        {
+            // Discard edits (same as Reset) — per A2: close without Apply discards.
+            settingsTab_->resetToCommitted();
+        }
+
+        // Hide and destroy.
+        settingsTab_->setVisible(false);
+        removeChildComponent(settingsTab_.get());
+        settingsTab_.reset();
+        settingsActive_ = false;
+
+        // Re-activate the last HathorTab, or nothing if none.
+        if (hathorTabCount > 0)
+            activateTab(hathorTabCount - 1);
+        else
+        {
+            activeIndex_ = -1;
+            settingsActive_ = false;
+        }
+
+        refreshTabBar();
+        resized();
+        return;
+    }
 
     // Remove key listener from the editor before removing the tab.
     if (index < static_cast<int>(keyListeners_.size()))
@@ -496,17 +606,23 @@ void EditorArea::removeTabAt(int index)
     tabs_.erase(tabs_.begin() + index);
 
     // Compute new active index.
-    if (tabs_.empty())
+    if (tabs_.empty() && !hasSettings)
     {
         activeIndex_ = -1;
+        settingsActive_ = false;
     }
     else
     {
         activeIndex_ = std::clamp(activeIndex_, 0,
                                   static_cast<int>(tabs_.size()) - 1);
+        settingsActive_ = false;
         // Make sure the new active tab is visible.
         for (std::size_t i = 0; i < tabs_.size(); ++i)
             tabs_[i]->setVisible(static_cast<int>(i) == activeIndex_);
+
+        // If settings was active, re-show it if it still exists.
+        if (settingsTab_ != nullptr)
+            settingsTab_->setVisible(false);
     }
 
     refreshTabBar();
@@ -534,7 +650,16 @@ void EditorArea::wireUnsavedCallback(HathorTab& tab)
 
 void EditorArea::refreshTabBar()
 {
-    tabBar_.rebuild(tabs_, activeIndex_);
+    int combinedActive = -1;
+    if (settingsActive_)
+    {
+        combinedActive = static_cast<int>(tabs_.size());
+    }
+    else if (activeIndex_ >= 0)
+    {
+        combinedActive = activeIndex_;
+    }
+    tabBar_.rebuild(tabInfos(), combinedActive);
 }
 
 // ===========================================================================

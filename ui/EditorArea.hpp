@@ -45,6 +45,7 @@
 // UI
 #include "HathorTab.hpp"
 #include "HathorLookAndFeel.hpp"
+#include "SettingsComponent.hpp"
 
 namespace hathor::ui {
 
@@ -59,6 +60,17 @@ namespace hathor::ui {
  * Req 22.6, 24.4
  */
 int nextFreeSlot(const std::vector<HathorTab*>& openTabs) noexcept;
+
+/**
+ * TabInfo — lightweight descriptor for a single tab in the Tab_Bar.
+ * Used by TabBarComponent::rebuild() so the bar doesn't need to know about
+ * HathorTab vs SettingsComponent internals.
+ */
+struct TabInfo
+{
+    juce::String label;
+    bool         unsavedDot{ false };
+};
 
 // ---------------------------------------------------------------------------
 // TabBarComponent — custom tab bar with unsaved-dot rendering
@@ -91,7 +103,7 @@ public:
     std::function<void(int)> onTabCloseClicked; ///< argument: tab index
 
     /// Rebuild tab geometry from the given tab list and repaint.
-    void rebuild(const std::vector<std::unique_ptr<HathorTab>>& tabs,
+    void rebuild(const std::vector<TabInfo>& tabs,
                  int activeIndex);
 
     // juce::Component
@@ -169,14 +181,23 @@ public:
     bool openFile(const juce::File& file);
 
     /**
-     * Close the tab at the given index.
-     * If the buffer has unsaved changes, shows Save / Discard / Cancel modal
-     * (Req 22.7).  Cancel leaves the tab open and returns false.
-     *
-     * @param index  Index of the tab to close.
-     * @return true if the tab was closed, false if Cancel was chosen.
-     */
+      * Close the tab at the given index.
+      * If the buffer has unsaved changes, shows Save / Discard / Cancel modal
+      * (Req 22.7).  Cancel leaves the tab open and returns false.
+      *
+      * @param index  Index of the tab to close.
+      * @return true if the tab was closed, false if Cancel was chosen.
+      */
     bool closeTab(int index);
+
+    /**
+      * Open or focus the Settings tab (A2).
+      * If the Settings tab is already open, focuses it; otherwise creates it
+      * and activates it.
+      *
+      * @param props  ApplicationProperties for persistence (passed to SettingsComponent).
+      */
+    void openSettingsTab(juce::ApplicationProperties* props);
 
     /// Number of open tabs.
     int tabCount() const noexcept { return static_cast<int>(tabs_.size()); }
@@ -212,12 +233,9 @@ private:
     // Internal helpers
     // -----------------------------------------------------------------------
 
-    /// Build a flat pointer list for nextFreeSlot().
-    std::vector<HathorTab*> tabPointers() const;
-
-    /// Switch to the tab at index.  Does NOT audio-interrupt the old slot
-    /// (the old slot continues playing — Req 22.3).
-    void activateTab(int index);
+     /// Switch to the tab at index.  Does NOT audio-interrupt the old slot
+     /// (the old slot continues playing — Req 22.3).
+     void activateTab(int index);
 
     /// Remove tab at index from the vectors and update the tab bar.
     void removeTabAt(int index);
@@ -227,6 +245,9 @@ private:
 
     /// Wire up the onUnsavedDotChanged callback for a tab.
     void wireUnsavedCallback(HathorTab& tab);
+
+    /// Build a pointer list of HathorTab only (excludes Settings tab).
+    std::vector<HathorTab*> buildHathorTabPointers() const;
 
     /// Rebuild the tab bar geometry and show the active content.
     void refreshTabBar();
@@ -317,6 +338,11 @@ private:
     // -----------------------------------------------------------------------
     std::vector<std::unique_ptr<HathorTab>>  tabs_;
     int                                      activeIndex_{ -1 };
+
+    /// Settings tab (A2) — managed alongside HathorTab tabs.
+    /// When active, it occupies the same content area as HathorTab tabs.
+    std::unique_ptr<SettingsComponent>       settingsTab_;
+    bool                                     settingsActive_{ false };
 
     /// One key-listener per tab (parallel to tabs_); owns the listener objects.
     std::vector<std::unique_ptr<TabKeyListener>> keyListeners_;
