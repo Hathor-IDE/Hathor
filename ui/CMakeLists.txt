@@ -37,6 +37,9 @@ target_sources(hathor-ui
         HathorLookAndFeel.cpp
         ActivityRibbon.cpp
         ExplorerPanel.cpp
+        ExplorerFileTypes.cpp
+        ExplorerTreeItems.cpp
+        TreeBuilder.cpp
         HathorFileParser.cpp
         HathorTab.cpp         # task 3.4
         EditorArea.cpp        # task 3.4

@@ -149,8 +149,16 @@ MainWindow::MainWindow(AudioEngine& audio,
                 editorArea_->openFile(file);
         };
 
-    // Set the initial directory from the project directory.
-    explorerPanel_->setDirectory(juce::File(projectDir));
+    // Set up ApplicationProperties early so the ExplorerPanel can persist
+    // and restore its last-used root directory (A4).
+    appProperties_.setStorageParameters(makePropertiesOptions());
+    explorerPanel_->setApplicationProperties(&appProperties_);
+
+    // Restore the last-used root directory if one was persisted; otherwise
+    // fall back to the project directory (cwd at launch).
+    explorerPanel_->restoreLastDirectoryAndRefresh();
+    if (explorerPanel_->directory() == juce::File())
+        explorerPanel_->setDirectory(juce::File(projectDir));
 
     // Add child components to the content component (DocumentWindow wraps one
     // content component; we use a plain Component as the layout host).
@@ -172,7 +180,6 @@ MainWindow::MainWindow(AudioEngine& audio,
     // -----------------------------------------------------------------------
     // Restore or compute initial window bounds (Req 20.5)
     // -----------------------------------------------------------------------
-    appProperties_.setStorageParameters(makePropertiesOptions());
     const juce::Rectangle<int> bounds = resolveInitialBounds();
     setBounds(bounds);
 
@@ -262,11 +269,17 @@ void MainWindow::resized()
 
 void MainWindow::closeButtonPressed()
 {
-    // Persist current window bounds.
+    // Persist current window bounds and explorer last-directory (A4).
     if (auto* props = appProperties_.getUserSettings())
     {
         props->setValue("windowBounds",
                         getBounds().toString());
+        // ExplorerPanel::saveLastDirectory is called on setDirectory(),
+        // but call it again here to be certain the latest directory is persisted
+        // even if setDirectory was never explicitly called.
+        if (explorerPanel_)
+            props->setValue("explorerLastDirectory",
+                            explorerPanel_->directory().getFullPathName());
         props->saveIfNeeded();
     }
 

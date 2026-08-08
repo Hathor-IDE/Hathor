@@ -95,6 +95,26 @@ struct Palette
 };
 
 // ---------------------------------------------------------------------------
+// Theme registry — the five themes defined by A1/B3 (§4.1, PROGRAM.md)
+// ---------------------------------------------------------------------------
+
+/// Identifies one of the five selectable themes.
+enum class ThemeId
+{
+    Dark,          ///< current default (Material-3 dark)
+    PurpleNeon,    ///< Purple/Neon accent variant
+    Capuchin,      ///< Capuchin brown-accent variant
+    Sand,          ///< Sand warm variant
+    Light,         ///< Light theme
+};
+
+/// Return the Palette for a given ThemeId.
+Palette paletteForTheme(ThemeId id) noexcept;
+
+/// Return the human-readable name for a theme (for Settings list).
+juce::String themeDisplayName(ThemeId id) noexcept;
+
+// ---------------------------------------------------------------------------
 // HathorLookAndFeel
 // ---------------------------------------------------------------------------
 

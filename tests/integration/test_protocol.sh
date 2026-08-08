@@ -16,7 +16,10 @@
 #   6. clear-pattern nonexistent → ok:false (slot not found)
 #   7. bpm 5             → ok:false (out of range [20,400])
 #   8. set-pattern d1 [unclosed → ok:false with parse error message
-#   9. quit              → ok:true, cmd:"quit"
+#   9. set-pattern d1 bd sn ; set-pattern d2 cp hh ; slot-stop d1 → ok:true slot:"d1"
+#  10. slot-play d1      → ok:true, cmd:"slot-play", slot:"d1"
+#  11. slot-stop         → ok:false (missing slot name)
+#  12. quit              → ok:true, cmd:"quit"
 #
 # Requirements: 12.3, 12.4, 14.4, 15.3, 16.5
 #
@@ -274,8 +277,37 @@ print(f"[RECV] {resp}")
 assert_fail(resp, "set-pattern", "invalid notation returns ok:false")
 assert_error_field(resp, "invalid notation response includes parse error message")
 
-# --- Test 9: quit ---
-print("\n--- Test 9: quit ---")
+# --- Test 9: set two patterns then slot-stop d1 ---
+print("\n--- Test 9: set-pattern d1, d2 then slot-stop d1 ---")
+resp = send_cmd("set-pattern d1 bd sn", timeout=10.0)
+print(f"[RECV] {resp}")
+assert_ok(resp, "set-pattern", "set-pattern d1 bd sn returns ok:true")
+
+resp = send_cmd("set-pattern d2 cp hh", timeout=10.0)
+print(f"[RECV] {resp}")
+assert_ok(resp, "set-pattern", "set-pattern d2 cp hh returns ok:true")
+
+resp = send_cmd("slot-stop d1")
+print(f"[RECV] {resp}")
+assert_ok(resp, "slot-stop", "slot-stop d1 returns ok:true")
+assert_field(resp, "slot", "d1", "slot-stop response includes slot name")
+
+# --- Test 10: slot-play d1 ---
+print("\n--- Test 10: slot-play d1 ---")
+resp = send_cmd("slot-play d1")
+print(f"[RECV] {resp}")
+assert_ok(resp, "slot-play", "slot-play d1 returns ok:true")
+assert_field(resp, "slot", "d1", "slot-play response includes slot name")
+
+# --- Test 11: slot-stop with missing slot name ---
+print("\n--- Test 11: slot-stop with missing slot name ---")
+resp = send_cmd("slot-stop")
+print(f"[RECV] {resp}")
+assert_fail(resp, "slot-stop", "slot-stop without slot returns ok:false")
+assert_error_field(resp, "slot-stop without slot includes error message")
+
+# --- Test 12: quit ---
+print("\n--- Test 12: quit ---")
 resp = send_cmd("quit")
 print(f"[RECV] {resp}")
 assert_ok(resp, "quit", "quit returns ok:true with cmd:quit")

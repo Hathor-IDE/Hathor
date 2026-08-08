@@ -86,8 +86,10 @@ void TabBarComponent::rebuild(const std::vector<std::unique_ptr<HathorTab>>& tab
 
 void TabBarComponent::paint(juce::Graphics& g)
 {
+    const auto& palette = HathorLookAndFeel::fromComponent(*this).getPalette();
+
     // Background strip
-    g.fillAll(juce::Colour(kBgColour));
+    g.fillAll(palette.background);
 
     for (int i = 0; i < static_cast<int>(geom_.size()); ++i)
     {
@@ -95,19 +97,20 @@ void TabBarComponent::paint(juce::Graphics& g)
         const bool isActive   = (i == activeIndex_);
 
         // Tab background
-        g.setColour(juce::Colour(isActive ? kActiveBg : kInactiveBg));
+        g.setColour(isActive ? palette.surface : palette.background);
         g.fillRect(tg.bounds);
 
         // Bottom border for inactive, top accent line for active
         if (isActive)
         {
-            g.setColour(juce::Colour(HathorLookAndFeel::Colours::accent)); // accent green top line
+            // accent green top line
+            g.setColour(palette.accent);
             g.fillRect(tg.bounds.getX(), tg.bounds.getY(),
                        tg.bounds.getWidth(), 2);
         }
         else
         {
-            g.setColour(juce::Colour(kSepColour));
+            g.setColour(palette.surfaceHighest);
             g.fillRect(tg.bounds.getRight() - 1, tg.bounds.getY(),
                        1, tg.bounds.getHeight()); // right separator
         }
@@ -117,7 +120,7 @@ void TabBarComponent::paint(juce::Graphics& g)
         {
             const int dotX = tg.bounds.getX() + 6;
             const int dotY = tg.bounds.getCentreY() - kDotRadius / 2;
-            g.setColour(juce::Colour(kDotColour));
+            g.setColour(palette.warning); ///< amber unsaved dot
             g.fillEllipse(static_cast<float>(dotX),
                           static_cast<float>(dotY),
                           static_cast<float>(kDotRadius),
@@ -130,13 +133,13 @@ void TabBarComponent::paint(juce::Graphics& g)
         const juce::Rectangle<int> labelRect(labelLeft, tg.bounds.getY(),
                                              labelRight - labelLeft,
                                              tg.bounds.getHeight());
-        g.setColour(juce::Colour(isActive ? kActiveText : kTextColour));
+        g.setColour(isActive ? palette.textPrimary : palette.textSecondary);
         g.setFont(HathorLookAndFeel::fontMedium(12.0f));
         g.drawText(tg.label, labelRect,
                    juce::Justification::centredLeft, true);
 
         // Close button (×)
-        g.setColour(juce::Colour(kCloseColour));
+        g.setColour(palette.textSecondary);
         g.setFont(HathorLookAndFeel::fontMedium(11.0f));
         g.drawText(juce::CharPointer_UTF8("\xC3\x97"), // × U+00D7
                    tg.closeBtnBounds,
@@ -203,10 +206,12 @@ EditorArea::EditorArea(AudioEngine& audio,
     : audio_(audio)
     , ci_(ci)
 {
+    const auto& palette = HathorLookAndFeel::fromComponent(*this).getPalette();
+
     // Status bar styling — label-md: 11px, Medium 500 (mockup)
     statusBar_.setFont(HathorLookAndFeel::fontMedium(HathorLookAndFeel::Typography::labelMd));
-    statusBar_.setColour(juce::Label::backgroundColourId, juce::Colour(HathorLookAndFeel::Colours::surfaceLow));
-    statusBar_.setColour(juce::Label::textColourId,       juce::Colour(HathorLookAndFeel::Colours::textSecondary));
+    statusBar_.setColour(juce::Label::backgroundColourId, palette.surfaceLow);
+    statusBar_.setColour(juce::Label::textColourId,       palette.textSecondary);
     statusBar_.setJustificationType(juce::Justification::centredLeft);
 
     // Tab bar callbacks
@@ -435,7 +440,7 @@ void EditorArea::resized()
 
 void EditorArea::paint(juce::Graphics& g)
 {
-    g.fillAll(juce::Colour(HathorLookAndFeel::Colours::surface));
+    g.fillAll(HathorLookAndFeel::fromComponent(*this).getPalette().surface);
 }
 
 // ---------------------------------------------------------------------------

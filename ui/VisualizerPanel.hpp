@@ -127,17 +127,7 @@ private:
                        float phase) const;
 
     // -----------------------------------------------------------------------
-    // Colours — sourced from HathorLookAndFeel design tokens
-    // -----------------------------------------------------------------------
-    static constexpr juce::uint32 kBgColour      = HathorLookAndFeel::Colours::surface;
-    static constexpr juce::uint32 kAccentColour   = HathorLookAndFeel::Colours::accent;
-    static constexpr juce::uint32 kGridDimColour  = HathorLookAndFeel::Colours::surfaceHigh;
-    static constexpr juce::uint32 kGridFlashColour= HathorLookAndFeel::Colours::accent;
-    static constexpr juce::uint32 kIdleRingColour = HathorLookAndFeel::Colours::surfaceHighest;
-
-    // -----------------------------------------------------------------------
     // Step grid dimensions
-    // -----------------------------------------------------------------------
     static constexpr int kGridCols = 8;
     static constexpr int kGridRows = 4;
     static constexpr int kNumCells = kGridCols * kGridRows;  // 32

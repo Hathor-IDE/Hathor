@@ -70,15 +70,6 @@ public:
 
 private:
     //==========================================================================
-    // Colours — sourced from HathorLookAndFeel design tokens (single source
-    // of truth). No hardcoded values here.
-    //==========================================================================
-    static constexpr juce::uint32 kBgColour     = HathorLookAndFeel::Colours::background;
-    static constexpr juce::uint32 kAccentColour  = HathorLookAndFeel::Colours::accent;
-    static constexpr juce::uint32 kTextColour    = HathorLookAndFeel::Colours::textSecondary;
-    static constexpr juce::uint32 kSepColour     = HathorLookAndFeel::Colours::surfaceHighest;
-
-    //==========================================================================
     // Button geometry constants
     static constexpr int kRibbonWidth   = 48;
     static constexpr int kButtonSize    = 32;

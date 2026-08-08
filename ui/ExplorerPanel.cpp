@@ -21,19 +21,19 @@ namespace hathor::ui {
 ExplorerPanel::ExplorerPanel()
     : directory_(juce::File::getCurrentWorkingDirectory())
 {
+    const auto& palette = HathorLookAndFeel::fromComponent(*this).getPalette();
+
     // Header label — label-md: 11px, Medium 500, letter-spacing 0.05em (mockup)
     headerLabel_.setText("EXPLORER", juce::dontSendNotification);
     headerLabel_.setFont(HathorLookAndFeel::fontMedium(11.0f));
-    headerLabel_.setColour(juce::Label::textColourId, juce::Colour(kHeaderTextColour));
+    headerLabel_.setColour(juce::Label::textColourId, palette.textSecondary);
     headerLabel_.setJustificationType(juce::Justification::centredLeft);
     addAndMakeVisible(headerLabel_);
 
     // Tree view — uses HathorLookAndFeel TreeView colour IDs (already set).
-    treeView_.setColour(juce::TreeView::backgroundColourId, juce::Colour(kBgColour));
-    treeView_.setColour(juce::TreeView::linesColourId,
-                        juce::Colour(HathorLookAndFeel::Colours::surfaceHighest));
-    treeView_.setColour(juce::TreeView::selectedItemBackgroundColourId,
-                        juce::Colour(HathorLookAndFeel::Colours::surfaceLow));
+    treeView_.setColour(juce::TreeView::backgroundColourId, palette.background);
+    treeView_.setColour(juce::TreeView::linesColourId,      palette.surfaceHighest);
+    treeView_.setColour(juce::TreeView::selectedItemBackgroundColourId, palette.surfaceLow);
     treeView_.setRootItemVisible(true);
     treeView_.setIndentSize(16);
     addAndMakeVisible(treeView_);
@@ -159,11 +159,13 @@ void ExplorerPanel::resized()
 
 void ExplorerPanel::paint(juce::Graphics& g)
 {
+    const auto& palette = HathorLookAndFeel::fromComponent(*this).getPalette();
+
     // Background
-    g.fillAll(juce::Colour(kBgColour));
+    g.fillAll(palette.background);
 
     // Header background — slightly lighter than panel bg (surface-container-low)
-    g.setColour(juce::Colour(kHeaderBgColour));
+    g.setColour(palette.surfaceLow);
     g.fillRect(0, 0, getWidth(), kHeaderHeight);
 }
 

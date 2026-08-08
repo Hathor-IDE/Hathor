@@ -85,14 +85,6 @@ public:
 
 private:
     //==========================================================================
-    // Colours — sourced from HathorLookAndFeel design tokens (single source
-    // of truth).
-    //==========================================================================
-    static constexpr juce::uint32 kBgColour        = HathorLookAndFeel::Colours::background;
-    static constexpr juce::uint32 kHeaderBgColour  = HathorLookAndFeel::Colours::surfaceLow;
-    static constexpr juce::uint32 kHeaderTextColour = HathorLookAndFeel::Colours::textSecondary;
-
-    //==========================================================================
     // Layout
     static constexpr int kHeaderHeight = 28;
 

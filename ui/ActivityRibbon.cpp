@@ -64,15 +64,17 @@ void ActivityRibbon::resized()
 
 void ActivityRibbon::paint(juce::Graphics& g)
 {
+    const auto& palette = HathorLookAndFeel::fromComponent(*this).getPalette();
+
     // Background — deepest surface level (surface-container-lowest)
-    g.fillAll(juce::Colour(kBgColour));
+    g.fillAll(palette.background);
 
     // Navigation buttons
     for (const auto& btn : navButtons_)
         paintButton(g, btn);
 
     // 1 px separator rule
-    g.setColour(juce::Colour(kSepColour));
+    g.setColour(palette.surfaceHighest);
     g.fillRect(separatorBounds_);
 
     // Settings button
@@ -81,24 +83,25 @@ void ActivityRibbon::paint(juce::Graphics& g)
 
 void ActivityRibbon::paintButton(juce::Graphics& g, const RibbonButton& btn) const
 {
+    const auto& palette = HathorLookAndFeel::fromComponent(*this).getPalette();
     const bool isActive = (btn.panel != Panel::None) && (btn.panel == activePanel_);
 
     // Accent highlight bar for active button
     if (isActive)
     {
         // 3 px left-edge accent bar (VS Code style, green accent from mockup)
-        g.setColour(juce::Colour(kAccentColour));
+        g.setColour(palette.accent);
         g.fillRect(juce::Rectangle<int>(0, btn.bounds.getY(), 3, kButtonSize));
 
         // Subtle tinted background over the entire button
-        g.setColour(juce::Colour(kAccentColour).withAlpha(0.15f));
+        g.setColour(palette.accent.withAlpha(0.15f));
         g.fillRect(btn.bounds);
     }
 
     // Icon label centred in the 32×32 box
     const juce::Colour textCol = isActive
-        ? juce::Colour(kAccentColour)
-        : juce::Colour(kTextColour);
+        ? palette.accent
+        : palette.textSecondary;
 
     g.setColour(textCol);
     g.setFont(HathorLookAndFeel::fontBold(14.0f));

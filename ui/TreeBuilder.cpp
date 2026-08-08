@@ -63,7 +63,7 @@ void TreeBuilder::buildChildren(const std::filesystem::path& dir, FolderNode& ou
     // file-browser ordering.
 
     std::vector<std::filesystem::directory_entry> folderEntries;
-    std::vector<std::pair<std::string, std::filesystem::directory_entry>> songEntries;
+    std::vector<std::filesystem::directory_entry> songEntries;
 
     for (const auto& entry : std::filesystem::directory_iterator(dir, ec))
     {
@@ -113,13 +113,14 @@ void TreeBuilder::buildChildren(const std::filesystem::path& dir, FolderNode& ou
 
     // Sort songs by filename.
     std::sort(songEntries.begin(), songEntries.end(),
-        [](const auto& a, const auto& b)
+        [](const std::filesystem::directory_entry& a,
+           const std::filesystem::directory_entry& b)
         {
-            return a.first < b.first;
+            return a.path().filename().string() < b.path().filename().string();
         });
 
     // Add song leaves.
-    for (const auto& [name, entry] : songEntries)
+    for (const auto& entry : songEntries)
     {
         const auto& childPath = entry.path();
         const FileType ft = classifyFile(childPath);
