@@ -228,8 +228,15 @@ public:
      * warning shown), false otherwise.
      *
      * Req 23.6: no other keystroke triggers pattern evaluation.
-     */
+      */
     bool handleKeyPress(const juce::KeyPress& key, HathorTab* tab);
+
+    /**
+     * Sync all tabs' Play/Stop button visuals to the engine's slot state (B1).
+     * Called from UITimer at 60 Hz so the UI reflects engine state changes
+     * from any path, not only button clicks.
+     */
+    void syncSlotButtonStates();
 
 private:
     // -----------------------------------------------------------------------
@@ -258,14 +265,11 @@ private:
     /// Build a TabInfo list for the tab bar (HathorTab entries + optional Settings tab).
     std::vector<TabInfo> tabInfos() const;
 
-    /// Rebuild the tab bar geometry and show the active content.
+     /// Rebuild the tab bar geometry and show the active content.
     void refreshTabBar();
 
-    /// Sync all tabs' Play/Stop button visuals to the engine's slot state (B1).
-    /// Called from UITimer at 60 Hz so the UI reflects engine state changes
-    /// from any path, not only button clicks.
-    void syncSlotButtonStates();
-
+    // -----------------------------------------------------------------------
+    // Layout constants
     // -----------------------------------------------------------------------
     // Eval helpers (Req 23.1–23.7)
     // -----------------------------------------------------------------------

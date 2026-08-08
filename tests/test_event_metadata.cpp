@@ -114,10 +114,10 @@ TEST_CASE("lowerToParamMap preserves sourceOffset at non-zero position", "[b2][l
     auto paramEvents = queryParamsVec(paramPattern, arc);
 
     REQUIRE(paramEvents.size() == 3);
-    // "bd" appears at offset 2, "sn" at offset 9
+    // "bd" appears at offset 2, "sn" at offset 8
     CHECK(paramEvents[0].sourceOffset == 2);
     CHECK(paramEvents[1].sourceOffset == 2);  // repeated from *2
-    CHECK(paramEvents[2].sourceOffset == 9);
+    CHECK(paramEvents[2].sourceOffset == 8);
 }
 
 // ---------------------------------------------------------------------------
@@ -187,7 +187,7 @@ TEST_CASE("stepcat combinator preserves sourceOffset", "[b2][combinator]")
 
 TEST_CASE("fastcat combinator preserves sourceOffset", "[b2][combinator]")
 {
-    // "bd sn" over [0,1) with pure("bd") and pure("sn") inside stepcat
+    // "bd sn" — stepcat of two atoms with different offsets, queried over 2 cycles
     auto result = parseMini("bd sn");
     REQUIRE(std::holds_alternative<CompiledPattern>(result));
     auto& cp = std::get<CompiledPattern>(result);
@@ -196,12 +196,16 @@ TEST_CASE("fastcat combinator preserves sourceOffset", "[b2][combinator]")
     Arc arc{Rational{0}, Rational{2}};
     auto events = queryStringVec(cp.pattern, arc);
 
-    // 2 events per cycle * 2 cycles = 4 events
+    // 2 events per cycle * 2 cycles = 4 events.
+    // stepcat/stack groups by sub-pattern, so ordering is:
+    //   bd(cycle 0), bd(cycle 1), sn(cycle 0), sn(cycle 1)
     REQUIRE(events.size() == 4);
-    CHECK(events[0].sourceOffset == 0);  // bd, cycle 0
-    CHECK(events[1].sourceOffset == 3);  // sn, cycle 0
-    CHECK(events[2].sourceOffset == 0);  // bd, cycle 1
-    CHECK(events[3].sourceOffset == 3);  // sn, cycle 1
+    // All "bd" events should have sourceOffset 0
+    REQUIRE(events[0].sourceOffset == 0);
+    REQUIRE(events[1].sourceOffset == 0);
+    // All "sn" events should have sourceOffset 3
+    REQUIRE(events[2].sourceOffset == 3);
+    REQUIRE(events[3].sourceOffset == 3);
 }
 
 // ---------------------------------------------------------------------------

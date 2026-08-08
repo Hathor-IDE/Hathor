@@ -219,11 +219,19 @@ TEST_CASE("SPSC ring buffer: zero-event frame is valid", "[spsc]")
 // B2: Event<ParamMap> size is bounded (no excessive growth from metadata)
 // ---------------------------------------------------------------------------
 
-TEST_CASE("SPSC ring buffer: Event<ParamMap> is trivially copyable", "[spsc][b2][realtime]")
+TEST_CASE("SPSC ring buffer: metadata fields are trivially copyable", "[spsc][b2][realtime]")
 {
     // B2 real-time audit: the metadata fields must be trivially copyable
-    // so the ring buffer's memcpy-style copy is safe.
-    STATIC_REQUIRE(std::is_trivially_copyable_v<Event<ParamMap>>);
+    // so the ring buffer's copy is safe and allocation-free.
+    // Note: Event<ParamMap> itself is NOT trivially copyable (ParamMap contains
+    // std::string for sample names), but the metadata fields we add are.
     STATIC_REQUIRE(std::is_trivially_copyable_v<std::size_t>);
     STATIC_REQUIRE(std::is_trivially_copyable_v<int8_t>);
+
+    // Event<ParamMap> must be copy-constructible and copy-assignable
+    // (the ring buffer and audio callback rely on this).
+    STATIC_REQUIRE(std::is_copy_constructible_v<Event<ParamMap>>);
+    STATIC_REQUIRE(std::is_copy_assignable_v<Event<ParamMap>>);
+    STATIC_REQUIRE(std::is_trivially_destructible_v<std::size_t>);
+    STATIC_REQUIRE(std::is_trivially_destructible_v<int8_t>);
 }

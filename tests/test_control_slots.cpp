@@ -204,3 +204,84 @@ TEST_CASE("A3: unknown command still rejected",
     REQUIRE(cap.data.value("ok", true) == false);
     REQUIRE(cap.data.value("error", "") == "unknown command");
 }
+
+// ---------------------------------------------------------------------------
+// B1: dispatchSlotPlayStop convenience wrapper
+// ---------------------------------------------------------------------------
+
+TEST_CASE("B1: dispatchSlotPlayStop issues slot-play and sets running=true",
+          "[b1][control]")
+{
+    FakeFacade audio;
+    SampleBank bank;
+    hathor::control::ControlInterface ci(audio, bank);
+
+    audio.findOrAddSlot("d1");
+    REQUIRE(audio.isSlotRunning(0) == false);
+
+    RespCapture cap;
+    ci.dispatchSlotPlayStop("d1", /*start=*/true,
+        [&cap](nlohmann::json j) { cap.data = std::move(j); cap.got = true; });
+
+    REQUIRE(cap.got);
+    REQUIRE(cap.data.value("ok", false) == true);
+    REQUIRE(cap.data.value("cmd", "") == "slot-play");
+    REQUIRE(audio.isSlotRunning(0) == true);
+}
+
+TEST_CASE("B1: dispatchSlotPlayStop issues slot-stop and sets running=false",
+          "[b1][control]")
+{
+    FakeFacade audio;
+    SampleBank bank;
+    hathor::control::ControlInterface ci(audio, bank);
+
+    audio.findOrAddSlot("d1");
+    audio.slotPlay(0);
+    REQUIRE(audio.isSlotRunning(0) == true);
+
+    RespCapture cap;
+    ci.dispatchSlotPlayStop("d1", /*start=*/false,
+        [&cap](nlohmann::json j) { cap.data = std::move(j); cap.got = true; });
+
+    REQUIRE(cap.got);
+    REQUIRE(cap.data.value("ok", false) == true);
+    REQUIRE(cap.data.value("cmd", "") == "slot-stop");
+    REQUIRE(audio.isSlotRunning(0) == false);
+}
+
+TEST_CASE("B1: dispatchSlotPlayStop on d1 does not affect d2",
+          "[b1][control]")
+{
+    FakeFacade audio;
+    SampleBank bank;
+    hathor::control::ControlInterface ci(audio, bank);
+
+    audio.findOrAddSlot("d1");
+    audio.findOrAddSlot("d2");
+    audio.slotPlay(0);  // d1 running
+    REQUIRE(audio.isSlotRunning(0) == true);
+    REQUIRE(audio.isSlotRunning(1) == false);
+
+    RespCapture cap;
+    ci.dispatchSlotPlayStop("d2", /*start=*/true,
+        [&cap](nlohmann::json j) { cap.data = std::move(j); cap.got = true; });
+
+    REQUIRE(cap.got);
+    REQUIRE(cap.data.value("ok", false) == true);
+    REQUIRE(cap.data.value("cmd", "") == "slot-play");
+
+    // Both must now be running independently.
+    REQUIRE(audio.isSlotRunning(0) == true);
+    REQUIRE(audio.isSlotRunning(1) == true);
+
+    // Stop d1 only — d2 must continue.
+    RespCapture cap2;
+    ci.dispatchSlotPlayStop("d1", /*start=*/false,
+        [&cap2](nlohmann::json j) { cap2.data = std::move(j); cap2.got = true; });
+
+    REQUIRE(cap2.got);
+    REQUIRE(cap2.data.value("cmd", "") == "slot-stop");
+    REQUIRE(audio.isSlotRunning(0) == false);
+    REQUIRE(audio.isSlotRunning(1) == true);
+}

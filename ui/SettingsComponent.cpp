@@ -99,8 +99,16 @@ SettingsComponent::loadSettings() const
     }
 
     const int themeIdx = props->getIntValue("settings.theme",
-                                            static_cast<int>(ThemeId::Dark));
-    m.theme = static_cast<ThemeId>(themeIdx);
+                                             static_cast<int>(ThemeId::Dark));
+
+    // Clamp to the valid ThemeId range so a stale/unknown persisted value
+    // (e.g. from a future version that added a 6th theme, or a corrupt prefs
+    // file) falls back safely to Dark rather than producing UB via a raw
+    // static_cast (B3 persistence-safety requirement).
+    static constexpr int kMinTheme = static_cast<int>(ThemeId::Dark);
+    static constexpr int kMaxTheme = static_cast<int>(ThemeId::Light);
+    const int clampedTheme = juce::jlimit(kMinTheme, kMaxTheme, themeIdx);
+    m.theme = static_cast<ThemeId>(clampedTheme);
 
     m.opacityPercent = props->getValue("settings.opacity",
                                        juce::String(opacitySupported_ ? 70.0f : 100.0f))
@@ -555,22 +563,12 @@ void SettingsComponent::applyTheme(ThemeId theme)
 {
     const Palette newPalette = paletteForTheme(theme);
 
-    if (auto* lf = dynamic_cast<HathorLookAndFeel*>(
-            &juce::Desktop::getInstance().getDefaultLookAndFeel()))
-    {
-        // setPalette() internally calls sendLookAndFeelChange() on all components.
-        lf->setPalette(newPalette);
-    }
-    else
-    {
-        // Fallback: set global palette pointer and broadcast manually.
-        HathorLookAndFeel::setGlobalPalette(&newPalette);
-        for (int i = 0; i < juce::Desktop::getInstance().getNumComponents(); ++i)
-        {
-            if (auto* c = juce::Desktop::getInstance().getComponent(i))
-                c->sendLookAndFeelChange();
-        }
-    }
+    // Resolve the HathorLookAndFeel instance installed on the window hierarchy
+    // (MainWindow calls setLookAndFeel(&lookAndFeel_)) and swap its palette.
+    // setPalette() calls sendLookAndFeelChange() on all live components, so
+    // every themed zone re-paints with the new palette immediately (B3).
+    HathorLookAndFeel& lookAndFeel = HathorLookAndFeel::fromComponent(*this);
+    lookAndFeel.setPalette(newPalette);
 }
 
 void SettingsComponent::applyOpacity(float percent)

@@ -53,17 +53,25 @@ HathorTab::HathorTab(int slotIndex, const juce::File& file)
 
      addAndMakeVisible(editor_);
 
-     // -----------------------------------------------------------------------
-     // Per-slot Play/Stop button (B1)
-     // -----------------------------------------------------------------------
-     // Small icon-only button that toggles the tab's slot play/stop state.
-     // It dispatches "slot-play <slot>" / "slot-stop <slot>" via the
-     // onPlayStopClicked callback installed by EditorArea.
-     slotPlayButton_.setButtonText("");
-     slotPlayButton_.setTooltip("Play/Stop this tab's slot");
-     slotPlayButton_.setLookAndFeel(&HathorLookAndFeel::fromComponent(*this));
-     slotPlayButton_.onClick = [this]() { slotPlayButtonClicked(); };
-     addAndMakeVisible(slotPlayButton_);
+    // -----------------------------------------------------------------------
+    // Per-slot Play/Stop button (B1)
+    // -----------------------------------------------------------------------
+    // Small icon-only button that toggles the tab's slot play/stop state.
+    // It dispatches "slot-play <slot>" / "slot-stop <slot>" via the
+    // onPlayStopClicked callback installed by EditorArea.
+    slotPlayButton_.setButtonText("");
+    slotPlayButton_.setTooltip("Play/Stop this tab's slot");
+    slotPlayButton_.setLookAndFeel(&HathorLookAndFeel::fromComponent(*this));
+    // Style as a flat icon button — no background fill, just the icon.
+    slotPlayButton_.setColour(juce::TextButton::buttonColourId,
+                              juce::Colours::transparentBlack);
+    slotPlayButton_.onClick = [this]() { slotPlayButtonClicked(); };
+    addAndMakeVisible(slotPlayButton_);
+
+    // Initialize the button visual state to stopped (Play icon).
+    // The authoritative state is the engine's SlotState::running atomic,
+    // which UITimer syncs at 60 Hz via syncSlotButtonStates().
+    setSlotRunningVisual(false);
 }
 
 HathorTab::~HathorTab()
@@ -146,10 +154,11 @@ void HathorTab::setSlotRunningVisual(bool running) noexcept
 
     if (running)
     {
-        // Stop icon (squares) — filled with accent for visual prominence.
-        slotPlayButton_.setButtonText(juce::CharPointer_UTF8("\xE2\x96\x90\xC2\xA0\xE2\x96\x90\xC2\xA0\xE2\x96\x90"));
+        // Stop icon (two squares).
+        slotPlayButton_.setButtonText(juce::String::charToString(0x25A0) + " " +
+                                      juce::String::charToString(0x25A0));
         slotPlayButton_.setColour(juce::TextButton::buttonColourId,
-                                  palette.surfaceLow);
+                                  juce::Colours::transparentBlack);
         slotPlayButton_.setColour(juce::TextButton::textColourOnId,
                                   palette.error);
         slotPlayButton_.setColour(juce::TextButton::textColourOffId,
@@ -158,9 +167,9 @@ void HathorTab::setSlotRunningVisual(bool running) noexcept
     else
     {
         // Play icon (triangle).
-        slotPlayButton_.setButtonText(juce::CharPointer_UTF8("\xE2\x96\xB6"));
+        slotPlayButton_.setButtonText(juce::String::charToString(0x25B6));
         slotPlayButton_.setColour(juce::TextButton::buttonColourId,
-                                  palette.surfaceLow);
+                                  juce::Colours::transparentBlack);
         slotPlayButton_.setColour(juce::TextButton::textColourOnId,
                                   palette.textPrimary);
         slotPlayButton_.setColour(juce::TextButton::textColourOffId,
@@ -206,12 +215,12 @@ void HathorTab::resized()
 void HathorTab::lookAndFeelChanged()
 {
     // Rebuild palette-derived colours + syntax colour scheme when the theme
-    // switches (B3). JUCE's CodeEditorComponent::lookAndFeelChanged() does
-    // not refresh its colour scheme, so we re-apply both the editor's colour
-    // IDs and the active tokeniser's scheme here, all sourced from the current
-    // HathorLookAndFeel palette.
-    HathorLookAndFeel& lookAndFeel = HathorLookAndFeel::fromComponent(*this);
-    const Palette& palette = lookAndFeel.getPalette();
+    // switches (B3). The LookAndFeel has already been updated by the time this
+    // is called (setPalette() → sendLookAndFeelChange()). JUCE's
+    // CodeEditorComponent::lookAndFeelChanged() does not refresh its syntax
+    // colour scheme, so the active tokeniser's scheme is re-applied here, all
+    // sourced from the current HathorLookAndFeel palette.
+    const auto& palette = HathorLookAndFeel::fromComponent(*this).getPalette();
 
     editor_.setColour(juce::CodeEditorComponent::backgroundColourId,
                       palette.surface);
@@ -224,11 +233,15 @@ void HathorTab::lookAndFeelChanged()
     editor_.setColour(juce::CodeEditorComponent::lineNumberTextId,
                       palette.codeLineNum);
 
-    // Re-apply the active tokeniser's palette-derived colour scheme.
+    // Re-apply the active tokeniser's palette-derived colour scheme so syntax
+    // highlighting tracks the new theme.
     if (useChuckTokeniser_)
         editor_.setColourScheme(chuckTokeniser_.getDefaultColourScheme());
     else
         editor_.setColourScheme(miniTokeniser_.getDefaultColourScheme());
+
+    // Re-apply button visual state to sync colours with the new palette.
+    setSlotRunningVisual(slotRunning_);
 }
 
 // ---------------------------------------------------------------------------

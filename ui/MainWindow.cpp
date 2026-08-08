@@ -192,6 +192,20 @@ MainWindow::MainWindow(AudioEngine& audio,
     appProperties_.setStorageParameters(makePropertiesOptions());
     explorerPanel_->setApplicationProperties(&appProperties_);
 
+    // Restore the persisted theme on startup (B3). SettingsComponent persists
+    // the theme as "settings.theme" (a ThemeId enum index). If absent or
+    // unknown, loadSettings() clamps to Dark (the default).
+    if (const auto* props = appProperties_.getUserSettings())
+    {
+        const int themeIdx = props->getIntValue("settings.theme",
+                                                 static_cast<int>(ThemeId::Dark));
+        static constexpr int kMinTheme = static_cast<int>(ThemeId::Dark);
+        static constexpr int kMaxTheme = static_cast<int>(ThemeId::Light);
+        const ThemeId appliedTheme =
+            static_cast<ThemeId>(juce::jlimit(kMinTheme, kMaxTheme, themeIdx));
+        lookAndFeel_.setPalette(paletteForTheme(appliedTheme));
+    }
+
     // Restore the last-used root directory if one was persisted; otherwise
     // fall back to the project directory (cwd at launch).
     explorerPanel_->restoreLastDirectoryAndRefresh();
