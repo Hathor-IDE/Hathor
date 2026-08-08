@@ -40,6 +40,8 @@ SliderPanel::SliderPanel(hathor::control::ControlInterface& ci)
 
 void SliderPanel::setupBpmSlider()
 {
+    const auto& palette = HathorLookAndFeel::fromComponent(*this).getPalette();
+
     // -----------------------------------------------------------------------
     // BPM label (Req 26.1)
     // -----------------------------------------------------------------------
@@ -47,7 +49,7 @@ void SliderPanel::setupBpmSlider()
     bpmLabel_.setFont(HathorLookAndFeel::fontMedium(
         HathorLookAndFeel::Typography::labelMd));
     bpmLabel_.setColour(juce::Label::textColourId,
-                        juce::Colour(HathorLookAndFeel::Colours::textSecondary));
+                        palette.textSecondary);
     bpmLabel_.setJustificationType(juce::Justification::centredLeft);
 
     // -----------------------------------------------------------------------

@@ -17,7 +17,6 @@ SongTreeItem::SongTreeItem(SongNode node, SongClickedCallback onClicked)
     : node_(std::move(node)),
       onSongClicked_(std::move(onClicked))
 {
-    setOpaque(true);
 }
 
 void SongTreeItem::paintItem(juce::Graphics& g, int width, int height)

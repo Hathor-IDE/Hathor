@@ -192,10 +192,9 @@ TEST_CASE("TreeBuilder handles inaccessible directory gracefully", "[tree-builde
     std::filesystem::remove_all(root);
     std::filesystem::create_directories(root / "noaccess");
 
-    // Remove read/execute permissions on the subdirectory.
+    // Remove read/execute permissions on the subdirectory to make it inaccessible.
     std::filesystem::permissions(root / "noaccess",
-        std::filesystem::perms::owner_read | std::filesystem::perms::owner_write |
-        std::filesystem::perms::owner_exec,
+        std::filesystem::perms::none,
         std::filesystem::perm_options::replace);
 
     TreeBuilder builder;

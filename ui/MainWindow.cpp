@@ -53,7 +53,7 @@ MainWindow::MainWindow(AudioEngine& audio,
                        std::string hathorMcpPath)
     : juce::DocumentWindow(
           "Hathor",
-          juce::Colour(HathorLookAndFeel::Colours::background),
+           juce::Colour(Palette::defaultPalette().background),
           juce::DocumentWindow::allButtons)
     , audio_(audio)
     , ci_(ci)

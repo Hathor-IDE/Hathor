@@ -84,8 +84,7 @@ void TreeBuilder::buildChildren(const std::filesystem::path& dir, FolderNode& ou
         }
         else if (ft == FileType::SongHathor || ft == FileType::SongChuck)
         {
-            // Store with filename for sorting.
-            songEntries.emplace_back(p.filename().string(), entry);
+            songEntries.push_back(entry);
         }
         // FileType::Other and inaccessible entries are silently excluded.
     }

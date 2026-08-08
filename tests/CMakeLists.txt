@@ -59,6 +59,7 @@ catch_discover_tests(hathor-engine-tests DISCOVERY_MODE PRE_TEST)
 # ---------------------------------------------------------------------------
 add_executable(hathor-control-tests
     test_mcp_socket.cpp
+    test_control_slots.cpp
 )
 
 target_compile_features(hathor-control-tests PRIVATE cxx_std_20)

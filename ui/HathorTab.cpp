@@ -31,16 +31,17 @@ HathorTab::HathorTab(int slotIndex)
     // These local overrides ensure correctness even if this component is
     // used outside of MainWindow's look-and-feel scope.
     // -----------------------------------------------------------------------
+    const auto& palette = HathorLookAndFeel::fromComponent(*this).getPalette();
     editor_.setColour(juce::CodeEditorComponent::backgroundColourId,
-                      juce::Colour(HathorLookAndFeel::Colours::surface));
+                      palette.surface);
     editor_.setColour(juce::CodeEditorComponent::defaultTextColourId,
-                      juce::Colour(HathorLookAndFeel::Colours::codeText));
+                      palette.codeText);
     editor_.setColour(juce::CodeEditorComponent::highlightColourId,
-                      juce::Colour(HathorLookAndFeel::Colours::accent).withAlpha(0.3f));
+                      palette.accent.withAlpha(0.3f));
     editor_.setColour(juce::CodeEditorComponent::lineNumberBackgroundId,
-                      juce::Colour(HathorLookAndFeel::Colours::surfaceLow));
+                      palette.surfaceLow);
     editor_.setColour(juce::CodeEditorComponent::lineNumberTextId,
-                      juce::Colour(HathorLookAndFeel::Colours::codeLineNum));
+                      palette.codeLineNum);
 
     // -----------------------------------------------------------------------
     // Register as a CodeDocument listener so we can detect edits (Req 22.5)

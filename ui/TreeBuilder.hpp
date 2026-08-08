@@ -36,6 +36,19 @@ namespace hathor::ui {
 // Tree node data (JUCE-free, unit-testable)
 // ---------------------------------------------------------------------------
 
+/// A song/file leaf node in the tree.
+struct SongNode
+{
+    std::string       name;       ///< display name (file name + extension)
+    std::filesystem::path path;    ///< absolute or relative path
+    FileType          fileType;   ///< SongHathor or SongChuck
+
+    SongNode() = default;
+
+    SongNode(std::string n, std::filesystem::path p, FileType ft)
+        : name(std::move(n)), path(std::move(p)), fileType(ft) {}
+};
+
 /// A folder (album) node in the tree.
 struct FolderNode
 {
@@ -50,22 +63,7 @@ struct FolderNode
     FolderNode(std::string n, std::filesystem::path p)
         : name(std::move(n)), path(std::move(p)), expanded(false) {}
 
-    /// The number of directly-visible children (respecting child folder collapse states).
-    /// Not used by the tree builder itself — provided for UI convenience.
     bool isEmpty() const noexcept { return folders.empty() && songs.empty(); }
-};
-
-/// A song/file leaf node in the tree.
-struct SongNode
-{
-    std::string       name;       ///< display name (file name + extension)
-    std::filesystem::path path;    ///< absolute or relative path
-    FileType          fileType;   ///< SongHathor or SongChuck
-
-    SongNode() = default;
-
-    SongNode(std::string n, std::filesystem::path p, FileType ft)
-        : name(std::move(n)), path(std::move(p)), fileType(ft) {}
 };
 
 // ---------------------------------------------------------------------------

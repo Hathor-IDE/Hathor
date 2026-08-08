@@ -31,23 +31,6 @@
 namespace hathor::ui {
 
 // ===========================================================================
-// Colour constants — sourced from HathorLookAndFeel design tokens
-// ===========================================================================
-
-namespace colours {
-    static constexpr juce::uint32 kBackground  = HathorLookAndFeel::Colours::background;
-    static constexpr juce::uint32 kSurface     = HathorLookAndFeel::Colours::surfaceContainer;
-    static constexpr juce::uint32 kText        = HathorLookAndFeel::Colours::textPrimary;
-    static constexpr juce::uint32 kAccent      = HathorLookAndFeel::Colours::accent;
-    static constexpr juce::uint32 kError       = HathorLookAndFeel::Colours::error;
-    static constexpr juce::uint32 kWarning     = HathorLookAndFeel::Colours::warning;
-    static constexpr juce::uint32 kUserBubble  = HathorLookAndFeel::Colours::surfaceContainer;
-    static constexpr juce::uint32 kAgentBubble = HathorLookAndFeel::Colours::surfaceContainer;
-    static constexpr juce::uint32 kBorder      = HathorLookAndFeel::Colours::surfaceHighest;
-    static constexpr juce::uint32 kReconnect   = 0xff5a3020; // distinct from palette (error state)
-}
-
-// ===========================================================================
 // AsciiArtHeader — generative ASCII decoration (Req 25.4)
 // ===========================================================================
 
@@ -65,11 +48,13 @@ void AsciiArtHeader::paint(juce::Graphics& g)
     if (w <= 0 || h <= 0)
         return;
 
+    const auto& palette = HathorLookAndFeel::fromComponent(*this).getPalette();
+
     // Dark background matching sidebar surface.
-    g.fillAll(juce::Colour(colours::kBackground));
+    g.fillAll(palette.background);
 
     // Bottom separator line.
-    g.setColour(juce::Colour(colours::kBorder));
+    g.setColour(palette.surfaceHighest);
     g.drawHorizontalLine(h - 1, 0.0f, static_cast<float>(w));
 
     // -----------------------------------------------------------------------
@@ -92,8 +77,9 @@ void AsciiArtHeader::paint(juce::Graphics& g)
     static constexpr int kNumChars = static_cast<int>(std::size(kChars));
 
     // Accent and dim colour derived from the existing palette.
-    const juce::Colour accent  = juce::Colour(colours::kAccent);
-    const juce::Colour dimText = juce::Colour(colours::kText).withAlpha(0.35f);
+    const auto& palette = HathorLookAndFeel::fromComponent(*this).getPalette();
+    const juce::Colour accent  = palette.accent;
+    const juce::Colour dimText = palette.textPrimary.withAlpha(0.35f);
 
     // Monospaced font, small.
     const juce::Font font = HathorLookAndFeel::fontRegular(11.0f);
@@ -161,13 +147,14 @@ MessageBubble::MessageBubble(const juce::String& text, Role role)
     label_.setReadOnly(true);
     label_.setScrollbarsShown(false);
     label_.setCaretVisible(false);
+    const auto& palette = HathorLookAndFeel::fromComponent(*this).getPalette();
     label_.setFont(HathorLookAndFeel::fontRegular(13.0f));
     label_.setColour(juce::TextEditor::backgroundColourId,
                      juce::Colour(0));
     label_.setColour(juce::TextEditor::outlineColourId,
                      juce::Colour(0));
     label_.setColour(juce::TextEditor::textColourId,
-                     juce::Colour(colours::kText));
+                     palette.textPrimary);
     label_.setText(text, juce::dontSendNotification);
 }
 
@@ -193,7 +180,8 @@ int MessageBubble::preferredHeight(int width) const
 
     // Use a temporary AttributedString to measure line wrapping.
     juce::AttributedString as;
-    as.append(label_.getText(), HathorLookAndFeel::fontRegular(13.0f), juce::Colour(colours::kText));
+    const auto& palette = HathorLookAndFeel::fromComponent(*this).getPalette();
+    as.append(label_.getText(), HathorLookAndFeel::fontRegular(13.0f), palette.textPrimary);
     as.setWordWrap(juce::AttributedString::byWord);
     as.setJustification(juce::Justification::topLeft);
 
@@ -212,30 +200,31 @@ void MessageBubble::resized()
 void MessageBubble::paint(juce::Graphics& g)
 {
     const auto bounds = getLocalBounds().toFloat().reduced(2.0f, 2.0f);
+    const auto& palette = HathorLookAndFeel::fromComponent(*this).getPalette();
 
-    juce::uint32 bgColour;
+    juce::Colour bgColour;
     float cornerRadius = 6.0f;
 
     switch (role_)
     {
         case Role::User:
-            bgColour = colours::kUserBubble;
+            bgColour = palette.surfaceContainer;
             break;
         case Role::Agent:
-            bgColour = colours::kAgentBubble;
+            bgColour = palette.surfaceContainer;
             break;
         case Role::ToolCall:
-            bgColour = colours::kSurface;
+            bgColour = palette.surfaceContainer;
             cornerRadius = 3.0f;
             break;
         case Role::StatusLine:
         default:
-            bgColour = colours::kBackground;
+            bgColour = palette.background;
             cornerRadius = 0.0f;
             break;
     }
 
-    g.setColour(juce::Colour(bgColour));
+    g.setColour(bgColour);
     g.fillRoundedRectangle(bounds, cornerRadius);
 }
 
@@ -293,12 +282,13 @@ ChatSidebar::ChatSidebar(AudioEngine& /*audio*/,
     // -----------------------------------------------------------------------
     // Status label (hidden by default)
     // -----------------------------------------------------------------------
+    const auto& palette = HathorLookAndFeel::fromComponent(*this).getPalette();
     addChildComponent(statusLabel_);
     statusLabel_.setFont(HathorLookAndFeel::fontMedium(HathorLookAndFeel::Typography::labelMd));
     statusLabel_.setColour(juce::Label::backgroundColourId,
-                           juce::Colour(colours::kError).withAlpha(0.2f));
+                           palette.error.withAlpha(0.2f));
     statusLabel_.setColour(juce::Label::textColourId,
-                           juce::Colour(colours::kText)); // use textPrimary for WCAG AA contrast on the red-tinted bg
+                           palette.textPrimary);
     statusLabel_.setJustificationType(juce::Justification::centredLeft);
     statusLabel_.setBorderSize(juce::BorderSize<int>(0, 6, 0, 6));
 
@@ -308,13 +298,13 @@ ChatSidebar::ChatSidebar(AudioEngine& /*audio*/,
     addChildComponent(reconnectBanner_);
     reconnectBanner_.setButtonText("Agent disconnected \xe2\x80\x94 click to reconnect");
     reconnectBanner_.setColour(juce::TextButton::buttonColourId,
-                                juce::Colour(colours::kReconnect));
+                               juce::Colour(0xff5a3020));
     reconnectBanner_.setColour(juce::TextButton::buttonOnColourId,
-                                juce::Colour(colours::kReconnect).brighter(0.2f));
+                               juce::Colour(0xff5a3020).brighter(0.2f));
     reconnectBanner_.setColour(juce::TextButton::textColourOffId,
-                                juce::Colour(colours::kWarning));
+                               palette.warning);
     reconnectBanner_.setColour(juce::TextButton::textColourOnId,
-                                juce::Colour(colours::kWarning));
+                               palette.warning);
 
     // Wire the reconnect click — hides the banner, re-enables input,
     // and calls session_->restart() (Req 32.8).
@@ -347,23 +337,25 @@ ChatSidebar::ChatSidebar(AudioEngine& /*audio*/,
     // -----------------------------------------------------------------------
     // Chat input field (Req 25.2, 25.6)
     // -----------------------------------------------------------------------
+    const auto& palette = HathorLookAndFeel::fromComponent(*this).getPalette();
+
     addAndMakeVisible(inputField_);
     inputField_.setMultiLine(false);
     inputField_.setReturnKeyStartsNewLine(false);
     inputField_.setScrollbarsShown(false);
     inputField_.setFont(HathorLookAndFeel::fontRegular(13.0f));
     inputField_.setColour(juce::TextEditor::backgroundColourId,
-                           juce::Colour(colours::kSurface));
+                          palette.surfaceContainer);
     inputField_.setColour(juce::TextEditor::textColourId,
-                           juce::Colour(colours::kText));
+                          palette.textPrimary);
     inputField_.setColour(juce::TextEditor::outlineColourId,
-                           juce::Colour(colours::kBorder));
+                          palette.surfaceHighest);
     inputField_.setColour(juce::TextEditor::focusedOutlineColourId,
-                           juce::Colour(colours::kAccent));
+                          palette.accent);
     inputField_.setColour(juce::CaretComponent::caretColourId,
-                           juce::Colour(colours::kAccent));
+                          palette.accent);
     inputField_.setTextToShowWhenEmpty("Message agent...",
-                                        juce::Colour(0xff666666));
+                                       palette.textDisabled);
     inputField_.addListener(this);
 
     // -----------------------------------------------------------------------
@@ -466,11 +458,13 @@ void ChatSidebar::resized()
 
 void ChatSidebar::paint(juce::Graphics& g)
 {
+    const auto& palette = HathorLookAndFeel::fromComponent(*this).getPalette();
+
     // Background fill (below the ASCII art header)
-    g.fillAll(juce::Colour(colours::kSurface));
+    g.fillAll(palette.surfaceContainer);
 
     // 1 px left border (separates sidebar from editor area)
-    g.setColour(juce::Colour(colours::kBorder));
+    g.setColour(palette.surfaceHighest);
     g.drawVerticalLine(0, 0.0f, static_cast<float>(getHeight()));
 
     // 1 px separator above the input field
@@ -677,10 +671,11 @@ void ChatSidebar::scrollToBottom()
 
 void ChatSidebar::setInputEnabled(bool enabled)
 {
+    const auto& palette = HathorLookAndFeel::fromComponent(*this).getPalette();
     inputField_.setEnabled(enabled);
     inputField_.setColour(juce::TextEditor::backgroundColourId,
-                           juce::Colour(enabled ? colours::kSurface
-                                                : colours::kBackground));
+                          juce::Colour(enabled ? palette.surfaceContainer
+                                               : palette.background));
     inputField_.repaint();
 }
 

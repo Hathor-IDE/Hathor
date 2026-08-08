@@ -114,17 +114,17 @@ private:
     // Rendering helpers — one per mode
     // -----------------------------------------------------------------------
     void paintPulse(juce::Graphics& g, const juce::Rectangle<float>& bounds,
-                    bool idle, float idlePhase) const;
+                    bool idle, float idlePhase, const Palette& palette) const;
 
     void paintStepGrid(juce::Graphics& g, const juce::Rectangle<float>& bounds,
-                       bool idle, float idlePhase) const;
+                       bool idle, float idlePhase, const Palette& palette) const;
 
     void paintWaveform(juce::Graphics& g, const juce::Rectangle<float>& bounds,
-                       bool idle, float idlePhase) const;
+                       bool idle, float idlePhase, const Palette& palette) const;
 
     /// Draw the dim placeholder ring (shown in idle state over any mode).
     void paintIdleRing(juce::Graphics& g, const juce::Rectangle<float>& bounds,
-                       float phase) const;
+                       float phase, const Palette& palette) const;
 
     // -----------------------------------------------------------------------
     // Step grid dimensions

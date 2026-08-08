@@ -136,8 +136,10 @@ void VisualizerPanel::mouseUp(const juce::MouseEvent& /*e*/)
 
 void VisualizerPanel::paint(juce::Graphics& g)
 {
+    const auto& palette = HathorLookAndFeel::fromComponent(*this).getPalette();
+
     // Fill background.
-    g.fillAll(juce::Colour(kBgColour));
+    g.fillAll(palette.surface);
 
     const auto bounds = getLocalBounds().toFloat();
     if (bounds.isEmpty())
@@ -155,16 +157,16 @@ void VisualizerPanel::paint(juce::Graphics& g)
     switch (mode_)
     {
         case Mode::Pulse:
-            paintPulse(g, bounds, idle_, idlePhase);
+            paintPulse(g, bounds, idle_, idlePhase, palette);
             break;
         case Mode::StepGrid:
-            paintStepGrid(g, bounds, idle_, idlePhase);
+            paintStepGrid(g, bounds, idle_, idlePhase, palette);
             break;
         case Mode::Waveform:
-            paintWaveform(g, bounds, idle_, idlePhase);
+            paintWaveform(g, bounds, idle_, idlePhase, palette);
             break;
         default:
-            paintPulse(g, bounds, idle_, idlePhase);
+            paintPulse(g, bounds, idle_, idlePhase, palette);
             break;
     }
 }
@@ -174,12 +176,13 @@ void VisualizerPanel::paint(juce::Graphics& g)
 // ==========================================================================
 
 void VisualizerPanel::paintPulse(juce::Graphics& g,
-                                  const juce::Rectangle<float>& bounds,
-                                  bool idle, float idlePhase) const
+                                   const juce::Rectangle<float>& bounds,
+                                   bool idle, float idlePhase,
+                                   const Palette& palette) const
 {
     if (idle)
     {
-        paintIdleRing(g, bounds, idlePhase);
+        paintIdleRing(g, bounds, idlePhase, palette);
         return;
     }
 
@@ -195,13 +198,13 @@ void VisualizerPanel::paintPulse(juce::Graphics& g,
 
     // Use a slightly desaturated accent colour for the pulse fill.
     const juce::Colour pulseColour =
-        juce::Colour(kAccentColour).withAlpha(0.8f);
+        palette.accent.withAlpha(0.8f);
 
     g.setColour(pulseColour);
     g.fillEllipse(cx - diameter * 0.5f,
-                  cy - diameter * 0.5f,
-                  diameter,
-                  diameter);
+                   cy - diameter * 0.5f,
+                   diameter,
+                   diameter);
 }
 
 // ==========================================================================
@@ -209,8 +212,9 @@ void VisualizerPanel::paintPulse(juce::Graphics& g,
 // ==========================================================================
 
 void VisualizerPanel::paintStepGrid(juce::Graphics& g,
-                                     const juce::Rectangle<float>& bounds,
-                                     bool idle, float idlePhase) const
+                                      const juce::Rectangle<float>& bounds,
+                                      bool idle, float idlePhase,
+                                      const Palette& palette) const
 {
     if (idle)
     {
@@ -220,7 +224,7 @@ void VisualizerPanel::paintStepGrid(juce::Graphics& g,
         const float cellH = bounds.getHeight() / static_cast<float>(kGridRows);
         const float pad   = 2.0f;
 
-        g.setColour(juce::Colour(kGridDimColour));
+        g.setColour(palette.surfaceHigh);
         for (int row = 0; row < kGridRows; ++row)
         {
             for (int col = 0; col < kGridCols; ++col)
@@ -234,7 +238,7 @@ void VisualizerPanel::paintStepGrid(juce::Graphics& g,
             }
         }
 
-        paintIdleRing(g, bounds, idlePhase);
+        paintIdleRing(g, bounds, idlePhase, palette);
         return;
     }
 
@@ -249,9 +253,9 @@ void VisualizerPanel::paintStepGrid(juce::Graphics& g,
             const int idx = row * kGridCols + col;
             const float brightness = cellBrightness_[idx];
 
-            // Interpolate from dim background to white.
-            const juce::Colour dimC  = juce::Colour(kGridDimColour);
-            const juce::Colour flashC = juce::Colour(kGridFlashColour);
+            // Interpolate from dim background to accent.
+            const juce::Colour dimC  = palette.surfaceHigh;
+            const juce::Colour flashC = palette.accent;
             const juce::Colour cellC  = dimC.interpolatedWith(flashC, brightness);
 
             const juce::Rectangle<float> cell(
@@ -271,12 +275,13 @@ void VisualizerPanel::paintStepGrid(juce::Graphics& g,
 // ==========================================================================
 
 void VisualizerPanel::paintWaveform(juce::Graphics& g,
-                                     const juce::Rectangle<float>& bounds,
-                                     bool idle, float idlePhase) const
+                                      const juce::Rectangle<float>& bounds,
+                                      bool idle, float idlePhase,
+                                      const Palette& palette) const
 {
     if (idle)
     {
-        paintIdleRing(g, bounds, idlePhase);
+        paintIdleRing(g, bounds, idlePhase, palette);
         return;
     }
 
@@ -311,7 +316,7 @@ void VisualizerPanel::paintWaveform(juce::Graphics& g,
         }
     }
 
-    g.setColour(juce::Colour(kAccentColour).withAlpha(0.9f));
+    g.setColour(palette.accent.withAlpha(0.9f));
     g.strokePath(path, juce::PathStrokeType(1.5f));
 }
 
@@ -320,8 +325,9 @@ void VisualizerPanel::paintWaveform(juce::Graphics& g,
 // ==========================================================================
 
 void VisualizerPanel::paintIdleRing(juce::Graphics& g,
-                                     const juce::Rectangle<float>& bounds,
-                                     float phase) const
+                                      const juce::Rectangle<float>& bounds,
+                                      float phase,
+                                      const Palette& palette) const
 {
     // Slowly breathing alpha: sine wave between 0.15 and 0.45.
     // phase is in [0.0, 1.0), mapped to [0, 2π).
@@ -335,7 +341,7 @@ void VisualizerPanel::paintIdleRing(juce::Graphics& g,
     const float radius = std::min(bounds.getWidth(), bounds.getHeight()) * 0.30f;
     const float strokeW = std::max(2.0f, radius * 0.08f);
 
-    const juce::Colour ringColour = juce::Colour(kIdleRingColour).withAlpha(alpha);
+    const juce::Colour ringColour = palette.surfaceHighest.withAlpha(alpha);
 
     juce::Path ring;
     ring.addEllipse(cx - radius, cy - radius, radius * 2.0f, radius * 2.0f);

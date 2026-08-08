@@ -21,187 +21,6 @@
 #include "BinaryData.h"
 
 // ===========================================================================
-// Palette definitions — five complete themes (A1 design-token engine)
-// ===========================================================================
-
-Palette Palette::defaultPalette() noexcept
-{
-    return Palette{
-        // --- Background levels ---
-        juce::Colour(0xff0e0e0eu),  // background
-        juce::Colour(0xff131313u),  // surface
-        juce::Colour(0xff1c1b1bu),  // surfaceLow
-        juce::Colour(0xff201f1fu),  // surfaceContainer
-        juce::Colour(0xff2a2a2au),  // surfaceHigh
-        juce::Colour(0xff353534u),  // surfaceHighest
-        juce::Colour(0xff3a3939u),  // surfaceBright
-        // --- Text ---
-        juce::Colour(0xffe5e2e1u),  // textPrimary
-        juce::Colour(0xffb9ccb2u),  // textSecondary
-        juce::Colour(0xff858585u),  // textMuted
-        juce::Colour(0xff666666u),  // textDisabled
-        // --- Accent ---
-        juce::Colour(0xff00ff41u),  // accent
-        juce::Colour(0xff00e639u),  // accentDim
-        juce::Colour(0xff003907u),  // accentOn
-        // --- Semantic ---
-        juce::Colour(0xffff5f56u),  // error
-        juce::Colour(0xffe0a020u),  // warning
-        // --- Code syntax ---
-        juce::Colour(0xffd4d4d4u),  // codeText
-        juce::Colour(0xff6a9955u),  // codeComment
-        juce::Colour(0xff569cd6u),  // codeKeyword
-        juce::Colour(0xff4ec9b0u),  // codeType
-        juce::Colour(0xffce9178u),  // codeString
-        juce::Colour(0xffdcdcaau),  // codeFunction
-        juce::Colour(0xffc586c0u),  // codeMacro
-        juce::Colour(0xffffd700u),  // codeBracket
-        juce::Colour(0xff858585u),  // codeLineNum
-    };
-}
-
-Palette paletteForTheme(ThemeId id) noexcept
-{
-    switch (id)
-    {
-        case ThemeId::Dark:
-            return Palette::defaultPalette();
-
-        case ThemeId::PurpleNeon:
-            return Palette{
-                juce::Colour(0xff0e0e0eu),  // background
-                juce::Colour(0xff131313u),  // surface
-                juce::Colour(0xff1c1b1bu),  // surfaceLow
-                juce::Colour(0xff201f1fu),  // surfaceContainer
-                juce::Colour(0xff2a2a2au),  // surfaceHigh
-                juce::Colour(0xff353534u),  // surfaceHighest
-                juce::Colour(0xff3a3939u),  // surfaceBright
-                juce::Colour(0xffe5e2e1u),  // textPrimary
-                juce::Colour(0xffb9ccb2u),  // textSecondary
-                juce::Colour(0xff858585u),  // textMuted
-                juce::Colour(0xff666666u),  // textDisabled
-                juce::Colour(0xffb497bdu),  // accent — purple/neon
-                juce::Colour(0xffa384acu),  // accentDim
-                juce::Colour(0xff3a1c54u),  // accentOn
-                juce::Colour(0xffff5f56u),  // error
-                juce::Colour(0xffe0a020u),  // warning
-                juce::Colour(0xffd4d4d4u),  // codeText
-                juce::Colour(0xff6a9955u),  // codeComment
-                juce::Colour(0xffc678ddu),  // codeKeyword — purple
-                juce::Colour(0xff4ec9b0u),  // codeType
-                juce::Colour(0xffce9178u),  // codeString
-                juce::Colour(0xffdcdcaau),  // codeFunction
-                juce::Colour(0xffc586c0u),  // codeMacro
-                juce::Colour(0xffffd700u),  // codeBracket
-                juce::Colour(0xff858585u),  // codeLineNum
-            };
-
-        case ThemeId::Capuchin:
-            return Palette{
-                juce::Colour(0xff0e0e0eu),  // background
-                juce::Colour(0xff131313u),  // surface
-                juce::Colour(0xff1c1b1bu),  // surfaceLow
-                juce::Colour(0xff201f1fu),  // surfaceContainer
-                juce::Colour(0xff2a2a2au),  // surfaceHigh
-                juce::Colour(0xff353534u),  // surfaceHighest
-                juce::Colour(0xff3a3939u),  // surfaceBright
-                juce::Colour(0xffe5e2e1u),  // textPrimary
-                juce::Colour(0xffb9ccb2u),  // textSecondary
-                juce::Colour(0xff858585u),  // textMuted
-                juce::Colour(0xff666666u),  // textDisabled
-                juce::Colour(0xff8d5524u),  // accent — capuchin brown
-                juce::Colour(0xff7a4a1d),  // accentDim
-                juce::Colour(0xff2b1703u),  // accentOn
-                juce::Colour(0xffff5f56u),  // error
-                juce::Colour(0xffe0a020u),  // warning
-                juce::Colour(0xffd4d4d4u),  // codeText
-                juce::Colour(0xff6a9955u),  // codeComment
-                juce::Colour(0xff569cd6u),  // codeKeyword
-                juce::Colour(0xff4ec9b0u),  // codeType
-                juce::Colour(0xffce9178u),  // codeString
-                juce::Colour(0xffdcdcaau),  // codeFunction
-                juce::Colour(0xffc586c0u),  // codeMacro
-                juce::Colour(0xffffd700u),  // codeBracket
-                juce::Colour(0xff858585u),  // codeLineNum
-            };
-
-        case ThemeId::Sand:
-            return Palette{
-                juce::Colour(0xff0e0e0eu),  // background
-                juce::Colour(0xff131313u),  // surface
-                juce::Colour(0xff1c1b1bu),  // surfaceLow
-                juce::Colour(0xff201f1fu),  // surfaceContainer
-                juce::Colour(0xff2a2a2au),  // surfaceHigh
-                juce::Colour(0xff353534u),  // surfaceHighest
-                juce::Colour(0xff3a3939u),  // surfaceBright
-                juce::Colour(0xffe5e2e1u),  // textPrimary
-                juce::Colour(0xffb9ccb2u),  // textSecondary
-                juce::Colour(0xff858585u),  // textMuted
-                juce::Colour(0xff666666u),  // textDisabled
-                juce::Colour(0xffd9730f),  // accent — sand/amber
-                juce::Colour(0xffbd5e0a),  // accentDim
-                juce::Colour(0xff3a1c03u),  // accentOn
-                juce::Colour(0xffff5f56u),  // error
-                juce::Colour(0xffe0a020u),  // warning
-                juce::Colour(0xffd4d4d4u),  // codeText
-                juce::Colour(0xff6a9955u),  // codeComment
-                juce::Colour(0xff569cd6u),  // codeKeyword
-                juce::Colour(0xff4ec9b0u),  // codeType
-                juce::Colour(0xffce9178u),  // codeString
-                juce::Colour(0xffdcdcaau),  // codeFunction
-                juce::Colour(0xffc586c0u),  // codeMacro
-                juce::Colour(0xffffd700u),  // codeBracket
-                juce::Colour(0xff858585u),  // codeLineNum
-            };
-
-        case ThemeId::Light:
-            return Palette{
-                juce::Colour(0xffffffffu),  // background
-                juce::Colour(0xfff5f5f5u),  // surface
-                juce::Colour(0xffe8e8e8u),  // surfaceLow
-                juce::Colour(0xffd8d8d8u),  // surfaceContainer
-                juce::Colour(0xffc8c8c8u),  // surfaceHigh
-                juce::Colour(0xffb8b8b8u),  // surfaceHighest
-                juce::Colour(0xffa8a8a8u),  // surfaceBright
-                juce::Colour(0xff1a1a1au),  // textPrimary
-                juce::Colour(0xff4a4a4au),  // textSecondary
-                juce::Colour(0xff7a7a7au),  // textMuted
-                juce::Colour(0xff9a9a9au),  // textDisabled
-                juce::Colour(0xff006325u),  // accent — green on light
-                juce::Colour(0xff00521cu),  // accentDim
-                juce::Colour(0xffd6f5e3u),  // accentOn
-                juce::Colour(0xffd32f2fu),  // error
-                juce::Colour(0xffed6c00u),  // warning
-                juce::Colour(0xff2d2d2du),  // codeText
-                juce::Colour(0xff2e7d32u),  // codeComment
-                juce::Colour(0xff1565c0u),  // codeKeyword
-                juce::Colour(0xff00796bu),  // codeType
-                juce::Colour(0xffe65100u),  // codeString
-                juce::Colour(0xff5865f5u),  // codeFunction
-                juce::Colour(0xffaa00ffu),  // codeMacro
-                juce::Colour(0xfff9a825u),  // codeBracket
-                juce::Colour(0xff555555u),  // codeLineNum
-            };
-    }
-
-    // Should never reach here, but return default as a safety net.
-    return Palette::defaultPalette();
-}
-
-juce::String themeDisplayName(ThemeId id) noexcept
-{
-    switch (id)
-    {
-        case ThemeId::Dark:      return "Dark";
-        case ThemeId::PurpleNeon: return "Purple / Neon";
-        case ThemeId::Capuchin:  return "Capuchin";
-        case ThemeId::Sand:      return "Sand";
-        case ThemeId::Light:     return "Light";
-    }
-    return "Dark";
-}
-
-// ===========================================================================
 // Embedded JetBrains Mono typeface accessors
 // ===========================================================================
 
@@ -452,6 +271,88 @@ void HathorLookAndFeel::applyPaletteToColours() noexcept
 }
 
 // ===========================================================================
+// Theme registry — five complete themes (§4.1: each defines full token set)
+// ===========================================================================
+
+Palette paletteForTheme(ThemeId id) noexcept
+{
+    switch (id)
+    {
+        case ThemeId::Dark:
+            return Palette::defaultPalette();
+
+        case ThemeId::PurpleNeon: {
+            Palette p = Palette::defaultPalette();
+            p.accent     = juce::Colour(0xffb497bdu);
+            p.accentDim  = juce::Colour(0xffa384acu);
+            p.accentOn   = juce::Colour(0xff3a1c54u);
+            p.codeKeyword = juce::Colour(0xffc678ddu);
+            return p;
+        }
+
+        case ThemeId::Capuchin: {
+            Palette p = Palette::defaultPalette();
+            p.accent      = juce::Colour(0xff8d5524u);
+            p.accentDim   = juce::Colour(0xff7a4a1du);
+            p.accentOn    = juce::Colour(0xff2b1703u);
+            return p;
+        }
+
+        case ThemeId::Sand: {
+            Palette p = Palette::defaultPalette();
+            p.accent      = juce::Colour(0xffd9730fu);
+            p.accentDim   = juce::Colour(0xffbd5e0au);
+            p.accentOn    = juce::Colour(0xff3a1c03u);
+            return p;
+        }
+
+        case ThemeId::Light:
+            return Palette{
+                juce::Colour(0xffffffffu),  // background
+                juce::Colour(0xfff5f5f5u),  // surface
+                juce::Colour(0xffe8e8e8u),  // surfaceLow
+                juce::Colour(0xffd8d8d8u),  // surfaceContainer
+                juce::Colour(0xffc8c8c8u),  // surfaceHigh
+                juce::Colour(0xffb8b8b8u),  // surfaceHighest
+                juce::Colour(0xffa8a8a8u),  // surfaceBright
+                juce::Colour(0xff1a1a1au),  // textPrimary
+                juce::Colour(0xff4a4a4au),  // textSecondary
+                juce::Colour(0xff7a7a7au),  // textMuted
+                juce::Colour(0xff9a9a9au),  // textDisabled
+                juce::Colour(0xff006325u),  // accent
+                juce::Colour(0xff00521cu),  // accentDim
+                juce::Colour(0xffd6f5e3u),  // accentOn
+                juce::Colour(0xffd32f2fu),  // error
+                juce::Colour(0xffed6c00u),  // warning
+                juce::Colour(0xff2d2d2du),  // codeText
+                juce::Colour(0xff2e7d32u),  // codeComment
+                juce::Colour(0xff1565c0u),  // codeKeyword
+                juce::Colour(0xff00796bu),  // codeType
+                juce::Colour(0xffe65100u),  // codeString
+                juce::Colour(0xff5865f5u),  // codeFunction
+                juce::Colour(0xffaa00ffu),  // codeMacro
+                juce::Colour(0xffffd700u),  // codeBracket — adjusted for light
+                juce::Colour(0xff555555u),  // codeLineNum
+            };
+    }
+
+    return Palette::defaultPalette();
+}
+
+juce::String themeDisplayName(ThemeId id) noexcept
+{
+    switch (id)
+    {
+        case ThemeId::Dark:       return "Dark";
+        case ThemeId::PurpleNeon: return "Purple / Neon";
+        case ThemeId::Capuchin:   return "Capuchin";
+        case ThemeId::Sand:       return "Sand";
+        case ThemeId::Light:      return "Light";
+    }
+    return "Dark";
+}
+
+// ===========================================================================
 // Font family substitution — intercept all default-font requests
 // ===========================================================================
 
@@ -664,25 +565,25 @@ juce::Font HathorLookAndFeel::getTextButtonFont(juce::TextButton& /*button*/,
 // ===========================================================================
 
 void HathorLookAndFeel::drawButtonBackground(juce::Graphics& g,
-                                              juce::Button& button,
-                                              const juce::Colour& /*backgroundColour*/,
-                                              bool shouldDrawButtonAsHighlighted,
-                                              bool shouldDrawButtonAsDown)
+                                               juce::Button& button,
+                                               const juce::Colour& /*backgroundColour*/,
+                                               bool shouldDrawButtonAsHighlighted,
+                                               bool shouldDrawButtonAsDown)
 {
-    using C = HathorLookAndFeel::Colours;
+    const Palette& p = currentPalette_;
 
     const juce::Rectangle<float> bounds = button.getLocalBounds().toFloat();
 
     juce::Colour bg;
 
     if (button.getToggleState())
-        bg = juce::Colour(C::accent);                       // active = green
+        bg = p.accent;                       // active = accent
     else if (shouldDrawButtonAsDown)
-        bg = juce::Colour(C::surfaceContainer);             // pressed = slightly lighter
+        bg = p.surfaceContainer;             // pressed = slightly lighter
     else if (shouldDrawButtonAsHighlighted)
-        bg = juce::Colour(C::surfaceLow);                   // hover = subtle tint
+        bg = p.surfaceLow;                   // hover = subtle tint
     else
-        bg = juce::Colour(C::surfaceHigh);                  // default
+        bg = p.surfaceHigh;                  // default
 
     g.setColour(bg);
     g.fillRoundedRectangle(bounds, HathorLookAndFeel::Radius::small);
@@ -693,16 +594,16 @@ void HathorLookAndFeel::drawButtonBackground(juce::Graphics& g,
 // ===========================================================================
 
 void HathorLookAndFeel::drawButtonText(juce::Graphics& g,
-                                      juce::TextButton& button,
-                                      bool shouldDrawButtonAsHighlighted,
-                                      bool shouldDrawButtonAsDown)
+                                       juce::TextButton& button,
+                                       bool shouldDrawButtonAsHighlighted,
+                                       bool shouldDrawButtonAsDown)
 {
-    using C = HathorLookAndFeel::Colours;
+    const Palette& p = currentPalette_;
 
-    juce::Colour textCol = juce::Colour(C::textPrimary);
+    juce::Colour textCol = p.textPrimary;
 
     if (button.getToggleState())
-        textCol = juce::Colour(C::background); // green bg + dark text when on
+        textCol = p.background; // accent bg + dark text when on
 
     // Get the button's font via the LookAndFeel hook (JetBrains Mono).
     juce::Font font = getTextButtonFont(button, button.getHeight());
@@ -725,13 +626,13 @@ void HathorLookAndFeel::drawButtonText(juce::Graphics& g,
 // ===========================================================================
 
 void HathorLookAndFeel::drawLinearSlider(juce::Graphics& g,
-                                          int x, int y, int width, int height,
-                                          float sliderPos,
-                                          float /*minSliderPos*/, float /*maxSliderPos*/,
-                                          juce::Slider::SliderStyle /*style*/,
-                                          juce::Slider& /*slider*/)
+                                           int x, int y, int width, int height,
+                                           float sliderPos,
+                                           float /*minSliderPos*/, float /*maxSliderPos*/,
+                                           juce::Slider::SliderStyle /*style*/,
+                                           juce::Slider& /*slider*/)
 {
-    using C = HathorLookAndFeel::Colours;
+    const Palette& p = currentPalette_;
 
     const bool isHorizontal = (width > height);
     const int  thumbSize    = isHorizontal ? 12 : 12;
@@ -741,7 +642,7 @@ void HathorLookAndFeel::drawLinearSlider(juce::Graphics& g,
     juce::Rectangle<float> trackRect(x, trackY, width, trackH);
 
     // Track background (pill shape)
-    g.setColour(juce::Colour(C::surfaceHighest));
+    g.setColour(p.surfaceHighest);
     g.fillRoundedRectangle(trackRect, trackH / 2.0f);
 
     // Filled portion
@@ -749,19 +650,19 @@ void HathorLookAndFeel::drawLinearSlider(juce::Graphics& g,
     if (fillW > 0)
     {
         juce::Rectangle<float> fillRect(x, trackY, fillW, trackH);
-        g.setColour(juce::Colour(C::accent));
+        g.setColour(p.accent);
         g.fillRoundedRectangle(fillRect, trackH / 2.0f);
     }
 
     // Thumb (circle)
     const float thumbX = juce::jlimit(static_cast<float>(x),
-                                      static_cast<float>(x + width),
-                                      sliderPos);
+                                       static_cast<float>(x + width),
+                                       sliderPos);
     const float thumbY = y + height / 2.0f;
-    g.setColour(juce::Colour(C::textPrimary));
+    g.setColour(p.textPrimary);
     g.fillEllipse(thumbX - thumbSize / 2.0f,
-                  thumbY - thumbSize / 2.0f,
-                  thumbSize, thumbSize);
+                   thumbY - thumbSize / 2.0f,
+                   thumbSize, thumbSize);
 }
 
 // ===========================================================================
@@ -769,17 +670,17 @@ void HathorLookAndFeel::drawLinearSlider(juce::Graphics& g,
 // ===========================================================================
 
 void HathorLookAndFeel::drawScrollbar(juce::Graphics& g,
-                                       juce::ScrollBar& /*scrollbar*/,
-                                       int x, int y, int width, int height,
-                                       bool /*isScrollbarVertical*/,
-                                       int /*thumbStartPosition*/, int /*thumbSize*/,
-                                       bool /*isMouseOver*/, bool /*isMouseDown*/)
+                                        juce::ScrollBar& /*scrollbar*/,
+                                        int x, int y, int width, int height,
+                                        bool /*isScrollbarVertical*/,
+                                        int /*thumbStartPosition*/, int /*thumbSize*/,
+                                        bool /*isMouseOver*/, bool /*isMouseDown*/)
 {
-    using C = HathorLookAndFeel::Colours;
+    const Palette& p = currentPalette_;
 
     // Track is transparent — let the parent background show through.
     // Thumb: dim, 8 px wide, 4 px corner radius (matches mockup).
-    g.setColour(juce::Colour(C::surfaceHighest));
+    g.setColour(p.surfaceHighest);
 
     juce::Rectangle<float> thumb(x, y, width, height);
     g.fillRoundedRectangle(thumb, HathorLookAndFeel::Radius::small);
