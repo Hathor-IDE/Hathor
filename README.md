@@ -1,24 +1,63 @@
 # Hathor
 
-Hathor is an open-source (GPLv3), non-commercial, desktop-only live-coding audio application
-written in C++20 using JUCE. It is a from-scratch port of the TidalCycles pattern language for
-music into C++, augmented with an AI chat layer that drives the pattern engine via a
-terminal/CLI interface using Zed's Agent Client Protocol (ACP).
+**The first agentic audio IDE.** An open-source (GPLv3), desktop-native live-coding and
+music-production environment where you write music in code — and an in-editor agent writes,
+repairs, and evolves that code with you.
 
-## Project Status
+Hathor is a from-scratch C++20 port of [TidalCycles](https://tidalcycles.org)'s pattern language
+into C++, wrapped in a professional JUCE IDE. It pairs a deterministic Tidal-style pattern engine
+with a layered AI authoring system, so agents and editors share **one canonical model** of the
+music, the language, and the project — not a bolted-on chat window.
 
-Phase 1 in development — core pattern engine, JUCE-based sample playback, and CLI/ACP control
-interface.
+## What Hathor is
 
-## Directory Structure
+- **A native music IDE**, not a web editor. All UI is real JUCE components — multi-tab editor with
+  split panes, command palette, navigation and workspace search, integrated terminal and task
+  runner, Git source control with history and a visual graph, unified diagnostics that link into
+  source, workspace/session persistence, and Hathor runtime inspection — all off the real-time audio
+  thread.
+- **A music engine, not a sequencer toy.** A from-scratch Tidal pattern engine with per-slot
+  play/stop, out-of-process per-tab-isolated ChucK, a real EQ, and a bake-to-song renderer that
+  commits auditioned audio assets and a send/return/LFO sync layer.
+- **A deterministic core.** No other AI-first music tool treats the *language* as a first-class,
+  versioned, auditable artifact. Hathor's Strudel/mini-notation and ChucK intelligence comes from a
+  real parser + real compiler diagnostics, never hallucinated syntax.
+- **An agentic workflow.** Hathor's agent plans → edits → validates → compiles → auditions →
+  repairs → renders → *then* asks permission to mutate your song. Destructive steps always cross a
+  confirmation gate. It is a safety-tooled, out-of-process, per-tab-isolated music agent.
+- **AI with real tools.** The AI authoring system runs on the same canonical application contract as
+  the UI and tests. Project intelligence, MCP tool namespaces, deterministic completion, project-aware
+  context, ghost-writing, and the agentic loop all share one model.
+- **Three complementary authoring layers:**
+
+  | Layer | What it does |
+  |---|---|
+  | **Deterministic** | Strudel LSP, real ChucK compiler, versioned language metadata, indexing |
+  | **Ghost-writing** | Cursor-style FIM inline completion with project-aware context |
+  | **Agentic** | Conversational workflow: read → edit → validate → audition → repair → commit |
+  | **Contextual IDE actions** | Right-click any diagnostic, selection, instrument, or Git change for deterministic + AI actions through one contract |
+
+## Why "first agentic audio IDE"
+
+Most music software gives you an AI prompt box bolted onto some sequencer. Hathor instead
+gives the agent **real tools**: it can inspect the song, list and render assets, create and
+audition ChucK instruments, read compiler diagnostics, and repair its own output — all through a
+canonical contract that is shared by the UI, the tests, and the agent alike. That combination —
+deterministic language authority, an auditable plan loop, and a desktop-native IDE — is what makes
+Hathor the first *agentic* audio IDE rather than an AI-enabled toy.
+
+## Directory structure
 
 ```
 Hathor/
 ├── engine/       Pure pattern engine (static lib, no JUCE dependency)
-├── app/          JUCE audio application shell
-├── control/      CLI/ACP control interface
+├── app/          JUCE audio application shell (audio engine, voice pools, sample bank)
+├── control/      Control plane — socket/MCP server, command interface, worker threads
+├── ui/           JUCE IDE (editor, explorer, chat, panels, MCP client, activity ribbon)
 ├── tests/        Unit tests (Catch2, no JUCE dependency)
-└── samples/      Minimal sample bank for CI (bd/0.wav, sn/0.wav)
+├── tests-ui/     UI-level tests
+├── samples/      Sample bank for CI (bd/0.wav, sn/0.wav)
+└── docs/         Program specification (docs/PROGRAM.md)
 ```
 
 ## Dependencies
@@ -31,18 +70,18 @@ All dependencies are fetched automatically via CMake FetchContent — no manual 
 | [Catch2](https://github.com/catchorg/Catch2) | v3.5.2 | BSL-1.0 | FetchContent from GitHub |
 | [nlohmann/json](https://github.com/nlohmann/json) | v3.11.3 | MIT | FetchContent from GitHub (single-header) |
 
-**Why FetchContent over submodules?**  FetchContent keeps the repository lightweight (no
-submodule init step), pins exact versions in the CMakeLists, and integrates cleanly with
-CMake's standard dependency model. The trade-off is that a network connection is needed on
-first configure; subsequent builds use the CMake download cache.
+**Why FetchContent over submodules?** FetchContent keeps the repository lightweight (no submodule
+init step), pins exact versions in the CMakeLists, and integrates cleanly with CMake's standard
+dependency model. The trade-off is that a network connection is needed on first configure;
+subsequent builds use the CMake download cache.
 
-## CMake Targets
+## CMake targets
 
 | Target | Description | JUCE dep? |
 |---|---|---|
 | `hathor-engine` | Pure pattern engine (static library) | No |
 | `hathor-engine-tests` | Unit test runner | No |
-| `hathor` | Full audio application | Yes |
+| `hathor` | Full audio application + IDE | Yes |
 
 ## Building
 
@@ -79,12 +118,16 @@ Send patterns via stdin:
 printf 'set-pattern d1 bd sn\n' | ./build/hathor --samples ./samples
 ```
 
+## Contributing
+
+This is an active open-source project. The program and its definitions of done are maintained in
+[`docs/PROGRAM.md`](docs/PROGRAM.md). Contributions are welcome — from engine work and IDE polish to
+the AI authoring system. Please open an issue or PR; GPLv3 applies (see below).
+
 ## License
 
 Copyright (C) 2026 Hathor Contributors
 
-This program is free software: you can redistribute it and/or modify it under the terms of the
-GNU General Public License as published by the Free Software Foundation, either version 3 of
-the License, or (at your option) any later version.
-
-See [LICENSE](LICENSE) for the full license text.
+Hathor is free software: you can redistribute it and/or modify it under the terms of the GNU
+General Public License as published by the Free Software Foundation, version 3 of the License
+(see [LICENSE](LICENSE)).
