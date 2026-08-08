@@ -237,6 +237,15 @@ MainWindow::MainWindow(AudioEngine& audio,
         audio_);
     uiTimer_->startTimerHz(60);
 
+    // B1: Sync per-tab Play/Stop button visuals to the engine's slot state.
+    // This runs at 60 Hz so the UI reflects slot state changes from any path
+    // (button clicks, slot-play/slot-stop commands, etc.) — not just clicks.
+    uiTimer_->onSyncSlotButtons = [this]()
+    {
+        if (editorArea_)
+            editorArea_->syncSlotButtonStates();
+    };
+
     setVisible(true);
 }
 

@@ -28,6 +28,8 @@
 // HATHOR_SLIDER_PANEL_DEFINED is set by SliderPanel.hpp, suppressing the stub below.
 #include "SliderPanel.hpp"
 
+#include <functional>
+
 // ---------------------------------------------------------------------------
 // SliderPanel stub — suppressed by HATHOR_SLIDER_PANEL_DEFINED (task 3.9 done)
 // ---------------------------------------------------------------------------
@@ -139,6 +141,17 @@ void UITimer::timerCallback()
     const float gainNow = audio_.getMasterGain();   // memory_order_relaxed
     if (std::abs(gainNow - sliders_.gainDisplayValue()) > 0.001f)
         sliders_.setGainDisplay(gainNow);
+
+    // -----------------------------------------------------------------------
+    // (d) Sync per-tab Play/Stop button visuals to the engine's slot state (B1)
+    //
+    // The engine's SlotState::running atomic is the single source of truth.
+    // This callback (installed by MainWindow) iterates all tabs and calls
+    // setSlotRunningVisual() on each, so the button icon reflects the actual
+    // armed/running state regardless of which path changed it.
+    // -----------------------------------------------------------------------
+    if (onSyncSlotButtons)
+        onSyncSlotButtons();
 }
 
 } // namespace hathor::ui

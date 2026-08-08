@@ -131,7 +131,7 @@ TEST_CASE("fast combinator preserves sourceOffset", "[b2][combinator]")
     REQUIRE(std::holds_alternative<CompiledPattern>(result));
     auto& cp = std::get<CompiledPattern>(result);
 
-    Arc arc{Rational{0}, Rational<1>};
+    Arc arc{Rational{0}, Rational{1}};
     auto events = queryStringVec(cp.pattern, arc);
 
     REQUIRE(events.size() == 2);
@@ -146,7 +146,7 @@ TEST_CASE("slow combinator preserves sourceOffset", "[b2][combinator]")
     REQUIRE(std::holds_alternative<CompiledPattern>(result));
     auto& cp = std::get<CompiledPattern>(result);
 
-    Arc arc{Rational{0}, Rational<2}};
+    Arc arc{Rational{0}, Rational{2}};
     auto events = queryStringVec(cp.pattern, arc);
 
     REQUIRE(events.size() == 1);
@@ -210,13 +210,10 @@ TEST_CASE("fastcat combinator preserves sourceOffset", "[b2][combinator]")
 
 TEST_CASE("Event copy constructor preserves metadata", "[b2][event]")
 {
-    Event<std::string> ev = []() {
-        Arc a{Rational{0}, Rational{1}};
-        Event<std::string> e{a, a, "bd"};
-        e.sourceOffset = 42;
-        e.slotId = 5;
-        return e;
-    }();
+    Arc a{Rational{0}, Rational{1}};
+    Event<std::string> ev{a, a, "bd"};
+    ev.sourceOffset = 42;
+    ev.slotId = 5;
 
     Event<std::string> copy = ev;
     CHECK(copy.sourceOffset == 42);
@@ -247,11 +244,12 @@ TEST_CASE("Event copy assignment preserves metadata", "[b2][event]")
 
 TEST_CASE("sourceOffset is stable after input string is destroyed", "[b2][lifetime]")
 {
-    std::size_t capturedOffset;
+    std::size_t capturedOffset = 0;
     {
         std::string input = "bd sn";
         auto result = parseMini(input);
-        auto& cp = asCP(result);
+        REQUIRE(std::holds_alternative<CompiledPattern>(result));
+        auto& cp = std::get<CompiledPattern>(result);
 
         Arc arc{Rational{0}, Rational{1}};
         auto events = queryStringVec(cp.pattern, arc);
@@ -272,10 +270,8 @@ TEST_CASE("sourceOffset is stable after input string is destroyed", "[b2][lifeti
 TEST_CASE("Event default-constructed metadata has sensible defaults", "[b2][event]")
 {
     // Event<T> with default member initializers for sourceOffset and slotId
-    Event<std::string> ev = []() {
-        Arc a{Rational{0}, Rational{0}};
-        return Event<std::string>{a, a, "x"};
-    }();
+    Arc a{Rational{0}, Rational{0}};
+    Event<std::string> ev{a, a, "x"};
 
     CHECK(ev.sourceOffset == 0);
     CHECK(ev.slotId == -1);

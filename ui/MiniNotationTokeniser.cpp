@@ -8,6 +8,7 @@
  */
 
 #include "MiniNotationTokeniser.hpp"
+#include "HathorLookAndFeel.hpp"
 
 #include <cctype>
 #include <string_view>

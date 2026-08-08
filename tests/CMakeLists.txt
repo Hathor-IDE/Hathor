@@ -10,6 +10,7 @@ add_executable(hathor-engine-tests
     test_miniparser.cpp
     test_prettyprinter.cpp
     test_strudel_differential.cpp
+    test_event_metadata.cpp
     golden/FixtureLoader.cpp
 )
 

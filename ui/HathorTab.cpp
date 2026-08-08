@@ -203,6 +203,34 @@ void HathorTab::resized()
     editor_.setBounds(0, editorTop, getWidth(), getHeight() - editorTop);
 }
 
+void HathorTab::lookAndFeelChanged()
+{
+    // Rebuild palette-derived colours + syntax colour scheme when the theme
+    // switches (B3). JUCE's CodeEditorComponent::lookAndFeelChanged() does
+    // not refresh its colour scheme, so we re-apply both the editor's colour
+    // IDs and the active tokeniser's scheme here, all sourced from the current
+    // HathorLookAndFeel palette.
+    HathorLookAndFeel& lookAndFeel = HathorLookAndFeel::fromComponent(*this);
+    const Palette& palette = lookAndFeel.getPalette();
+
+    editor_.setColour(juce::CodeEditorComponent::backgroundColourId,
+                      palette.surface);
+    editor_.setColour(juce::CodeEditorComponent::defaultTextColourId,
+                      palette.codeText);
+    editor_.setColour(juce::CodeEditorComponent::highlightColourId,
+                      palette.accent.withAlpha(0.3f));
+    editor_.setColour(juce::CodeEditorComponent::lineNumberBackgroundId,
+                      palette.surfaceLow);
+    editor_.setColour(juce::CodeEditorComponent::lineNumberTextId,
+                      palette.codeLineNum);
+
+    // Re-apply the active tokeniser's palette-derived colour scheme.
+    if (useChuckTokeniser_)
+        editor_.setColourScheme(chuckTokeniser_.getDefaultColourScheme());
+    else
+        editor_.setColourScheme(miniTokeniser_.getDefaultColourScheme());
+}
+
 // ---------------------------------------------------------------------------
 // juce::CodeDocument::Listener
 // ---------------------------------------------------------------------------

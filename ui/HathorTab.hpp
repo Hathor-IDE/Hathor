@@ -140,6 +140,13 @@ public:
     // -----------------------------------------------------------------------
     void resized() override;
 
+    /** Re-apply palette-derived editor colours when the theme switches (B3).
+        JUCE's CodeEditorComponent::lookAndFeelChanged() does not refresh its
+        syntax colour scheme, so the active tokeniser's scheme is rebuilt from
+        the current palette here.
+    */
+    void lookAndFeelChanged() override;
+
 private:
     // -----------------------------------------------------------------------
     // juce::CodeDocument::Listener

@@ -681,6 +681,48 @@ void EditorArea::wireUnsavedCallback(HathorTab& tab)
     };
 }
 
+void EditorArea::wirePlayStopCallback(HathorTab& tab)
+{
+    // The callback dispatches slot-play/slot-stop via ControlInterface on a
+    // detached worker thread (same pattern as SliderPanel).  The slot name is
+    // resolved from the engine via audio_.slotName(slotIndex).
+    //
+    // This does NOT maintain an independent playback state — the engine's
+    // SlotState::running atomic is the source of truth.  The button visual
+    // is synced from that state via syncSlotButtonStates() (called at 60 Hz
+    // by UITimer).
+    //
+    // We capture the slot index (int, stable) rather than a pointer to the
+    // tab, since tabs_ is a vector of unique_ptr and may reallocate.
+    const int slotIdx = tab.slotIndex();
+    hathor::control::ControlInterface& ci = ci_;
+
+    tab.onPlayStopClicked = [this, slotIdx, &ci]()
+    {
+        const std::string slotName =
+            audio_.slotName(slotIdx).empty()
+                ? ("d" + std::to_string(slotIdx))
+                : audio_.slotName(slotIdx);
+
+        const bool currentlyRunning = audio_.isSlotRunning(slotIdx);
+        const bool start = !currentlyRunning;
+
+        const std::string cmd =
+            (start ? "slot-play " : "slot-stop ") + slotName;
+
+        std::thread([&ci, cmd]()
+        {
+            ci.dispatch(cmd);
+        }).detach();
+    };
+}
+
+void EditorArea::syncSlotButtonStates()
+{
+    for (const auto& t : tabs_)
+        t->setSlotRunningVisual(audio_.isSlotRunning(t->slotIndex()));
+}
+
 void EditorArea::refreshTabBar()
 {
     int combinedActive = -1;

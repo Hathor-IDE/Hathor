@@ -297,13 +297,13 @@ ChatSidebar::ChatSidebar(AudioEngine& /*audio*/,
     addChildComponent(reconnectBanner_);
     reconnectBanner_.setButtonText("Agent disconnected \xe2\x80\x94 click to reconnect");
     reconnectBanner_.setColour(juce::TextButton::buttonColourId,
-                               juce::Colour(0xff5a3020));
+                               palette.error.withAlpha(0.6f));
     reconnectBanner_.setColour(juce::TextButton::buttonOnColourId,
-                               juce::Colour(0xff5a3020).brighter(0.2f));
+                               palette.error.withAlpha(0.7f));
     reconnectBanner_.setColour(juce::TextButton::textColourOffId,
-                               palette.warning);
+                               palette.background);
     reconnectBanner_.setColour(juce::TextButton::textColourOnId,
-                               palette.warning);
+                               palette.background);
 
     // Wire the reconnect click — hides the banner, re-enables input,
     // and calls session_->restart() (Req 32.8).

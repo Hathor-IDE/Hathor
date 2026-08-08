@@ -55,11 +55,11 @@ class UITimer : public juce::Timer
 {
 public:
     /**
-     * @param buf      SPSC ring buffer owned by AudioEngine.
-     * @param vis      VisualizerPanel to push frames to.
-     * @param sliders  SliderPanel whose display values are kept in sync.
-     * @param audio    AudioEngine for BPM / gain queries.
-     */
+      * @param buf      SPSC ring buffer owned by AudioEngine.
+      * @param vis      VisualizerPanel to push frames to.
+      * @param sliders  SliderPanel whose display values are kept in sync.
+      * @param audio    AudioEngine for BPM / gain / slot queries.
+      */
     UITimer(hathor::SpscRingBuffer<128>& buf,
             hathor::ui::VisualizerPanel& vis,
             hathor::ui::SliderPanel&     sliders,
@@ -72,6 +72,15 @@ public:
     UITimer& operator=(const UITimer&) = delete;
     UITimer(UITimer&&)                 = delete;
     UITimer& operator=(UITimer&&)      = delete;
+
+    // -----------------------------------------------------------------------
+    // Slot-play/stop sync (B1)
+    // -----------------------------------------------------------------------
+    // Installed by MainWindow after construction. Called at 60 Hz to sync
+    // each tab's Play/Stop button visual state to the engine's SlotState::running
+    // atomic, so the UI reflects slot state changes from any path (not just
+    // button clicks).
+    std::function<void()> onSyncSlotButtons;
 
     // juce::Timer override — three-step drain/sync logic.
     void timerCallback() override;
