@@ -34,10 +34,12 @@ add_executable(hathor-ui-tests
     test_spsc_ring_buffer.cpp
     test_hathor_file_parser.cpp
     test_mini_tokeniser.cpp
+    test_chuck_tokeniser.cpp
     test_tree_builder.cpp
     ${CMAKE_SOURCE_DIR}/ui/HathorFileParser.cpp
     ${CMAKE_SOURCE_DIR}/ui/ExplorerFileTypes.cpp
     ${CMAKE_SOURCE_DIR}/ui/TreeBuilder.cpp
+    ${CMAKE_SOURCE_DIR}/ui/ChuckKeywords.cpp
 )
 
 target_compile_features(hathor-ui-tests PRIVATE cxx_std_20)

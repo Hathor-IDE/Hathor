@@ -53,9 +53,10 @@ namespace hathor::ui {
  *   - Closing without Apply() discards _pending (== Reset, no Apply persists).
  */
 class SettingsComponent : public juce::Component,
-                          public juce::Slider::Listener,
+                           public juce::Slider::Listener,
                           public juce::Button::Listener,
-                          public juce::ComboBox::Listener
+                          public juce::ComboBox::Listener,
+                          public juce::TextEditor::Listener
 {
 public:
     /**
@@ -83,10 +84,17 @@ public:
     bool hasPendingChanges() const noexcept { return pendingChanges_; }
 
     /**
-     * Discard pending edits (revert _pending to _committed, like Reset).
-     * Called when the Settings tab is closed without Apply (A2).
-     */
+      * Discard pending edits (revert _pending to _committed, like Reset).
+      * Called when the Settings tab is closed without Apply (A2).
+      */
     void resetToCommitted();
+
+    /**
+      * Callback invoked after Apply commits the edit buffer to live state.
+      * MainWindow can use this to restart the agent session with the new
+      * agent executable path.
+      */
+    std::function<void()> onSettingsApplied;
 
     /**
      * Return the display label for the tab bar.
@@ -116,7 +124,15 @@ public:
     // ComboBox::Listener
     // -----------------------------------------------------------------------
 
+    /** Return the human-readable name for a theme (for Settings list).
+     */
     void comboBoxChanged(juce::ComboBox* comboBox) override;
+
+    // -----------------------------------------------------------------------
+    // TextEditor::Listener
+    // -----------------------------------------------------------------------
+
+    void textEditorTextChanged(juce::TextEditor& editor) override;
 
 private:
     // -----------------------------------------------------------------------

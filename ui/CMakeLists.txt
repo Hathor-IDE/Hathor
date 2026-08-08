@@ -45,6 +45,7 @@ target_sources(hathor-ui
         EditorArea.cpp        # task 3.4
         MiniNotationTokeniser.cpp # task 3.5
         ChuckTokeniser.cpp       # A5 — ChucK syntax highlighting
+        ChuckKeywords.cpp       # A5 — JUCE-free ChucK keyword/class sets
         UITimer.cpp               # task 3.7
         VisualizerPanel.cpp       # task 3.8
         SliderPanel.cpp           # task 3.9

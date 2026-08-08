@@ -12,206 +12,21 @@
  * single-pass character scanner suitable for juce::CodeEditorComponent.
  * Only lexical/tokenisation categories are reproduced — no semantic analysis,
  * no parsing, no evaluation.
+ *
+ * Keyword/class sets and identifier classification delegate to the JUCE-free
+ * ChuckKeywords module so logic can be unit-tested without JUCE.
  */
 
 #include "ChuckTokeniser.hpp"
+#include "HathorLookAndFeel.hpp"
 
 #include <cctype>
-#include <cstdint>
 
 namespace hathor::ui {
 
 // ---------------------------------------------------------------------------
-// Keyword / class sets — adapted from vscode-chuck grammar
+// isChuckFile
 // ---------------------------------------------------------------------------
-// Each set corresponds to a `match` pattern in the TextMate grammar.
-
-static const std::unordered_set<std::string_view>& chuckKeywords() noexcept
-{
-    // keyword.control.chuck — from vscode-chuck grammar:
-    //   break | continue | do | else | for | if | repeat | return | switch | until | while
-    static const std::unordered_set<std::string_view> s = {
-        "break", "continue", "do", "else", "for", "if",
-        "repeat", "return", "switch", "until", "while",
-    };
-    return s;
-}
-
-static const std::unordered_set<std::string_view>& chuckModifiers() noexcept
-{
-    // keyword.control.chuck (function/spork group in vscode-chuck):
-    //   const | fun | function | new | spork
-    static const std::unordered_set<std::string_view> s = {
-        "const", "fun", "function", "new", "spork",
-    };
-    return s;
-}
-
-static const std::unordered_set<std::string_view>& chuckTypeKeywords() noexcept
-{
-    // storage.type.class.chuck:  class | interface
-    // storage.modifier.class.chuck: extends | implements | private | protected | public | pure | static
-    static const std::unordered_set<std::string_view> s = {
-        "class", "interface",
-        "extends", "implements", "private", "protected", "public", "pure", "static",
-    };
-    return s;
-}
-
-static const std::unordered_set<std::string_view>& chuckTypes() noexcept
-{
-    // storage.type.chuck — vscode-chuck: complex | dur | float | int | polar | same | string | time | void
-    // language-chuck adds: vec3 | vec4
-    static const std::unordered_set<std::string_view> s = {
-        "complex", "dur", "float", "int", "polar", "same",
-        "string", "time", "void",
-        "vec3", "vec4",
-    };
-    return s;
-}
-
-static const std::unordered_set<std::string_view>& chuckVariableLanguage() noexcept
-{
-    // variable.language.chuck: this | super
-    static const std::unordered_set<std::string_view> s = {
-        "this", "super",
-    };
-    return s;
-}
-
-static const std::unordered_set<std::string_view>& chuckConstants() noexcept
-{
-    // constant.special.chuck — vscode-chuck:
-    //   adc | blackhole | cherr | chout | dac | day | false | hour | maybe |
-    //   me | minute | ms | now | null | NULL | samp | second | true | week
-    static const std::unordered_set<std::string_view> s = {
-        "adc", "blackhole", "cherr", "chout", "dac",
-        "day", "false", "hour", "maybe",
-        "me", "minute", "ms", "now", "null", "NULL",
-        "samp", "second", "true", "week",
-    };
-    return s;
-}
-
-// --- UGen class names (support.class.ugen.chuck) ---
-static const std::unordered_set<std::string_view>& chuckUgens() noexcept
-{
-    static const std::unordered_set<std::string_view> s = {
-        "UGen", "UGen_Multi", "UGen_Stereo",
-        "SinOsc", "PulseOsc", "SqrOsc", "TriOsc", "SawOsc", "Phasor",
-        "Noise", "Impulse", "Step", "Gain",
-        "SndBuf", "SndBuf2",
-        "HalfRect", "FullRect", "Mix2", "Pan2",
-        "CurveTable", "WarpTable",
-        "LiSa", "Envelope", "ADSR",
-        "Delay", "DelayA", "DelayL", "Echo",
-        "JCRev", "NRev", "PRCRev", "Chorus",
-        "Modulate", "PitShift", "SubNoise",
-        "Blit", "BlitSaw", "BlitSquare",
-        "WvIn", "WaveLoop", "WvOut",
-        "OneZero", "TwoZero", "OnePole", "TwoPole", "PoleZero", "BiQuad",
-        "Filter", "LPF", "HPF", "BPF", "BRF", "ResonZ", "Dyno",
-        "StkInstrument",
-        "BandedWG", "BlowBotl", "BlowHole", "Bowed", "Brass", "Clarinet",
-        "Flute", "Mandolin", "ModalBar", "Moog", "Saxofony", "Shakers",
-        "Sitar", "StifKarp", "VoicForm",
-        "FM", "BeeThree", "FMVoices", "HevyMetl", "PercFlut", "Rhodey",
-        "TubeBell", "Wurley",
-        "Chugen", "Chugraph", "Chubgraph",
-        "Gen5", "Gen7", "Gen9", "Gen10", "Gen17", "GenX",
-        "BLT", "CNoise", "FilterBasic", "FilterStk", "LiSa10",
-    };
-    return s;
-}
-
-// --- Library class names (support.class.library.chuck) ---
-static const std::unordered_set<std::string_view>& chuckLibraries() noexcept
-{
-    static const std::unordered_set<std::string_view> s = {
-        "Machine", "Math", "Object", "RegEx", "Shred", "Std",
-    };
-    return s;
-}
-
-// ---------------------------------------------------------------------------
-// Static-set accessor implementations (delegate to the static functions above)
-// ---------------------------------------------------------------------------
-
-const std::unordered_set<std::string_view>& ChuckTokeniser::keywordSet() noexcept
-{
-    return chuckKeywords();
-}
-
-const std::unordered_set<std::string_view>& ChuckTokeniser::typeSet() noexcept
-{
-    return chuckTypes();
-}
-
-const std::unordered_set<std::string_view>& ChuckTokeniser::ugenSet() noexcept
-{
-    return chuckUgens();
-}
-
-const std::unordered_set<std::string_view>& ChuckTokeniser::librarySet() noexcept
-{
-    return chuckLibraries();
-}
-
-const std::unordered_set<std::string_view>& ChuckTokeniser::constantSet() noexcept
-{
-    return chuckConstants();
-}
-
-const std::unordered_set<std::string_view>& ChuckTokeniser::modifierSet() noexcept
-{
-    return chuckModifiers();
-}
-
-const std::unordered_set<std::string_view>& ChuckTokeniser::variableLanguageSet() noexcept
-{
-    return chuckVariableLanguage();
-}
-
-// ---------------------------------------------------------------------------
-// classifyIdentifier
-// ---------------------------------------------------------------------------
-
-int ChuckTokeniser::classifyIdentifier(std::string_view word) noexcept
-{
-    // Check order: keywords, types, modifiers, variable-language, constants,
-    // then UGen/library classes.  A word can only be one category.
-    if (chuckKeywords().count(word))
-        return 1;  // TK_KEYWORD
-    if (chuckTypes().count(word))
-        return 2;  // TK_TYPE
-    if (chuckTypeKeywords().count(word))
-        return 2;  // TK_TYPE (class/interface/extends/public/etc.)
-    if (chuckModifiers().count(word))
-        return 1;  // TK_KEYWORD (fun/function/spork/const/new)
-    if (chuckVariableLanguage().count(word))
-        return 1;  // TK_KEYWORD (this/super)
-    if (chuckConstants().count(word))
-        return 5;  // TK_NUMBER (constants — special, not keyword)
-    if (chuckUgens().count(word))
-        return 6;  // TK_UGEN
-    if (chuckLibraries().count(word))
-        return 7;  // TK_LIBRARY
-    return 0;      // default / plain identifier
-}
-
-// ---------------------------------------------------------------------------
-// isChuckFile / isChuckExtension
-// ---------------------------------------------------------------------------
-
-bool ChuckTokeniser::isChuckExtension(std::string_view ext) noexcept
-{
-    // Case-insensitive comparison of ".ck" (3 chars: dot, 'c', 'k').
-    if (ext.size() != 3 || ext[0] != '.')
-        return false;
-    char a = static_cast<char>(std::tolower(static_cast<unsigned char>(ext[1])));
-    char b = static_cast<char>(std::tolower(static_cast<unsigned char>(ext[2])));
-    return a == 'c' && b == 'k';
-}
 
 bool ChuckTokeniser::isChuckFile(const juce::File& file) noexcept
 {
@@ -276,7 +91,7 @@ int ChuckTokeniser::readNextToken(juce::CodeDocument::Iterator& iterator)
                 }
                 return 4;  // TK_COMMENT
             }
-            // Not "<--" — restore.
+            // Not "<--" — restore and fall through to operator handling.
             iterator = save;
         }
     }
@@ -293,7 +108,7 @@ int ChuckTokeniser::readNextToken(juce::CodeDocument::Iterator& iterator)
         if (!iterator.isEOF() && iterator.peekNextChar() == '/')
         {
             iterator.nextChar();
-            return 4;
+            return 4;  // TK_COMMENT
         }
 
         // Consume until */
@@ -400,7 +215,7 @@ int ChuckTokeniser::readNextToken(juce::CodeDocument::Iterator& iterator)
     // Hex: 0x... / 0X...
     // Binary: 0b... / 0B...
     // Decimal/int: digits with optional _ separators and . / e notation
-    // pi: the bare token "pi"
+    // pi: the bare token "pi" (handled in classifyChuckIdentifier)
     // -----------------------------------------------------------------------
     if (std::isdigit(c) || (c == '.' && iterator.peekNextChar() != '.'))
     {
@@ -531,7 +346,6 @@ int ChuckTokeniser::readNextToken(juce::CodeDocument::Iterator& iterator)
     if (std::iswalpha(c) || c == '_' || c == '$')
     {
         // Read the full identifier word.
-        int startPos = iterator.getPosition();
         juce::String word;
         while (!iterator.isEOF())
         {
@@ -546,17 +360,17 @@ int ChuckTokeniser::readNextToken(juce::CodeDocument::Iterator& iterator)
             }
         }
 
-        // Check if it's the special "pi" constant.
+        // "pi" is classified as a numeric constant.
         if (word == "pi")
-            return 5;  // TK_NUMBER (grammar treats pi as constant.numeric)
+            return 5;  // TK_NUMBER
 
-        return classifyIdentifier(word.toStdString());
+        return classifyChuckIdentifier(word.toStdString());
     }
 
     // -----------------------------------------------------------------------
     // Operators and punctuation — keyword.operator.chuck
     // Grammar: =>|=<|@=>|\+=>|\-=>|\*=>|\/=>|%=>|\+\+|\+|--|-|\*|\/(?!/|
-    //          %|==|!=|<=|>=|<<|>>|<|>|&&|\|\||&|\|||\^|\$|::
+    //          %|==|!=|<=|>=|<<|>>|<|>|&&|\|\||&|\||\^|\$|::
     // -----------------------------------------------------------------------
     if (c == '=' || c == '<' || c == '>' || c == '+' || c == '-' ||
         c == '*' || c == '/' || c == '%' || c == '&' || c == '|' ||
@@ -645,17 +459,17 @@ juce::CodeEditorComponent::ColourScheme ChuckTokeniser::getDefaultColourScheme()
     // Map colour indices to the existing Hathor Palette code-syntax colours
     // (HathorLookAndFeel.hpp Palette struct, design token layer).
     //
-    // Colour indices:
-    //   0 — Default  (palette.codeText)
-    //   1 — Keyword  (palette.codeKeyword)
-    //   2 — Type     (palette.codeType)
-    //   3 — String   (palette.codeString)
-    //   4 — Comment  (palette.codeComment)
-    //   5 — Number   (palette.codeKeyword — constants like now, true, false)
-    //   6 — UGen     (palette.codeFunction — UGens like SinOsc, UGen)
-    //   7 — Library  (palette.codeMacro  — library classes like Machine, Math)
-    //   8 — Operator (palette.codeBracket — operators & punctuation)
-    //   9 — Debug    (palette.codeMacro — <<< >>> debug printing)
+    // Index → Palette token:
+    //   0 (Default)   → palette.codeText
+    //   1 (Keyword)   → palette.codeKeyword
+    //   2 (Type)      → palette.codeType
+    //   3 (String)    → palette.codeString
+    //   4 (Comment)   → palette.codeComment
+    //   5 (Number)    → palette.codeKeyword  (constants like now/true/false/dac share keyword colour)
+    //   6 (UGen)      → palette.codeFunction
+    //   7 (Library)   → palette.codeMacro
+    //   8 (Operator)  → palette.codeBracket
+    //   9 (Debug)     → palette.codeMacro
     const Palette& p = HathorLookAndFeel::globalPalette();
 
     juce::CodeEditorComponent::ColourScheme scheme;

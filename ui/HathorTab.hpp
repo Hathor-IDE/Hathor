@@ -49,11 +49,13 @@ class HathorTab : public juce::Component,
 {
 public:
     /**
-     * Construct an untitled tab on the given slot.
-     *
-     * @param slotIndex  Pattern slot index in [0, AudioEngine::kNumSlots).
-     */
-    explicit HathorTab(int slotIndex);
+      * Construct an untitled tab on the given slot.
+      *
+      * @param slotIndex  Pattern slot index in [0, AudioEngine::kNumSlots).
+      * @param file       Optional file — if provided, the correct tokeniser
+      *                   (mini-notation or ChuckTokeniser) is chosen at construction.
+      */
+    HathorTab(int slotIndex, const juce::File& file = juce::File());
 
     ~HathorTab() override;
 

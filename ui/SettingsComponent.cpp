@@ -9,8 +9,7 @@
 
 #include "SettingsComponent.hpp"
 
-// Need the Petdex data if available (D1–D4). For A2 we show a select-only
-// combo with no default; actual mascot rendering is deferred to D1–D4.
+#include <cstdlib>
 
 namespace hathor::ui {
 
@@ -93,26 +92,21 @@ SettingsComponent::loadSettings() const
         m.theme          = ThemeId::Dark;
         m.opacityPercent = opacitySupported_ ? 70.0f : 100.0f;
         m.agentExePath   = std::getenv("HATHOR_AGENT")
-                               ? std::string(std::getenv("HATHOR_AGENT"))
-                               : "";
+                              ? std::string(std::getenv("HATHOR_AGENT"))
+                              : "";
         m.petSelection   = "";
         return m;
     }
 
-    // Theme
     const int themeIdx = props->getIntValue("settings.theme",
-                                             static_cast<int>(ThemeId::Dark));
+                                            static_cast<int>(ThemeId::Dark));
     m.theme = static_cast<ThemeId>(themeIdx);
 
-    // Opacity
     m.opacityPercent = props->getValue("settings.opacity",
                                        juce::String(opacitySupported_ ? 70.0f : 100.0f))
-                           .getFloatValue();
+                            .getFloatValue();
 
-    // Agent path
     m.agentExePath = props->getValue("settings.agentExePath").toStdString();
-
-    // Pet selection
     m.petSelection = props->getValue("settings.petSelection").toStdString();
 
     return m;
@@ -129,8 +123,8 @@ void SettingsComponent::saveSettings(const SettingsModel& model) const
 
     props->setValue("settings.theme",          static_cast<int>(model.theme));
     props->setValue("settings.opacity",        juce::String(model.opacityPercent));
-    props->setValue("settings.agentExePath",   model.agentExePath);
-    props->setValue("settings.petSelection",   model.petSelection);
+    props->setValue("settings.agentExePath",   juce::String(model.agentExePath));
+    props->setValue("settings.petSelection",   juce::String(model.petSelection));
 
     props->saveIfNeeded();
 }
@@ -142,10 +136,12 @@ void SettingsComponent::saveSettings(const SettingsModel& model) const
 void SettingsComponent::buildAppearanceSection()
 {
     const auto& palette = HathorLookAndFeel::fromComponent(*this).getPalette();
-    const int y = 0;
-    const int labelW = kLabelWidth;
+    const int labelW   = kLabelWidth;
     const int controlX = labelW + 8;
     const int controlW = 300;
+    const int contentW = 600;
+
+    int y = 0;
 
     // --- Section header ---
     auto* header = new juce::Label();
@@ -153,10 +149,10 @@ void SettingsComponent::buildAppearanceSection()
     header->setFont(HathorLookAndFeel::fontSemiBold(HathorLookAndFeel::Typography::headlineMd));
     header->setColour(juce::Label::textColourId, palette.textPrimary);
     header->setJustificationType(juce::Justification::centredLeft);
-    header->setBounds(0, y, 400, kControlHeight);
+    header->setBounds(0, y, contentW, kControlHeight);
     contentPanel_->addAndMakeVisible(header);
 
-    int rowY = y + kControlHeight + 8;
+    y += kControlHeight + 8;
 
     // --- Theme picker ---
     auto* themeLabel = new juce::Label();
@@ -164,26 +160,24 @@ void SettingsComponent::buildAppearanceSection()
     themeLabel->setFont(HathorLookAndFeel::fontMedium(HathorLookAndFeel::Typography::bodySm));
     themeLabel->setColour(juce::Label::textColourId, palette.textSecondary);
     themeLabel->setJustificationType(juce::Justification::centredRight);
-    themeLabel->setBounds(0, rowY, labelW, kControlHeight);
+    themeLabel->setBounds(0, y, labelW, kControlHeight);
     contentPanel_->addAndMakeVisible(themeLabel);
 
-    themeCombo_.setBounds(controlX, rowY, controlW, kControlHeight);
+    themeCombo_.setBounds(controlX, y, controlW, kControlHeight);
     themeCombo_.setEditableText(false);
 
-    // Register friendly names for each theme (B3).
-    themeCombo_.addChoice("Dark",           static_cast<int>(ThemeId::Dark) + 1);
-    themeCombo_.addChoice("Purple / Neon",  static_cast<int>(ThemeId::PurpleNeon) + 1);
-    themeCombo_.addChoice("Capuchin",       static_cast<int>(ThemeId::Capuchin) + 1);
-    themeCombo_.addChoice("Sand",           static_cast<int>(ThemeId::Sand) + 1);
-    themeCombo_.addChoice("Light",          static_cast<int>(ThemeId::Light) + 1);
+    themeCombo_.addItem("Dark",           static_cast<int>(ThemeId::Dark) + 1);
+    themeCombo_.addItem("Purple / Neon",  static_cast<int>(ThemeId::PurpleNeon) + 1);
+    themeCombo_.addItem("Capuchin",       static_cast<int>(ThemeId::Capuchin) + 1);
+    themeCombo_.addItem("Sand",           static_cast<int>(ThemeId::Sand) + 1);
+    themeCombo_.addItem("Light",          static_cast<int>(ThemeId::Light) + 1);
 
-    // Set current value from pending.
     themeCombo_.setSelectedId(static_cast<int>(pending_.theme) + 1,
                               juce::dontSendNotification);
     themeCombo_.addListener(this);
     contentPanel_->addAndMakeVisible(themeCombo_);
 
-    rowY += kControlHeight + 12;
+    y += kControlHeight + 12;
 
     // --- Opacity slider ---
     auto* opacityLabel = new juce::Label();
@@ -191,23 +185,21 @@ void SettingsComponent::buildAppearanceSection()
     opacityLabel->setFont(HathorLookAndFeel::fontMedium(HathorLookAndFeel::Typography::bodySm));
     opacityLabel->setColour(juce::Label::textColourId, palette.textSecondary);
     opacityLabel->setJustificationType(juce::Justification::centredRight);
-    opacityLabel->setBounds(0, rowY, labelW, kControlHeight);
+    opacityLabel->setBounds(0, y, labelW, kControlHeight);
     contentPanel_->addAndMakeVisible(opacityLabel);
 
-    opacitySlider_.setBounds(controlX, rowY, controlW, kControlHeight);
+    opacitySlider_.setBounds(controlX, y, controlW, kControlHeight);
     opacitySlider_.setSliderStyle(juce::Slider::LinearHorizontal);
     opacitySlider_.setRange(20.0, 100.0, 1.0);
-    opacitySlider_.setSnapToOneDecimalPlace(0);
-    opacitySlider_.setDoubleClickReadOnly(false);
     opacitySlider_.setValue(pending_.opacityPercent, juce::dontSendNotification);
     opacitySlider_.addListener(this);
     contentPanel_->addAndMakeVisible(opacitySlider_);
 
-    opacityValueLabel_.setBounds(controlX + controlW + 8, rowY, 48, kControlHeight);
+    opacityValueLabel_.setBounds(controlX + controlW + 8, y, 48, kControlHeight);
     opacityValueLabel_.setFont(HathorLookAndFeel::fontRegular(HathorLookAndFeel::Typography::bodySm));
     opacityValueLabel_.setColour(juce::Label::textColourId, palette.textSecondary);
     opacityValueLabel_.setJustificationType(juce::Justification::centredLeft);
-    opacityValueLabel_.setText(juce::String(pending_.opacityPercent) + "%",
+    opacityValueLabel_.setText(juce::String(pending_.opacityPercent, 0) + "%",
                                juce::dontSendNotification);
     contentPanel_->addAndMakeVisible(opacityValueLabel_);
 
@@ -217,22 +209,20 @@ void SettingsComponent::buildAppearanceSection()
         opacityValueLabel_.setText("100% (Linux: unsupported)", juce::dontSendNotification);
     }
 
-    rowY += kControlHeight + 12;
+    y += kControlHeight + 12;
 
-    // Store section height for layout. Content panel will be sized dynamically.
-    contentPanel_->setBounds(0, 0, 600, rowY + 16);
+    contentPanel_->setBounds(0, 0, contentW, y + 16);
 }
 
 void SettingsComponent::buildAgentSection(const std::string& hathorMcpPath)
 {
     const auto& palette = HathorLookAndFeel::fromComponent(*this).getPalette();
-    const int startX = 0;
-    const int labelW = kLabelWidth;
+    const int labelW   = kLabelWidth;
     const int controlX = labelW + 8;
     const int controlW = 300;
+    const int contentW = 600;
 
     int y = contentPanel_->getHeight() + 8;
-    int sectionStartY = y;
 
     // --- Section header ---
     auto* header = new juce::Label();
@@ -240,13 +230,13 @@ void SettingsComponent::buildAgentSection(const std::string& hathorMcpPath)
     header->setFont(HathorLookAndFeel::fontSemiBold(HathorLookAndFeel::Typography::headlineMd));
     header->setColour(juce::Label::textColourId, palette.textPrimary);
     header->setJustificationType(juce::Justification::centredLeft);
-    header->setBounds(startX, y, 400, kControlHeight);
+    header->setBounds(0, y, contentW, kControlHeight);
     contentPanel_->addAndMakeVisible(header);
 
     y += kControlHeight + 8;
 
     // --- Agent executable path ---
-    agentPathLabel_.setBounds(startX, y, labelW, kControlHeight);
+    agentPathLabel_.setBounds(0, y, labelW, kControlHeight);
     agentPathLabel_.setText("Agent exe:", juce::dontSendNotification);
     agentPathLabel_.setFont(HathorLookAndFeel::fontMedium(HathorLookAndFeel::Typography::bodySm));
     agentPathLabel_.setColour(juce::Label::textColourId, palette.textSecondary);
@@ -255,6 +245,7 @@ void SettingsComponent::buildAgentSection(const std::string& hathorMcpPath)
 
     agentPathEditor_.setBounds(controlX, y, controlW, kControlHeight);
     agentPathEditor_.setText(juce::String(pending_.agentExePath), juce::dontSendNotification);
+    agentPathEditor_.addListener(this);
     contentPanel_->addAndMakeVisible(agentPathEditor_);
 
     y += kControlHeight + 4;
@@ -265,11 +256,11 @@ void SettingsComponent::buildAgentSection(const std::string& hathorMcpPath)
     mcpLabel->setFont(HathorLookAndFeel::fontMedium(HathorLookAndFeel::Typography::bodySm));
     mcpLabel->setColour(juce::Label::textColourId, palette.textSecondary);
     mcpLabel->setJustificationType(juce::Justification::centredRight);
-    mcpLabel->setBounds(startX, y, labelW, kControlHeight);
+    mcpLabel->setBounds(0, y, labelW, kControlHeight);
     contentPanel_->addAndMakeVisible(mcpLabel);
 
     mcpPathLabel_.setBounds(controlX, y, controlW, kControlHeight);
-    mcpPathLabel_.setText(juce::String(hathorMcpPath).isEmpty()
+    mcpPathLabel_.setText(hathorMcpPath.empty()
                               ? "(not found beside executable)"
                               : juce::String(hathorMcpPath),
                           juce::dontSendNotification);
@@ -280,21 +271,16 @@ void SettingsComponent::buildAgentSection(const std::string& hathorMcpPath)
 
     y += kControlHeight + 8;
 
-    // Section height update
-    contentPanel_->setBounds(0, 0, 600, y + 8);
-
-    // Adjust previous sections' heights — actually we need to reposition.
-    // Simpler approach: we rebuild from scratch in resized().
-    // For now, just track the bottom.
-    juce::ignoreUnused(sectionStartY);
+    contentPanel_->setBounds(0, 0, contentW, y + 8);
 }
 
 void SettingsComponent::buildPetdexSection()
 {
     const auto& palette = HathorLookAndFeel::fromComponent(*this).getPalette();
-    const int labelW = kLabelWidth;
+    const int labelW   = kLabelWidth;
     const int controlX = labelW + 8;
     const int controlW = 300;
+    const int contentW = 600;
 
     int y = contentPanel_->getHeight() + 8;
 
@@ -304,7 +290,7 @@ void SettingsComponent::buildPetdexSection()
     header->setFont(HathorLookAndFeel::fontSemiBold(HathorLookAndFeel::Typography::headlineMd));
     header->setColour(juce::Label::textColourId, palette.textPrimary);
     header->setJustificationType(juce::Justification::centredLeft);
-    header->setBounds(0, y, 400, kControlHeight);
+    header->setBounds(0, y, contentW, kControlHeight);
     contentPanel_->addAndMakeVisible(header);
 
     y += kControlHeight + 8;
@@ -320,21 +306,23 @@ void SettingsComponent::buildPetdexSection()
     petCombo_.setBounds(controlX, y, controlW, kControlHeight);
     petCombo_.setEditableText(false);
 
-    // Populate with known mascots (D1–D4 deferred). For A2, show a "none"
-    // option plus any discovered mascots, but no default selection.
     populatePetList();
 
-    // Set from pending (empty = no selection → shows "(none)" hint)
-    if (pending_.petSelection.isNotEmpty())
+    // Set from pending (empty = no selection → "(none)" hint)
+    if (!pending_.petSelection.empty())
     {
-        for (int i = 0; i < petCombo_.getNumItems(); ++i)
+        for (int i = 1; i <= petCombo_.getNumItems(); ++i)
         {
-            if (petCombo_.getItem(i).reference == pending_.petSelection)
+            if (petCombo_.getItemText(i - 1) == juce::String(pending_.petSelection))
             {
-                petCombo_.setSelectedId(petCombo_.getItem(i).id, juce::dontSendNotification);
+                petCombo_.setSelectedId(i, juce::dontSendNotification);
                 break;
             }
         }
+    }
+    else
+    {
+        petCombo_.setText("(none)", juce::dontSendNotification);
     }
 
     petCombo_.addListener(this);
@@ -342,7 +330,7 @@ void SettingsComponent::buildPetdexSection()
 
     y += kControlHeight + 24;
 
-    contentPanel_->setBounds(0, 0, 600, y);
+    contentPanel_->setBounds(0, 0, contentW, y);
 }
 
 void SettingsComponent::buildChuckPlaceholder()
@@ -356,18 +344,18 @@ void SettingsComponent::buildChuckPlaceholder()
     header->setFont(HathorLookAndFeel::fontSemiBold(HathorLookAndFeel::Typography::headlineMd));
     header->setColour(juce::Label::textColourId, palette.textPrimary);
     header->setJustificationType(juce::Justification::centredLeft);
-    header->setBounds(0, y, 400, kControlHeight);
+    header->setBounds(0, y, 600, kControlHeight);
     contentPanel_->addAndMakeVisible(header);
 
     y += kControlHeight + 8;
 
     auto* note = new juce::Label();
-    note->setText("ChucK integration — implemented in Phase C (B4).",
+    note->setText("ChucK integration - implemented in Phase C (B4).",
                   juce::dontSendNotification);
     note->setFont(HathorLookAndFeel::fontRegular(HathorLookAndFeel::Typography::bodySm));
     note->setColour(juce::Label::textColourId, palette.textMuted);
     note->setJustificationType(juce::Justification::centredLeft);
-    note->setBounds(0, y, 500, kControlHeight);
+    note->setBounds(0, y, 600, kControlHeight);
     contentPanel_->addAndMakeVisible(note);
 
     y += kControlHeight + 24;
@@ -386,18 +374,18 @@ void SettingsComponent::buildEqPlaceholder()
     header->setFont(HathorLookAndFeel::fontSemiBold(HathorLookAndFeel::Typography::headlineMd));
     header->setColour(juce::Label::textColourId, palette.textPrimary);
     header->setJustificationType(juce::Justification::centredLeft);
-    header->setBounds(0, y, 400, kControlHeight);
+    header->setBounds(0, y, 600, kControlHeight);
     contentPanel_->addAndMakeVisible(header);
 
     y += kControlHeight + 8;
 
     auto* note = new juce::Label();
-    note->setText("EQ integration — implemented in Phase D (B7).",
+    note->setText("EQ integration - implemented in Phase D (B7).",
                   juce::dontSendNotification);
     note->setFont(HathorLookAndFeel::fontRegular(HathorLookAndFeel::Typography::bodySm));
     note->setColour(juce::Label::textColourId, palette.textMuted);
     note->setJustificationType(juce::Justification::centredLeft);
-    note->setBounds(0, y, 500, kControlHeight);
+    note->setBounds(0, y, 600, kControlHeight);
     contentPanel_->addAndMakeVisible(note);
 
     y += kControlHeight + 24;
@@ -407,36 +395,29 @@ void SettingsComponent::buildEqPlaceholder()
 
 void SettingsComponent::buildActionButtons()
 {
-    const auto& palette = HathorLookAndFeel::fromComponent(*this).getPalette();
-
-    // Buttons are placed below the scroll content — managed in resized().
+    // Buttons are laid out in resized(). Only added as children here.
     applyButton_.setButtonText("Apply");
-    applyButton_.setBounds(0, 0, kButtonWidth, kButtonHeight);
     applyButton_.addListener(this);
-    applyButton_.setEnabled(false);  // only enabled when there are pending changes
+    applyButton_.setEnabled(false);
     addAndMakeVisible(applyButton_);
 
     resetButton_.setButtonText("Reset");
-    resetButton_.setBounds(kButtonWidth + kButtonGap, 0, kButtonWidth, kButtonHeight);
     resetButton_.addListener(this);
     addAndMakeVisible(resetButton_);
 }
 
 void SettingsComponent::populatePetList()
 {
-    // A2: Petdex is deferred to D1–D4. Show "None" as the only option —
-    // no default selection (per A2: "opt-in only, no default").
     petCombo_.clear();
-    petCombo_.addChoice("(none)", 1);
+    petCombo_.addItem("(none)", 1);
 
-    // Placeholder for future mascot discovery (D1–D4):
-    //   petCombo_.addChoice("Strudel Fox", 2);
-    //   petCombo_.addChoice("Hathor Cat",  3);
-    // Actual mascot assets and licensing data arrive in D1–D4.
+    // Placeholder for future mascot discovery (D1-D4):
+    //   petCombo_.addItem("Strudel Fox", 2);
+    //   petCombo_.addItem("Hathor Cat",  3);
+    // Actual mascot assets and licensing data arrive in D1-D4.
 
-    petCombo_.setText(juce::String(pending_.petSelection.isEmpty()
-                                       ? "(none)"
-                                       : pending_.petSelection));
+    if (pending_.petSelection.empty())
+        petCombo_.setText("(none)", juce::dontSendNotification);
 }
 
 // ---------------------------------------------------------------------------
@@ -453,18 +434,16 @@ void SettingsComponent::resized()
 {
     auto b = getLocalBounds();
 
-    // Reserve space for buttons at the bottom of the content panel.
     const int buttonBarHeight = kButtonHeight + 16;
-    contentPanel_->setTopLeftPosition(0, 0);
 
-    // Expand content panel width to fit viewport (minus scrollbar).
-    const int contentW = juce::jmax(400, b.getWidth() - 8);
-    contentPanel_->setSize(contentW, contentPanel_->getHeight());
-
-    // Scroll view fills the top portion.
     scrollView_->setBounds(b.removeFromTop(b.getHeight() - buttonBarHeight));
 
-    // Buttons pinned to bottom-right.
+    // Sync content panel width to the viewport.
+    contentPanel_->setTopLeftPosition(0, 0);
+    contentPanel_->setSize(juce::jmax(400, b.getWidth()),
+                           contentPanel_->getHeight());
+
+    // Buttons pinned to bottom-right of the full bounds (below scroll view).
     const int bx = b.getWidth() - kButtonWidth * 2 - kButtonGap;
     applyButton_.setBounds(bx, b.getHeight() - kButtonHeight,
                            kButtonWidth, kButtonHeight);
@@ -484,7 +463,6 @@ void SettingsComponent::sliderValueChanged(juce::Slider* slider)
         const float val = static_cast<float>(slider->getValue());
         pending_.opacityPercent = val;
 
-        // Live-update the value label.
         opacityValueLabel_.setText(juce::String(val, 0) + "%",
                                    juce::dontSendNotification);
 
@@ -500,7 +478,6 @@ void SettingsComponent::buttonClicked(juce::Button* button)
 {
     if (button == &applyButton_)
     {
-        // Commit pending → committed, persist, apply live.
         committed_ = pending_;
         saveSettings(committed_);
         applyTheme(committed_.theme);
@@ -509,42 +486,14 @@ void SettingsComponent::buttonClicked(juce::Button* button)
         applyButton_.setEnabled(false);
         resetButton_.setEnabled(false);
 
-        // Re-load from properties to ensure consistency.
         committed_ = loadSettings();
+
+        if (onSettingsApplied)
+            onSettingsApplied();
     }
     else if (button == &resetButton_)
     {
-        // Revert pending to committed (discard edits, NOT factory defaults).
-        pending_ = committed_;
-
-        // Sync UI controls back to committed values.
-        themeCombo_.setSelectedId(static_cast<int>(pending_.theme) + 1,
-                                  juce::dontSendNotification);
-        opacitySlider_.setValue(pending_.opacityPercent,
-                                juce::dontSendNotification);
-        opacityValueLabel_.setText(juce::String(pending_.opacityPercent, 0) + "%",
-                                   juce::dontSendNotification);
-        agentPathEditor_.setText(juce::String(pending_.agentExePath),
-                                 juce::dontSendNotification);
-
-        if (!pending_.petSelection.isEmpty())
-        {
-            for (int i = 0; i < petCombo_.getNumItems(); ++i)
-            {
-                if (petCombo_.getItem(i).reference == pending_.petSelection)
-                {
-                    petCombo_.setSelectedId(petCombo_.getItem(i).id,
-                                            juce::dontSendNotification);
-                    break;
-                }
-            }
-        }
-        else
-        {
-            petCombo_.setText("(none)");
-        }
-
-        updateDirtyFlag();
+        resetToCommitted();
     }
 }
 
@@ -565,15 +514,24 @@ void SettingsComponent::comboBoxChanged(juce::ComboBox* comboBox)
     }
     else if (comboBox == &petCombo_)
     {
-        const int selectedId = comboBox->getSelectedId();
-        if (selectedId == 1)
-        {
+        if (comboBox->getSelectedId() == 1)
             pending_.petSelection = "";
-        }
         else
-        {
             pending_.petSelection = comboBox->getText().toStdString();
-        }
+
+        updateDirtyFlag();
+    }
+}
+
+// ---------------------------------------------------------------------------
+// TextEditor::Listener
+// ---------------------------------------------------------------------------
+
+void SettingsComponent::textEditorTextChanged(juce::TextEditor& editor)
+{
+    if (&editor == &agentPathEditor_)
+    {
+        pending_.agentExePath = editor.getText().toStdString();
         updateDirtyFlag();
     }
 }
@@ -597,36 +555,36 @@ void SettingsComponent::applyTheme(ThemeId theme)
 {
     const Palette newPalette = paletteForTheme(theme);
 
-    // Apply through the LookAndFeel so all components update.
-    // The MainWindow owns the HathorLookAndFeel instance; we set the palette
-    // on it via the global pointer.
     if (auto* lf = dynamic_cast<HathorLookAndFeel*>(
-            juce::Desktop::getInstance().getDefaultLookAndFeel()))
+            &juce::Desktop::getInstance().getDefaultLookAndFeel()))
     {
+        // setPalette() internally calls sendLookAndFeelChange() on all components.
         lf->setPalette(newPalette);
     }
     else
     {
-        // Fallback: set global palette directly.
+        // Fallback: set global palette pointer and broadcast manually.
         HathorLookAndFeel::setGlobalPalette(&newPalette);
-        juce::Component::sendLookAndFeelChange();
+        for (int i = 0; i < juce::Desktop::getInstance().getNumComponents(); ++i)
+        {
+            if (auto* c = juce::Desktop::getInstance().getComponent(i))
+                c->sendLookAndFeelChange();
+        }
     }
 }
 
 void SettingsComponent::applyOpacity(float percent)
 {
-    // B5: use TopLevelWindow::setAlpha on macOS/Windows.
-    // On Linux, opacity is unsupported — skip.
     if (!opacitySupported_)
         return;
 
-    // Iterate all top-level components and set alpha on the main window.
     for (int i = 0; i < juce::Desktop::getInstance().getNumComponents(); ++i)
     {
         if (auto* w = dynamic_cast<juce::TopLevelWindow*>(
                 juce::Desktop::getInstance().getComponent(i)))
         {
-            if (w->isMainWindow())
+            // MainWindow's component name is "Hathor" (set in DocumentWindow ctor).
+            if (w->getName() == "Hathor")
             {
                 w->setAlpha(percent / 100.0f);
                 return;
@@ -639,31 +597,29 @@ void SettingsComponent::resetToCommitted()
 {
     pending_ = committed_;
 
-    // Sync UI controls.
     themeCombo_.setSelectedId(static_cast<int>(pending_.theme) + 1,
                               juce::dontSendNotification);
     opacitySlider_.setValue(pending_.opacityPercent,
-                            juce::dontSendNotification);
+                              juce::dontSendNotification);
     opacityValueLabel_.setText(juce::String(pending_.opacityPercent, 0) + "%",
                                juce::dontSendNotification);
     agentPathEditor_.setText(juce::String(pending_.agentExePath),
                              juce::dontSendNotification);
 
-    if (!pending_.petSelection.isEmpty())
+    if (!pending_.petSelection.empty())
     {
-        for (int i = 0; i < petCombo_.getNumItems(); ++i)
+        for (int i = 1; i <= petCombo_.getNumItems(); ++i)
         {
-            if (petCombo_.getItem(i).reference == pending_.petSelection)
+            if (petCombo_.getItemText(i - 1) == juce::String(pending_.petSelection))
             {
-                petCombo_.setSelectedId(petCombo_.getItem(i).id,
-                                        juce::dontSendNotification);
+                petCombo_.setSelectedId(i, juce::dontSendNotification);
                 break;
             }
         }
     }
     else
     {
-        petCombo_.setText("(none)");
+        petCombo_.setText("(none)", juce::dontSendNotification);
     }
 
     updateDirtyFlag();

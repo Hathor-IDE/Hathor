@@ -157,6 +157,9 @@ private:
     /// Requirements: 32.1, 32.3
     std::unique_ptr<hathor::ui::AcpAgentSession>   agentSession_;
 
+    /// Agent executable path — set at startup, can be updated via Settings (A2).
+    std::string                                    agentExePath_;
+
     // -----------------------------------------------------------------------
     // Engine references
     // -----------------------------------------------------------------------

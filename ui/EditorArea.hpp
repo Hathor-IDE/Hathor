@@ -193,11 +193,14 @@ public:
     /**
       * Open or focus the Settings tab (A2).
       * If the Settings tab is already open, focuses it; otherwise creates it
-      * and activates it.
+      * and activates it.  The caller should install onSettingsApplied on the
+      * returned SettingsComponent if it wants to react to Apply.
       *
       * @param props  ApplicationProperties for persistence (passed to SettingsComponent).
+      * @return Pointer to the SettingsComponent, or nullptr if the tab could
+      *         not be created (e.g. all slots full — never, but kept for symmetry).
       */
-    void openSettingsTab(juce::ApplicationProperties* props);
+    SettingsComponent* openSettingsTab(juce::ApplicationProperties* props);
 
     /// Number of open tabs.
     int tabCount() const noexcept { return static_cast<int>(tabs_.size()); }
@@ -248,6 +251,9 @@ private:
 
     /// Build a pointer list of HathorTab only (excludes Settings tab).
     std::vector<HathorTab*> buildHathorTabPointers() const;
+
+    /// Build a TabInfo list for the tab bar (HathorTab entries + optional Settings tab).
+    std::vector<TabInfo> tabInfos() const;
 
     /// Rebuild the tab bar geometry and show the active content.
     void refreshTabBar();

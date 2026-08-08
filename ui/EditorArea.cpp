@@ -313,7 +313,7 @@ bool EditorArea::openFile(const juce::File& file)
     }
 
     // Load the file text into a new tab.
-    auto tab = std::make_unique<HathorTab>(slot);
+    auto tab = std::make_unique<HathorTab>(slot, file);
     tab->setFilePath(file);
     if (frontLabel.has_value())
         tab->setDisplayLabel(*frontLabel);
@@ -397,12 +397,13 @@ bool EditorArea::closeTab(int index)
                     }
                     else
                     {
-                        // Save-As via native chooser
+                        // Save-As via native chooser — include both supported
+                        // file type filters (.hathor and .ck).
                         auto chooser = std::make_shared<juce::FileChooser>(
                             "Save Buffer As…",
                             juce::File::getSpecialLocation(
                                 juce::File::userDocumentsDirectory),
-                            "*.hathor");
+                            "*.hathor;*.ck");
 
                         chooser->launchAsync(
                             juce::FileBrowserComponent::saveMode |
@@ -438,13 +439,13 @@ bool EditorArea::closeTab(int index)
     return true;
 }
 
-void EditorArea::openSettingsTab(juce::ApplicationProperties* props)
+SettingsComponent* EditorArea::openSettingsTab(juce::ApplicationProperties* props)
 {
     // If already open, just focus it.
     if (settingsTab_ != nullptr)
     {
         activateTab(static_cast<int>(tabs_.size()));
-        return;
+        return settingsTab_.get();
     }
 
     // Create the Settings tab (A2).
@@ -454,6 +455,7 @@ void EditorArea::openSettingsTab(juce::ApplicationProperties* props)
 
     // Activate it (sets visibility, bounds, refreshTabBar).
     activateTab(static_cast<int>(tabs_.size()));
+    return settingsTab_.get();
 }
 
 HathorTab* EditorArea::activeTab() noexcept
@@ -498,7 +500,7 @@ void EditorArea::paint(juce::Graphics& g)
 // Internal helpers
 // ---------------------------------------------------------------------------
 
-std::vector<EditorArea::TabInfo> EditorArea::tabInfos() const
+std::vector<TabInfo> EditorArea::tabInfos() const
 {
     std::vector<TabInfo> infos;
 

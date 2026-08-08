@@ -16,9 +16,12 @@ namespace hathor::ui {
 // Constructor / destructor
 // ---------------------------------------------------------------------------
 
-HathorTab::HathorTab(int slotIndex)
+HathorTab::HathorTab(int slotIndex, const juce::File& file)
     : slotIndex_(slotIndex)
-    , editor_(document_, &miniTokeniser_) // default to mini-notation; swaps on file-type detection
+    , useChuckTokeniser_(ChuckTokeniser::isChuckFile(file))
+    , editor_(document_, useChuckTokeniser_
+                                  ? static_cast<juce::CodeTokeniser*>(&chuckTokeniser_)
+                                  : static_cast<juce::CodeTokeniser*>(&miniTokeniser_))
 {
     // -----------------------------------------------------------------------
     // Editor font: JetBrains Mono, 13 pt (code-default from mockup, Req 22.1)

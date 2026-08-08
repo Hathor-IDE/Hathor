@@ -20,16 +20,16 @@
  * codeString, codeComment, codeFunction, codeMacro, etc.).
  *
  * Colour index mapping:
- *   0 — TK_DEFAULT  (palette.codeText — plain text / identifiers)
- *   1 — TK_KEYWORD  (palette.codeKeyword — control flow + fun/spork/etc.)
- *   2 — TK_TYPE     (palette.codeType — primitive types + class modifiers)
- *   3 — TK_STRING   (palette.codeString — quoted strings)
- *   4 — TK_COMMENT  (palette.codeComment — //, <--, /* */ comments)
- *   5 — TK_NUMBER   (palette.codeKeyword — constants like now/true/false/dac)
- *   6 — TK_UGEN     (palette.codeFunction — UGens like SinOsc, UGen)
- *   7 — TK_LIBRARY   (palette.codeMacro — library classes like Machine, Math)
- *   8 — TK_OPERATOR  (palette.codeBracket — operators & punctuation)
- *   9 — TK_DEBUG     (palette.codeMacro — <<< >>> debug printing)
+ *   0 - TK_DEFAULT  (palette.codeText - plain text / identifiers)
+ *   1 - TK_KEYWORD  (palette.codeKeyword - control flow + fun/spork/etc.)
+ *   2 - TK_TYPE     (palette.codeType - primitive types + class modifiers)
+ *   3 - TK_STRING   (palette.codeString - quoted strings)
+ *   4 - TK_COMMENT  (palette.codeComment - line and block comments)
+ *   5 - TK_NUMBER   (palette.codeKeyword - constants like now/true/false/dac)
+ *   6 - TK_UGEN     (palette.codeFunction - UGens like SinOsc, UGen)
+ *   7 - TK_LIBRARY   (palette.codeMacro - library classes like Machine, Math)
+ *   8 - TK_OPERATOR  (palette.codeBracket - operators & punctuation)
+ *   9 - TK_DEBUG     (palette.codeMacro - <<< >>> debug printing)
  *
  * The JUCE-free keyword sets and classifier live in ChuckKeywords.hpp so they
  * can be unit-tested without linking JUCE.

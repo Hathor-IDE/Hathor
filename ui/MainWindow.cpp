@@ -52,9 +52,10 @@ MainWindow::MainWindow(AudioEngine& audio,
                        std::string agentExePath,
                        std::string hathorMcpPath)
     : juce::DocumentWindow(
-          "Hathor",
-           juce::Colour(Palette::defaultPalette().background),
-          juce::DocumentWindow::allButtons)
+           "Hathor",
+          juce::Colour(Palette::defaultPalette().background),
+           juce::DocumentWindow::allButtons)
+    , agentExePath_(agentExePath)
     , audio_(audio)
     , ci_(ci)
 {
@@ -133,7 +134,45 @@ MainWindow::MainWindow(AudioEngine& audio,
              {
                  // Settings button: open or focus the Settings tab (A2).
                  if (editorArea_)
-                     editorArea_->openSettingsTab(&appProperties_);
+                 {
+                     auto* settings = editorArea_->openSettingsTab(&appProperties_);
+                     if (settings != nullptr)
+                     {
+                         settings->onSettingsApplied = [this]()
+                         {
+                             // Restart the agent session with the persisted path (A2).
+                             const auto* props = appProperties_.getUserSettings();
+                             if (props == nullptr)
+                                 return;
+
+                             const std::string newAgentPath =
+                                 props->getValue("settings.agentExePath").toStdString();
+
+                             if (newAgentPath != agentExePath_)
+                             {
+                                 agentExePath_ = newAgentPath;
+                                 if (!agentExePath_.empty())
+                                 {
+                                     agentSession_->stop();
+                                     const std::string projectDir =
+                                         juce::File::getCurrentWorkingDirectory()
+                                             .getFullPathName().toStdString();
+                                     const std::string hathorMcpPath =
+                                         juce::File::getSpecialLocation(
+                                             juce::File::currentExecutableFile)
+                                             .getSiblingFile(
+#if JUCE_WINDOWS
+                                                 "hathor-mcp.exe")
+#else
+                                                 "hathor-mcp")
+#endif
+                                             .getFullPathName().toStdString();
+                                     agentSession_->start(agentExePath_, projectDir, hathorMcpPath);
+                                 }
+                             }
+                         };
+                     }
+                 }
              }
             // Other panels (Search, VersionControl, AIAgent) are not yet
             // implemented — do nothing, preserving active state.
