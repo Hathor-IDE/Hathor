@@ -18,7 +18,7 @@ namespace hathor::ui {
 
 HathorTab::HathorTab(int slotIndex)
     : slotIndex_(slotIndex)
-    , editor_(document_, &tokeniser_) // MiniNotationTokeniser wired in task 3.5
+    , editor_(document_, &miniTokeniser_) // default to mini-notation; swaps on file-type detection
 {
     // -----------------------------------------------------------------------
     // Editor font: JetBrains Mono, 13 pt (code-default from mockup, Req 22.1)
@@ -63,6 +63,25 @@ HathorTab::~HathorTab()
 void HathorTab::setFilePath(const juce::File& f)
 {
     filePath_ = f;
+    setFileTypeFromPath(f);
+}
+
+void HathorTab::setFileTypeFromPath(const juce::File& file)
+{
+    const bool isChuck = ChuckTokeniser::isChuckFile(file);
+
+    if (isChuck != useChuckTokeniser_)
+    {
+        useChuckTokeniser_ = isChuck;
+        // Note: CodeEditorComponent does not allow swapping the tokeniser
+        // after construction in JUCE 8. The constructor picks the tokeniser
+        // based on file type at tab-creation time. Here we only update the
+        // colour scheme to match the active tokeniser's scheme.
+        if (isChuck)
+            editor_.setColourScheme(chuckTokeniser_.getDefaultColourScheme());
+        else
+            editor_.setColourScheme(miniTokeniser_.getDefaultColourScheme());
+    }
 }
 
 void HathorTab::setDisplayLabel(const std::string& label)

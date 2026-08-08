@@ -17,6 +17,7 @@
 #include <juce_gui_extra/juce_gui_extra.h>
 
 #include "MiniNotationTokeniser.hpp"
+#include "ChuckTokeniser.hpp"
 #include "HathorLookAndFeel.hpp"
 
 #include <optional>
@@ -102,6 +103,14 @@ public:
     /// Clear the unsaved-dot flag (called after a successful `set-pattern` eval).
     void clearUnsavedDot();
 
+    /// Switch the syntax tokeniser based on file extension.
+    /// Called by setFilePath() and EditorArea when the file type is known.
+    /// Defaults to MiniNotationTokeniser for .hathor, ChuckTokeniser for .ck.
+    void setFileTypeFromPath(const juce::File& file);
+
+    /// Return true if this tab is currently using the ChucK tokeniser.
+    bool isChuckTab() const noexcept { return useChuckTokeniser_; }
+
     // -----------------------------------------------------------------------
     // Callback — installed by EditorArea; fired when unsavedDot changes.
     // -----------------------------------------------------------------------
@@ -134,7 +143,13 @@ private:
     std::optional<std::string> displayLabel_; ///< from front-matter `label`
     bool                       unsavedDot_{ false };
 
-    MiniNotationTokeniser       tokeniser_;
+    // Tokenisers for both file types.  Exactly one is active at a time;
+    // the editor_ holds a non-owning pointer to whichever is active.
+    // (juce::CodeEditorComponent does not own its tokeniser.)
+    MiniNotationTokeniser       miniTokeniser_;
+    ChuckTokeniser            chuckTokeniser_;
+    bool                      useChuckTokeniser_{ false };
+
     juce::CodeDocument          document_;
     juce::CodeEditorComponent   editor_;
 

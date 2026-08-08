@@ -129,13 +129,12 @@ MainWindow::MainWindow(AudioEngine& audio,
                 activityRibbon_->setActivePanel(wantsOpen ? hathor::ui::Panel::Explorer : hathor::ui::Panel::None);
                 resized(); // re-lay-out editor area
             }
-            else if (panel == hathor::ui::Panel::None)
-            {
-                // Settings button or external close: hide explorer if open.
-                explorerPanel_->setVisible(false);
-                activityRibbon_->setActivePanel(hathor::ui::Panel::None);
-                resized();
-            }
+             else if (panel == hathor::ui::Panel::None)
+             {
+                 // Settings button: open or focus the Settings tab (A2).
+                 if (editorArea_)
+                     editorArea_->openSettingsTab(&appProperties_);
+             }
             // Other panels (Search, VersionControl, AIAgent) are not yet
             // implemented — do nothing, preserving active state.
         };

@@ -620,9 +620,7 @@ void SettingsComponent::applyOpacity(float percent)
     if (!opacitySupported_)
         return;
 
-    juce::WindowHandle* topWindow = juce::Desktop::getInstance().getMainWindowFor(
-        juce::Desktop::getInstance().getIndexOfFocusedWindow());
-    // Use the DocumentWindow approach: iterate windows.
+    // Iterate all top-level components and set alpha on the main window.
     for (int i = 0; i < juce::Desktop::getInstance().getNumComponents(); ++i)
     {
         if (auto* w = dynamic_cast<juce::TopLevelWindow*>(
@@ -635,6 +633,40 @@ void SettingsComponent::applyOpacity(float percent)
             }
         }
     }
+}
+
+void SettingsComponent::resetToCommitted()
+{
+    pending_ = committed_;
+
+    // Sync UI controls.
+    themeCombo_.setSelectedId(static_cast<int>(pending_.theme) + 1,
+                              juce::dontSendNotification);
+    opacitySlider_.setValue(pending_.opacityPercent,
+                            juce::dontSendNotification);
+    opacityValueLabel_.setText(juce::String(pending_.opacityPercent, 0) + "%",
+                               juce::dontSendNotification);
+    agentPathEditor_.setText(juce::String(pending_.agentExePath),
+                             juce::dontSendNotification);
+
+    if (!pending_.petSelection.isEmpty())
+    {
+        for (int i = 0; i < petCombo_.getNumItems(); ++i)
+        {
+            if (petCombo_.getItem(i).reference == pending_.petSelection)
+            {
+                petCombo_.setSelectedId(petCombo_.getItem(i).id,
+                                        juce::dontSendNotification);
+                break;
+            }
+        }
+    }
+    else
+    {
+        petCombo_.setText("(none)");
+    }
+
+    updateDirtyFlag();
 }
 
 } // namespace hathor::ui

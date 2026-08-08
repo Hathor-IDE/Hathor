@@ -44,12 +44,14 @@ target_sources(hathor-ui
         HathorTab.cpp         # task 3.4
         EditorArea.cpp        # task 3.4
         MiniNotationTokeniser.cpp # task 3.5
+        ChuckTokeniser.cpp       # A5 — ChucK syntax highlighting
         UITimer.cpp               # task 3.7
         VisualizerPanel.cpp       # task 3.8
         SliderPanel.cpp           # task 3.9
         AcpAgentSession.cpp           # task 4.2–4.5
         PermissionPromptComponent.cpp # task 4.4
         ChatSidebar.cpp               # task 5.1
+        SettingsComponent.cpp         # A2
         # App-layer sources (AudioEngine, SampleBank, VoicePool live in app/,
         # not in a linkable static lib — include them directly here)
         ${CMAKE_SOURCE_DIR}/app/AudioEngine.cpp

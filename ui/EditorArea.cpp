@@ -50,10 +50,9 @@ TabBarComponent::TabBarComponent()
     setInterceptsMouseClicks(true, false);
 }
 
-void TabBarComponent::rebuild(const std::vector<std::unique_ptr<HathorTab>>& tabs,
+void TabBarComponent::rebuild(const std::vector<TabInfo>& tabs,
                               int activeIndex)
 {
-    activeIndex_ = activeIndex;
     geom_.clear();
 
     if (tabs.empty())
@@ -61,6 +60,8 @@ void TabBarComponent::rebuild(const std::vector<std::unique_ptr<HathorTab>>& tab
         repaint();
         return;
     }
+
+    activeIndex_ = activeIndex;
 
     const int totalW  = getWidth();
     const int n       = static_cast<int>(tabs.size());
@@ -75,8 +76,8 @@ void TabBarComponent::rebuild(const std::vector<std::unique_ptr<HathorTab>>& tab
         g.closeBtnBounds = { x + tabW - kCloseBoxSize - 4,
                              (kTabHeight - kCloseBoxSize) / 2,
                              kCloseBoxSize, kCloseBoxSize };
-        g.label       = tabs[static_cast<std::size_t>(i)]->tabLabel();
-        g.unsavedDot  = tabs[static_cast<std::size_t>(i)]->hasUnsavedDot();
+        g.label       = tabs[static_cast<std::size_t>(i)].label;
+        g.unsavedDot  = tabs[static_cast<std::size_t>(i)].unsavedDot;
         geom_.push_back(std::move(g));
         x += tabW;
     }
@@ -335,7 +336,35 @@ bool EditorArea::openFile(const juce::File& file)
 
 bool EditorArea::closeTab(int index)
 {
-    if (index < 0 || index >= static_cast<int>(tabs_.size()))
+    const int hathorTabCount = static_cast<int>(tabs_.size());
+
+    // Handle Settings tab close (A2) — simple discard, no Save/Discard modal.
+    if (index >= hathorTabCount)
+    {
+        if (settingsTab_ == nullptr)
+            return false;
+
+        // Discard pending edits (same semantics as close without Apply).
+        settingsTab_->resetToCommitted();
+
+        // Hide and destroy the settings tab.
+        settingsTab_->setVisible(false);
+        removeChildComponent(settingsTab_.get());
+        settingsTab_.reset();
+        settingsActive_ = false;
+
+        // Re-activate the last HathorTab if any exist.
+        if (hathorTabCount > 0)
+            activateTab(hathorTabCount - 1);
+        else
+            activeIndex_ = -1;
+
+        refreshTabBar();
+        resized();
+        return true;
+    }
+
+    if (index < 0 || index >= hathorTabCount)
         return false;
 
     HathorTab* tab = tabs_[static_cast<std::size_t>(index)].get();

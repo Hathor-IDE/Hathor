@@ -6,7 +6,7 @@
  *
  * Lexing is adapted from the public ChucK TextMate grammar:
  *   forrcaho/vscode-chuck  (port of cjwilburn/language-chuck)
- *   https://github.com/forrcaho/vscode-chuck
+ *   https://github.com/forrcaho/vscode-chuck/blob/main/syntaxes/chuck.tmLanguage.json
  *
  * The grammar's regex-based patterns are reimplemented here as a deterministic
  * single-pass character scanner suitable for juce::CodeEditorComponent.
@@ -17,30 +17,14 @@
 #include "ChuckTokeniser.hpp"
 
 #include <cctype>
-#include <string_view>
+#include <cstdint>
 
 namespace hathor::ui {
-
-// ---------------------------------------------------------------------------
-// peekLineText
-// ---------------------------------------------------------------------------
-
-juce::String ChuckTokeniser::peekLineText(juce::CodeDocument::Iterator it)
-{
-    juce::String line;
-    while (!it.isEOF() && it.peekNextChar() != '\n')
-        line += it.nextChar();
-    return line;
-}
 
 // ---------------------------------------------------------------------------
 // Keyword / class sets — adapted from vscode-chuck grammar
 // ---------------------------------------------------------------------------
 // Each set corresponds to a `match` pattern in the TextMate grammar.
-// Order: most specific first where overlap is possible (the classifier
-// checks keyword → type → modifier → variable-language → constant before
-// ugen/library, so identifiers never match class patterns unless they are
-// truly class names).
 
 static const std::unordered_set<std::string_view>& chuckKeywords() noexcept
 {
@@ -100,7 +84,6 @@ static const std::unordered_set<std::string_view>& chuckConstants() noexcept
     // constant.special.chuck — vscode-chuck:
     //   adc | blackhole | cherr | chout | dac | day | false | hour | maybe |
     //   me | minute | ms | now | null | NULL | samp | second | true | week
-    // language-chuck is the same set.
     static const std::unordered_set<std::string_view> s = {
         "adc", "blackhole", "cherr", "chout", "dac",
         "day", "false", "hour", "maybe",
@@ -111,12 +94,9 @@ static const std::unordered_set<std::string_view>& chuckConstants() noexcept
 }
 
 // --- UGen class names (support.class.ugen.chuck) ---
-// From vscode-chuck grammar, merged with language-chuck additions.
-// These are ChucK's built-in unit generator classes.
 static const std::unordered_set<std::string_view>& chuckUgens() noexcept
 {
     static const std::unordered_set<std::string_view> s = {
-        // Core UGens (from both grammars)
         "UGen", "UGen_Multi", "UGen_Stereo",
         "SinOsc", "PulseOsc", "SqrOsc", "TriOsc", "SawOsc", "Phasor",
         "Noise", "Impulse", "Step", "Gain",
@@ -132,18 +112,13 @@ static const std::unordered_set<std::string_view>& chuckUgens() noexcept
         "OneZero", "TwoZero", "OnePole", "TwoPole", "PoleZero", "BiQuad",
         "Filter", "LPF", "HPF", "BPF", "BRF", "ResonZ", "Dyno",
         "StkInstrument",
-        // STK models
         "BandedWG", "BlowBotl", "BlowHole", "Bowed", "Brass", "Clarinet",
         "Flute", "Mandolin", "ModalBar", "Moog", "Saxofony", "Shakers",
         "Sitar", "StifKarp", "VoicForm",
-        // FM / electric pianos / organs
         "FM", "BeeThree", "FMVoices", "HevyMetl", "PercFlut", "Rhodey",
         "TubeBell", "Wurley",
-        // Chugraph/Chugen
         "Chugen", "Chugraph", "Chubgraph",
-        // Gen
         "Gen5", "Gen7", "Gen9", "Gen10", "Gen17", "GenX",
-        // Other
         "BLT", "CNoise", "FilterBasic", "FilterStk", "LiSa10",
     };
     return s;
@@ -169,7 +144,7 @@ const std::unordered_set<std::string_view>& ChuckTokeniser::keywordSet() noexcep
 
 const std::unordered_set<std::string_view>& ChuckTokeniser::typeSet() noexcept
 {
-    return chuckTypeKeywords();
+    return chuckTypes();
 }
 
 const std::unordered_set<std::string_view>& ChuckTokeniser::ugenSet() noexcept
@@ -203,24 +178,24 @@ const std::unordered_set<std::string_view>& ChuckTokeniser::variableLanguageSet(
 
 int ChuckTokeniser::classifyIdentifier(std::string_view word) noexcept
 {
-    // Check order matters: built-in constants and types first, then classes.
-    // A word can only be one category at a time.
+    // Check order: keywords, types, modifiers, variable-language, constants,
+    // then UGen/library classes.  A word can only be one category.
     if (chuckKeywords().count(word))
         return 1;  // TK_KEYWORD
     if (chuckTypes().count(word))
-        return 2;  // TK_TYPE  (storage.type.chuck)
+        return 2;  // TK_TYPE
     if (chuckTypeKeywords().count(word))
-        return 2;  // TK_TYPE  (storage.type.class / storage.modifier)
+        return 2;  // TK_TYPE (class/interface/extends/public/etc.)
     if (chuckModifiers().count(word))
         return 1;  // TK_KEYWORD (fun/function/spork/const/new)
     if (chuckVariableLanguage().count(word))
         return 1;  // TK_KEYWORD (this/super)
     if (chuckConstants().count(word))
-        return 5;  // TK_NUMBER — constants share the "literal" colour slot
+        return 5;  // TK_NUMBER (constants — special, not keyword)
     if (chuckUgens().count(word))
-        return 6;  // TK_UGEN (support.class.ugen)
+        return 6;  // TK_UGEN
     if (chuckLibraries().count(word))
-        return 7;  // TK_LIBRARY (support.class.library)
+        return 7;  // TK_LIBRARY
     return 0;      // default / plain identifier
 }
 
@@ -230,10 +205,8 @@ int ChuckTokeniser::classifyIdentifier(std::string_view word) noexcept
 
 bool ChuckTokeniser::isChuckExtension(std::string_view ext) noexcept
 {
-    // Case-insensitive comparison of ".ck".
-    if (ext.size() != 3 || ext[0] != '.' && ext[0] != '.')
-        return false;
-    if (ext[0] != '.')
+    // Case-insensitive comparison of ".ck" (3 chars: dot, 'c', 'k').
+    if (ext.size() != 3 || ext[0] != '.')
         return false;
     char a = static_cast<char>(std::tolower(static_cast<unsigned char>(ext[1])));
     char b = static_cast<char>(std::tolower(static_cast<unsigned char>(ext[2])));
@@ -281,44 +254,31 @@ int ChuckTokeniser::readNextToken(juce::CodeDocument::Iterator& iterator)
         return 4;  // TK_COMMENT
     }
 
-    // <-- line comment
-    if (c == '<' && iterator.peekNextChar() == '-' && iterator.peekPreviousChar() == '<')
-    {
-        // Actually we need to check two chars: "<--"
-        // But peekPreviousChar from the current position isn't right — let's
-        // check the pattern differently. We're at '<', need to see if next chars
-        // are '-' and '-' — wait, the grammar says "<--" (3 chars). Let me re-check.
-        // Grammar: begin: "(^[ \t]+)?(?=//|<\\-\\-)"
-        // match for comment start: "//|<\\-\\-"
-        // So "<--" is the comment form. We have c == '<' already.
-        // Check if next two chars are '-' '-'
-    }
-
-    // Re-check: we need to look ahead two characters from '<' to see "<--"
-    // Actually, the grammar pattern is "<\\-\\-" which is literally "<--"
-    // Let's handle this properly: check current char '<' and peek next two.
+    // <-- line comment — check by looking ahead 3 characters from current '<'
     if (c == '<')
     {
-        // Save position for restore if this isn't a comment
-        auto saveIter = iterator;
-        juce::String twoChars;
-        twoChars += iterator.nextChar();  // '<'
-        twoChars += iterator.nextChar();  // next char
-        twoChars += iterator.nextChar();  // next next char
-        if (twoChars == "<--")
+        juce::juce_wchar n1 = iterator.peekNextChar();
+        if (n1 == '-')
         {
-            // It's a <-- comment — consume to end of line.
-            while (!iterator.isEOF())
+            // Save iterator position in case this isn't "<--"
+            juce::CodeDocument::Iterator save = iterator;
+            iterator.nextChar();  // '<'
+            iterator.nextChar();  // '-'
+            if (!iterator.isEOF() && iterator.peekNextChar() == '-')
             {
-                juce::juce_wchar ch = iterator.peekNextChar();
-                if (ch == '\n' || ch == '\r')
-                    break;
-                iterator.nextChar();
+                iterator.nextChar();  // second '-'
+                while (!iterator.isEOF())
+                {
+                    juce::juce_wchar ch = iterator.peekNextChar();
+                    if (ch == '\n' || ch == '\r')
+                        break;
+                    iterator.nextChar();
+                }
+                return 4;  // TK_COMMENT
             }
-            return 4;  // TK_COMMENT
+            // Not "<--" — restore.
+            iterator = save;
         }
-        // Not a comment — restore iterator.
-        iterator = saveIter;
     }
 
     // -----------------------------------------------------------------------
@@ -330,7 +290,7 @@ int ChuckTokeniser::readNextToken(juce::CodeDocument::Iterator& iterator)
         iterator.nextChar();  // consume '*'
 
         // Handle empty block comment /*/
-        if (iterator.peekNextChar() == '/')
+        if (!iterator.isEOF() && iterator.peekNextChar() == '/')
         {
             iterator.nextChar();
             return 4;
@@ -352,22 +312,40 @@ int ChuckTokeniser::readNextToken(juce::CodeDocument::Iterator& iterator)
     // -----------------------------------------------------------------------
     // Debug output: <<< and >>> (support.function.debug.chuck)
     // -----------------------------------------------------------------------
-    if (c == '<' && iterator.peekNextChar() == '<' &&
-        iterator.peekNextCharAt(2) == '<')
+    if (c == '<')
     {
-        iterator.nextChar();
-        iterator.nextChar();
-        iterator.nextChar();
-        return 9;  // TK_DEBUG
+        juce::juce_wchar n1 = iterator.peekNextChar();
+        if (n1 == '<')
+        {
+            // Save in case it's just a < operator
+            juce::CodeDocument::Iterator save = iterator;
+            iterator.nextChar();  // '<'
+            iterator.nextChar();  // '<'
+            if (!iterator.isEOF() && iterator.peekNextChar() == '<')
+            {
+                iterator.nextChar();  // third '<'
+                return 9;  // TK_DEBUG
+            }
+            // Not <<< — restore and fall through to operator handling.
+            iterator = save;
+        }
     }
 
-    if (c == '>' && iterator.peekNextChar() == '>' &&
-        iterator.peekNextCharAt(2) == '>')
+    if (c == '>')
     {
-        iterator.nextChar();
-        iterator.nextChar();
-        iterator.nextChar();
-        return 9;  // TK_DEBUG
+        juce::juce_wchar n1 = iterator.peekNextChar();
+        if (n1 == '>')
+        {
+            juce::CodeDocument::Iterator save = iterator;
+            iterator.nextChar();  // '>'
+            iterator.nextChar();  // '>'
+            if (!iterator.isEOF() && iterator.peekNextChar() == '>')
+            {
+                iterator.nextChar();  // third '>'
+                return 9;  // TK_DEBUG
+            }
+            iterator = save;
+        }
     }
 
     // -----------------------------------------------------------------------
@@ -432,7 +410,6 @@ int ChuckTokeniser::readNextToken(juce::CodeDocument::Iterator& iterator)
             juce::juce_wchar next = iterator.peekNextChar();
             if (next == 'x' || next == 'X')
             {
-                // Hex number: 0x... or 0X...
                 iterator.nextChar();  // '0'
                 iterator.nextChar();  // 'x'/'X'
                 while (!iterator.isEOF())
@@ -447,7 +424,6 @@ int ChuckTokeniser::readNextToken(juce::CodeDocument::Iterator& iterator)
             }
             if (next == 'b' || next == 'B')
             {
-                // Binary number: 0b... or 0B...
                 iterator.nextChar();  // '0'
                 iterator.nextChar();  // 'b'/'B'
                 while (!iterator.isEOF())
@@ -490,7 +466,6 @@ int ChuckTokeniser::readNextToken(juce::CodeDocument::Iterator& iterator)
                     if (std::isdigit(static_cast<unsigned char>(afterDot)))
                     {
                         iterator.nextChar();  // consume '.'
-                        // consume fractional digits and underscores
                         while (!iterator.isEOF())
                         {
                             juce::juce_wchar cc = iterator.peekNextChar();
@@ -502,7 +477,6 @@ int ChuckTokeniser::readNextToken(juce::CodeDocument::Iterator& iterator)
                     }
                     else
                     {
-                        // Not a float — stop without consuming the '.'
                         break;
                     }
                 }
@@ -513,7 +487,6 @@ int ChuckTokeniser::readNextToken(juce::CodeDocument::Iterator& iterator)
             }
             else if (nc == 'e' || nc == 'E')
             {
-                // Exponent: e/E followed by optional +/- and digits
                 juce::CodeDocument::Iterator lookahead = iterator;
                 lookahead.nextChar();  // consume 'e'/'E'
                 if (!lookahead.isEOF())
@@ -521,9 +494,9 @@ int ChuckTokeniser::readNextToken(juce::CodeDocument::Iterator& iterator)
                     juce::juce_wchar maybeSign = lookahead.peekNextChar();
                     if (maybeSign == '+' || maybeSign == '-')
                         lookahead.nextChar();
-                    if (!lookahead.isEOF() && std::isdigit(static_cast<unsigned char>(lookahead.peekNextChar())))
+                    if (!lookahead.isEOF() &&
+                        std::isdigit(static_cast<unsigned char>(lookahead.peekNextChar())))
                     {
-                        // It's a real exponent — commit.
                         iterator = lookahead;
                         while (!iterator.isEOF())
                         {
@@ -536,7 +509,6 @@ int ChuckTokeniser::readNextToken(juce::CodeDocument::Iterator& iterator)
                     }
                     else
                     {
-                        // Not a real exponent — stop.
                         break;
                     }
                 }
@@ -558,6 +530,8 @@ int ChuckTokeniser::readNextToken(juce::CodeDocument::Iterator& iterator)
     // -----------------------------------------------------------------------
     if (std::iswalpha(c) || c == '_' || c == '$')
     {
+        // Read the full identifier word.
+        int startPos = iterator.getPosition();
         juce::String word;
         while (!iterator.isEOF())
         {
@@ -581,12 +555,14 @@ int ChuckTokeniser::readNextToken(juce::CodeDocument::Iterator& iterator)
 
     // -----------------------------------------------------------------------
     // Operators and punctuation — keyword.operator.chuck
-    // Grammar: =>|=<|@=>|\+=>|\-=>|\*=>|\/=>|%=>|\+\+|\+|--|-|\*|\/(?!/|%|
-    //          ==|!=|<=|>=|<<|>>|<|>|&&|\|\||&|\|||\^|\$|::
+    // Grammar: =>|=<|@=>|\+=>|\-=>|\*=>|\/=>|%=>|\+\+|\+|--|-|\*|\/(?!/|
+    //          %|==|!=|<=|>=|<<|>>|<|>|&&|\|\||&|\|||\^|\$|::
     // -----------------------------------------------------------------------
     if (c == '=' || c == '<' || c == '>' || c == '+' || c == '-' ||
         c == '*' || c == '/' || c == '%' || c == '&' || c == '|' ||
-        c == '^' || c == '$' || c == '!' || c == ':' )
+        c == '^' || c == '$' || c == '!' || c == ':' || c == '@' ||
+        c == '(' || c == ')' || c == '[' || c == ']' ||
+        c == '{' || c == '}' || c == ',' || c == ';' || c == '.' )
     {
         // Try two-char operators first.
         juce::juce_wchar next = iterator.peekNextChar();
@@ -598,85 +574,64 @@ int ChuckTokeniser::readNextToken(juce::CodeDocument::Iterator& iterator)
             iterator.nextChar();
             return 8;  // TK_OPERATOR
         }
-        // =>=<  (not Chuck, but =< is a comparison)
-        if (c == '=' && next == '<')
-        {
-            iterator.nextChar();
-            iterator.nextChar();
-            return 8;
-        }
         // @=> (variable declaration)
         if (c == '@' && next == '=')
         {
             iterator.nextChar();
             iterator.nextChar();
-            return 8;
+            return 8;  // TK_OPERATOR
         }
         // +=, -=, *=, /=, %=
         if ((next == '=') && (c == '+' || c == '-' || c == '*' || c == '/' || c == '%'))
         {
             iterator.nextChar();
             iterator.nextChar();
-            return 8;
+            return 8;  // TK_OPERATOR
         }
         // ++, --
         if (next == c && (c == '+' || c == '-'))
         {
             iterator.nextChar();
             iterator.nextChar();
-            return 8;
+            return 8;  // TK_OPERATOR
         }
-        // ==, !=, <=, >=, <<, >>, &&, ||
-        if (next == '=' && (c == '=' || c == '!' || c == '<' || c == '>' || c == '&' || c == '|'))
+        // ==, !=, <=, >=
+        if (next == '=' && (c == '=' || c == '!' || c == '<' || c == '>'))
         {
             iterator.nextChar();
             iterator.nextChar();
-            return 8;
+            return 8;  // TK_OPERATOR
         }
-        // <<, >>  (already handled by next=='=' check? No: < followed by <)
+        // <<, >>
         if ((c == '<' && next == '<') || (c == '>' && next == '>'))
         {
             iterator.nextChar();
             iterator.nextChar();
-            return 8;
+            return 8;  // TK_OPERATOR
         }
         // &&, ||
         if ((c == '&' && next == '&') || (c == '|' && next == '|'))
         {
             iterator.nextChar();
             iterator.nextChar();
-            return 8;
+            return 8;  // TK_OPERATOR
         }
         // ::
         if (c == ':' && next == ':')
         {
             iterator.nextChar();
             iterator.nextChar();
-            return 8;
+            return 8;  // TK_OPERATOR
         }
 
-        // Single-char operator
+        // Single-char operator / punctuation
         iterator.nextChar();
-
-        // Avoid matching '/' as start of comment here — comments are handled
-        // earlier in this function (before we reach this section).
-        // But '//' would be caught by the line-comment check above, and
-        // '/*' by the block-comment check.  A bare '/' that is not part of
-        // a comment is a division operator.
         return 8;  // TK_OPERATOR
     }
 
     // -----------------------------------------------------------------------
-    // Remaining single-char punctuation: ( ) [ ] { } , ; .
+    // Fallback: consume a single character and return default colour.
     // -----------------------------------------------------------------------
-    if (std::iswcntrl(c) && c != '\n' && c != '\r')
-    {
-        // Non-printable but not whitespace/newline — skip to avoid infinite loop.
-        iterator.nextChar();
-        return 0;
-    }
-
-    // Default: consume a single character and return default colour.
     iterator.nextChar();
     return 0;
 }
@@ -690,43 +645,30 @@ juce::CodeEditorComponent::ColourScheme ChuckTokeniser::getDefaultColourScheme()
     // Map colour indices to the existing Hathor Palette code-syntax colours
     // (HathorLookAndFeel.hpp Palette struct, design token layer).
     //
-    // The colour *names* here must match what JUCE's CodeEditorComponent
-    // expects, but the ColourScheme is set per-editor via setColourScheme().
-    // We use the same palette tokens as the mini-notation tokeniser but with
-    // distinct names so the colour table can be managed separately if needed.
-    //
-    // The actual colours come from the Palette, but JUCE's ColourScheme is a
-    // static table — so we read from the global palette.
+    // Colour indices:
+    //   0 — Default  (palette.codeText)
+    //   1 — Keyword  (palette.codeKeyword)
+    //   2 — Type     (palette.codeType)
+    //   3 — String   (palette.codeString)
+    //   4 — Comment  (palette.codeComment)
+    //   5 — Number   (palette.codeKeyword — constants like now, true, false)
+    //   6 — UGen     (palette.codeFunction — UGens like SinOsc, UGen)
+    //   7 — Library  (palette.codeMacro  — library classes like Machine, Math)
+    //   8 — Operator (palette.codeBracket — operators & punctuation)
+    //   9 — Debug    (palette.codeMacro — <<< >>> debug printing)
     const Palette& p = HathorLookAndFeel::globalPalette();
 
-    static const struct { const char* name; int index; } entries[] =
-    {
-        { "Default",  0 },
-        { "Keyword",  1 },
-        { "Type",     2 },
-        { "String",   3 },
-        { "Comment",  4 },
-        { "Number",   5 },
-        { "UGen",     6 },
-        { "Library",  7 },
-        { "Operator", 8 },
-        { "Debug",    9 },
-    };
-
     juce::CodeEditorComponent::ColourScheme scheme;
-    for (const auto& e : entries)
-        scheme.set(e.name, p.codeText);  // placeholder — set below
-
     scheme.set("Default",  p.codeText);
     scheme.set("Keyword",  p.codeKeyword);
     scheme.set("Type",     p.codeType);
     scheme.set("String",   p.codeString);
     scheme.set("Comment",  p.codeComment);
     scheme.set("Number",   p.codeKeyword);  // constants share keyword colour
-    scheme.set("UGen",     p.codeFunction); // UGens get the function colour
-    scheme.set("Library",  p.codeMacro);    // library classes get macro colour
-    scheme.set("Operator", p.codeBracket);  // operators share bracket colour
-    scheme.set("Debug",    p.codeMacro);    // <<< >>> share macro colour
+    scheme.set("UGen",     p.codeFunction);
+    scheme.set("Library",  p.codeMacro);
+    scheme.set("Operator", p.codeBracket);
+    scheme.set("Debug",    p.codeMacro);
 
     return scheme;
 }
