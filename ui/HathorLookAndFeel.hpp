@@ -241,18 +241,44 @@ public:
     // Components should prefer this over hard-coded values.
     // ========================================================================
 
+    /// Helper: obtain the current palette when you don't have a Component
+    /// reference (e.g. inside a TreeViewItem which is not a Component).
+    static const Palette& globalPalette() noexcept
+    {
+        return *globalPalette_;
+    }
+
     /// Helper: obtain the LookAndFeel as HathorLookAndFeel from any Component.
     static HathorLookAndFeel& fromComponent(juce::Component& c) noexcept
     {
-        return *static_cast<HathorLookAndFeel*>(c.getLookAndFeel());
+        juce::LookAndFeel& lf = c.getLookAndFeel();
+        return *static_cast<HathorLookAndFeel*>(&lf);
+    }
+
+    /// Const overload — for use in const Component methods.
+    static const HathorLookAndFeel& fromComponent(const juce::Component& c) noexcept
+    {
+        const juce::LookAndFeel& lf = c.getLookAndFeel();
+        return *static_cast<const HathorLookAndFeel*>(&lf);
+    }
+
+    /// Install the global palette pointer (used by globalPalette()).
+    static void setGlobalPalette(const Palette* p) noexcept
+    {
+        globalPalette_ = p;
     }
 
 private:
-    // ========================================================================
+    // =========================================================================
     // Runtime design-token state
-    // ========================================================================
+    // =========================================================================
 
     Palette currentPalette_;
+
+    /// Global palette pointer — points to currentPalette_ of the single
+    /// HathorLookAndFeel instance. Set in the constructor. Used by
+    /// globalPalette() for components that can't reach a Component.
+    static const Palette* globalPalette_;
 
     // ========================================================================
     // Re-apply all JUCE colour IDs from the current palette.

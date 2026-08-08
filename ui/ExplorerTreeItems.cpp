@@ -9,6 +9,23 @@
 
 namespace hathor::ui {
 
+// ---------------------------------------------------------------------------
+// Helper: fetch the current Palette from the owning TreeView's LookAndFeel.
+// ---------------------------------------------------------------------------
+
+static const Palette& paletteFor(const juce::TreeViewItem& item) noexcept
+{
+    const juce::TreeView* tv = item.getOwnerView();
+    if (tv != nullptr)
+    {
+        const juce::LookAndFeel& lf = tv->getLookAndFeel();
+        if (auto* hlf = dynamic_cast<const HathorLookAndFeel*>(&lf))
+            return hlf->getPalette();
+    }
+    // Fallback: use the global palette accessor.
+    return HathorLookAndFeel::globalPalette();
+}
+
 // ===========================================================================
 // SongTreeItem
 // ===========================================================================
@@ -21,7 +38,9 @@ SongTreeItem::SongTreeItem(SongNode node, SongClickedCallback onClicked)
 
 void SongTreeItem::paintItem(juce::Graphics& g, int width, int height)
 {
-    const juce::Colour textCol = juce::Colour(HathorLookAndFeel::Colours::textPrimary);
+    const Palette& palette = paletteFor(*this);
+
+    const juce::Colour textCol = palette.textPrimary;
 
     // Icon + label layout
     const int iconSize = 12;
@@ -36,7 +55,7 @@ void SongTreeItem::paintItem(juce::Graphics& g, int width, int height)
         // .hathor: a small rectangle with an accent dot — pattern icon
         g.setColour(textCol.withAlpha(0.7f));
         g.fillRect(iconX, iconY, iconSize, iconSize);
-        g.setColour(juce::Colour(HathorLookAndFeel::Colours::accent));
+        g.setColour(palette.accent);
         const int dotSize = 4;
         g.fillEllipse(
             static_cast<float>(iconX + (iconSize - dotSize) / 2),
@@ -94,15 +113,18 @@ FolderTreeItem::FolderTreeItem(FolderNode node, SongClickedCallback onClicked)
     : node_(std::move(node)),
       onSongClicked_(std::move(onClicked))
 {
-    setOpaque(true);
     // Root is expanded by default; child folders inherit their node's
     // expanded flag (false for children).
+    if (node_.expanded)
+        setOpen(true);
 }
 
 void FolderTreeItem::paintItem(juce::Graphics& g, int width, int height)
 {
-    const juce::Colour textCol = juce::Colour(HathorLookAndFeel::Colours::textPrimary);
-    const juce::Colour mutedCol = juce::Colour(HathorLookAndFeel::Colours::textSecondary);
+    const Palette& palette = paletteFor(*this);
+
+    const juce::Colour textCol = palette.textPrimary;
+    const juce::Colour mutedCol = palette.textSecondary;
 
     // Icon + label layout
     const int iconSize = 12;
@@ -147,14 +169,14 @@ void FolderTreeItem::itemOpennessChanged(bool isOpen)
         for (const auto& childFolder : node_.folders)
         {
             auto childItem = std::make_unique<FolderTreeItem>(childFolder, onSongClicked_);
-            addSubItem(std::move(childItem));
+            addSubItem(childItem.release());
         }
 
         // Add song leaves.
         for (const auto& song : node_.songs)
         {
             auto songItem = std::make_unique<SongTreeItem>(song, onSongClicked_);
-            addSubItem(std::move(songItem));
+            addSubItem(songItem.release());
         }
 
         childrenBuilt_ = true;

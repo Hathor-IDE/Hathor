@@ -90,6 +90,8 @@ void SliderPanel::setupBpmSlider()
 
 void SliderPanel::setupGainSlider()
 {
+    const auto& palette = HathorLookAndFeel::fromComponent(*this).getPalette();
+
     // -----------------------------------------------------------------------
     // Gain label (Req 26.1)
     // -----------------------------------------------------------------------
@@ -97,7 +99,7 @@ void SliderPanel::setupGainSlider()
     gainLabel_.setFont(HathorLookAndFeel::fontMedium(
         HathorLookAndFeel::Typography::labelMd));
     gainLabel_.setColour(juce::Label::textColourId,
-                         juce::Colour(HathorLookAndFeel::Colours::textSecondary));
+                         palette.textSecondary);
     gainLabel_.setJustificationType(juce::Justification::centredLeft);
 
     // -----------------------------------------------------------------------
@@ -193,7 +195,7 @@ void SliderPanel::resized()
 void SliderPanel::paint(juce::Graphics& g)
 {
     // Dark surface background matching ChatSidebar's bottom zone.
-    g.fillAll(juce::Colour(HathorLookAndFeel::Colours::surfaceLow));
+    g.fillAll(HathorLookAndFeel::fromComponent(*this).getPalette().surfaceLow);
 }
 
 } // namespace hathor::ui

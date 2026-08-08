@@ -83,7 +83,6 @@ void ExplorerPanel::refresh()
     buildRootItem();
 
     treeView_.setRootItem(rootItem_.get());
-    treeView_.rebuildItems();
     treeView_.repaint();
 }
 

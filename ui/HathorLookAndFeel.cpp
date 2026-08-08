@@ -126,6 +126,7 @@ Palette Palette::defaultPalette() noexcept
 HathorLookAndFeel::HathorLookAndFeel()
     : currentPalette_(Palette::defaultPalette())
 {
+    globalPalette_ = &currentPalette_;
     applyPaletteToColours();
 }
 
@@ -137,7 +138,9 @@ void HathorLookAndFeel::setPalette(const Palette& newPalette)
 {
     currentPalette_ = newPalette;
     applyPaletteToColours();
-    sendLookAndFeelChange();
+    for (int i = juce::Desktop::getInstance().getNumComponents(); --i >= 0;)
+        if (auto* c = juce::Desktop::getInstance().getComponent(i))
+            c->sendLookAndFeelChange();
 }
 
 // ===========================================================================
@@ -352,6 +355,8 @@ juce::String themeDisplayName(ThemeId id) noexcept
     return "Dark";
 }
 
+const Palette* HathorLookAndFeel::globalPalette_ = nullptr;
+
 // ===========================================================================
 // Font family substitution — intercept all default-font requests
 // ===========================================================================
@@ -508,173 +513,6 @@ void HathorLookAndFeel::drawScrollbar(juce::Graphics& g,
                                        bool /*isScrollbarVertical*/,
                                        int /*thumbStartPosition*/, int /*thumbSize*/,
                                        bool /*isMouseOver*/, bool /*isMouseDown*/)
-{
-    const Palette& p = currentPalette_;
-
-    // Track is transparent — let the parent background show through.
-    // Thumb: dim, 8 px wide, 4 px corner radius (matches mockup).
-    g.setColour(p.surfaceHighest);
-
-    juce::Rectangle<float> thumb(x, y, width, height);
-    g.fillRoundedRectangle(thumb, HathorLookAndFeel::Radius::small);
-}
-
-// ===========================================================================
-// Font family substitution — intercept all default-font requests
-// ===========================================================================
-
-juce::Typeface::Ptr HathorLookAndFeel::getTypefaceForFont(const juce::Font& font)
-{
-    const juce::String family = font.getTypefaceName().trim();
-
-    // Intercept requests for:
-    //   - No specific family (empty / system default sans-serif)
-    //   - The system default monospaced font (e.g. Menlo, Monaco)
-    //   - Explicit "JetBrains Mono" requests
-    if (family.isEmpty()
-        || family == juce::Font::getDefaultSansSerifFontName()
-        || family == juce::Font::getDefaultMonospacedFontName()
-        || family.containsIgnoreCase("jetbrains"))
-    {
-        const int styleFlags = font.getStyleFlags();
-
-        if ((styleFlags & juce::Font::bold) != 0)
-            return boldTypeface();
-
-        return regularTypeface();
-    }
-
-    // For any other family, fall through to the base class.
-    return juce::LookAndFeel_V4::getTypefaceForFont(font);
-}
-
-// ===========================================================================
-// getTextButtonFont — JetBrains Mono Bold for text buttons
-// ===========================================================================
-
-juce::Font HathorLookAndFeel::getTextButtonFont(juce::TextButton& /*button*/,
-                                                 int buttonHeight)
-{
-    // Use Medium weight at ~55% of button height for label-sized text.
-    const float h = static_cast<float>(buttonHeight) * 0.55f;
-    return HathorLookAndFeel::fontMedium(juce::jmax(h, 10.0f));
-}
-
-// ===========================================================================
-// drawButtonBackground — dark theme button with green accent
-// ===========================================================================
-
-void HathorLookAndFeel::drawButtonBackground(juce::Graphics& g,
-                                               juce::Button& button,
-                                               const juce::Colour& /*backgroundColour*/,
-                                               bool shouldDrawButtonAsHighlighted,
-                                               bool shouldDrawButtonAsDown)
-{
-    const Palette& p = currentPalette_;
-
-    const juce::Rectangle<float> bounds = button.getLocalBounds().toFloat();
-
-    juce::Colour bg;
-
-    if (button.getToggleState())
-        bg = p.accent;                       // active = accent
-    else if (shouldDrawButtonAsDown)
-        bg = p.surfaceContainer;             // pressed = slightly lighter
-    else if (shouldDrawButtonAsHighlighted)
-        bg = p.surfaceLow;                   // hover = subtle tint
-    else
-        bg = p.surfaceHigh;                  // default
-
-    g.setColour(bg);
-    g.fillRoundedRectangle(bounds, HathorLookAndFeel::Radius::small);
-}
-
-// ===========================================================================
-// drawButtonText — green on active, primary text on inactive
-// ===========================================================================
-
-void HathorLookAndFeel::drawButtonText(juce::Graphics& g,
-                                       juce::TextButton& button,
-                                       bool shouldDrawButtonAsHighlighted,
-                                       bool shouldDrawButtonAsDown)
-{
-    const Palette& p = currentPalette_;
-
-    juce::Colour textCol = p.textPrimary;
-
-    if (button.getToggleState())
-        textCol = p.background; // accent bg + dark text when on
-
-    // Get the button's font via the LookAndFeel hook (JetBrains Mono).
-    juce::Font font = getTextButtonFont(button, button.getHeight());
-
-    if (shouldDrawButtonAsHighlighted || shouldDrawButtonAsDown)
-        font = HathorLookAndFeel::fontBold(font.getHeight());
-    else
-        font = HathorLookAndFeel::fontRegular(font.getHeight());
-
-    g.setColour(textCol);
-    g.setFont(font);
-
-    const juce::Rectangle<int> bounds = button.getLocalBounds();
-    g.drawFittedText(button.getButtonText(), bounds,
-                     juce::Justification::centred, 1, 1.0f);
-}
-
-// ===========================================================================
-// drawLinearSlider — pill-track aesthetic from the mockup
-// ===========================================================================
-
-void HathorLookAndFeel::drawLinearSlider(juce::Graphics& g,
-                                           int x, int y, int width, int height,
-                                           float sliderPos,
-                                           float /*minSliderPos*/, float /*maxSliderPos*/,
-                                           juce::Slider::SliderStyle /*style*/,
-                                           juce::Slider& /*slider*/)
-{
-    const Palette& p = currentPalette_;
-
-    const bool isHorizontal = (width > height);
-    const int  thumbSize    = isHorizontal ? 12 : 12;
-    const float trackH       = isHorizontal ? 4.0f : static_cast<float>(width);
-
-    const float trackY = y + (height - trackH) / 2.0f;
-    juce::Rectangle<float> trackRect(x, trackY, width, trackH);
-
-    // Track background (pill shape)
-    g.setColour(p.surfaceHighest);
-    g.fillRoundedRectangle(trackRect, trackH / 2.0f);
-
-    // Filled portion
-    const float fillW = juce::jlimit(0.0f, static_cast<float>(width), sliderPos - x);
-    if (fillW > 0)
-    {
-        juce::Rectangle<float> fillRect(x, trackY, fillW, trackH);
-        g.setColour(p.accent);
-        g.fillRoundedRectangle(fillRect, trackH / 2.0f);
-    }
-
-    // Thumb (circle)
-    const float thumbX = juce::jlimit(static_cast<float>(x),
-                                       static_cast<float>(x + width),
-                                       sliderPos);
-    const float thumbY = y + height / 2.0f;
-    g.setColour(p.textPrimary);
-    g.fillEllipse(thumbX - thumbSize / 2.0f,
-                   thumbY - thumbSize / 2.0f,
-                   thumbSize, thumbSize);
-}
-
-// ===========================================================================
-// drawScrollbar — thin thumb, transparent track
-// ===========================================================================
-
-void HathorLookAndFeel::drawScrollbar(juce::Graphics& g,
-                                        juce::ScrollBar& /*scrollbar*/,
-                                        int x, int y, int width, int height,
-                                        bool /*isScrollbarVertical*/,
-                                        int /*thumbStartPosition*/, int /*thumbSize*/,
-                                        bool /*isMouseOver*/, bool /*isMouseDown*/)
 {
     const Palette& p = currentPalette_;
 

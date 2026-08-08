@@ -29,8 +29,10 @@ PermissionPromptComponent::PermissionPromptComponent(int requestId,
     // -----------------------------------------------------------------------
     // Prompt label
     // -----------------------------------------------------------------------
+    const auto& palette = HathorLookAndFeel::fromComponent(promptLabel_).getPalette();
+
     promptLabel_.setText("Agent is requesting permission:", juce::dontSendNotification);
-    promptLabel_.setColour(juce::Label::textColourId, juce::Colour(HathorLookAndFeel::Colours::textPrimary));
+    promptLabel_.setColour(juce::Label::textColourId, palette.textPrimary);
     promptLabel_.setJustificationType(juce::Justification::centredLeft);
     addAndMakeVisible(promptLabel_);
 
@@ -39,7 +41,7 @@ PermissionPromptComponent::PermissionPromptComponent(int requestId,
     // -----------------------------------------------------------------------
     countdownLabel_.setText(juce::String(secondsLeft_) + "s",
                             juce::dontSendNotification);
-    countdownLabel_.setColour(juce::Label::textColourId, juce::Colour(HathorLookAndFeel::Colours::textSecondary));
+    countdownLabel_.setColour(juce::Label::textColourId, palette.textSecondary);
     countdownLabel_.setJustificationType(juce::Justification::centredRight);
     addAndMakeVisible(countdownLabel_);
 
@@ -133,13 +135,15 @@ void PermissionPromptComponent::timerCallback()
 
 void PermissionPromptComponent::paint(juce::Graphics& g)
 {
+    const auto& palette = HathorLookAndFeel::fromComponent(*this).getPalette();
+
     // Slightly lighter background rectangle to visually distinguish the prompt
     // from normal chat bubbles.
-    g.setColour(juce::Colour(HathorLookAndFeel::Colours::surfaceHigh));
+    g.setColour(palette.surfaceHigh);
     g.fillRoundedRectangle(getLocalBounds().toFloat(), 6.f);
 
     // Subtle border.
-    g.setColour(juce::Colour(HathorLookAndFeel::Colours::surfaceHighest));
+    g.setColour(palette.surfaceHighest);
     g.drawRoundedRectangle(getLocalBounds().toFloat().reduced(0.5f), 6.f, 1.f);
 }
 

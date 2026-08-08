@@ -77,7 +77,6 @@ void AsciiArtHeader::paint(juce::Graphics& g)
     static constexpr int kNumChars = static_cast<int>(std::size(kChars));
 
     // Accent and dim colour derived from the existing palette.
-    const auto& palette = HathorLookAndFeel::fromComponent(*this).getPalette();
     const juce::Colour accent  = palette.accent;
     const juce::Colour dimText = palette.textPrimary.withAlpha(0.35f);
 
@@ -337,25 +336,24 @@ ChatSidebar::ChatSidebar(AudioEngine& /*audio*/,
     // -----------------------------------------------------------------------
     // Chat input field (Req 25.2, 25.6)
     // -----------------------------------------------------------------------
-    const auto& palette = HathorLookAndFeel::fromComponent(*this).getPalette();
-
+    const auto& inputPalette = HathorLookAndFeel::fromComponent(*this).getPalette();
     addAndMakeVisible(inputField_);
     inputField_.setMultiLine(false);
     inputField_.setReturnKeyStartsNewLine(false);
     inputField_.setScrollbarsShown(false);
     inputField_.setFont(HathorLookAndFeel::fontRegular(13.0f));
     inputField_.setColour(juce::TextEditor::backgroundColourId,
-                          palette.surfaceContainer);
+                           inputPalette.surfaceContainer);
     inputField_.setColour(juce::TextEditor::textColourId,
-                          palette.textPrimary);
+                           inputPalette.textPrimary);
     inputField_.setColour(juce::TextEditor::outlineColourId,
-                          palette.surfaceHighest);
+                           inputPalette.surfaceHighest);
     inputField_.setColour(juce::TextEditor::focusedOutlineColourId,
-                          palette.accent);
+                           inputPalette.accent);
     inputField_.setColour(juce::CaretComponent::caretColourId,
-                          palette.accent);
+                           inputPalette.accent);
     inputField_.setTextToShowWhenEmpty("Message agent...",
-                                       palette.textDisabled);
+                                       inputPalette.textDisabled);
     inputField_.addListener(this);
 
     // -----------------------------------------------------------------------

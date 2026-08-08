@@ -3,14 +3,21 @@
 Derived from the Stitch HTML/CSS mockup (`stitch_hathor_ide_dj_workspace/code.html` + `DESIGN.md`),
 translated into the native JUCE `HathorLookAndFeel` class (`ui/HathorLookAndFeel.hpp/.cpp`).
 
+Colours are stored as runtime `juce::Colour` fields in the `Palette` value-type
+(`HathorLookAndFeel::Palette`), held by each `HathorLookAndFeel` instance.
+Components access colours via `getPalette()` (from any `Component`) or
+`globalPalette()` (from non-Component contexts like `TreeViewItem`).
+Use `HathorLookAndFeel::fromComponent(c).getPalette()` or `HathorLookAndFeel::globalPalette()`
+at call sites.
+
 ---
 
 ## 1. Colour Palette
 
 Source: Material-3-inspired dark theme from the Tailwind config in `code.html`.
-All tokens are stored as `static constexpr juce::uint32` ARGB values in
-`HathorLookAndFeel::Colours`. Use `juce::Colour(HathorLookAndFeel::Colours::xxx)`
-at call sites.
+All tokens are stored as `juce::Colour` fields in the `HathorLookAndFeel::Palette`
+runtime value-type. Access via `HathorLookAndFeel::fromComponent(c).getPalette()`
+or `HathorLookAndFeel::globalPalette()` (for non-Component contexts).
 
 ### Background levels (tonal layers, flat — no shadows)
 
@@ -61,6 +68,11 @@ at call sites.
 | `codeMacro`   | `#c586c0` | Macro/const references   |
 | `codeBracket` | `#ffd700` | Brackets, angle brackets |
 | `codeLineNum` | `#858585` | Line number text         |
+
+> **Note:** `codeText`, `codeComment`, `codeKeyword`, etc. are JUCE-specific
+> syntax highlighting colours used by `CodeEditorComponent::ColourScheme`.
+> They are intentionally NOT part of the runtime `Palette` — see the "MiniNotationTokeniser.cpp"
+> section below for rationale.
 
 ---
 
