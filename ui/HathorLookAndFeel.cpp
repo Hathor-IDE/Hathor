@@ -138,9 +138,15 @@ void HathorLookAndFeel::setPalette(const Palette& newPalette)
 {
     currentPalette_ = newPalette;
     applyPaletteToColours();
+
+    // Broadcast to every live component. JUCE's sendLookAndFeelChange() recurses
+    // into child components, so HathorTab (and any other component that overrides
+    // lookAndFeelChanged()) re-applies its palette-derived colours here.
     for (int i = juce::Desktop::getInstance().getNumComponents(); --i >= 0;)
+    {
         if (auto* c = juce::Desktop::getInstance().getComponent(i))
             c->sendLookAndFeelChange();
+    }
 }
 
 // ===========================================================================
@@ -284,30 +290,107 @@ Palette paletteForTheme(ThemeId id) noexcept
         case ThemeId::Dark:
             return Palette::defaultPalette();
 
-        case ThemeId::PurpleNeon: {
-            Palette p = Palette::defaultPalette();
-            p.accent     = juce::Colour(0xffb497bdu);
-            p.accentDim  = juce::Colour(0xffa384acu);
-            p.accentOn   = juce::Colour(0xff3a1c54u);
-            p.codeKeyword = juce::Colour(0xffc678ddu);
-            return p;
-        }
+        case ThemeId::PurpleNeon:
+            // A complete token set (§4.1): dark foundation with a purple/neon
+            // accent family. No token is left to inherit from the default.
+            return Palette{
+                juce::Colour(0xff0e0e0eu),  // background
+                juce::Colour(0xff131313u),  // surface
+                juce::Colour(0xff1c1b1bu),  // surfaceLow
+                juce::Colour(0xff201f1fu),  // surfaceContainer
+                juce::Colour(0xff2a2a2au),  // surfaceHigh
+                juce::Colour(0xff353534u),  // surfaceHighest
+                juce::Colour(0xff3a3939u),  // surfaceBright
 
-        case ThemeId::Capuchin: {
-            Palette p = Palette::defaultPalette();
-            p.accent      = juce::Colour(0xff8d5524u);
-            p.accentDim   = juce::Colour(0xff7a4a1du);
-            p.accentOn    = juce::Colour(0xff2b1703u);
-            return p;
-        }
+                juce::Colour(0xffe5e2e1u),  // textPrimary
+                juce::Colour(0xffb9ccb2u),  // textSecondary
+                juce::Colour(0xff858585u),  // textMuted
+                juce::Colour(0xff666666u),  // textDisabled
 
-        case ThemeId::Sand: {
-            Palette p = Palette::defaultPalette();
-            p.accent      = juce::Colour(0xffd9730fu);
-            p.accentDim   = juce::Colour(0xffbd5e0au);
-            p.accentOn    = juce::Colour(0xff3a1c03u);
-            return p;
-        }
+                juce::Colour(0xffb497bdu),  // accent — muted mauve
+                juce::Colour(0xffa384acu),  // accentDim
+                juce::Colour(0xff3a1c54u),  // accentOn — deep violet (text on accent)
+                juce::Colour(0xffff5f56u),  // error
+                juce::Colour(0xffe0a020u),  // warning
+
+                juce::Colour(0xffd4d4d4u),  // codeText
+                juce::Colour(0xff6a9955u),  // codeComment
+                juce::Colour(0xffc678ddu),  // codeKeyword — purple to match theme
+                juce::Colour(0xff4ec9b0u),  // codeType
+                juce::Colour(0xffce9178u),  // codeString
+                juce::Colour(0xffd4d4d4u),  // codeFunction
+                juce::Colour(0xffc678ddu),  // codeMacro — purple
+                juce::Colour(0xffffd700u),  // codeBracket
+                juce::Colour(0xff858585u),  // codeLineNum
+            };
+
+        case ThemeId::Capuchin:
+            // A complete token set: dark foundation with a warm brown
+            // capuchin accent family. No token inherits from the default.
+            return Palette{
+                juce::Colour(0xff0e0e0eu),  // background
+                juce::Colour(0xff131313u),  // surface
+                juce::Colour(0xff1c1b1bu),  // surfaceLow
+                juce::Colour(0xff201f1fu),  // surfaceContainer
+                juce::Colour(0xff2a2a2au),  // surfaceHigh
+                juce::Colour(0xff353534u),  // surfaceHighest
+                juce::Colour(0xff3a3939u),  // surfaceBright
+
+                juce::Colour(0xffe5e2e1u),  // textPrimary
+                juce::Colour(0xffb9ccb2u),  // textSecondary
+                juce::Colour(0xff858585u),  // textMuted
+                juce::Colour(0xff666666u),  // textDisabled
+
+                juce::Colour(0xff8d5524u),  // accent — capuchin brown
+                juce::Colour(0xff7a4a1du),  // accentDim
+                juce::Colour(0xff2b1703u),  // accentOn — dark brown (text on accent)
+                juce::Colour(0xffff5f56u),  // error
+                juce::Colour(0xffe0a020u),  // warning
+
+                juce::Colour(0xffd4d4d4u),  // codeText
+                juce::Colour(0xff6a9955u),  // codeComment
+                juce::Colour(0xff569cd6u),  // codeKeyword
+                juce::Colour(0xff4ec9b0u),  // codeType
+                juce::Colour(0xffce9178u),  // codeString
+                juce::Colour(0xffd4d4d4u),  // codeFunction
+                juce::Colour(0xffc586c0u),  // codeMacro
+                juce::Colour(0xffffd700u),  // codeBracket
+                juce::Colour(0xff858585u),  // codeLineNum
+            };
+
+        case ThemeId::Sand:
+            // A complete token set: dark foundation with a warm sand/amber
+            // accent family. No token inherits from the default.
+            return Palette{
+                juce::Colour(0xff0e0e0eu),  // background
+                juce::Colour(0xff131313u),  // surface
+                juce::Colour(0xff1c1b1bu),  // surfaceLow
+                juce::Colour(0xff201f1fu),  // surfaceContainer
+                juce::Colour(0xff2a2a2au),  // surfaceHigh
+                juce::Colour(0xff353534u),  // surfaceHighest
+                juce::Colour(0xff3a3939u),  // surfaceBright
+
+                juce::Colour(0xffe5e2e1u),  // textPrimary
+                juce::Colour(0xffb9ccb2u),  // textSecondary
+                juce::Colour(0xff858585u),  // textMuted
+                juce::Colour(0xff666666u),  // textDisabled
+
+                juce::Colour(0xffd9730fu),  // accent — warm amber/sand
+                juce::Colour(0xffbd5e0au),  // accentDim
+                juce::Colour(0xff3a1c03u),  // accentOn — deep amber (text on accent)
+                juce::Colour(0xffff5f56u),  // error
+                juce::Colour(0xffe0a020u),  // warning
+
+                juce::Colour(0xffd4d4d4u),  // codeText
+                juce::Colour(0xff6a9955u),  // codeComment
+                juce::Colour(0xff569cd6u),  // codeKeyword
+                juce::Colour(0xff4ec9b0u),  // codeType
+                juce::Colour(0xffce9178u),  // codeString
+                juce::Colour(0xffd4d4d4u),  // codeFunction
+                juce::Colour(0xffc586c0u),  // codeMacro
+                juce::Colour(0xffffd700u),  // codeBracket
+                juce::Colour(0xff858585u),  // codeLineNum
+            };
 
         case ThemeId::Light:
             return Palette{
@@ -318,15 +401,18 @@ Palette paletteForTheme(ThemeId id) noexcept
                 juce::Colour(0xffc8c8c8u),  // surfaceHigh
                 juce::Colour(0xffb8b8b8u),  // surfaceHighest
                 juce::Colour(0xffa8a8a8u),  // surfaceBright
+
                 juce::Colour(0xff1a1a1au),  // textPrimary
                 juce::Colour(0xff4a4a4au),  // textSecondary
                 juce::Colour(0xff7a7a7au),  // textMuted
                 juce::Colour(0xff9a9a9au),  // textDisabled
-                juce::Colour(0xff006325u),  // accent
+
+                juce::Colour(0xff006325u),  // accent — forest green
                 juce::Colour(0xff00521cu),  // accentDim
-                juce::Colour(0xffd6f5e3u),  // accentOn
+                juce::Colour(0xffd6f5e3u),  // accentOn — light green (text on accent)
                 juce::Colour(0xffd32f2fu),  // error
                 juce::Colour(0xffed6c00u),  // warning
+
                 juce::Colour(0xff2d2d2du),  // codeText
                 juce::Colour(0xff2e7d32u),  // codeComment
                 juce::Colour(0xff1565c0u),  // codeKeyword
@@ -334,7 +420,7 @@ Palette paletteForTheme(ThemeId id) noexcept
                 juce::Colour(0xffe65100u),  // codeString
                 juce::Colour(0xff5865f5u),  // codeFunction
                 juce::Colour(0xffaa00ffu),  // codeMacro
-                juce::Colour(0xffffd700u),  // codeBracket — adjusted for light
+                juce::Colour(0xff8a6d00u),  // codeBracket — amber (avoids pure yellow on light)
                 juce::Colour(0xff555555u),  // codeLineNum
             };
     }

@@ -206,24 +206,27 @@ int MiniNotationTokeniser::readNextToken(juce::CodeDocument::Iterator& iterator)
 
 juce::CodeEditorComponent::ColourScheme MiniNotationTokeniser::getDefaultColourScheme()
 {
-    // Syntax colour scheme — VS Code Dark+ theme colors (matching the Stitch
-    // mockup's code example inline styles). These are code syntax colors,
-    // not UI design tokens — they must remain consistent with the code
-    // highlighting shown in the mockup.
-    static const struct { const char* name; juce::uint32 colour; } entries[] =
-    {
-        { "Atom",         0xffd4d4d4 }, // 0 — light grey (default text, code)
-        { "Integer",      0xffb5cea8 }, // 1 — soft green (literal values)
-        { "Rest/Tilde",   0xff569cd6 }, // 2 — blue (rest operators)
-        { "Bracket",      0xffffd700 }, // 3 — gold (angle brackets, brackets)
-        { "Operator",     0xffc586c0 }, // 4 — purple (star, slash, bang)
-        { "Paren/Comma",  0xff9cdcfe }, // 5 — light blue (parens, commas)
-        { "Error",        0xfff44747 }, // 6 — red (syntax errors)
-    };
+    // Build the colour scheme from the active palette so that mini-notation
+    // syntax highlighting tracks theme switches (B3). The palette tokens are
+    // the single source of truth (§4.1); no colour literals are duplicated here.
+    const Palette& p = HathorLookAndFeel::globalPalette();
 
+    // Colour index mapping (see header doc comment):
+    //   0 (Atom/default)  → palette.codeText
+    //   1 (Integer)       → palette.codeKeyword  (numeric literals share keyword colour)
+    //   2 (Rest/Tilde)    → palette.codeType
+    //   3 (Bracket)       → palette.codeBracket
+    //   4 (Operator)      → palette.codeMacro
+    //   5 (Paren/Comma)   → palette.codeString
+    //   6 (Error)         → palette.error       (brighter than text for visibility)
     juce::CodeEditorComponent::ColourScheme scheme;
-    for (const auto& e : entries)
-        scheme.set(e.name, juce::Colour(e.colour));
+    scheme.set("Atom",       p.codeText);
+    scheme.set("Integer",    p.codeKeyword);
+    scheme.set("Rest/Tilde", p.codeType);
+    scheme.set("Bracket",    p.codeBracket);
+    scheme.set("Operator",   p.codeMacro);
+    scheme.set("Paren/Comma",p.codeString);
+    scheme.set("Error",      p.error);
 
     return scheme;
 }

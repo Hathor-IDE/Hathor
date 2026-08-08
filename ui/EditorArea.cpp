@@ -251,6 +251,7 @@ bool EditorArea::openUntitledTab()
 
     auto tab = std::make_unique<HathorTab>(slot);
     wireUnsavedCallback(*tab);
+    wirePlayStopCallback(*tab);
     installKeyListenerForTab(*tab);
     addAndMakeVisible(*tab);
     tabs_.push_back(std::move(tab));
@@ -326,6 +327,7 @@ bool EditorArea::openFile(const juce::File& file)
     tab->clearUnsavedDot();
 
     wireUnsavedCallback(*tab);
+    wirePlayStopCallback(*tab);
     installKeyListenerForTab(*tab);
     addAndMakeVisible(*tab);
     tabs_.push_back(std::move(tab));

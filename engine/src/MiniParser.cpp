@@ -177,11 +177,11 @@ struct Parser {
 
         if (t.kind == TokenKind::TK_ATOM) {
             advance();
-            child = std::make_unique<MiniNode>(MiniAtom{std::string(t.text)});
+            child = std::make_unique<MiniNode>(MiniAtom{std::string(t.text), t.pos});
         }
         else if (t.kind == TokenKind::TK_TILDE) {
             advance();
-            child = std::make_unique<MiniNode>(MiniAtom{std::string("~")});
+            child = std::make_unique<MiniNode>(MiniAtom{std::string("~"), t.pos});
         }
         else if (t.kind == TokenKind::TK_LBRACKET) {
             std::size_t openPos = t.pos;
@@ -236,7 +236,7 @@ struct Parser {
         else if (t.kind == TokenKind::TK_INT) {
             // A bare integer is a valid atom token (e.g. "0", "1").
             advance();
-            child = std::make_unique<MiniNode>(MiniAtom{std::string(t.text)});
+            child = std::make_unique<MiniNode>(MiniAtom{std::string(t.text), t.pos});
         }
         else {
             return err(t.pos, std::string("unexpected token '") + std::string(t.text) + "'");
@@ -437,7 +437,7 @@ static Pattern<std::string> lowerNode(const MiniNode& node)
                     0
                 };
             }
-            return pure(alt.token);
+            return pure(alt.token, alt.sourceOffset);
         }
         else if constexpr (std::is_same_v<T, MiniSeq>) {
             if (alt.steps.size() == 1)
@@ -492,7 +492,7 @@ static Pattern<std::string> lowerNode(const MiniNode& node)
         }
         else {
             // Should never reach here.
-            return pure(std::string{});
+            return pure(std::string{}, 0);
         }
     }, static_cast<const std::variant<MiniAtom, MiniSeq, MiniStack, MiniSlowSeq, MiniFast, MiniSlow, MiniRep, MiniEuclid>&>(node));
 }

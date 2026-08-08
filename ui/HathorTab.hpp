@@ -119,6 +119,23 @@ public:
     std::function<void()> onUnsavedDotChanged;
 
     // -----------------------------------------------------------------------
+    // Per-slot Play/Stop (B1)
+    // -----------------------------------------------------------------------
+
+    /// Return true if this tab's slot is currently armed/running.
+    /// Called by EditorArea/UITimer to sync the button visual state.
+    bool isSlotRunning() const noexcept { return slotRunning_; }
+
+    /// Set the button visual state to reflect armed/running (Play vs Stop icon).
+    /// Called by EditorArea/UITimer — NOT a source of truth; reflects the engine.
+    void setSlotRunningVisual(bool running) noexcept;
+
+    /// Callback installed by EditorArea — fired when the button is clicked.
+    /// The callback receives the slot index and should dispatch
+    /// slot-play/slot-stop via ControlInterface.
+    std::function<void()> onPlayStopClicked;
+
+    // -----------------------------------------------------------------------
     // juce::Component overrides
     // -----------------------------------------------------------------------
     void resized() override;
@@ -137,6 +154,12 @@ private:
     // -----------------------------------------------------------------------
     void markUnsaved();
 
+    /// Paint the Play/Stop button icon onto the editor header area.
+    void paintSlotPlayButton(juce::Graphics& g);
+
+    /// Handle a click on the Play/Stop button.
+    void slotPlayButtonClicked();
+
     // -----------------------------------------------------------------------
     // Data
     // -----------------------------------------------------------------------
@@ -144,6 +167,11 @@ private:
     std::optional<juce::File>  filePath_;
     std::optional<std::string> displayLabel_; ///< from front-matter `label`
     bool                       unsavedDot_{ false };
+
+    // Per-slot Play/Stop button visual state (B1).
+    // This is NOT a source of truth — the engine's SlotState::running atomic
+    // is. This flag is synced from the engine via setSlotRunningVisual().
+    bool                       slotRunning_{ false };
 
     // Tokenisers for both file types.  Exactly one is active at a time;
     // the editor_ holds a non-owning pointer to whichever is active.
@@ -154,6 +182,11 @@ private:
 
     juce::CodeDocument          document_;
     juce::CodeEditorComponent   editor_;
+
+    // Per-slot Play/Stop button (B1). Renders as a small icon button in the
+    // editor header. Visual state reflects SlotState::running, not an
+    // independent boolean.
+    juce::TextButton            slotPlayButton_;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(HathorTab)
 };

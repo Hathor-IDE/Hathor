@@ -84,23 +84,41 @@ public:
                            std::function<void(nlohmann::json)> onComplete);
 
     /**
-     * UI-facing dispatch: same routing as dispatch(), but instead of writing
-     * the JSON response to stdout, the response is delivered to @p onResult
-     * called on the worker thread (for async commands like set-pattern) or
-     * on the calling thread (for synchronous commands like bpm, set-gain).
-     *
-     * MUST be called on a worker thread, never on the JUCE message thread
-     * (Req 23.7).
-     *
-     * @param line      The command line (e.g. "set-pattern d0 bd sn").
-     * @param onResult  Callback invoked with the JSON response.
-     *                  For set-pattern, called on the WorkerThread after
-     *                  pattern compilation completes. For other commands,
-     *                  called synchronously before this function returns.
-     *
-     * Requirements: 23.1, 23.3, 23.7
-     */
+      * UI-facing dispatch: same routing as dispatch(), but instead of writing
+      * the JSON response to stdout, the response is delivered to @p onResult
+      * called on the worker thread (for async commands like set-pattern) or
+      * on the calling thread (for synchronous commands like bpm, set-gain).
+      *
+      * MUST be called on a worker thread, never on the JUCE message thread
+      * (Req 23.7).
+      *
+      * @param line      The command line (e.g. "set-pattern d0 bd sn").
+      * @param onResult  Callback invoked with the JSON response.
+      *                  For set-pattern, called on the WorkerThread after
+      *                  pattern compilation completes. For other commands,
+      *                  called synchronously before this function returns.
+      *
+      * Requirements: 23.1, 23.3, 23.7
+      */
     void dispatchWithCallback(std::string_view line,
+                               std::function<void(nlohmann::json)> onResult);
+
+    /**
+     * Dispatch a per-slot play/stop command synchronously.
+     *
+     * Convenience wrapper around dispatchWithCallback for B1 (per-tab Play/Stop).
+     * Issues "slot-play <slotName>" or "slot-stop <slotName>" and calls onResult
+     * with the JSON response.  For synchronous slot commands the callback fires
+     * before this function returns.
+     *
+     * MUST be called on a worker thread (not the JUCE message thread).
+     *
+     * @param slotName  Slot name string (e.g. "d0", "d1").
+     * @param start     true = slot-play, false = slot-stop.
+     * @param onResult  Callback invoked with the JSON response.
+     */
+    void dispatchSlotPlayStop(const std::string& slotName,
+                              bool start,
                               std::function<void(nlohmann::json)> onResult);
 
 private:

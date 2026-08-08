@@ -31,6 +31,7 @@ using MiniNodePtr = std::unique_ptr<MiniNode>;
 /// A leaf token: "bd", "sn", "~", etc.
 struct MiniAtom {
     std::string token;
+    std::size_t sourceOffset = 0; ///< byte offset of this atom's token in the original source (B2)
 };
 
 /// A space-separated or [...] sequence — lowers to stepcat (equal weights).

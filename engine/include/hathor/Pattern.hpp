@@ -98,7 +98,7 @@ private:
 // ---------------------------------------------------------------------------
 
 /**
- * pure(value) — a Pattern that repeats a single value once per integer cycle.
+ * pure(value, sourceOffset) — a Pattern that repeats a single value once per integer cycle.
  *
  * For each integer cycle c such that [c, c+1) overlaps the query arc:
  *  - whole  = Arc{Rational(c), Rational(c+1)}  (the full cycle arc)
@@ -111,18 +111,21 @@ private:
  * For small T (e.g. std::string short-string-optimised, int, float) this fits
  * in std::function's SBO buffer and no heap allocation occurs at query time.
  *
- * Requirement references: 1.1, 1.3, 1.4, 7.1
+ * @tparam T            Payload type.
+ * @param value         The value emitted by every event.
+ * @param sourceOffset  Byte offset of the originating source token (B2 metadata).
+ *                      Callers that have no source position pass 0 (the default).
+ * @returns             A Pattern<T> with maxEventsPerCycle == 1.
  *
- * @tparam T   Payload type.
- * @param value The value emitted by every event.
- * @returns     A Pattern<T> with maxEventsPerCycle == 1.
+ * Requirement references: 1.1, 1.3, 1.4, 7.1
  */
 template <typename T>
-Pattern<T> pure(T value)
+Pattern<T> pure(T value, std::size_t sourceOffset = 0)
 {
-    // Capture value by value — keep the closure small so std::function can
-    // store it in its SBO buffer without heap allocation at call time.
-    auto fn = [v = std::move(value)](Arc arc, std::span<Event<T>> outBuffer) -> std::size_t
+    // Capture value + sourceOffset by value — keep the closure small so
+    // std::function can store it in its SBO buffer without heap allocation.
+    auto fn = [v = std::move(value), src = sourceOffset]
+              (Arc arc, std::span<Event<T>> outBuffer) -> std::size_t
     {
         if (outBuffer.empty()) return 0;
 
@@ -147,7 +150,7 @@ Pattern<T> pure(T value)
             Arc active = whole.intersect(arc);
 
             if (!active.isEmpty()) {
-                outBuffer[count++] = Event<T>{whole, active, v};
+                outBuffer[count++] = Event<T>{whole, active, v, src, -1};
             }
         }
 

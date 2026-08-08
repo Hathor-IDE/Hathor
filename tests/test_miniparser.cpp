@@ -320,3 +320,114 @@ TEST_CASE("parse multi-cycle query", "[miniparser]")
     for (auto& ev : events)
         CHECK(ev.value == "bd");
 }
+
+// ---------------------------------------------------------------------------
+// B2: sourceOffset propagation from Token.pos → MiniAtom → Event
+// ---------------------------------------------------------------------------
+
+TEST_CASE("parse atom preserves sourceOffset from token position", "[miniparser][b2]")
+{
+    // "  bd" — the atom "bd" starts at byte offset 2.
+    auto result = parseMini("  bd");
+    auto& cp = asCP(result);
+
+    Arc arc{Rational{0}, Rational{1}};
+    auto events = queryToVec(cp.pattern, arc);
+
+    REQUIRE(events.size() == 1);
+    CHECK(events[0].value == "bd");
+    CHECK(events[0].sourceOffset == 2);
+}
+
+TEST_CASE("parse multiple atoms receive their respective source offsets", "[miniparser][b2]")
+{
+    // "bd sn" — "bd" at offset 0, "sn" at offset 3.
+    auto result = parseMini("bd sn");
+    auto& cp = asCP(result);
+
+    Arc arc{Rational{0}, Rational{1}};
+    auto events = queryToVec(cp.pattern, arc);
+
+    REQUIRE(events.size() == 2);
+    CHECK(events[0].value == "bd");
+    CHECK(events[0].sourceOffset == 0);
+    CHECK(events[1].value == "sn");
+    CHECK(events[1].sourceOffset == 3);
+}
+
+TEST_CASE("parse tilde preserves sourceOffset", "[miniparser][b2]")
+{
+    // "~" at offset 0
+    auto result = parseMini("~ bd");
+    auto& cp = asCP(result);
+
+    // Over [0,1): "~" produces no events, "bd" fires at cycle 1/2.
+    Arc arc{Rational{0}, Rational{1}};
+    auto events = queryToVec(cp.pattern, arc);
+
+    // "bd" is the only event (in the second half of the cycle).
+    REQUIRE(events.size() == 1);
+    CHECK(events[0].value == "bd");
+    CHECK(events[0].sourceOffset == 2);  // "bd" starts at byte 2 in "~ bd"
+}
+
+TEST_CASE("parse bare integer atom preserves sourceOffset", "[miniparser][b2]")
+{
+    // "0 1" — integer atoms "0" at offset 0, "1" at offset 2.
+    auto result = parseMini("0 1");
+    auto& cp = asCP(result);
+
+    Arc arc{Rational{0}, Rational{1}};
+    auto events = queryToVec(cp.pattern, arc);
+
+    REQUIRE(events.size() == 2);
+    CHECK(events[0].value == "0");
+    CHECK(events[0].sourceOffset == 0);
+    CHECK(events[1].value == "1");
+    CHECK(events[1].sourceOffset == 2);
+}
+
+TEST_CASE("parse euclid preserves sourceOffset on child atom", "[miniparser][b2]")
+{
+    // "bd(3,8)" — "bd" at offset 0.
+    auto result = parseMini("bd(3,8)");
+    auto& cp = asCP(result);
+
+    Arc arc{Rational{0}, Rational{1}};
+    auto events = queryToVec(cp.pattern, arc);
+
+    REQUIRE_FALSE(events.empty());
+    CHECK(events[0].sourceOffset == 0);
+}
+
+TEST_CASE("parse fast operator preserves sourceOffset on child", "[miniparser][b2]")
+{
+    // "bd*4" — "bd" at offset 0.
+    auto result = parseMini("bd*4");
+    auto& cp = asCP(result);
+
+    Arc arc{Rational{0}, Rational{1}};
+    auto events = queryToVec(cp.pattern, arc);
+
+    REQUIRE(events.size() == 4);
+    for (auto& ev : events) {
+        CHECK(ev.value == "bd");
+        CHECK(ev.sourceOffset == 0);
+    }
+}
+
+TEST_CASE("parse bracket group preserves individual source offsets", "[miniparser][b2]")
+{
+    // "[bd sn]" — "bd" at offset 1, "sn" at offset 4.
+    auto result = parseMini("[bd sn]");
+    auto& cp = asCP(result);
+
+    Arc arc{Rational{0}, Rational{1}};
+    auto events = queryToVec(cp.pattern, arc);
+
+    REQUIRE(events.size() == 2);
+    CHECK(events[0].value == "bd");
+    CHECK(events[0].sourceOffset == 1);
+    CHECK(events[1].value == "sn");
+    CHECK(events[1].sourceOffset == 4);
+}

@@ -213,6 +213,19 @@ void ControlInterface::dispatchWithCallback(
 }
 
 // ---------------------------------------------------------------------------
+// dispatchSlotPlayStop() — B1 per-tab Play/Stop convenience wrapper
+// ---------------------------------------------------------------------------
+
+void ControlInterface::dispatchSlotPlayStop(
+    const std::string& slotName,
+    bool start,
+    std::function<void(nlohmann::json)> onResult)
+{
+    const std::string cmd = std::string(start ? "slot-play " : "slot-stop ") + slotName;
+    dispatchWithCallback(cmd, std::move(onResult));
+}
+
+// ---------------------------------------------------------------------------
 // handlePing() — Req 14.6
 // ---------------------------------------------------------------------------
 

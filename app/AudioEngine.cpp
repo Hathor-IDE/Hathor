@@ -431,11 +431,16 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
              voicePool_.trigger(ev.value, bank_, sampleOffset, clockNow,
                                 static_cast<int8_t>(i));
 
-            // Accumulate for the visualizer (no alloc, capped at kMaxFrameEvents).
-            if (firedEventCount < static_cast<uint32_t>(hathor::kMaxFrameEvents)) {
-                new (&firedEvents[firedEventCount]) hathor::Event<hathor::ParamMap>(ev);
-                ++firedEventCount;
-            }
+             // Accumulate for the visualizer (no alloc, capped at kMaxFrameEvents).
+             // B2: stamp the originating slot index onto the event before it
+             // enters the visualizer ring buffer.  sourceOffset travels
+             // passively via the Event copy (already set during lowering).
+             if (firedEventCount < static_cast<uint32_t>(hathor::kMaxFrameEvents)) {
+                 hathor::Event<hathor::ParamMap> fired = ev;
+                 fired.slotId = static_cast<int8_t>(i);
+                 new (&firedEvents[firedEventCount]) hathor::Event<hathor::ParamMap>(fired);
+                 ++firedEventCount;
+             }
         }
     }
 

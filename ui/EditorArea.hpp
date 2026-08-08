@@ -249,6 +249,14 @@ private:
     /// Wire up the onUnsavedDotChanged callback for a tab.
     void wireUnsavedCallback(HathorTab& tab);
 
+    /// Wire up the onPlayStopClicked callback for a tab (B1).
+    void wirePlayStopCallback(HathorTab& tab);
+
+    /// Sync all tabs' Play/Stop button visuals to the engine's slot state.
+    /// Called from the UITimer path (60 Hz) so the UI reflects engine state
+    /// changes that arrive via other paths (not just button clicks).
+    void syncSlotButtonStates();
+
     /// Build a pointer list of HathorTab only (excludes Settings tab).
     std::vector<HathorTab*> buildHathorTabPointers() const;
 

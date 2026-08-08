@@ -101,13 +101,17 @@ Pattern<ParamMap> lowerToParamMap(const Pattern<std::string>& src)
         const std::size_t count = srcPtr->query(arc, innerSpan);
 
         // Map each Event<std::string> → Event<ParamMap>.
+        // B2: propagate sourceOffset from the string-event payload.
         const std::size_t outCount = (count < outBuffer.size()) ? count : outBuffer.size();
         for (std::size_t i = 0; i < outCount; ++i) {
             const Event<std::string>& src_event = *innerBuf->slot(i);
             ParamMap pm;
             pm.set(keys::kS, src_event.value);       // "s" = sample folder name
             pm.set(keys::kN, int64_t{0});             // "n" = default sample index
-            outBuffer[i] = Event<ParamMap>{src_event.whole, src_event.active, std::move(pm)};
+            outBuffer[i] = Event<ParamMap>{src_event.whole, src_event.active,
+                                           std::move(pm),
+                                           src_event.sourceOffset,
+                                           src_event.slotId};
         }
 
         return outCount;
