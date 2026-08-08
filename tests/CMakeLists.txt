@@ -51,6 +51,36 @@ include(Catch)
 catch_discover_tests(hathor-engine-tests DISCOVERY_MODE PRE_TEST)
 
 # ---------------------------------------------------------------------------
+# hathor-control-tests — control + MCP socket accept-loop tests (Phase 2.5 H0)
+#
+# Links hathor-control (ControlInterface + WorkerThread + SocketServer) and the
+# engine.  JUCE-free: a fake AudioEngineFacade + an idle SampleBank stand in for
+# the real app, so no audio device is required.
+# ---------------------------------------------------------------------------
+add_executable(hathor-control-tests
+    test_mcp_socket.cpp
+)
+
+target_compile_features(hathor-control-tests PRIVATE cxx_std_20)
+target_compile_options(hathor-control-tests PRIVATE -Wall -Wextra -Werror)
+
+target_include_directories(hathor-control-tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/app
+    ${CMAKE_SOURCE_DIR}/control
+    ${CMAKE_SOURCE_DIR}/engine/include
+)
+
+target_link_libraries(hathor-control-tests PRIVATE
+    hathor-control
+    hathor-engine
+    Catch2::Catch2WithMain
+    nlohmann_json::nlohmann_json
+)
+
+include(Catch)
+catch_discover_tests(hathor-control-tests DISCOVERY_MODE PRE_TEST)
+
+# ---------------------------------------------------------------------------
 # Integration tests (require the full hathor binary; skipped if app is off)
 # ---------------------------------------------------------------------------
 add_subdirectory(integration)

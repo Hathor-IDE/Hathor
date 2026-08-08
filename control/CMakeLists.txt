@@ -11,6 +11,7 @@ endif()
 add_library(hathor-control OBJECT
     ControlInterface.cpp
     WorkerThread.cpp
+    SocketServer.cpp
 )
 
 target_include_directories(hathor-control

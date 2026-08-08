@@ -24,6 +24,7 @@
  */
 
 #include "AcpAgentSession.hpp"
+#include "../control/SocketServer.hpp"
 
 // POSIX
 #include <cerrno>
@@ -157,6 +158,14 @@ void AcpAgentSession::stop()
         listenerFd_ = -1;
     }
     removeUnixSocket();
+
+    // ----------------------------------------------------------------------
+    // MCP accept loop teardown.  Closing the listener (above) unblocks the
+    // accept-loop worker; joining here guarantees no background thread touches
+    // AcpAgentSession/ControlInterface state after this returns (Req 32.8).
+    // ----------------------------------------------------------------------
+    if (mcpServerThread_.joinable())
+        mcpServerThread_.join();
 
     // Reset state.
     isReady_.store(false, std::memory_order_release);
@@ -306,6 +315,23 @@ void AcpAgentSession::removeUnixSocket()
 }
 
 // ---------------------------------------------------------------------------
+// Internal — MCP Unix-socket accept loop (Phase 2.5 H0)
+// ---------------------------------------------------------------------------
+
+void AcpAgentSession::mcpServerLoop()
+{
+    const int fd = listenerFd_;
+    if (fd == -1 || !mcpCommandHandler_)
+        return;
+
+    // Snapshot the handler; the accept loop may outlive a handler reassignment
+    // but never the session (stop() joins this thread first).
+    McpCommandHandlerFn handler = mcpCommandHandler_;
+
+    hathor::control::runSocketAcceptLoop(fd, stopRequested_, std::move(handler));
+}
+
+// ---------------------------------------------------------------------------
 // Internal — subprocess spawn
 // ---------------------------------------------------------------------------
 
@@ -438,6 +464,15 @@ void AcpAgentSession::senderLoop(const std::string& agentExePath,
                       + std::string(std::strerror(errno)));
         return;
     }
+
+    // ----------------------------------------------------------------------
+    // Phase 2.5 H0: start the MCP socket accept/read loop.  It runs on its own
+    // worker thread (mcpServerThread_), never on the JUCE message thread nor
+    // the audio thread, and forwards each command to ControlInterface via
+    // mcpCommandHandler_.  It is torn down in stop().
+    // ----------------------------------------------------------------------
+    if (mcpCommandHandler_)
+        mcpServerThread_ = std::thread([this] { mcpServerLoop(); });
 
     // ------------------------------------------------------------------
     // Step 2: Spawn agent subprocess

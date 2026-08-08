@@ -116,6 +116,21 @@ public:
     void setOnPermissionRequest(OnPermissionRequestFn fn){ onPermissionRequest_ = std::move(fn); }
     void setOnAgentDisconnected(OnAgentDisconnectedFn fn){ onAgentDisconnected_ = std::move(fn); }
 
+    /**
+     * Install the dispatcher used to handle MCP/control commands received on
+     * the Unix socket (set-pattern, play, stop, bpm, set-gain).  The handler
+     * is invoked on the socket accept-loop worker thread with a command line,
+     * and MUST route it through hathor::control::ControlInterface::dispatchWithCallback
+     * (or equivalent) so that the response sink delivers the JSON result back
+     * over the socket.  Call before start().
+     *
+     * Requirements: Phase 2.5 H0
+     */
+    using McpCommandHandlerFn = std::function<void(
+        std::string commandLine,
+        std::function<void(std::string response)> respond)>;
+    void setMcpCommandHandler(McpCommandHandlerFn fn) { mcpCommandHandler_ = std::move(fn); }
+
     // -----------------------------------------------------------------------
     // Session lifecycle — called from JUCE message thread
     // -----------------------------------------------------------------------
@@ -216,6 +231,13 @@ private:
      * Remove the Unix socket file from the filesystem.
      */
     void removeUnixSocket();
+
+    /**
+     * Accept/read loop for the Unix listener created by createUnixSocketListener().
+     * Runs on mcpServerThread_ (a worker thread, never the JUCE message thread or
+     * audio thread).  Dispatches each command through mcpCommandHandler_.
+     */
+    void mcpServerLoop();
 
     /**
      * Spawn the agent subprocess using posix_spawn + pipes.
@@ -330,6 +352,12 @@ private:
 
     /// Next JSON-RPC request id
     std::atomic<int> nextId_{1};
+
+    // -----------------------------------------------------------------------
+    // MCP Unix-socket accept loop (Phase 2.5 H0)
+    // -----------------------------------------------------------------------
+    std::thread mcpServerThread_;   ///< accept/read loop worker thread
+    McpCommandHandlerFn mcpCommandHandler_; ///< routes socket commands to ControlInterface
 
     // -----------------------------------------------------------------------
     // Threads

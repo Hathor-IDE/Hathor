@@ -83,6 +83,24 @@ MainWindow::MainWindow(AudioEngine& audio,
     // -----------------------------------------------------------------------
     agentSession_ = std::make_unique<hathor::ui::AcpAgentSession>();
 
+    // -----------------------------------------------------------------------
+    // Wire MCP/control commands received on the Unix socket to ControlInterface
+    // (Phase 2.5 H0).  The handler is invoked on the socket accept-loop worker
+    // thread; dispatchWithCallback() routes each command through the normal
+    // command handlers and returns the JSON result via the response sink, which
+    // forwards it back over the socket.
+    // -----------------------------------------------------------------------
+    agentSession_->setMcpCommandHandler(
+        [this](std::string commandLine, std::function<void(std::string)> respond)
+        {
+            ci_.dispatchWithCallback(
+                commandLine,
+                [respond = std::move(respond)](nlohmann::json result)
+                {
+                    respond(result.dump());
+                });
+        });
+
     // Determine the project directory (cwd at launch time).
     const std::string projectDir =
         juce::File::getCurrentWorkingDirectory().getFullPathName().toStdString();

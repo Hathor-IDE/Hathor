@@ -102,6 +102,23 @@ splitFirst(std::string_view sv) noexcept
     return {first, rest};
 }
 
+/// Per-thread response sink used by dispatchWithCallback(). When non-empty,
+/// every handler routes its JSON result here instead of to stdout, so a caller
+/// (e.g. the MCP socket accept loop, or UI eval) can capture the response.
+/// Thread-local: a shared global would race between the worker thread pool and
+/// the ControlInterface caller, and a member would need its own mutex.
+static thread_local std::function<void(nlohmann::json)> g_responseSink;
+
+/// Route @p j to the current thread's response sink, or to stdout when no
+/// sink is active (the stdin/stdout CLI path, Req 12.2).
+static void emitResponse(const nlohmann::json& j)
+{
+    if (g_responseSink)
+        g_responseSink(j);
+    else
+        respond(j);
+}
+
 } // anonymous namespace
 
 // ---------------------------------------------------------------------------
@@ -140,7 +157,7 @@ void ControlInterface::dispatch(std::string_view rawLine)
         auto [slot, notation] = splitFirst(rest);
         handleSetPattern(slot, notation);
     } else {
-        respond({
+        emitResponse({
             {"ok",    false},
             {"error", "unknown command"},
             {"cmd",   std::string(cmd)}
@@ -175,6 +192,23 @@ void ControlInterface::run()
 }
 
 // ---------------------------------------------------------------------------
+// dispatchWithCallback() — non-stdout response delivery (Req 23.7)
+// ---------------------------------------------------------------------------
+
+void ControlInterface::dispatchWithCallback(
+    std::string_view line,
+    std::function<void(nlohmann::json)> onResult)
+{
+    // Install this thread's response sink so the command handlers deliver
+    // their JSON result to onResult instead of stdout.  Restored on exit.
+    // For set-pattern the result is delivered later, on the WorkerThread,
+    // via the per-job callback captured in handleSetPattern().
+    g_responseSink = std::move(onResult);
+    dispatch(line);
+    g_responseSink = nullptr;
+}
+
+// ---------------------------------------------------------------------------
 // handlePing() — Req 14.6
 // ---------------------------------------------------------------------------
 
@@ -184,7 +218,7 @@ void ControlInterface::handlePing(std::chrono::steady_clock::time_point receiveT
     const double latencyMs =
         std::chrono::duration<double, std::milli>(now - receiveTime).count();
 
-    respond({
+    emitResponse({
         {"ok",         true},
         {"cmd",        "ping"},
         {"latency_ms", latencyMs}
@@ -198,13 +232,13 @@ void ControlInterface::handlePing(std::chrono::steady_clock::time_point receiveT
 void ControlInterface::handlePlay()
 {
     audio_.play();
-    respond({{"ok", true}, {"cmd", "play"}});
+    emitResponse({{"ok", true}, {"cmd", "play"}});
 }
 
 void ControlInterface::handleStop()
 {
     audio_.stop();
-    respond({{"ok", true}, {"cmd", "stop"}});
+    emitResponse({{"ok", true}, {"cmd", "stop"}});
 }
 
 // ---------------------------------------------------------------------------
@@ -214,7 +248,7 @@ void ControlInterface::handleStop()
 void ControlInterface::handleBpm(std::string_view arg)
 {
     if (arg.empty()) {
-        respond({
+        emitResponse({
             {"ok",    false},
             {"cmd",   "bpm"},
             {"error", "missing BPM argument"}
@@ -231,7 +265,7 @@ void ControlInterface::handleBpm(std::string_view arg)
             throw std::invalid_argument("trailing characters");
         }
     } catch (...) {
-        respond({
+        emitResponse({
             {"ok",    false},
             {"cmd",   "bpm"},
             {"error", "invalid BPM value — expected a number"}
@@ -240,7 +274,7 @@ void ControlInterface::handleBpm(std::string_view arg)
     }
 
     if (bpm < 20.0 || bpm > 400.0) {
-        respond({
+        emitResponse({
             {"ok",    false},
             {"cmd",   "bpm"},
             {"error", "BPM out of range [20, 400]"},
@@ -250,7 +284,7 @@ void ControlInterface::handleBpm(std::string_view arg)
     }
 
     audio_.setBpm(bpm);
-    respond({
+    emitResponse({
         {"ok",  true},
         {"cmd", "bpm"},
         {"bpm", bpm}
@@ -264,7 +298,7 @@ void ControlInterface::handleBpm(std::string_view arg)
 void ControlInterface::handleSetGain(std::string_view arg)
 {
     if (arg.empty()) {
-        respond({
+        emitResponse({
             {"ok",    false},
             {"cmd",   "set-gain"},
             {"error", "missing gain argument"}
@@ -282,7 +316,7 @@ void ControlInterface::handleSetGain(std::string_view arg)
             throw std::invalid_argument("trailing characters");
         }
     } catch (...) {
-        respond({
+        emitResponse({
             {"ok",    false},
             {"cmd",   "set-gain"},
             {"error", "invalid value"}
@@ -294,7 +328,7 @@ void ControlInterface::handleSetGain(std::string_view arg)
     const float clamped = std::clamp(val, 0.f, 2.f);
     audio_.setMasterGain(clamped);
 
-    respond({
+    emitResponse({
         {"ok",   true},
         {"cmd",  "set-gain"},
         {"gain", clamped}
@@ -309,7 +343,7 @@ void ControlInterface::handleSetPattern(std::string_view slot,
                                          std::string_view notation)
 {
     if (slot.empty()) {
-        respond({
+        emitResponse({
             {"ok",    false},
             {"cmd",   "set-pattern"},
             {"error", "missing slot name"}
@@ -318,7 +352,7 @@ void ControlInterface::handleSetPattern(std::string_view slot,
     }
 
     if (notation.empty()) {
-        respond({
+        emitResponse({
             {"ok",    false},
             {"cmd",   "set-pattern"},
             {"slot",  std::string(slot)},
@@ -327,9 +361,20 @@ void ControlInterface::handleSetPattern(std::string_view slot,
         return;
     }
 
-    // Enqueue on the worker thread (non-blocking) — Req 11.5
-    impl_->worker.enqueue({std::string(slot), std::string(notation)});
-    // Response will be sent asynchronously by the worker's onComplete callback.
+    // Enqueue on the worker thread (non-blocking) — Req 11.5.
+    //
+    // When a per-thread response sink is active (dispatchWithCallback, e.g.
+    // the MCP socket accept loop / UI eval path), pass it as the per-job
+    // callback so the worker delivers the result to the caller instead of
+    // stdout. Otherwise fall back to the WorkerThread's global onComplete_
+    // (the stdin/stdout CLI path).
+    if (g_responseSink)
+        impl_->worker.enqueue(CompileJob{std::string(slot),
+                                         std::string(notation),
+                                         g_responseSink});
+    else
+        impl_->worker.enqueue({std::string(slot), std::string(notation)});
+    // Response is sent asynchronously (worker onComplete / g_responseSink).
 }
 
 // ---------------------------------------------------------------------------
@@ -339,7 +384,7 @@ void ControlInterface::handleSetPattern(std::string_view slot,
 void ControlInterface::handleClearPattern(std::string_view slotSV)
 {
     if (slotSV.empty()) {
-        respond({
+        emitResponse({
             {"ok",    false},
             {"cmd",   "clear-pattern"},
             {"error", "missing slot name"}
@@ -357,7 +402,7 @@ void ControlInterface::handleClearPattern(std::string_view slotSV)
     // Strategy: if idx < 0 (table full, name unknown) → not found.
     // If idx >= 0 but loadSlot(idx) == nullptr → slot was cleared or never set.
     if (idx < 0 || audio_.loadSlot(idx) == nullptr) {
-        respond({
+        emitResponse({
             {"ok",    false},
             {"cmd",   "clear-pattern"},
             {"slot",  slotName},
@@ -367,7 +412,7 @@ void ControlInterface::handleClearPattern(std::string_view slotSV)
     }
 
     audio_.clearSlot(idx);
-    respond({
+    emitResponse({
         {"ok",   true},
         {"cmd",  "clear-pattern"},
         {"slot", slotName}
@@ -395,7 +440,7 @@ void ControlInterface::handleListPatterns()
         patterns.push_back(std::move(entry));
     }
 
-    respond({
+    emitResponse({
         {"ok",       true},
         {"cmd",      "list-patterns"},
         {"patterns", std::move(patterns)}
