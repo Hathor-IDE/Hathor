@@ -83,6 +83,12 @@ public:
     bool hasPendingChanges() const noexcept { return pendingChanges_; }
 
     /**
+     * Discard pending edits (revert _pending to _committed, like Reset).
+     * Called when the Settings tab is closed without Apply (A2).
+     */
+    void resetToCommitted();
+
+    /**
      * Return the display label for the tab bar.
      */
     juce::String tabLabel() const noexcept { return "Settings"; }
