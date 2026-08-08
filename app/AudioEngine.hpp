@@ -102,6 +102,14 @@ public:
     /// Returns true if the transport is currently running.
     bool isRunning() const noexcept override;
 
+    // --- Per-slot play/stop (A3) ---
+    // These manipulate the per-slot running bit on SlotState, independent of
+    // the global transport.  slotStop() also silences voices currently being
+    // driven by that slot.
+    void slotPlay(int slotIdx) noexcept override;
+    void slotStop(int slotIdx) noexcept override;
+    bool isSlotRunning(int slotIdx) const noexcept override;
+
     // ------------------------------------------------------------------
     // Master gain (Req 26.5, 26.6, 26.7, 26.8)
     // ------------------------------------------------------------------

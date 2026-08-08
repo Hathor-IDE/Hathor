@@ -4,37 +4,44 @@
 #pragma once
 
 /**
- * ExplorerPanel.hpp — sliding file-tree panel listing .hathor files.
+ * ExplorerPanel.hpp — recursive folder-tree file browser panel.
  *
  * The panel is toggled open/closed by the Explorer button in ActivityRibbon.
- * When open it lists all .hathor files in the project directory (most-recently-
- * opened file's directory, or the application launch directory if no file has
- * been opened yet).
+ * When open it displays a hierarchical folder/file tree of the project directory:
+ *   - Folders (albums) are expandable/collapsible branch nodes.
+ *   - Supported song files (.hathor, and .ck once A5 is in place) are leaf nodes.
  *
- * Clicking a file calls onFileClicked(juce::File), which the owner (MainWindow /
+ * Clicking a song calls onFileClicked(juce::File), which the owner (MainWindow /
  * EditorArea) uses to open the file in a new tab or focus an existing tab.
  *
- * Requirements: 21.3, 21.4, 24.1
+ * The last-used root directory is persisted via a juce::ApplicationProperties
+ * object installed by the owner (MainWindow), and restored on startup.
+ *
+ * Requirements: 21.3, 21.4, 24.1, A4
  */
 
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <functional>
-#include <vector>
 
 #include "HathorLookAndFeel.hpp"
+#include "ExplorerTreeItems.hpp"
+#include "TreeBuilder.hpp"
 
 namespace hathor::ui {
 
 /**
  * ExplorerPanel
  *
- * A juce::Component that hosts a juce::ListBox listing .hathor files.
+ * A juce::Component that hosts a juce::TreeView showing a recursive
+ * project directory tree.
+ *
  * Owners should:
- *   1. Call setDirectory(juce::File) whenever the project directory changes.
- *   2. Install onFileClicked to respond to file selections.
+ *   1. Call setApplicationProperties() after constructing MainWindow's
+ *      ApplicationProperties, so the last root directory can be persisted.
+ *   2. Install onFileClicked to respond to song file selections.
+ *   3. Call setDirectory(juce::File) whenever the project directory changes.
  */
-class ExplorerPanel : public juce::Component,
-                      private juce::ListBoxModel
+class ExplorerPanel : public juce::Component
 {
 public:
     explicit ExplorerPanel();
@@ -42,19 +49,27 @@ public:
 
     //==========================================================================
     // Callback — installed by MainWindow / EditorArea.
-    // Called on the JUCE message thread when the user clicks a .hathor file.
+    // Called on the JUCE message thread when the user clicks a song file.
     std::function<void(juce::File)> onFileClicked;
+
+    //==========================================================================
+    // Application properties — for persisting the last root directory.
+    // Called once after MainWindow creates its ApplicationProperties.
+    void setApplicationProperties(juce::ApplicationProperties* props) noexcept
+    {
+        appProperties_ = props;
+    }
 
     //==========================================================================
     // Directory management
 
-    /// Set the directory to scan for .hathor files.
-    /// Triggers an immediate refresh of the file list.
+    /// Set the root directory to walk recursively.
+    /// Triggers an immediate rebuild of the tree.
     void setDirectory(const juce::File& dir);
 
     juce::File directory() const noexcept { return directory_; }
 
-    /// Re-scan the current directory and refresh the list.
+    /// Re-build the tree from the current directory.
     void refresh();
 
     //==========================================================================
@@ -67,34 +82,36 @@ private:
     // Colours — sourced from HathorLookAndFeel design tokens (single source
     // of truth).
     //==========================================================================
-    static constexpr juce::uint32 kBgColour       = HathorLookAndFeel::Colours::background;
-    static constexpr juce::uint32 kHeaderBgColour = HathorLookAndFeel::Colours::surfaceLow;
+    static constexpr juce::uint32 kBgColour        = HathorLookAndFeel::Colours::background;
+    static constexpr juce::uint32 kHeaderBgColour  = HathorLookAndFeel::Colours::surfaceLow;
     static constexpr juce::uint32 kHeaderTextColour = HathorLookAndFeel::Colours::textSecondary;
-    static constexpr juce::uint32 kItemTextColour   = HathorLookAndFeel::Colours::textPrimary;
-    static constexpr juce::uint32 kSelBgColour      = HathorLookAndFeel::Colours::surfaceLow;
-    static constexpr juce::uint32 kSelTextColour    = HathorLookAndFeel::Colours::textPrimary;
 
     //==========================================================================
     // Layout
     static constexpr int kHeaderHeight = 28;
-    static constexpr int kRowHeight    = 22;
 
     //==========================================================================
-    // juce::ListBoxModel overrides
-    int  getNumRows() override;
-    void paintListBoxItem(int rowNumber, juce::Graphics& g,
-                          int width, int height,
-                          bool rowIsSelected) override;
-    void listBoxItemClicked(int row, const juce::MouseEvent& e) override;
-    void listBoxItemDoubleClicked(int row, const juce::MouseEvent& e) override;
+    // Persistence helpers
+    void saveLastDirectory() const;
+    juce::File restoreLastDirectory() const;
+
+    //==========================================================================
+    // Tree root item — rebuilt on each refresh.
+    void buildRootItem();
 
     //==========================================================================
     // Data
-    juce::File                 directory_;
-    std::vector<juce::File>    files_;     ///< sorted list of .hathor files found
+    juce::File                    directory_;
+    TreeBuilder                   treeBuilder_;
+    std::unique_ptr<FolderTreeItem> rootItem_;
+    juce::TreeView                treeView_;
+    juce::Label                   headerLabel_;
 
-    juce::ListBox              listBox_;
-    juce::Label                headerLabel_;
+    // Non-owning — set by MainWindow after ApplicationProperties is created.
+    juce::ApplicationProperties*  appProperties_{ nullptr };
+
+    // Storage for the root FolderNode so FolderTreeItem has a stable owner.
+    std::unique_ptr<FolderNode>   rootData_;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(ExplorerPanel)
 };

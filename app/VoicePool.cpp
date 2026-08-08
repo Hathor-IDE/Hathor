@@ -100,7 +100,8 @@ int VoicePool::findVoiceSlot(int64_t newCutGroup, uint64_t /*absoluteStart*/) no
 void VoicePool::trigger(const hathor::ParamMap& params,
                         const SampleBank&       bank,
                         int                     sampleOffset,
-                        uint64_t                currentSample)
+                        uint64_t                currentSample,
+                        int8_t                  slotId)
 {
     // ------------------------------------------------------------------
     // 1. Resolve sample name ("s") and index ("n")
@@ -201,6 +202,7 @@ void VoicePool::trigger(const hathor::ParamMap& params,
     voice.state         = Voice::State::Playing;
     voice.startSample   = absoluteStart;
     voice.cutGroup      = cutGroup;
+    voice.slotId        = slotId;
     // Raw pointer into the SampleEntry's immutable data — safe because the bank
     // is permanently read-only after load() (see design §2.4).
     voice.sampleData    = const_cast<float*>(entry->data.data());
@@ -299,4 +301,15 @@ void VoicePool::silenceAll() noexcept
 {
     for (Voice& v : voices_)
         v.state = Voice::State::Free;
+}
+
+// ---------------------------------------------------------------------------
+// VoicePool::silenceSlot
+// ---------------------------------------------------------------------------
+
+void VoicePool::silenceSlot(int8_t slotId) noexcept
+{
+    for (Voice& v : voices_)
+        if (v.slotId == slotId)
+            v.state = Voice::State::Free;
 }

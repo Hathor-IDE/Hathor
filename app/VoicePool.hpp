@@ -24,6 +24,7 @@ struct Voice {
     State       state       = State::Free;
     uint64_t    startSample = 0;       ///< Absolute sample when voice was triggered
     int64_t     cutGroup    = -1;      ///< -1 = no cut group
+    int8_t      slotId      = -1;      ///< Originating slot index (-1 = no owner)
     float*      sampleData  = nullptr; ///< Raw pointer into SampleEntry::data (never owned)
     int         numChannels = 1;       ///< 1 (mono) or 2 (stereo) — matches SampleEntry
     std::size_t sampleLen   = 0;       ///< Total number of interleaved float samples
@@ -63,10 +64,12 @@ public:
     /// @param sampleOffset  Frame offset within the current audio buffer where the
     ///                      event fires (used for voice age comparison).
     /// @param currentSample Absolute sample clock at the start of the current buffer.
+    /// @param slotId        Index of the slot that owns this voice (-1 if none).
     void trigger(const hathor::ParamMap& params,
                  const SampleBank&       bank,
                  int                     sampleOffset,
-                 uint64_t                currentSample);
+                 uint64_t                currentSample,
+                 int8_t                  slotId = -1);
 
     /// Mix all Playing voices into the output buffers.
     ///
@@ -77,6 +80,9 @@ public:
 
     /// Immediately silence all Playing voices (e.g. on transport stop).
     void silenceAll() noexcept;
+
+    /// Immediately silence all Playing voices belonging to @p slotId (A3).
+    void silenceSlot(int8_t slotId) noexcept;
 
 private:
     std::array<Voice, kVoices> voices_{};

@@ -17,6 +17,7 @@
 #include "hathor/ParamMap.hpp"
 #include "hathor/Pattern.hpp"
 
+#include <atomic>
 #include <memory>
 #include <string>
 #include <vector>
@@ -36,4 +37,11 @@ struct SlotState {
     /// list-patterns. Written once on the worker thread; read on the main
     /// thread only after the atomic store/load fence.
     std::string notation;
+
+    /// Per-slot running flag (A3 — true independent per-slot Play/Stop).
+    /// Set by the control thread (slot-play/slot-stop), read lock-free on the
+    /// audio thread.  When false the audio callback skips voice triggering for
+    /// this slot and instead silences any voices that were previously armed by
+    /// this slot.  The flag is atomic so no mutex is needed in the callback.
+    std::atomic<bool> running{false};
 };

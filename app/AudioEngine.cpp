@@ -164,6 +164,36 @@ bool AudioEngine::isRunning() const noexcept
 }
 
 // ---------------------------------------------------------------------------
+// Per-slot play/stop (A3)
+// ---------------------------------------------------------------------------
+
+void AudioEngine::slotPlay(int slotIdx) noexcept
+{
+    auto state = loadSlot(slotIdx);
+    if (!state)
+        return;
+    state->running.store(true, std::memory_order_release);
+}
+
+void AudioEngine::slotStop(int slotIdx) noexcept
+{
+    auto state = loadSlot(slotIdx);
+    if (!state)
+        return;
+    state->running.store(false, std::memory_order_release);
+    // Silence any voices currently playing from this slot (A3).
+    voicePool_.silenceSlot(static_cast<int8_t>(slotIdx));
+}
+
+bool AudioEngine::isSlotRunning(int slotIdx) const noexcept
+{
+    auto state = loadSlot(slotIdx);
+    if (!state)
+        return false;
+    return state->running.load(std::memory_order_acquire);
+}
+
+// ---------------------------------------------------------------------------
 // Master gain (Req 26.5, 26.6)
 // ---------------------------------------------------------------------------
 
@@ -368,30 +398,38 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
         std::shared_ptr<SlotState> state =
             std::atomic_load_explicit(&slots_[i], std::memory_order_acquire);
 
-        if (!state || !state->pattern)
-            continue;
+         if (!state || !state->pattern)
+             continue;
 
-        // Query into the pre-sized event buffer (zero allocation — Req 7.1, 7.2).
-        std::span<hathor::Event<hathor::ParamMap>> span{state->eventBuffer};
-        const std::size_t count = state->pattern->query(bufferArc, span);
+         // Per-slot running check (A3): skip voice triggering for slots
+         // that have been individually stopped.  This is a relaxed atomic
+         // read — no allocation, no mutex, real-time safe.
+         if (!state->running.load(std::memory_order_acquire))
+             continue;
 
-        // Schedule each event.
-        for (std::size_t j = 0; j < count; ++j) {
-            const hathor::Event<hathor::ParamMap>& ev = state->eventBuffer[j];
+         // Query into the pre-sized event buffer (zero allocation — Req 7.1, 7.2).
+         std::span<hathor::Event<hathor::ParamMap>> span{state->eventBuffer};
+         const std::size_t count = state->pattern->query(bufferArc, span);
 
-            // Convert event's cycle-domain start to a sample offset within this buffer.
-            // Req 9.1: sampleOffset = (event.active.start - cycleStart) * samplesPerCycle
-            const double offsetD =
-                (ev.active.start - cycleStart).toDouble() * samplesPerCycle;
+         // Schedule each event.
+         for (std::size_t j = 0; j < count; ++j) {
+             const hathor::Event<hathor::ParamMap>& ev = state->eventBuffer[j];
 
-            // Discard events that fall outside this buffer (Req 9.2).
-            if (offsetD < 0.0 || offsetD >= static_cast<double>(numSamples))
-                continue;
+             // Convert event's cycle-domain start to a sample offset within this buffer.
+             // Req 9.1: sampleOffset = (event.active.start - cycleStart) * samplesPerCycle
+             const double offsetD =
+                 (ev.active.start - cycleStart).toDouble() * samplesPerCycle;
 
-            const int sampleOffset = static_cast<int>(offsetD);
+             // Discard events that fall outside this buffer (Req 9.2).
+             if (offsetD < 0.0 || offsetD >= static_cast<double>(numSamples))
+                 continue;
 
-            // Trigger the voice (Req 9.3).
-            voicePool_.trigger(ev.value, bank_, sampleOffset, clockNow);
+             const int sampleOffset = static_cast<int>(offsetD);
+
+             // Trigger the voice (Req 9.3).  Pass the slot index as the owner
+             // so that slotStop() can silence voices from this slot.
+             voicePool_.trigger(ev.value, bank_, sampleOffset, clockNow,
+                                static_cast<int8_t>(i));
 
             // Accumulate for the visualizer (no alloc, capped at kMaxFrameEvents).
             if (firedEventCount < static_cast<uint32_t>(hathor::kMaxFrameEvents)) {

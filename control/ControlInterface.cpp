@@ -156,6 +156,10 @@ void ControlInterface::dispatch(std::string_view rawLine)
         // split rest into slot + notation (everything after second ws token)
         auto [slot, notation] = splitFirst(rest);
         handleSetPattern(slot, notation);
+    } else if (cmd == "slot-play") {
+        handleSlotPlayStop(trim(rest), /*start=*/true);
+    } else if (cmd == "slot-stop") {
+        handleSlotPlayStop(trim(rest), /*start=*/false);
     } else {
         emitResponse({
             {"ok",    false},
@@ -457,6 +461,52 @@ void ControlInterface::handleQuit()
     // Flush is handled inside respond(), but call it again to be safe.
     std::fflush(stdout);
     std::exit(0);
+}
+
+// ---------------------------------------------------------------------------
+// handleSlotPlayStop() — A3 per-slot play/stop
+// ---------------------------------------------------------------------------
+
+void ControlInterface::handleSlotPlayStop(std::string_view slotSV, bool start)
+{
+    const std::string cmdName = start ? "slot-play" : "slot-stop";
+
+    if (slotSV.empty()) {
+        emitResponse({
+            {"ok",    false},
+            {"cmd",   cmdName},
+            {"error", "missing slot name"}
+        });
+        return;
+    }
+
+    const std::string slotName(slotSV);
+    const int idx = audio_.findOrAddSlot(slotName);
+
+    // findOrAddSlot returns -1 only when the table is full AND the name is
+    // unknown.  But per the clear-pattern precedent (which checks loadSlot),
+    // a slot that was never set up with pattern data is still addressable
+    // for play/stop — we only reject "table full, name unknown".
+    if (idx < 0) {
+        emitResponse({
+            {"ok",    false},
+            {"cmd",   cmdName},
+            {"slot",  slotName},
+            {"error", "no free slot slots available"}
+        });
+        return;
+    }
+
+    if (start)
+        audio_.slotPlay(idx);
+    else
+        audio_.slotStop(idx);
+
+    emitResponse({
+        {"ok",   true},
+        {"cmd",  cmdName},
+        {"slot", slotName}
+    });
 }
 
 } // namespace hathor::control

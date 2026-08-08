@@ -32,12 +32,19 @@ class AudioEngineFacade {
 public:
     virtual ~AudioEngineFacade() = default;
 
-    // --- Transport ---
+     // --- Transport ---
     virtual void   play()    noexcept = 0;
     virtual void   stop()    noexcept = 0;
     virtual void   setBpm(double bpm) noexcept = 0;
     virtual double getBpm()  const noexcept = 0;
     virtual bool   isRunning() const noexcept = 0;
+
+    // --- Per-slot play/stop (A3) ---
+    // slotPlay(slotIdx) — resume one slot independently (others unchanged).
+    // slotStop(slotIdx) — stop one slot independently (others continue).
+    virtual void slotPlay(int slotIdx) noexcept = 0;
+    virtual void slotStop(int slotIdx) noexcept = 0;
+    virtual bool isSlotRunning(int slotIdx) const noexcept = 0;
 
     // --- Master gain (Req 26.5, 26.6) ---
 

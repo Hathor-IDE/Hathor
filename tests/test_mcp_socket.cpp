@@ -57,6 +57,20 @@ public:
     double getBpm() const noexcept override { return bpm_; }
     bool isRunning() const noexcept override { return running_; }
 
+    void slotPlay(int slotIdx) noexcept override {
+        if (slotIdx >= 0 && static_cast<std::size_t>(slotIdx) < states_.size())
+            slotRunning_[static_cast<std::size_t>(slotIdx)] = true;
+    }
+    void slotStop(int slotIdx) noexcept override {
+        if (slotIdx >= 0 && static_cast<std::size_t>(slotIdx) < states_.size())
+            slotRunning_[static_cast<std::size_t>(slotIdx)] = false;
+    }
+    bool isSlotRunning(int slotIdx) const noexcept override {
+        if (slotIdx >= 0 && static_cast<std::size_t>(slotIdx) < states_.size())
+            return slotRunning_[static_cast<std::size_t>(slotIdx)];
+        return false;
+    }
+
     void setMasterGain(float g) noexcept override { gain_ = g; }
     float getMasterGain() const noexcept override { return gain_; }
 
@@ -69,6 +83,7 @@ public:
         {
             names_.push_back(name);
             states_.push_back(nullptr);
+            slotRunning_.push_back(false);
             return static_cast<int>(names_.size() - 1);
         }
         return -1;
@@ -107,6 +122,7 @@ private:
     float gain_ = 1.0f;
     std::vector<std::string> names_;
     std::vector<std::shared_ptr<SlotState>> states_;
+    std::vector<bool> slotRunning_;
 };
 
 // ---------------------------------------------------------------------------

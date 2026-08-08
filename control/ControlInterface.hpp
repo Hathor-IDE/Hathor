@@ -112,6 +112,9 @@ private:
     /// clear-pattern <slot>  (Req 15.2, 15.3)
     void handleClearPattern(std::string_view slot);
 
+    /// slot-play <slot> / slot-stop <slot>  (A3)
+    void handleSlotPlayStop(std::string_view slot, bool start);
+
     /// list-patterns  (Req 15.1)
     void handleListPatterns();
 
