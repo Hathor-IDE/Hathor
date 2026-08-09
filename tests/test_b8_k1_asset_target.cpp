@@ -230,7 +230,8 @@ TEST_CASE("LiveJam path is outside Studio asset directory", "[b8-k1][livejam][pa
 
 TEST_CASE("sanitizeAssetName strips path separators", "[b8-k1][safety]")
 {
-    REQUIRE(sanitizeAssetName("../etc/passwd") == "___etc_passwd");
+    // Leading dots are stripped first, then separators become underscores.
+    REQUIRE(sanitizeAssetName("../etc/passwd") == "_etc_passwd");
     REQUIRE(sanitizeAssetName("sub/dir/kick") == "sub_dir_kick");
     REQUIRE(sanitizeAssetName("a\\b\\c") == "a_b_c");
 }

@@ -24,6 +24,10 @@
 #include <string>
 #include <filesystem>
 
+// Bring AssetTarget into the global namespace so AudioEngineFacade's method
+// signatures stay unqualified (matching the existing SlotState/EqPreset pattern).
+using hathor::AssetTarget;
+
 /**
  * Abstract facade for the methods AudioEngine exposes to the control layer.
  *
