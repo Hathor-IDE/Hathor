@@ -85,6 +85,8 @@ VMResult ChuckVM::activate(unsigned sampleRate, unsigned channels)
     // Reset heartbeat for a fresh VM.
     heartbeat_.store(0, std::memory_order_release);
     blocksProduced_.store(0, std::memory_order_release);
+    // Increment the VM generation for this new lifecycle.
+    generation_.fetch_add(1, std::memory_order_acq_rel);
 
     try {
         chucKThread_ = std::thread(&ChuckVM::chucKThreadLoop, this);
@@ -305,8 +307,11 @@ void ChuckVM::chucKThreadLoop()
         renderCb_(renderBuf, kRenderBlockSize, channels_);
 
         // Increment heartbeat (for B4-K5 watchdog).
-        heartbeat_.fetch_add(1, std::memory_order_release);
-        blocksProduced_.fetch_add(1, std::memory_order_release);
+        // Per B4-K5 §HEARTBEAT: use relaxed atomic — the heartbeat is a
+        // progress indicator, not a data channel.  Synchronization semantics
+        // do not require stronger ordering here.
+        heartbeat_.fetch_add(1, std::memory_order_relaxed);
+        blocksProduced_.fetch_add(1, std::memory_order_relaxed);
 
         // Sleep until next render tick (5ms ≈ 12800 Hz at kBlockSize=64).
         // The ChucK thread is real-time-ish but not in the audio callback

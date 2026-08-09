@@ -44,20 +44,30 @@ namespace hathor::audio_worker {
 /**
  * ChuckVM — wraps a single ChucK VM instance with its dedicated OS thread.
  *
- * Thread model:
- *   - The ChucK thread is created/destroyed by activate()/deactivate(),
- *     NEVER by the audio callback thread.
- *   - compileCode() must use immediate=FALSE (deferred spork) per K0.5.
- *   - The heartbeat counter is atomic and incremented once per render
- *     block for watchdog consumption (B4-K5).
- */
+     * Thread model:
+     *   - The ChucK thread is created/destroyed by activate()/deactivate(),
+     *     NEVER by the audio callback thread.
+     *   - compileCode() must use immediate=FALSE (deferred spork) per K0.5.
+     *   - The heartbeat counter is atomic and incremented once per render
+     *     block for watchdog consumption (B4-K5).
+     *   - B4-K7: The render thread consumes handoff shreds via an injected
+     *     HandoffLoader callback, keeping the VM decoupled from VmLifecycle.
+     */
+class ChuckVM {
 class ChuckVM {
 public:
     /// Audio render callback signature.
     /// Produces numFrames of audio into outBuf (numFrames * numChannels).
     /// Called on the ChucK thread only; must be real-time safe within the VM.
     using RenderCallback = std::function<void(float* outBuf, unsigned numFrames,
-                                              unsigned numChannels)>;
+                                               unsigned numChannels)>;
+
+    /// B4-K7: Handoff loader callback signature.
+    /// Called on the ChucK thread (render loop) to consume a compiled shred
+    /// from the atomic handoff slot.  Returns a loaded shred or nullptr
+    /// if none is available.  Must be non-blocking and real-time safe
+    /// (lock-free via std::atomic_load_explicit).
+    using HandoffLoader = std::function<std::shared_ptr<CompiledShred>()>;
 
     /// Construct a VM for the given tab, with a render callback to fill
     /// the audio block buffer.
@@ -77,6 +87,11 @@ public:
     /// K0.5: initialisation is single-threaded; no concurrent compile/run.
     /// @return VMResult with ok=true on success.
     VMResult activate(unsigned sampleRate = 44100, unsigned channels = 1);
+
+    /// B4-K7: Set the handoff loader callback.  Called once on activate (or
+    /// via setHandoffLoader before activate).  The render thread invokes this
+    /// to consume compiled shreds from the atomic handoff slot.
+    void setHandoffLoader(HandoffLoader loader) noexcept;
 
     /// Stop the VM thread and tear down the ChucK instance.
     /// Per policy this can be a suspend (retain state) or full destroy.
@@ -127,8 +142,9 @@ public:
 
     /// Heartbeat counter — incremented once per render block.
     /// Read by the watchdog (B4-K5) to detect stalls.
+    /// Uses relaxed ordering per B4-K5 §HEARTBEAT (progress indicator, not data channel).
     uint64_t heartbeat() const noexcept {
-        return heartbeat_.load(std::memory_order_acquire);
+        return heartbeat_.load(std::memory_order_relaxed);
     }
 
     /// Number of render blocks produced since activation.

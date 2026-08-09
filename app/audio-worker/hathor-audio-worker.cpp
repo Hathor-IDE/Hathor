@@ -61,6 +61,7 @@
 #include "ChuckVm.hpp"
 #include "VMManager.hpp"
 #include "VmLifecycle.hpp"
+#include "VmWatchdog.hpp"
 #include "ResourcePolicy.hpp"
 
 #include <atomic>
@@ -109,6 +110,7 @@ using hathor::audio_worker::VMManager;
 using hathor::audio_worker::VMResult;
 using hathor::audio_worker::VmLifecycle;
 using hathor::audio_worker::VmState;
+using hathor::audio_worker::VmWatchdog;
 
 // ---------------------------------------------------------------------------
 // Globals
@@ -129,6 +131,27 @@ static VMManager gVmManager;
 
 // B4-K4: serialized compiler — the sole caller of any ChucK compile API.
 static std::unique_ptr<ChuckCompiler> gCompiler;
+
+// B4-K5: per-VM watchdog for hang detection and recovery.
+static std::unique_ptr<VmWatchdog> gWatchdog;
+
+// B4-K5: hang event log — records recent hang detection events for the
+// control-plane "vm_hang_status" command.  Accessed from the watchdog thread
+// (writer) and the control-plane thread (reader).  Protected by a mutex.
+struct HangEvent {
+    TabId tabId;
+    uint64_t oldGeneration;
+    uint64_t heartbeatValue;
+    std::chrono::steady_clock::time_point detectionTime;
+    uint64_t newGeneration;
+    bool recovered;
+};
+static std::vector<HangEvent> gHangEvents;
+static std::mutex gHangEventsMtx;
+
+// B4-K5: last hang notification per tab (for quick status queries).
+static std::unordered_map<TabId, HangEvent> gLastHangPerTab;
+static std::mutex gLastHangMtx;
 
 static void handleSigterm(int /*signum*/) {
     gRunning.store(false, std::memory_order_release);
@@ -353,13 +376,17 @@ static void controlPlaneThread() {
                                                   numFrames, numChannels, genForCb);
                         });
 
-                    auto result = gVmManager.activateVM(static_cast<TabId>(tabId),
-                                                         sampleRate, channels);
-                    if (result.ok) {
-                        resp = "ok vm_activated tab=" + std::to_string(tabId)
-                             + " gen=" + std::to_string(vmGen)
-                             + " state=active\n";
-                    } else {
+                     auto result = gVmManager.activateVM(static_cast<TabId>(tabId),
+                                                          sampleRate, channels);
+                     if (result.ok) {
+                         // B4-K5: register the VM with the watchdog.
+                         if (gWatchdog) {
+                             gWatchdog->registerVM(static_cast<TabId>(tabId), vmGen);
+                         }
+                         resp = "ok vm_activated tab=" + std::to_string(tabId)
+                              + " gen=" + std::to_string(vmGen)
+                              + " state=active\n";
+                     } else {
                         resp = "err vm_activate_failed tab=" + std::to_string(tabId)
                              + " code=" + std::to_string(result.errorCode)
                              + " " + result.message + "\n";
@@ -390,6 +417,10 @@ static void controlPlaneThread() {
 
                     auto result = gVmManager.activateVM(static_cast<TabId>(tabId));
                     if (result.ok) {
+                        // B4-K5: register the VM with the watchdog.
+                        if (gWatchdog) {
+                            gWatchdog->registerVM(static_cast<TabId>(tabId), vmGen);
+                        }
                         resp = "ok vm_create tab=" + std::to_string(tabId)
                              + " gen=" + std::to_string(vmGen) + "\n";
                     } else {
@@ -417,10 +448,14 @@ static void controlPlaneThread() {
                     if (mode == "destroy") suspend = false;
                 }
 
-                auto result = gVmManager.deactivateVM(static_cast<TabId>(tabId), suspend);
-                if (result.ok) {
-                    resp = "ok vm_deactivated tab=" + std::to_string(tabId)
-                         + " " + result.message + "\n";
+                 auto result = gVmManager.deactivateVM(static_cast<TabId>(tabId), suspend);
+                 if (result.ok) {
+                     // B4-K5: unregister from the watchdog when deactivating.
+                     if (gWatchdog) {
+                         gWatchdog->unregisterVM(static_cast<TabId>(tabId));
+                     }
+                     resp = "ok vm_deactivated tab=" + std::to_string(tabId)
+                          + " " + result.message + "\n";
                 } else {
                     resp = "err vm_deactivate_failed tab=" + std::to_string(tabId)
                          + " " + result.message + "\n";
@@ -437,10 +472,19 @@ static void controlPlaneThread() {
                 if (tabId < 0 || tabId >= kNumTabs) {
                     resp = "err vm_resume: tab id out of range\n";
                 } else {
-                    auto result = gVmManager.resumeVM(static_cast<TabId>(tabId));
-                    if (result.ok) {
-                        resp = "ok vm_resumed tab=" + std::to_string(tabId)
-                             + " state=active\n";
+                     auto result = gVmManager.resumeVM(static_cast<TabId>(tabId));
+                     if (result.ok) {
+                         // B4-K5: re-register with the watchdog and reset the
+                         // heartbeat baseline so the resumed VM doesn't get
+                         // immediately classified as hung (its heartbeat was
+                         // unchanged while suspended).
+                         if (gWatchdog) {
+                             uint64_t gen = gVmLifecycle.generationOf(static_cast<TabId>(tabId));
+                             gWatchdog->registerVM(static_cast<TabId>(tabId), gen);
+                             gWatchdog->resetHeartbeat(static_cast<TabId>(tabId));
+                         }
+                         resp = "ok vm_resumed tab=" + std::to_string(tabId)
+                              + " state=active\n";
                     } else {
                         resp = "err vm_resume_failed tab=" + std::to_string(tabId)
                              + " " + result.message + "\n";
@@ -457,10 +501,14 @@ static void controlPlaneThread() {
                 int tabId = std::stoi(rest);
                 if (tabId < 0 || tabId >= kNumTabs) {
                     resp = "err vm_destroy: tab id out of range\n";
-                } else {
-                    gVmLifecycle.vmDestroy(tabId);
-                    gVmManager.destroyVM(static_cast<TabId>(tabId));
-                    resp = "ok vm_destroyed tab=" + std::to_string(tabId) + "\n";
+                 } else {
+                     // B4-K5: unregister from the watchdog when destroying.
+                     if (gWatchdog) {
+                         gWatchdog->unregisterVM(static_cast<TabId>(tabId));
+                     }
+                     gVmLifecycle.vmDestroy(tabId);
+                     gVmManager.destroyVM(static_cast<TabId>(tabId));
+                     resp = "ok vm_destroyed tab=" + std::to_string(tabId) + "\n";
                 }
             } catch (...) {
                 resp = "err invalid vm_destroy arguments\n";
