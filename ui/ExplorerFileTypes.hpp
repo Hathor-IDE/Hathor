@@ -21,9 +21,10 @@
  * as song leaves.
  *
  * The ".hathor_assets" directory is a managed project-assets folder (see
- * V2 Architecture in PROGRAM.md §Phase C). Its internals are surfaced
- * structurally but individual non-song files within it are not treated as
- * song leaves unless they match a supported extension.
+ * V2 Architecture in PROGRAM.md §Phase C and B8-K5). Its internal structure
+ * (chuck_instruments/ etc.) is collapsed by the TreeBuilder into logical
+ * asset nodes (AssetNode) that surface as "Instruments → acid_bass" in the
+ * Explorer, while the physical layout remains unchanged on disk.
  */
 
 #include <filesystem>
@@ -62,6 +63,7 @@ enum class FileType
     Folder,        ///< a directory node
     SongHathor,    ///< a .hathor song file
     SongChuck,     ///< a .ck ChucK source file (A5 — recognized but eval not yet wired)
+    ManagedDir,    ///< a managed asset directory (.hathor_assets) — collapsed by TreeBuilder
     Other,         ///< unsupported — should not appear as a song leaf
 };
 

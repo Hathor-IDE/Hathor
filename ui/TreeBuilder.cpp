@@ -22,7 +22,6 @@ namespace hathor::ui {
 // Constants for managed asset directory layout (see PROGRAM.md §V2 Architecture)
 // ---------------------------------------------------------------------------
 
-static constexpr const char* kHathorAssetsDir       = ".hathor_assets";
 static constexpr const char* kChuckInstrumentsSubdir = "chuck_instruments";
 
 // ---------------------------------------------------------------------------
@@ -89,19 +88,16 @@ void TreeBuilder::buildChildren(const std::filesystem::path& dir, FolderNode& ou
 
         if (ft == FileType::Folder)
         {
-            // Special handling: .hathor_assets is a managed directory —
-            // its internal structure is collapsed into logical asset nodes.
-            // The folder itself does NOT appear as an ordinary child; instead
-            // its logical assets are synthesized into the parent FolderNode's
+            folderEntries.push_back(entry);
+        }
+        else if (ft == FileType::ManagedDir)
+        {
+            // B8-K5: .hathor_assets is a managed directory — its internal
+            // structure is collapsed into logical asset nodes.  The folder
+            // itself does NOT appear as an ordinary child; instead its
+            // logical assets are synthesized into the parent FolderNode's
             // managedCategories / managedAssets collections.
-            if (isAssetDirectory(p))
-            {
-                buildManagedAssets(p, out);
-            }
-            else
-            {
-                folderEntries.push_back(entry);
-            }
+            buildManagedAssets(p, out);
         }
         else if (ft == FileType::SongHathor || ft == FileType::SongChuck)
         {
@@ -183,7 +179,7 @@ void TreeBuilder::buildManagedAssets(
         };
 
         std::unordered_map<std::string, InstrumentFile> byStem;
-        std::vector<std::string>                        stemOrder; // preserve sort
+        std::unordered_set<std::string> stemSeen;
 
         for (const auto& entry : std::filesystem::directory_iterator(instrumentsDir, ec))
         {
@@ -207,32 +203,33 @@ void TreeBuilder::buildManagedAssets(
 
             if (ext == ".ck")
             {
-                auto& instr = byStem.try_emplace(stem).first->second;
-                if (!instr.hasCk)
-                    stemOrder.push_back(stem);
-                instr.ckPath = p;
-                instr.hasCk  = true;
+                auto [it, inserted] = byStem.emplace(stem, InstrumentFile{});
+                if (inserted)
+                    stemSeen.insert(stem);
+                it->second.ckPath  = p;
+                it->second.hasCk   = true;
             }
             else if (ext == ".wav" || ext == ".aiff" || ext == ".flac")
             {
-                auto& instr = byStem.try_emplace(stem).first->second;
-                if (!instr.hasCk && !instr.hasWav)
-                    stemOrder.push_back(stem);
+                auto [it, inserted] = byStem.emplace(stem, InstrumentFile{});
+                if (inserted)
+                    stemSeen.insert(stem);
                 // Only record the first audio file per stem (matches .wav
                 // convention; if both .wav and .aiff exist, .wav wins since
                 // it's encountered first in typical layouts).
-                if (!instr.hasWav)
+                if (!it->second.hasWav)
                 {
-                    instr.wavPath = p;
-                    instr.hasWav  = true;
+                    it->second.wavPath = p;
+                    it->second.hasWav  = true;
                 }
             }
         }
 
-        if (!stemOrder.empty())
+        if (!stemSeen.empty())
         {
             // Sort stems alphabetically for deterministic ordering.
-            std::sort(stemOrder.begin(), stemOrder.end());
+            std::vector<std::string> sortedStems(stemSeen.begin(), stemSeen.end());
+            std::sort(sortedStems.begin(), sortedStems.end());
 
             // Build the "Instruments" managed category folder.
             // Its path is the instruments directory so that asset-to-
@@ -242,7 +239,7 @@ void TreeBuilder::buildManagedAssets(
                 instrumentsDir);
             instrumentsCat.expanded = false;  // child category — collapsed by default
 
-            for (const auto& stem : stemOrder)
+            for (const auto& stem : sortedStems)
             {
                 const auto& instr = byStem[stem];
 

@@ -68,7 +68,11 @@ FileType classifyFile(const std::filesystem::path& p) noexcept
         return FileType::Other;
 
     if (std::filesystem::is_directory(p, ec))
+    {
+        if (isAssetDirectory(p))
+            return FileType::ManagedDir;
         return FileType::Folder;
+    }
 
     if (!std::filesystem::is_regular_file(p, ec))
         return FileType::Other;

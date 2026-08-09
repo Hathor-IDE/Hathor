@@ -22,6 +22,8 @@
 
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <functional>
+#include <map>
+#include <cstdint>
 
 #include "HathorLookAndFeel.hpp"
 #include "ExplorerTreeItems.hpp"
@@ -80,8 +82,8 @@ public:
 
     /// Notify the panel that the project directory's filesystem contents
     /// may have changed externally (e.g. a new .ck instrument was baked).
-    /// This is wired to juce::DirectoryWatcher so the managed view stays
-    /// in sync with the real filesystem (B8-K5 §9).
+    /// This is wired to a background polling timer so the managed view
+    /// stays in sync with the real filesystem (B8-K5 §9).
     void handleFilesystemChange();
 
     //==========================================================================
@@ -104,6 +106,28 @@ private:
     void buildRootItem();
 
     //==========================================================================
+    // B8-K5 §9: Filesystem refresh
+    // ---------------------------------------------------------------------------
+    /// Polling timer for filesystem changes.  Since juce::DirectoryWatcher
+    /// is unavailable in this JUCE version, a lightweight juce::Timer walks
+    /// the tree directory recursively and compares file_write_times to
+    /// detect additions / deletions / modifications.  When a change is
+    /// detected, the tree is rebuilt.
+    class FsPollTimer : public juce::Timer
+    {
+    public:
+        explicit FsPollTimer(ExplorerPanel& owner) : owner_(owner) {}
+        void timerCallback() override;
+        void watch(const juce::File& dir) noexcept;
+        void reset() noexcept;
+    private:
+        ExplorerPanel& owner_;
+        juce::File watchedDir_;
+        std::map<std::string, std::uint64_t> snapshot_;  // path -> write_time
+        void rebuildSnapshot() noexcept;
+    };
+
+    //==========================================================================
     // Data
     juce::File                    directory_;
     TreeBuilder                   treeBuilder_;
@@ -111,10 +135,10 @@ private:
     juce::TreeView                treeView_;
     juce::Label                   headerLabel_;
 
-    /// B8-K5 §9: filesystem watcher so the managed view reflects external
-    /// changes (new instruments, re-bakes, deletions, renames) without
-    /// requiring a manual refresh.
-    std::unique_ptr<juce::DirectoryWatcher> dirWatcher_;
+    /// B8-K5 §9: filesystem polling timer so the managed view reflects
+    /// external changes (new instruments, re-bakes, deletions, renames)
+    /// without requiring a manual refresh.
+    std::unique_ptr<FsPollTimer>  fsPollTimer_;
 
     // Non-owning — set by MainWindow after ApplicationProperties is created.
     juce::ApplicationProperties*  appProperties_{ nullptr };

@@ -12,8 +12,8 @@
 
 #include "ExplorerPanel.hpp"
 
-// juce_gui_extra for juce::DirectoryWatcher (B8-K5 §9 filesystem sync)
-#include <juce_gui_extra/juce_gui_extra.h>
+#include <chrono>
+#include <filesystem>
 
 namespace hathor::ui {
 
@@ -41,21 +41,12 @@ ExplorerPanel::ExplorerPanel()
     treeView_.setIndentSize(16);
     addAndMakeVisible(treeView_);
 
-    // B8-K5 §9: Set up filesystem watching so the managed view stays in sync
-    // with external changes (new instruments, re-bakes, deletions, renames).
-    // DirectoryWatcher fires on a background thread and the callback posts
-    // back to the message thread via MessageManager::callAsync.
-    dirWatcher_ = std::make_unique<juce::DirectoryWatcher>("", false);
-    dirWatcher_->addListener(
-        [this](const juce::String&)
-        {
-            // Fire-and-forget: rebuild the tree on any filesystem change
-            // within the watched directory.  The JUCE message-thread guard
-            // ensures refresh() only runs on the UI thread.
-            if (juce::MessageManager::getInstanceWithoutCreating() != nullptr)
-                juce::MessageManager::callAsync([this]() { refresh(); });
-        },
-        juce::StringRef("hathor-explorer"));
+    // B8-K5 §9: Set up a polling timer so the managed view stays in sync
+    // with filesystem changes (new instruments, re-bakes, deletions,
+    // renames).  juce::DirectoryWatcher is unavailable in this JUCE version,
+    // so we poll every 2 seconds, comparing file_write_times.
+    fsPollTimer_ = std::make_unique<FsPollTimer>(*this);
+    fsPollTimer_->watch(directory_);
 
     // Build the initial tree. If appProperties_ is set later, restoreLastDirectory
     // will update the directory and rebuild.
@@ -73,12 +64,10 @@ void ExplorerPanel::setDirectory(const juce::File& dir)
 
     directory_ = dir;
 
-    // B8-K5 §9: Update the watched directory so the managed view stays
+    // B8-K5 §9: Update the polling watcher so the managed view stays
     // in sync with filesystem changes.
-    if (dirWatcher_)
-    {
-        dirWatcher_->setDirectory(dir.getFullPathName(), false);
-    }
+    if (fsPollTimer_)
+        fsPollTimer_->watch(dir);
 
     // Persist the new directory for next launch.
     saveLastDirectory();
@@ -92,9 +81,9 @@ void ExplorerPanel::restoreLastDirectoryAndRefresh()
     if (restored.isDirectory())
     {
         directory_ = restored;
-        // B8-K5 §9: point the watcher at the restored directory.
-        if (dirWatcher_)
-            dirWatcher_->setDirectory(directory_.getFullPathName(), false);
+        // B8-K5 §9: point the polling timer at the restored directory.
+        if (fsPollTimer_)
+            fsPollTimer_->watch(directory_);
     }
     // If no persisted directory, keep the current one (cwd fallback).
 
@@ -209,6 +198,118 @@ void ExplorerPanel::paint(juce::Graphics& g)
     // Header background — slightly lighter than panel bg (surface-container-low)
     g.setColour(palette.surfaceLow);
     g.fillRect(0, 0, getWidth(), kHeaderHeight);
+}
+
+// ---------------------------------------------------------------------------
+// B8-K5 §9: FsPollTimer — filesystem change polling
+// ---------------------------------------------------------------------------
+
+void ExplorerPanel::FsPollTimer::timerCallback()
+{
+    std::map<std::string, std::uint64_t> current;
+    bool changed = false;
+
+    if (!watchedDir_.isDirectory())
+        return;
+
+    const auto rootPath = std::filesystem::path(watchedDir_.getFullPathName().toStdString());
+    std::error_code ec;
+
+    // Walk the tree collecting (path, write_time) pairs.
+    std::filesystem::recursive_directory_iterator it(rootPath, ec);
+    if (ec)
+        return;
+
+    std::filesystem::recursive_directory_iterator end;
+
+    while (it != end)
+    {
+        std::error_code ec2;
+        const auto& p = it->path();
+        const auto ftime = std::filesystem::last_write_time(p, ec2);
+        if (!ec2)
+        {
+            const auto epoch = std::chrono::duration_cast<std::chrono::seconds>(
+                ftime.time_since_epoch()).count();
+
+            const std::string key = p.string();
+            current[key] = static_cast<std::uint64_t>(epoch);
+        }
+        ++it;
+    }
+
+    // Compare against the snapshot.
+    if (current.size() != snapshot_.size())
+    {
+        changed = true;
+    }
+    else
+    {
+        for (const auto& [k, v] : current)
+        {
+            auto found = snapshot_.find(k);
+            if (found == snapshot_.end() || found->second != v)
+            {
+                changed = true;
+                break;
+            }
+        }
+    }
+
+    if (changed)
+    {
+        rebuildSnapshot();
+        if (juce::MessageManager::getInstanceWithoutCreating() != nullptr)
+            juce::MessageManager::callAsync([this]() { owner_.refresh(); });
+    }
+}
+
+void ExplorerPanel::FsPollTimer::watch(const juce::File& dir) noexcept
+{
+    watchedDir_ = dir;
+    rebuildSnapshot();
+
+    if (!isTimerRunning())
+        startTimer(2000);  // poll every 2 seconds
+}
+
+void ExplorerPanel::FsPollTimer::reset() noexcept
+{
+    snapshot_.clear();
+    watchedDir_ = juce::File();
+    if (isTimerRunning())
+        stopTimer();
+}
+
+void ExplorerPanel::FsPollTimer::rebuildSnapshot() noexcept
+{
+    snapshot_.clear();
+
+    if (!watchedDir_.isDirectory())
+        return;
+
+    const auto rootPath = std::filesystem::path(watchedDir_.getFullPathName().toStdString());
+    std::error_code ec;
+
+    std::filesystem::recursive_directory_iterator it(rootPath, ec);
+    if (ec)
+        return;
+
+    std::filesystem::recursive_directory_iterator end;
+
+    while (it != end)
+    {
+        std::error_code ec2;
+        const auto& p = it->path();
+        const auto ftime = std::filesystem::last_write_time(p, ec2);
+        if (!ec2)
+        {
+            const auto epoch = std::chrono::duration_cast<std::chrono::seconds>(
+                ftime.time_since_epoch()).count();
+            snapshot_[p.string()] = static_cast<std::uint64_t>(epoch);
+        }
+        ++it;
+    }
 }
 
 } // namespace hathor::ui

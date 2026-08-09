@@ -206,7 +206,9 @@ void AssetTreeItem::itemClicked(const juce::MouseEvent& /*e*/)
 void AssetTreeItem::itemDoubleClicked(const juce::MouseEvent& /*e*/)
 {
     // Double-click: same as single-click — open .ck source.
-    itemClicked(juce::MouseEvent{});
+    if (onSourceClicked_)
+        if (const juce::File f = sourceFile(); f.getFullPathName().isNotEmpty())
+            onSourceClicked_(f);
 }
 
 juce::File AssetTreeItem::sourceFile() const noexcept
