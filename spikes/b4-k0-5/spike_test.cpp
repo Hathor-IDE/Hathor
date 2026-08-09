@@ -40,7 +40,6 @@
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
-#include <cstring>
 #include <string>
 #include <thread>
 #include <vector>
@@ -54,9 +53,6 @@ static void printChout(const char* msg)
     std::printf("[chuck] %s\n", msg);
     std::fflush(stdout);
 }
-
-// Global flag for detecting crashes via signal — minimal crash detection
-static volatile sig_atomic_t g_vm_crashed = 0;
 
 struct SpikeResult
 {
@@ -75,27 +71,22 @@ struct SpikeResult
 // Representative ChucK snippets that exercise different compilation paths.
 // These mimic the kinds of programs B4-K4 would compile for per-tab VMs.
 static const std::vector<std::string> kChuckSnippets = {
-    // Simple oscillator + sine wave — the "hello world" of ChucK audio
     "SinOsc sin => dac; 440 => sin.freq; 0.5 => sin.gain; 1::second => now;",
-
-    // More complex: two oscillators with modulation
     "SinOsc lfo => blackhole; SinOsc osc => dac; "
-    "440 => osc.freq; 5 => lfo.freq; "
-    "osc + (0.01 => osc.oscillator) => now; 1::second => now;",
-
-    // Loop with a shorter duration — exercises shred scheduling
+    "440 => osc.freq; 5 => lfo.freq; 1::second => now;",
     "SinOsc osc => dac; 220 => osc.freq; "
     "repeat(4) { 0.25::second => now; }",
-
-    // Noise generator — different UGen type
     "Noise n => LPF filt => dac; 1000 => filt.freq; "
     "0.3 => n.gain; 0.5::second => now;",
-
-    // Multiple oscillators with different frequencies
     "SinOsc a => dac; SinOsc b => dac; "
     "220 => a.freq; 330 => b.freq; 0.3 => a.gain; 0.3 => b.gain; "
     "1::second => now;",
 };
+
+// Silence callback — discards chout/cherr output to avoid flooding stdout
+static void silentCallback(const char*) {}
+
+enum class SporkMode { Deferred, Immediate };
 
 // ---------------------------------------------------------------------------
 // VM owner thread function (Thread A)
@@ -118,10 +109,9 @@ struct VmContext
 static void vmOwnerThread(VmContext& ctx, unsigned long maxIterations)
 {
     constexpr int kNumFrames = 256;
-    constexpr int kNumInputChannels = 0;
     constexpr int kNumOutputChannels = 2;
 
-    SAMPLE input[kNumInputChannels * kNumFrames] = {};
+    SAMPLE input[0] = {};
     SAMPLE output[kNumOutputChannels * kNumFrames] = {};
 
     // Give Thread B a moment to start compiling
@@ -154,11 +144,8 @@ static void vmOwnerThread(VmContext& ctx, unsigned long maxIterations)
 // Compile thread function (Thread B)
 //
 // Repeatedly calls compileCode() from a separate thread while Thread A
-// is running the VM. Tests both immediate=FALSE (deferred, the path B4
-// should use) and immediate=TRUE (immediate, the path B4 must avoid).
+// is running the VM. Tests both immediate=FALSE (deferred) and immediate=TRUE.
 // ---------------------------------------------------------------------------
-
-enum class SporkMode { Deferred, Immediate };
 
 static void compileThread(VmContext& ctx,
                           std::atomic<bool>& shouldStop,
@@ -192,12 +179,8 @@ static void compileThread(VmContext& ctx,
 
         iter++;
 
-        // For rapid handoff case, no sleep — for normal cases, small sleep
-        if (maxIterations > 5000)
-        {
-            // Rapid handoff: minimal delay to maximize contention
-        }
-        else
+        // For rapid handoff case (>5000 iters), no sleep — maximize contention
+        if (maxIterations <= 5000)
         {
             std::this_thread::sleep_for(std::chrono::microseconds(500));
         }
@@ -241,14 +224,10 @@ static SpikeResult runCaseA()
         return result;
     }
 
-    // Run the VM for a short period
-    VmContext ctx;
-    ctx.chuck = chuck;
-    ctx.shouldStop.store(false);
-
     constexpr int kNumFrames = 256;
+    constexpr int kNumOutputChannels = 2;
     SAMPLE input[0] = {};
-    SAMPLE output[512] = {};
+    SAMPLE output[kNumOutputChannels * kNumFrames] = {};
 
     for (int i = 0; i < 100; i++)
     {
@@ -268,7 +247,7 @@ static SpikeResult runCaseA()
 }
 
 // ---------------------------------------------------------------------------
-// Case B: Single compilation from another thread (deferred mode)
+// Case B: Single compilation from another thread
 // ---------------------------------------------------------------------------
 
 static SpikeResult runCaseB(SporkMode mode)
@@ -294,8 +273,10 @@ static SpikeResult runCaseB(SporkMode mode)
         return result;
     }
 
-    chuck->setChoutCallback(printChout);
-    chuck->setCherrCallback(printChout);
+    // Silence chout/cherr to avoid flooding
+    chuck->setChoutCallback(silentCallback);
+    chuck->setCherrCallback(silentCallback);
+    // Chuck has no "silent" mode — just skip setting callbacks
 
     VmContext ctx;
     ctx.chuck = chuck;
@@ -331,7 +312,6 @@ static SpikeResult runCaseB(SporkMode mode)
     result.vmCrashes = ctx.crashes.load();
     result.completed = true;
 
-    // Check if VM is still alive
     if (chuck->vm_running())
     {
         chuck->removeAllShreds();
@@ -351,7 +331,7 @@ static SpikeResult runCaseB(SporkMode mode)
 // Case C/D/E: Repeated compilation (deferred and immediate modes)
 // ---------------------------------------------------------------------------
 
-static SpikeResult runCaseCD(ECaseMode /* unused */, SporkMode mode,
+static SpikeResult runCaseCD(SporkMode mode,
                              unsigned long maxIterations,
                              bool rapidHandoff = false)
 {
@@ -359,12 +339,12 @@ static SpikeResult runCaseCD(ECaseMode /* unused */, SporkMode mode,
     result.caseNum = (maxIterations < 2000) ? 3 : (rapidHandoff ? 5 : 4);
     result.caseName = (mode == SporkMode::Deferred)
         ? (rapidHandoff
-            ? "E: Rapid handoff compile (deferred/immediate=FALSE)"
+            ? "E: Rapid handoff (deferred/immediate=FALSE)"
             : (maxIterations < 2000
                 ? "C: Repeated compile (deferred/immediate=FALSE)"
                 : "D: Sustained concurrency (deferred/immediate=FALSE)"))
         : (rapidHandoff
-            ? "E: Rapid handoff compile (immediate/immediate=TRUE)"
+            ? "E: Rapid handoff (immediate/immediate=TRUE)"
             : (maxIterations < 2000
                 ? "C: Repeated compile (immediate/immediate=TRUE)"
                 : "D: Sustained concurrency (immediate/immediate=TRUE)"));
@@ -373,7 +353,7 @@ static SpikeResult runCaseCD(ECaseMode /* unused */, SporkMode mode,
     chuck->setParam(CHUCK_PARAM_SAMPLE_RATE, 44100);
     chuck->setParam(CHUCK_PARAM_INPUT_CHANNELS, 0);
     chuck->setParam(CHUCK_PARAM_OUTPUT_CHANNELS, 2);
-    chuck->setParam(CHUCK_PARAM_VM_HALT, FALSE);  // Don't halt — keep running
+    chuck->setParam(CHUCK_PARAM_VM_HALT, FALSE);
     chuck->setParam(CHUCK_PARAM_IS_REALTIME_AUDIO_HINT, FALSE);
 
     if (!chuck->init() || !chuck->start())
@@ -384,9 +364,9 @@ static SpikeResult runCaseCD(ECaseMode /* unused */, SporkMode mode,
         return result;
     }
 
-    // Redirect ChucK output to avoid interference
-    chuck->setChoutCallback(printChout);
-    chuck->setCherrCallback(printChout);
+    // Silence chout/cherr to avoid flooding
+    chuck->setChoutCallback(silentCallback);
+    chuck->setCherrCallback(silentCallback);
 
     VmContext ctx;
     ctx.chuck = chuck;
@@ -463,8 +443,9 @@ static SpikeResult runCaseF(SporkMode mode)
         return result;
     }
 
-    chuck->setChoutCallback(printChout);
-    chuck->setCherrCallback(printChout);
+    // Silence chout/cherr to avoid flooding
+    chuck->setChoutCallback(silentCallback);
+    chuck->setCherrCallback(silentCallback);
 
     VmContext ctx;
     ctx.chuck = chuck;
@@ -480,12 +461,12 @@ static SpikeResult runCaseF(SporkMode mode)
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
 
     // Compile in a tight loop, then stop VM while compiling is still happening
-    std::atomic<bool> shouldStop{false};
-    std::thread compileTh([&ctx, mode, &shouldStop, &result]() {
+    std::atomic<bool> localShouldStop{false};
+    std::thread compileTh([&ctx, mode, &localShouldStop, &result]() {
         t_CKBOOL immediate = (mode == SporkMode::Immediate) ? TRUE : FALSE;
         const char* modeStr = (mode == SporkMode::Immediate) ? "immediate" : "deferred";
 
-        for (unsigned long i = 0; i < 200 && !shouldStop.load(); i++)
+        for (unsigned long i = 0; i < 200 && !localShouldStop.load(); i++)
         {
             const std::string& snippet = kChuckSnippets[i % kChuckSnippets.size()];
             std::vector<t_CKUINT> shredIDs;
@@ -495,8 +476,6 @@ static SpikeResult runCaseF(SporkMode mode)
                 result.compileSuccesses++;
             else
                 result.compileFailures++;
-
-            // No sleep — maximize contention with shutdown
         }
 
         result.mode = modeStr;
@@ -506,15 +485,13 @@ static SpikeResult runCaseF(SporkMode mode)
     // Let compilation run for a short time, then shut down the VM
     std::this_thread::sleep_for(std::chrono::milliseconds(30));
     ctx.shouldStop.store(true);
-
-    // Also signal the compile thread to stop
-    shouldStop.store(true);
+    localShouldStop.store(true);
 
     vmThread.join();
     compileTh.join();
 
     result.runIterations = ctx.runIterations.load();
-    result.vmCrashes = ctx.cracks.load();
+    result.vmCrashes = ctx.crashes.load();
 
     std::printf("[%s] compileAttempts=%lu, successes=%lu, failures=%lu, "
                 "runIters=%lu, crashes=%lu\n",

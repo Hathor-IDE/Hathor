@@ -20,31 +20,44 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(chuck)
 
 # ---------------------------------------------------------------------------
-# Build libchuck as a static library (vanilla mode: no audio I/O)
+# Build libchuck as a static library (vanilla mode: no platform audio I/O)
 #
 # The vanilla build compiles the ChucK core source tree with no platform
-# audio drivers. We enable threads (do NOT define __DISABLE_THREADS__) so
-# that CBufferSimple retains its XMutex — this is critical for our test,
-# which exercises cross-thread compile/run concurrency.
+# audio drivers. This matches `make vanilla` in the upstream ChucK build.
 #
-# We DO disable: MIDI, network, OTF, HID, serial, keyboard, prompter, shell,
-# and STK audio (no RtAudio). This matches the vanilla build configuration.
+# We enable threads (do NOT define __DISABLE_THREADS__) so that CBufferSimple
+# retains its XMutex — this is critical for our test, which exercises
+# cross-thread compile/run concurrency.
 # ---------------------------------------------------------------------------
 
 set(CHUCK_CORE_DIR ${chuck_SOURCE_DIR}/src/core)
 
-set(CHUCK_DEFINES
-    __DISABLE_MIDI__
-    __DISABLE_NETWORK__
-    __DISABLE_OTF_SERVER__
-    __DISABLE_HID__
-    __DISABLE_SERIAL__
-    __DISABLE_KBHIT__
-    __DISABLE_PROMPTER__
-    __DISABLE_SHELL__
+# Generate parser with bison and lexer with flex.
+#
+# The ChucK source tree ships pre-generated chuck_yacc.c/.h (bison output with
+# a custom prefix), but chuck.lex includes "chuck.tab.h" (the standard bison
+# output header name). We run bison ourselves from chuck.y to produce the
+# chuck.tab.c/.h pair that the lexer expects. Similarly, flex produces
+# chuck.yy.c from chuck.lex.
+find_package(BISON REQUIRED)
+find_package(FLEX REQUIRED)
+
+add_custom_command(
+    OUTPUT ${CHUCK_CORE_DIR}/chuck.tab.c ${CHUCK_CORE_DIR}/chuck.tab.h
+    COMMAND ${BISON_EXECUTABLE} -d -o ${CHUCK_CORE_DIR}/chuck.tab.c ${CHUCK_CORE_DIR}/chuck.y
+    DEPENDS ${CHUCK_CORE_DIR}/chuck.y
+    COMMENT "Generating Chuck parser with bison"
 )
 
-# C++ source files for the ChucK core library
+add_custom_command(
+    OUTPUT ${CHUCK_CORE_DIR}/chuck.yy.c
+    COMMAND ${FLEX_EXECUTABLE} --nounistd -o ${CHUCK_CORE_DIR}/chuck.yy.c ${CHUCK_CORE_DIR}/chuck.lex
+    DEPENDS ${CHUCK_CORE_DIR}/chuck.lex ${CHUCK_CORE_DIR}/chuck.tab.h
+    COMMENT "Generating Chuck lexer with flex"
+)
+
+# C++ source files for the ChucK core library (matches the vanilla makefile's
+# CXXOBJS_CORE list exactly)
 set(CHUCK_CXX_SRCS
     ${CHUCK_CORE_DIR}/chuck_absyn.cpp
     ${CHUCK_CORE_DIR}/chuck_parse.cpp
@@ -95,10 +108,10 @@ set(CHUCK_CXX_SRCS
     ${CHUCK_CORE_DIR}/uana_extract.cpp
 )
 
-# C source files for the ChucK core library (pre-generated parser + lex
-# output from chuck_yacc.c / chuck_yacc.h are checked into the repo)
+# C source files for the ChucK core library (bison-generated parser +
+# flex-generated lexer + utility C sources)
 set(CHUCK_C_SRCS
-    ${CHUCK_CORE_DIR}/chuck_yacc.c
+    ${CHUCK_CORE_DIR}/chuck.tab.c
     ${CHUCK_CORE_DIR}/chuck.yy.c
     ${CHUCK_CORE_DIR}/util_network.c
     ${CHUCK_CORE_DIR}/util_raw.c
@@ -107,12 +120,6 @@ set(CHUCK_C_SRCS
 
 # liblo sources (OSC library, used internally by ChucK)
 file(GLOB CHUCK_LO_SRCS ${CHUCK_CORE_DIR}/lo/*.c)
-
-# libsndfile is not needed in vanilla mode (no audio file I/O in core)
-# but util_sndfile.c may be referenced; check and add if present
-if(EXISTS ${CHUCK_CORE_DIR}/util_sndfile.c)
-    list(APPEND CHUCK_C_SRCS ${CHUCK_CORE_DIR}/util_sndfile.c)
-endif()
 
 add_library(libchuck STATIC
     ${CHUCK_CXX_SRCS}
@@ -125,12 +132,7 @@ target_include_directories(libchuck PUBLIC
     ${CHUCK_CORE_DIR}/lo
 )
 
-# Apply defines for vanilla build
-foreach(DEF ${CHUCK_DEFINES})
-    target_compile_definitions(libchuck PUBLIC ${DEF})
-endforeach()
-
-# C++ source files need C++14 at minimum
+# C++ source files need C++14 at minimum (ChucK core requirement)
 target_compile_features(libchuck PUBLIC cxx_std_14)
 
 # The lo library needs HAVE_CONFIG_H
@@ -138,7 +140,26 @@ target_compile_definitions(libchuck PUBLIC HAVE_CONFIG_H)
 
 # macOS frameworks needed by some ChucK utility code
 if(APPLE)
-    target_link_libraries(libchuck PUBLIC "-framework Foundation")
+    target_link_libraries(libchuck PUBLIC
+        "-framework Foundation"
+        "-framework CoreFoundation"
+        "-framework CoreMIDI"
+        "-framework CoreAudio"
+        "-framework AudioToolbox"
+        "-framework IOKit"
+        "-framework ApplicationServices"
+    )
+
+    # Stub out private framework symbols (MultitouchSupport) that are only
+    # referenced by HID code paths we never exercise in the spike.
+    # These are weak symbols so they only resolve if actually used.
+    target_link_options(libchuck PUBLIC "-Wl,-undefined,dynamic_lookup")
+endif()
+
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(SNDFILE IMPORTED_TARGET sndfile)
+if(SNDFILE_FOUND)
+    target_link_libraries(libchuck PUBLIC PkgConfig::SNDFILE)
 endif()
 
 # ---------------------------------------------------------------------------
