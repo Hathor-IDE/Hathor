@@ -17,8 +17,6 @@
 // even without app/ in hathor-control's include_directories).
 #include "../app/AudioEngineFacade.hpp"
 #include "../app/SampleBank.hpp"
-#include "../app/AudioWorkerManager.hpp"
-#include "../app/AssetPathResolver.hpp"
 
 #include <nlohmann/json.hpp>
 

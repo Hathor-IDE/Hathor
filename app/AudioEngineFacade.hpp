@@ -301,4 +301,3 @@ public:
     /// Source of truth: AssetPathResolver::projectDir().
     virtual std::filesystem::path currentProjectDir() const noexcept = 0;
 };
-};

@@ -192,7 +192,8 @@ nlohmann::json ProjectReadFacade::getCurrentSong() const
             {"selection",       nullptr},
             {"diagnostics",     nlohmann::json::array()},
             {"referenced_assets", nlohmann::json::array()},
-            {"slot_index",      -1}
+            {"slot_count",      0},
+            {"timestamp",       isoTimestamp()}
         };
         return result;
     }
@@ -257,7 +258,9 @@ nlohmann::json ProjectReadFacade::getCurrentSong() const
         {"selection",          slot.slotName},
         {"diagnostics",        std::move(diagnostics)},
         {"referenced_assets",  std::move(referencedAssets)},
-        {"slot_index",         slot.slotIndex}
+        {"slot_index",         slot.slotIndex},
+        {"slot_count",         static_cast<int>(slots.size())},
+        {"timestamp",          isoTimestamp()}
     };
 
     return result;
@@ -297,7 +300,8 @@ nlohmann::json ProjectReadFacade::listSamples() const
 
     return nlohmann::json{
         {"ok",      true},
-        {"samples", std::move(samples)}
+        {"samples", std::move(samples)},
+        {"timestamp", isoTimestamp()}
     };
 }
 
@@ -340,7 +344,8 @@ nlohmann::json ProjectReadFacade::listChuckInstruments(
 
     return nlohmann::json{
         {"ok",            true},
-        {"instruments",   std::move(result)}
+        {"instruments",   std::move(result)},
+        {"timestamp",     isoTimestamp()}
     };
 }
 
@@ -393,7 +398,7 @@ nlohmann::json ProjectReadFacade::getDiagnostics(
             const auto& err = std::get<hathor::ParseError>(result);
             diagnostics.push_back(nlohmann::json{
                 {"severity",      "error"},
-                {"code",          "MINI_PARSE_ERROR"},
+                {"code",          "PARSE_ERROR"},
                 {"message",       err.message},
                 {"resource_id",   std::string(sourceId)},
                 {"source",        "miniparser"},
@@ -438,7 +443,8 @@ nlohmann::json ProjectReadFacade::getDiagnostics(
 
     return nlohmann::json{
         {"ok",           true},
-        {"diagnostics",  std::move(diagnostics)}
+        {"diagnostics",  std::move(diagnostics)},
+        {"timestamp",    isoTimestamp()}
     };
 }
 
