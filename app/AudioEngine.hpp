@@ -140,6 +140,35 @@ public:
     float getMasterGain() const noexcept override;
 
     // ------------------------------------------------------------------
+    // B7-K2: Master-bus preset EQ
+    // ------------------------------------------------------------------
+    //
+    // Four fixed presets (Flat / Bass Boost / Vocal / Bright) applied at the
+    // master mix stage, AFTER per-voice filtering and ChucK audio, but BEFORE
+    // final master gain (decision #13):
+    //
+    //   Master EQ → Final Master Gain → Output
+    //
+    // Preset selection is called from the worker/control thread (or command
+    // handler).  Coefficients are computed there and published to the audio
+    // thread via the same std::shared_ptr + atomic_store/load pattern used for
+    // SlotState.  No mutex, no allocation in the audio callback.
+    //
+    // Requirement references: B7-K2 §3, §4, §5
+
+    /// Select the master-bus EQ preset.
+    /// Called on the worker/control thread.  Computes the complete replacement
+    /// filter state and publishes it atomically.
+    void setMasterEqPreset(hathor::EqPreset preset) noexcept override;
+
+    /// Returns the currently active EQ preset.
+    hathor::EqPreset getMasterEqPreset() const noexcept override;
+
+    /// Load the current MasterEqState (acquire ordering).
+    /// May return nullptr during early startup (before the first preset is set).
+    std::shared_ptr<hathor::MasterEqState> loadEqState() const noexcept;
+
+    // ------------------------------------------------------------------
     // Hot-swap slot API (called from WorkerThread — Req 11.1–11.5, 13.1–13.4)
     // ------------------------------------------------------------------
 
@@ -220,6 +249,10 @@ private:
     std::atomic<bool>     running_{true};     ///< transport running flag
     std::atomic<int>      sampleRate_{44100}; ///< set when device opens
 
+    // B4-K3: Worker process generation — used by tryReadAudioBlock to reject
+    // stale shared-memory samples when the worker has been restarted.
+    std::atomic<uint64_t> workerGeneration_{0};
+
     // ------------------------------------------------------------------
     // Master gain (Req 26.5, 26.6)
     // ------------------------------------------------------------------
@@ -281,4 +314,24 @@ private:
     // without a worker path). slotPlay/slotStop delegate VM activation
     // to this manager.
     std::unique_ptr<hathor::AudioWorkerManager> workerMgr_;
+
+    // ------------------------------------------------------------------
+    // B7-K2: Master-bus preset EQ state
+    // ------------------------------------------------------------------
+    //
+    // The active EQ state is an immutable shared_ptr<MasterEqState>.
+    // The control/worker thread publishes a COMPLETE replacement via
+    // std::atomic_store_explicit(release); the audio thread consumes it via
+    // std::atomic_load_explicit(acquire).  This is the same pattern used for
+    // SlotState above (Apple-Clang-compatible).
+    //
+    // The audio thread never mutates the COEFFICIENTS — only the delay-line
+    // state inside the loaded MasterEqState advances per sample.  When a new
+    // preset is selected, a fresh MasterEqState (zeroed delays) is published;
+    // the audio thread transitions to it on the next callback.
+    //
+    // Requirement references: B7-K2 §4, §5, §6
+    std::shared_ptr<hathor::MasterEqState> activeEqState_;
+    /// Current preset (atomic for quick introspection without loading the SP).
+    std::atomic<int> eqPreset_{static_cast<int>(hathor::EqPreset::Flat)};
 };

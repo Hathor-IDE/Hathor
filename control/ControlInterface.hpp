@@ -151,6 +151,10 @@ private:
     /// set-gain <value>  (Req 26.7, 26.8)
     void handleSetGain(std::string_view arg);
 
+    /// set-eq-preset <preset>  (B7-K2)
+    /// Preset names: flat, bass-boost, vocal, bright
+    void handleSetEqPreset(std::string_view arg);
+
     /// quit  (Req 16.5)
     void handleQuit();
 

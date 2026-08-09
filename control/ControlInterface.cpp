@@ -150,6 +150,8 @@ void ControlInterface::dispatch(std::string_view rawLine)
         handleBpm(trim(rest));
     } else if (cmd == "set-gain") {
         handleSetGain(trim(rest));
+    } else if (cmd == "set-eq-preset") {
+        handleSetEqPreset(trim(rest));
     } else if (cmd == "clear-pattern") {
         handleClearPattern(trim(rest));
     } else if (cmd == "set-pattern") {
@@ -349,6 +351,47 @@ void ControlInterface::handleSetGain(std::string_view arg)
         {"ok",   true},
         {"cmd",  "set-gain"},
         {"gain", clamped}
+    });
+}
+
+// ---------------------------------------------------------------------------
+// handleSetEqPreset() — B7-K2 master-bus preset EQ
+// ---------------------------------------------------------------------------
+//
+// Preset names: flat, bass-boost, vocal, bright
+// This is called on the control/worker thread (not the audio thread).
+// setMasterEqPreset() computes the complete replacement filter state and
+// publishes it atomically — no allocation or mutex in the audio callback.
+// ---------------------------------------------------------------------------
+
+void ControlInterface::handleSetEqPreset(std::string_view arg)
+{
+    hathor::EqPreset preset;
+
+    if (arg == "flat") {
+        preset = hathor::EqPreset::Flat;
+    } else if (arg == "bass-boost") {
+        preset = hathor::EqPreset::BassBoost;
+    } else if (arg == "vocal") {
+        preset = hathor::EqPreset::Vocal;
+    } else if (arg == "bright") {
+        preset = hathor::EqPreset::Bright;
+    } else {
+        emitResponse({
+            {"ok",    false},
+            {"cmd",   "set-eq-preset"},
+            {"error", "unknown preset; valid: flat, bass-boost, vocal, bright"},
+            {"value", std::string(arg)}
+        });
+        return;
+    }
+
+    audio_.setMasterEqPreset(preset);
+
+    emitResponse({
+        {"ok",      true},
+        {"cmd",     "set-eq-preset"},
+        {"preset",  std::string(arg)}
     });
 }
 

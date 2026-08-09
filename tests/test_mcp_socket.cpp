@@ -133,6 +133,15 @@ public:
         return {};
     }
 
+    void setMasterEqPreset(hathor::EqPreset preset) noexcept override
+    {
+        (void)preset;
+    }
+    hathor::EqPreset getMasterEqPreset() const noexcept override
+    {
+        return hathor::EqPreset::Flat;
+    }
+
 private:
     double bpm_ = 120.0;
     bool running_ = false;

@@ -208,6 +208,11 @@ inline void biquadProcessSample(float  inL,
 // ---------------------------------------------------------------------------
 // B7-K1 + B7-K2: Generic biquad coefficient + processing
 // ---------------------------------------------------------------------------
+//
+// These types live in the hathor namespace (alongside kMinQ/kMaxQ) so they
+// can be used by both B7-K1 (per-voice) and B7-K2 (master-bus).
+
+namespace hathor {
 
 /**
  * BiquadCoeffs — a single normalized (a0=1) biquad coefficient set.
@@ -423,3 +428,5 @@ inline void biquadProcessSample(float  inL,
     state.x2r = state.x1r; state.x1r = inR;
     state.y2r = state.y1r; state.y1r = outR;
 }
+
+} // namespace hathor

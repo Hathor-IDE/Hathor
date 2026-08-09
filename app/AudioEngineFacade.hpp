@@ -17,6 +17,7 @@
  */
 
 #include "SlotState.hpp"
+#include "MasterEq.hpp"
 
 #include <memory>
 #include <string>
@@ -53,6 +54,15 @@ public:
 
     /// Get the current master output gain (relaxed ordering).
     virtual float getMasterGain() const noexcept = 0;
+
+    // --- B7-K2: Master-bus preset EQ ---
+
+    /// Select the master-bus EQ preset (worker/control thread).
+    /// Publishes a complete replacement filter state atomically.
+    virtual void setMasterEqPreset(hathor::EqPreset preset) noexcept = 0;
+
+    /// Returns the currently active EQ preset.
+    virtual hathor::EqPreset getMasterEqPreset() const noexcept = 0;
 
     // --- Hot-swap slot API ---
 

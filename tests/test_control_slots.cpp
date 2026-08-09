@@ -78,6 +78,12 @@ public:
     bool stopCkTab(int) noexcept override { return false; }
     std::string queryCkTab(int) const override { return {}; }
 
+    void setMasterEqPreset(hathor::EqPreset) noexcept override {}
+    hathor::EqPreset getMasterEqPreset() const noexcept override
+    {
+        return hathor::EqPreset::Flat;
+    }
+
     static constexpr int kNumSlots = 16;
     std::string names_[kNumSlots];
     std::shared_ptr<SlotState> states_[kNumSlots];

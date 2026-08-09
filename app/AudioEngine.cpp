@@ -58,6 +58,10 @@ std::string AudioEngine::startWorker(const std::string& workerPath)
     limits.maxVmMemoryMb = 256;
     workerMgr_->setResourceLimits(limits);
 
+    // Record the worker's initial generation so the audio callback can reject
+    // stale samples after a worker restart.
+    workerGeneration_.store(workerMgr_->generation(), std::memory_order_release);
+
     return "";
 }
 
@@ -253,6 +257,50 @@ float AudioEngine::getMasterGain() const noexcept
 }
 
 // ---------------------------------------------------------------------------
+// B7-K2: Master-bus preset EQ (decision #13 signal chain)
+// ---------------------------------------------------------------------------
+
+void AudioEngine::setMasterEqPreset(hathor::EqPreset preset) noexcept
+{
+    // --- Worker/control thread path ---
+    //
+    // 1. Compute the complete preset coefficients from the preset spec.
+    // 2. Construct the replacement EQ state (zeroed delay lines).
+    // 3. Atomically publish the complete state.
+    //
+    // The audio thread will see the new state on its next atomic_load.
+    // No partial state is ever observed.  No mutex, no allocation on the
+    // audio thread (allocation happens here on the control thread).
+    //
+    // B7-K2 §4, §5, §6
+
+    const int sr = sampleRate_.load(std::memory_order_acquire);
+    if (sr <= 0)
+        return; // device not yet open — preset will be applied on device start
+
+    // Build the complete replacement state BEFORE publishing.
+    auto newState = hathor::MasterEqState::create(preset, sr);
+    if (!newState)
+        return;
+
+    // Atomic publication: release store so the audio thread's acquire load
+    // sees the fully-constructed state.
+    std::atomic_store_explicit(&activeEqState_, std::move(newState),
+                               std::memory_order_release);
+    eqPreset_.store(static_cast<int>(preset), std::memory_order_relaxed);
+}
+
+hathor::EqPreset AudioEngine::getMasterEqPreset() const noexcept
+{
+    return static_cast<hathor::EqPreset>(eqPreset_.load(std::memory_order_relaxed));
+}
+
+std::shared_ptr<hathor::MasterEqState> AudioEngine::loadEqState() const noexcept
+{
+    return std::atomic_load_explicit(&activeEqState_, std::memory_order_acquire);
+}
+
+// ---------------------------------------------------------------------------
 // Hot-swap slot API
 // ---------------------------------------------------------------------------
 
@@ -369,6 +417,14 @@ void AudioEngine::audioDeviceAboutToStart(juce::AudioIODevice* device)
 
     const int rate = static_cast<int>(device->getCurrentSampleRate());
     sampleRate_.store(rate, std::memory_order_relaxed);
+
+    // B7-K2: Initialize the EQ state now that the real sample rate is known.
+    // If a preset was already selected via setMasterEqPreset() before the
+    // device opened (the sample rate was a placeholder), re-apply it with
+    // the correct rate.  If no preset was selected yet, this publishes Flat.
+    const hathor::EqPreset currentPreset =
+        static_cast<hathor::EqPreset>(eqPreset_.load(std::memory_order_relaxed));
+    setMasterEqPreset(currentPreset);
 
     // Reset the transport clock on device (re)start so it begins from zero.
     sampleClock_.store(0, std::memory_order_relaxed);
@@ -538,14 +594,87 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
 
     // ------------------------------------------------------------------
     // Step 4: Mix all active voices into the output buffer (Req 9.3).
+    //   This includes per-voice B7-K1 filtering (cutoff/resonance).
     // ------------------------------------------------------------------
     if (left && right) {
         voicePool_.mix(left, right, numSamples, sampleRate);
     }
 
     // ------------------------------------------------------------------
-    // Step 4a: Apply master gain to the mixed output (Req 26.5, 26.6).
-    // Relaxed load is sufficient — continuous fader, no sync dependency.
+    // Step 4a: Mix ChucK audio into the master signal (B4).
+    //   ChucK instruments are rendered by the out-of-process worker.
+    //   The audio plane is sampled via the validated shared-memory ring
+    //   (B4-K1/B4-K2).  This happens AFTER per-voice filtering and BEFORE
+    //   the master EQ — ChucK audio is part of the master mix.
+    //
+    //   B4-K2's transport is mono (kBlockSize = 64 samples).
+    //   We deinterleave and mix into both left and right output channels.
+    //
+    //   Signal chain (decision #13, B7-K2):
+    //     per-voice processing + B7-K1 filtering
+    //         ↓
+    //     voice mix  +  ChucK audio
+    //         ↓
+    //     Master EQ    (B7-K2)
+    //         ↓
+    //     Final Master Gain
+    //         ↓
+    //     Output
+    // ------------------------------------------------------------------
+    if (left && right && workerMgr_) {
+        const uint64_t workerGen = workerGeneration_.load(std::memory_order_acquire);
+        constexpr uint32_t kCkBlockSize = 64;
+        float ckBuf[kCkBlockSize];
+
+        // tryReadAudioBlock returns false if the worker is dead, stale, or
+        // there's no data — in that case we simply skip (the voice mix
+        // already in the output buffer is preserved).
+        uint32_t blockSize = static_cast<uint32_t>(numSamples);
+        if (blockSize > kCkBlockSize)
+            blockSize = kCkBlockSize;
+
+        if (workerMgr_->tryReadAudioBlock(ckBuf, blockSize, workerGen)) {
+            for (uint32_t s = 0; s < blockSize; ++s) {
+                left[s]  += ckBuf[s];
+                right[s] += ckBuf[s];
+            }
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Step 4b: Apply Master-bus EQ (B7-K2).
+    //   The EQ is the LAST signal-shaping stage before master gain.
+    //   We load the current immutable state via atomic_load (acquire).
+    //   Processing is allocation-free: we iterate the fixed number of
+    //   bands and apply the direct-form-I difference equation.
+    //
+    //   B7-K2 §3, §4, §5, §6 — no mutex, no allocation, no mutation of
+    //   coefficients the audio thread is reading.
+    // ------------------------------------------------------------------
+    if (left && right) {
+        // Acquire-load the complete, immutable EQ state.  The pointer
+        // itself is atomically swapped; the pointed-to MasterEqState's
+        // delay fields are mutated in-place (they are runtime state, not
+        // coefficients — see B7-K2 §6).
+        std::shared_ptr<hathor::MasterEqState> eqState =
+            std::atomic_load_explicit(&activeEqState_, std::memory_order_acquire);
+
+        if (eqState && eqState->bandCount > 0) {
+            for (int s = 0; s < numSamples; ++s) {
+                float outL, outR;
+                eqState->processSample(left[s], right[s], outL, outR);
+                left[s]  = outL;
+                right[s] = outR;
+            }
+        }
+        // For Flat (bandCount==0) the filter is identity — we skip processing
+        // entirely, which is exactly the neutral behavior required (B7-K2 §8).
+    }
+
+    // ------------------------------------------------------------------
+    // Step 4c: Apply master gain to the mixed + EQ'd output (Req 26.5, 26.6).
+    //   Master gain is the FINAL gain stage — after the EQ (decision #13).
+    //   Relaxed load is sufficient — continuous fader, no sync dependency.
     // ------------------------------------------------------------------
     const float gain = masterGain_.load(std::memory_order_relaxed);
     if (gain != 1.0f) {
@@ -557,7 +686,7 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
     }
 
     // ------------------------------------------------------------------
-    // Step 4b: Capture mixed output to WAV file if capture is open.
+    // Step 4d: Capture mixed output to WAV file if capture is open.
     // ------------------------------------------------------------------
     if (captureOpen_.load(std::memory_order_acquire) && captureWriter_ && left && right) {
         // AudioFormatWriter::writeFromFloatArrays expects a non-owning array of
