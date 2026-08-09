@@ -34,6 +34,30 @@ struct Voice {
     float       pan         = 0.5f;    ///< Stereo position [0.0 = hard left, 1.0 = hard right]
     std::size_t beginSample = 0;       ///< Start frame index (after begin fraction applied)
     std::size_t endSample   = 0;       ///< Exclusive end frame index
+
+    // B7-K1: Per-voice biquad low-pass filter state.
+    // Coefficients are computed ONCE at trigger time from the event's
+    // cutoff/resonance parameters (RBJ Audio EQ Cookbook low-pass) and remain
+    // fixed for the lifetime of the voice.  The delay values advance
+    // sample-by-sample in mix().
+    //
+    // Direct-form-I biquad with separate left/right delay lines so that
+    // stereo voices maintain independent filter state per channel.  Mono
+    // voices use only the "L" chain (left and right samples get the same
+    // filter treatment, which is correct since they are identical).
+    float b0  = 1.0f;                 ///< feed-forward coefficient (b0/a0)
+    float b1  = 0.0f;                 ///< feed-forward coefficient (b1/a0)
+    float b2  = 0.0f;                 ///< feed-forward coefficient (b2/a0)
+    float a1  = 0.0f;                 ///< feedback coefficient (a1/a0, cookbook value — used as -a1 in diff-eq)
+    float a2  = 0.0f;                 ///< feedback coefficient (a2/a0, cookbook value — used as -a2 in diff-eq)
+    float x1  = 0.0f;                 ///< input delay  x[n-1] (left)
+    float x2  = 0.0f;                 ///< input delay  x[n-2] (left)
+    float y1  = 0.0f;                 ///< output delay y[n-1] (left)
+    float y2  = 0.0f;                 ///< output delay y[n-2] (left)
+    float x1r = 0.0f;                ///< input delay  x[n-1] (right)
+    float x2r = 0.0f;                ///< input delay  x[n-2] (right)
+    float y1r = 0.0f;                ///< output delay y[n-1] (right)
+    float y2r = 0.0f;                ///< output delay y[n-2] (right)
 };
 
 // ---------------------------------------------------------------------------
@@ -59,24 +83,30 @@ public:
     /// Trigger a new voice from the given parameter map.
     ///
     /// @param params        Per-event parameters ("s", "n", "gain", "speed", "pan",
-    ///                      "begin", "end", "cut").
+    ///                      "begin", "end", "cut", "cutoff", "resonance").
     /// @param bank          Sample bank used to resolve "s"/"n" lookup.
     /// @param sampleOffset  Frame offset within the current audio buffer where the
     ///                      event fires (used for voice age comparison).
     /// @param currentSample Absolute sample clock at the start of the current buffer.
+    /// @param sampleRate    Audio device sample rate in Hz (needed for B7-K1 filter
+    ///                      coefficient calculation — set once at trigger time).
     /// @param slotId        Index of the slot that owns this voice (-1 if none).
     void trigger(const hathor::ParamMap& params,
                  const SampleBank&       bank,
                  int                     sampleOffset,
                  uint64_t                currentSample,
+                 int                     sampleRate,
                  int8_t                  slotId = -1);
 
     /// Mix all Playing voices into the output buffers.
     ///
-    /// @param left       Pointer to left-channel output buffer (numSamples frames).
-    /// @param right      Pointer to right-channel output buffer (numSamples frames).
-    /// @param numSamples Number of frames to render.
-    void mix(float* left, float* right, int numSamples);
+    /// @param left        Pointer to left-channel output buffer (numSamples frames).
+    /// @param right       Pointer to right-channel output buffer (numSamples frames).
+    /// @param numSamples  Number of frames to render.
+    /// @param sampleRate  Audio device sample rate in Hz (needed for B7-K1 filter
+    ///                    coefficient calculation — fixed at trigger time, passed here
+    ///                    for consistency with the per-voice state model).
+    void mix(float* left, float* right, int numSamples, int sampleRate);
 
     /// Immediately silence all Playing voices (e.g. on transport stop).
     void silenceAll() noexcept;

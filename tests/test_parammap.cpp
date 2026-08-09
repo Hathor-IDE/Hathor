@@ -165,4 +165,6 @@ TEST_CASE("Standard key constants have expected values", "[ParamMap][keys]")
     REQUIRE(keys::kBegin == "begin");
     REQUIRE(keys::kEnd   == "end");
     REQUIRE(keys::kCut   == "cut");
+    REQUIRE(keys::kCutoff    == "cutoff");
+    REQUIRE(keys::kResonance == "resonance");
 }

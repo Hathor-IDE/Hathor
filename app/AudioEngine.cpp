@@ -519,8 +519,9 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
 
              // Trigger the voice (Req 9.3).  Pass the slot index as the owner
              // so that slotStop() can silence voices from this slot.
-             voicePool_.trigger(ev.value, bank_, sampleOffset, clockNow,
-                                static_cast<int8_t>(i));
+              voicePool_.trigger(ev.value, bank_, sampleOffset, clockNow,
+                                 sampleRate,
+                                 static_cast<int8_t>(i));
 
              // Accumulate for the visualizer (no alloc, capped at kMaxFrameEvents).
              // B2: stamp the originating slot index onto the event before it
@@ -539,7 +540,7 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
     // Step 4: Mix all active voices into the output buffer (Req 9.3).
     // ------------------------------------------------------------------
     if (left && right) {
-        voicePool_.mix(left, right, numSamples);
+        voicePool_.mix(left, right, numSamples, sampleRate);
     }
 
     // ------------------------------------------------------------------

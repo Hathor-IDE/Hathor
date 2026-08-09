@@ -9,6 +9,7 @@
 #include <limits>
 #include <string>
 
+#include "BiquadFilter.hpp"
 #include "hathor/Value.hpp"
 
 // ---------------------------------------------------------------------------
@@ -42,6 +43,16 @@ static std::string_view getString(const hathor::Value& v) noexcept
     if (const std::string* s = std::get_if<std::string>(&v))
         return *s;
     return {};
+}
+
+/// Reset a Voice's filter state to zero (call at trigger time).
+/// Uses the shared BiquadFilter helpers from BiquadFilter.hpp.
+static void resetFilterState(Voice& v) noexcept
+{
+    v.x1 = 0.0f;  v.x2  = 0.0f;
+    v.y1 = 0.0f;  v.y2  = 0.0f;
+    v.x1r = 0.0f; v.x2r = 0.0f;
+    v.y1r = 0.0f; v.y2r = 0.0f;
 }
 
 } // namespace
@@ -101,6 +112,7 @@ void VoicePool::trigger(const hathor::ParamMap& params,
                         const SampleBank&       bank,
                         int                     sampleOffset,
                         uint64_t                currentSample,
+                        int                     sampleRate,
                         int8_t                  slotId)
 {
     // ------------------------------------------------------------------
@@ -174,6 +186,18 @@ void VoicePool::trigger(const hathor::ParamMap& params,
         cutGroup = getInt64(*v, -1);
 
     // ------------------------------------------------------------------
+    // 3a. Read B7-K1 filter parameters (cutoff/resonance) with defaults.
+    //     Defaults: cutoff ≈ 20000 Hz (effectively off), resonance ≈ 0.707 (Butterworth).
+    // ------------------------------------------------------------------
+    double cutoff    = hathor::kDefaultCutoff;
+    double resonance = hathor::kDefaultResonance;
+
+    if (const hathor::Value* v = params.get(hathor::keys::kCutoff))
+        cutoff = getDouble(*v, hathor::kDefaultCutoff);
+    if (const hathor::Value* v = params.get(hathor::keys::kResonance))
+        resonance = getDouble(*v, hathor::kDefaultResonance);
+
+    // ------------------------------------------------------------------
     // 4. Apply cut-group silencing (Req 10.5)
     //    Immediately silence all voices in the same cut group (>0)
     // ------------------------------------------------------------------
@@ -198,7 +222,18 @@ void VoicePool::trigger(const hathor::ParamMap& params,
     // ------------------------------------------------------------------
     // 6. Configure the voice (Req 10.6 — set once at trigger time)
     // ------------------------------------------------------------------
+
     Voice& voice        = voices_[slot];
+
+    // B7-K1: Calculate biquad low-pass coefficients ONCE at trigger time.
+    // This runs on the non-audio path.  Coefficients are stored directly in
+    // the Voice and remain fixed for the voice's lifetime.  mix() will use
+    // these coefficients on every sample — no per-sample recomputation.
+    hathor::computeLpCoeffs(cutoff, resonance, sampleRate,
+                    voice.b0, voice.b1, voice.b2, voice.a1, voice.a2);
+    // Flush filter state so each voice starts with zeroed delays.
+    resetFilterState(voice);
+
     voice.state         = Voice::State::Playing;
     voice.startSample   = absoluteStart;
     voice.cutGroup      = cutGroup;
@@ -226,8 +261,10 @@ void VoicePool::trigger(const hathor::ParamMap& params,
 // No heap allocation; all arithmetic on stack variables.
 // ---------------------------------------------------------------------------
 
-void VoicePool::mix(float* left, float* right, int numSamples)
+void VoicePool::mix(float* left, float* right, int numSamples, int sampleRate)
 {
+    (void)sampleRate; // B7-K1 coefficients are pre-computed at trigger time.
+
     for (int vi = 0; vi < kVoices; ++vi) {
         Voice& v = voices_[vi];
         if (v.state != Voice::State::Playing)
@@ -243,6 +280,13 @@ void VoicePool::mix(float* left, float* right, int numSamples)
         // endFrame in terms of frames (sampleLen / numChannels = total frames)
         const std::size_t totalFrames = v.sampleLen / static_cast<std::size_t>(numCh);
         const std::size_t endFrame    = v.endSample;
+
+        // Cache biquad coefficients per voice (fixed for the entire voice lifetime).
+        const float b0 = v.b0;
+        const float b1 = v.b1;
+        const float b2 = v.b2;
+        const float a1 = v.a1;
+        const float a2 = v.a2;
 
         for (int s = 0; s < numSamples; ++s) {
             if (v.readPos >= static_cast<double>(endFrame)) {
@@ -282,6 +326,19 @@ void VoicePool::mix(float* left, float* right, int numSamples)
                 sampleL = static_cast<float>(l0 + frac * (l1 - l0));
                 sampleR = static_cast<float>(r0 + frac * (r1 - r0));
             }
+
+            // B7-K1: Per-voice biquad low-pass filter — direct-form I.
+            // Processes EVERY sample of the voice's playback, before gain/pan/mix.
+            // Coefficients are fixed (computed at trigger time); only the delay
+            // state advances per sample.  Uses the shared helper from BiquadFilter.hpp.
+            float outL, outR;
+            hathor::biquadProcessSample(sampleL, sampleR,
+                                        b0, b1, b2, a1, a2,
+                                        v.x1, v.x2, v.y1, v.y2,
+                                        v.x1r, v.x2r, v.y1r, v.y2r,
+                                        outL, outR);
+            sampleL = outL;
+            sampleR = outR;
 
             // Apply gain and pan, mix into output
             left[s]  += sampleL * leftGain;

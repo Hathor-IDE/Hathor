@@ -107,6 +107,35 @@ include(Catch)
 catch_discover_tests(hathor-audio-transport-tests DISCOVERY_MODE PRE_TEST)
 
 # ---------------------------------------------------------------------------
+# hathor-b7-k1-filter-tests — B7-K1 per-voice biquad low-pass filter
+#
+# Tests computeLpCoeffs, biquadProcessSample, and VoicePool end-to-end
+# filtering.  JUCE-free: VoicePool.cpp and the header-only BiquadFilter.hpp
+# and SampleBank.hpp have no JUCE dependency (SampleBank::find/addTestEntry
+# are inline in the header; VoicePool.cpp uses only standard headers).
+# ---------------------------------------------------------------------------
+add_executable(hathor-b7-k1-filter-tests
+    test_b7_k1_filter.cpp
+    ${CMAKE_SOURCE_DIR}/app/VoicePool.cpp
+)
+
+target_compile_features(hathor-b7-k1-filter-tests PRIVATE cxx_std_20)
+target_compile_options(hathor-b7-k1-filter-tests PRIVATE -Wall -Wextra -Werror)
+
+target_include_directories(hathor-b7-k1-filter-tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/app
+    ${CMAKE_SOURCE_DIR}/engine/include
+)
+
+target_link_libraries(hathor-b7-k1-filter-tests PRIVATE
+    hathor-engine
+    Catch2::Catch2WithMain
+)
+
+include(Catch)
+catch_discover_tests(hathor-b7-k1-filter-tests DISCOVERY_MODE PRE_TEST)
+
+# ---------------------------------------------------------------------------
 # hathor-b4-k6-event-queue-tests — B4-K6 timestamped musical event queue
 #
 # Tests MusicalEvent, SpscEventRing, ClockSync, EventTransport, EventScheduler,

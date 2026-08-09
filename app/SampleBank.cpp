@@ -263,21 +263,6 @@ void SampleBank::load(const std::filesystem::path& root,
 }
 
 // ---------------------------------------------------------------------------
-// SampleBank::find
+// SampleBank diagnostics — now inline in the header (no JUCE needed).
 // ---------------------------------------------------------------------------
-const SampleEntry* SampleBank::find(std::string_view name,
-                                    int64_t          index) const noexcept
-{
-    for (const auto& e : entries_)
-    {
-        if (e.index == index && e.name == name)
-            return &e;
-    }
-    return nullptr;
-}
 
-// ---------------------------------------------------------------------------
-// SampleBank diagnostics
-// ---------------------------------------------------------------------------
-int SampleBank::loadedCount()  const noexcept { return loaded_;  }
-int SampleBank::skippedCount() const noexcept { return skipped_; }

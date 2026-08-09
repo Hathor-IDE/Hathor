@@ -57,14 +57,30 @@ public:
     /// Returns nullptr if not found. Linear scan over entries_ – O(N) but
     /// N is small and the operation is allocation-free, so it is safe to
     /// call from the audio thread.
-    const SampleEntry* find(std::string_view name, int64_t index) const noexcept;
+    const SampleEntry* find(std::string_view name, int64_t index) const noexcept
+    {
+        for (const auto& e : entries_) {
+            if (e.index == index && e.name == name)
+                return &e;
+        }
+        return nullptr;
+    }
 
     /// Total number of files successfully decoded and stored.
-    int loadedCount()  const noexcept;
+    int loadedCount()  const noexcept { return loaded_;  }
 
     /// Total number of files that were skipped due to decode errors or
     /// non-numeric file stems.
-    int skippedCount() const noexcept;
+    int skippedCount() const noexcept { return skipped_; }
+
+    /// Test-only: inject a SampleEntry directly into the bank without
+    /// requiring JUCE or a filesystem load.  This method is used exclusively
+    /// by unit tests and does not affect production code paths.
+    void addTestEntry(SampleEntry&& entry) noexcept
+    {
+        entries_.push_back(std::move(entry));
+        ++loaded_;
+    }
 
 private:
     std::vector<SampleEntry> entries_;

@@ -46,6 +46,16 @@ inline constexpr std::string_view kEnd   = "end";
 /// Cut group identifier (int64_t).  Voices sharing a cut group mute each other.
 inline constexpr std::string_view kCut   = "cut";
 
+/// Per-voice biquad low-pass cutoff frequency in Hz (double).
+/// Default ≈ 20000 Hz (effectively "off" at normal sample rates).
+/// B7-K1.
+inline constexpr std::string_view kCutoff    = "cutoff";
+
+/// Per-voice biquad low-pass resonance / Q factor (double).
+/// Default ≈ 0.707 (Butterworth).
+/// B7-K1.
+inline constexpr std::string_view kResonance = "resonance";
+
 } // namespace keys
 
 // ---------------------------------------------------------------------------
