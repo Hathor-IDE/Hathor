@@ -302,8 +302,14 @@ void AudioWorkerManager::shutdown()
     // Signal the liveness thread to stop.
     impl_->livenessRunning_.store(false, std::memory_order_release);
 
-    // Send "stop" command via control plane (best-effort).
-    if (impl_->workerPid_ > 0) {
+    // Join the liveness thread first so it doesn't race with our shutdown logic.
+    if (impl_->livenessThread_.joinable())
+        impl_->livenessThread_.join();
+
+    // Send "stop" command via control plane (best-effort, only if worker is
+    // still alive). Skip if the worker is already known dead — connecting to
+    // a dead worker's socket can take up to 500ms (connect retry timeout).
+    if (impl_->workerPid_ > 0 && !impl_->workerKnownDead_.load(std::memory_order_acquire)) {
         sendControlCommand("stop", 2000);
     }
 
@@ -323,10 +329,6 @@ void AudioWorkerManager::shutdown()
         }
         impl_->workerPid_ = -1;
     }
-
-    // Join the liveness thread.
-    if (impl_->livenessThread_.joinable())
-        impl_->livenessThread_.join();
 
     // Invalidate transport.
     impl_->workerKnownDead_.store(true, std::memory_order_release);
@@ -365,38 +367,21 @@ uint64_t AudioWorkerManager::generation() const noexcept
 
 bool AudioWorkerManager::isWorkerAlive() const noexcept
 {
-    // Fast path: check the workerAlive flag in shared memory.
-    if (impl_->transport_ && impl_->transport_ != MAP_FAILED) {
-        if (!impl_->transport_->workerAlive.load(std::memory_order_acquire))
-            return false;
-
-        // Check heartbeat staleness.
-        const uint64_t beat = impl_->transport_->lastHeartbeat.load(std::memory_order_acquire);
-        const uint64_t lastSeen = impl_->lastHeartbeatSeen_.load(std::memory_order_relaxed);
-        if (beat != lastSeen) return true;
-
-        // Heartbeat hasn't advanced — let the liveness thread handle the timeout.
-        // For the RT audio thread, a stale heartbeat means "not definitely alive".
-    }
-
-    // Check process exit (non-blocking).
-    if (impl_->workerPid_ > 0) {
-        int status = 0;
-        pid_t r = ::waitpid(impl_->workerPid_, &status, WNOHANG);
-        if (r == impl_->workerPid_) {
-            return false;
-        }
-    }
-
-    // If the liveness thread already flagged us dead, return false.
+    // Fast path: the liveness thread has already detected death.
     if (impl_->workerKnownDead_.load(std::memory_order_acquire))
         return false;
 
-    // If we have a transport and the workerAlive flag is set, assume alive.
-    if (impl_->transport_ && impl_->transport_ != MAP_FAILED)
-        return impl_->transport_->workerAlive.load(std::memory_order_acquire);
+    // Check the workerAlive flag in shared memory.  After a clean shutdown
+    // the worker sets this to false.  After a crash (SIGKILL/SIGSEGV) the
+    // flag may remain true, but the liveness thread will detect the death
+    // via heartbeat staleness or process-exit (waitpid) and set workerKnownDead_.
+    if (impl_->transport_ && impl_->transport_ != MAP_FAILED) {
+        if (!impl_->transport_->workerAlive.load(std::memory_order_acquire))
+            return false;
+    }
 
-    return false;
+    return impl_->status_.load(std::memory_order_acquire) != WorkerStatus::Dead
+        && impl_->status_.load(std::memory_order_acquire) != WorkerStatus::NotStarted;
 }
 
 std::string AudioWorkerManager::getLastError() const
