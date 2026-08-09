@@ -196,13 +196,13 @@ void ChatThread::reconnect()
         // true. We rely on the existing callback path.
         session_->restart(agentExePath_, projectDir_, mcpPath_);
     }
-     else
-     {
-         // No session wired — handle gracefully by returning to disconnected.
-         connState_.onReconnectFailure("No agent session configured");
-         reconnectBanner_.setButtonText("Agent disconnected \xe2\x80\x94 click to reconnect");
-         resized();
-     }
+    else
+    {
+        // No session wired — handle gracefully by returning to disconnected.
+        connState_.onReconnectFailure("No agent session configured");
+        reconnectBanner_.setButtonText("Agent disconnected \xe2\x80\x94 click to reconnect");
+        resized();
+    }
 }
 
 // ---------------------------------------------------------------------------

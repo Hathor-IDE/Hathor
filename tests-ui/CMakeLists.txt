@@ -37,6 +37,7 @@ add_executable(hathor-ui-tests
     test_chuck_tokeniser.cpp
     test_tree_builder.cpp
     test_bake_to_song.cpp
+    test_thread_state.cpp
     ${CMAKE_SOURCE_DIR}/ui/HathorFileParser.cpp
     ${CMAKE_SOURCE_DIR}/ui/ExplorerFileTypes.cpp
     ${CMAKE_SOURCE_DIR}/ui/TreeBuilder.cpp
