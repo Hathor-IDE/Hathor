@@ -69,7 +69,7 @@ public:
     /// @param timeout  Maximum time to wait for cooperative shutdown before
     ///                 force-cancel.  Called from the watchdog thread, never
     ///                 the audio callback thread.
-    VMResult forceDestroyVM(TabId tabId, std::chrono::milliseconds timeout = std::chrono::milliseconds(1000));
+    VMResult forceDestroyVM(TabId tabId, std::chrono::milliseconds timeout = std::chrono::milliseconds(200));
 
     /// Compile ChucK code for a tab's VM (K0.5 serialized).
     VMResult compileVM(TabId tabId, const std::string& code);

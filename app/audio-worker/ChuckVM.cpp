@@ -180,15 +180,35 @@ VMResult ChuckVM::forceDestroy(std::chrono::milliseconds timeout)
     // forcibly terminate the thread — on POSIX, this sends a cancellation
     // at the next cancellation point (sched_yield, sleep, condvar wait).
     //
+    // Strategy:
+    //   1. First, try cooperative shutdown: poll pthread_kill(tid, 0) to
+    //      check if the thread has exited on its own.
+    //   2. If that fails, use pthread_cancel to forcibly terminate.
+    //
     // NOTE: On macOS, pthread_cancel may interact poorly with signal
-    // handlers in test frameworks (Catch2).  The render callback must
-    // contain cancellation points (e.g., sched_yield) for this to work.
+    // handlers in test frameworks (Catch2), which is why we try
+    // cooperative shutdown first and give the thread a reasonable window.
     if (threadToJoin.joinable()) {
-        int cancelRv = pthread_cancel(tid);
-        (void)cancelRv;
+        // Poll for cooperative exit: check if the thread has exited.
+        auto deadline = std::chrono::steady_clock::now() + timeout;
+        bool cooperativeExit = false;
 
-        // Join the thread (should exit at next cancellation point,
-        // or if pthread_cancel failed, try join anyway).
+        while (std::chrono::steady_clock::now() < deadline) {
+            // pthread_kill with signal 0 checks if the thread is alive.
+            int rv = pthread_kill(tid, 0);
+            if (rv == ESRCH) {
+                cooperativeExit = true;
+                break;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+
+        if (!cooperativeExit) {
+            int cancelRv = pthread_cancel(tid);
+            (void)cancelRv;
+        }
+
+        // Join the thread (it should have exited by now).
         try {
             threadToJoin.join();
         } catch (...) {

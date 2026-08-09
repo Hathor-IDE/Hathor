@@ -197,9 +197,14 @@ public:
     /**
      * Set the watchdog check interval (default: kDefaultWatchdogIntervalMs = 500ms).
      */
-    void setInterval(std::chrono::milliseconds interval) noexcept;    /**
-     * Get the number of VMs currently being monitored.
+    void setInterval(std::chrono::milliseconds interval) noexcept;
+
+    /**
+     * Enable or disable automatic recovery.
+     * When disabled, the watchdog will detect hangs and invoke onHangDetected_
+     * but will NOT call recoverVM.  Useful for testing detection-only scenarios.
      */
+    void setAutoRecovery(bool enabled) noexcept;
     int monitoredCount() const noexcept;
 
     /**
@@ -258,6 +263,9 @@ private:
     std::atomic<int> intervalMs_;  // stored as int ms, not atomic<milliseconds>
 
     std::atomic<int> totalHangDetections_{0};
+
+    /// Whether to automatically recover hung VMs.  Defaults to true.
+    std::atomic<bool> autoRecovery_{true};
 };
 
 } // namespace hathor::audio_worker

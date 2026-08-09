@@ -105,6 +105,11 @@ void VmWatchdog::setInterval(std::chrono::milliseconds interval) noexcept
     intervalMs_.store(static_cast<int>(interval.count()), std::memory_order_release);
 }
 
+void VmWatchdog::setAutoRecovery(bool enabled) noexcept
+{
+    autoRecovery_.store(enabled, std::memory_order_release);
+}
+
 int VmWatchdog::monitoredCount() const noexcept
 {
     std::lock_guard<std::mutex> lock(entriesMtx_);
@@ -216,13 +221,19 @@ bool VmWatchdog::checkVM(TabId tabId, const std::chrono::steady_clock::time_poin
     currentHeartbeat = vm->heartbeat();
 
     // Read the last observed heartbeat and progress timestamp.
-    std::lock_guard<std::mutex> lock(entriesMtx_);
-    auto& e = entries_[tabId];
-    if (!e)
-        return false;
+    // Also record detection details — we need these outside the lock.
+    uint64_t lastHearbeat = 0;
+    std::chrono::steady_clock::time_point lastProgress;
 
-    uint64_t lastHearbeat = e->lastHeartbeat.load(std::memory_order_acquire);
-    auto lastProgress = e->lastProgress;
+    {
+        std::lock_guard<std::mutex> lock(entriesMtx_);
+        auto& e = entries_[tabId];
+        if (!e)
+            return false;
+
+        lastHearbeat = e->lastHeartbeat.load(std::memory_order_acquire);
+        lastProgress = e->lastProgress;
+    }
 
     // -----------------------------------------------------------------------
     // HEARTBEAT STALL DETECTION (PROGRAM.md B4-K5 §HANG DETECTION):
@@ -233,8 +244,12 @@ bool VmWatchdog::checkVM(TabId tabId, const std::chrono::steady_clock::time_poin
 
     if (currentHeartbeat > lastHearbeat) {
         // Heartbeat advanced — update baseline.
-        e->lastHeartbeat.store(currentHeartbeat, std::memory_order_release);
-        e->lastProgress = now;
+        std::lock_guard<std::mutex> lock(entriesMtx_);
+        auto& e = entries_[tabId];
+        if (e) {
+            e->lastHeartbeat.store(currentHeartbeat, std::memory_order_release);
+            e->lastProgress = now;
+        }
         return false;  // Not a hang.
     }
 
@@ -274,8 +289,10 @@ bool VmWatchdog::checkVM(TabId tabId, const std::chrono::steady_clock::time_poin
         onHangDetected_(tabId, detectionGen, detectionHeartbeat, detectionTime);
     }
 
-    // Attempt recovery.
-    recoverVM(tabId);
+    // Attempt recovery (unless auto-recovery is disabled, e.g., in tests).
+    if (autoRecovery_.load(std::memory_order_acquire)) {
+        recoverVM(tabId);
+    }
 
     return true;
 }
@@ -392,6 +409,11 @@ bool VmWatchdog::recoverVM(TabId tabId)
 
         return false;
     }
+
+    // Set the new generation on the VM so callers can identify it.
+    ChuckVM* newVm = vmManager_->findVM(tabId);
+    if (newVm)
+        newVm->setGeneration(newGen);
 
     // Step 5: Re-register with the watchdog (fresh heartbeat baseline).
     //         This resets the heartbeat tracking and restart cooldown.

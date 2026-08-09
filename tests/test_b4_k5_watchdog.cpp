@@ -187,6 +187,7 @@ TEST_CASE("B4-K5: intentional hang — watchdog detects at ~2s", "[k5][hang][det
 
     watchdog.setTimeout(std::chrono::milliseconds(200));
     watchdog.setInterval(std::chrono::milliseconds(50));
+    watchdog.setAutoRecovery(false);  // Detection-only test — no recovery
     watchdog.registerVM(tabId, gen);
     watchdog.start();
 
@@ -236,14 +237,22 @@ TEST_CASE("B4-K5: recovery — old VM torn down, fresh VM created", "[k5][recove
     vm->setGeneration(gen1);
 
     VmWatchdog watchdog(&vmMgr, &vmLifecycle,
-        [&hangDetected](TabId, uint64_t, uint64_t, std::chrono::steady_clock::time_point) {
+        // Hang detection callback: clear the hang flag BEFORE recovery
+        // so forceDestroyVM's cooperative join can succeed without
+        // needing pthread_cancel.
+        [&hangDetected, &hangFlag, &vmMgr](TabId, uint64_t, uint64_t, std::chrono::steady_clock::time_point) {
             hangDetected.store(true, std::memory_order_release);
-        },
-        // Recovery callback: clear the hang flag so the new VM (created with
-        // the same render callback) won't immediately hang again.
-        [&recoveryComplete, &newGen, &hangFlag](TabId, uint64_t gen) {
-            newGen = gen;
             hangFlag.store(false, std::memory_order_release);
+            // Also set a silence callback so the recovered VM doesn't hang.
+            vmMgr.setRenderCallback(ChuckVM::RenderCallback{
+                [](float* outBuf, unsigned numFrames, unsigned) {
+                    if (outBuf) std::memset(outBuf, 0, numFrames * sizeof(float));
+                }
+            });
+        },
+        // Recovery callback: record the new generation.
+        [&recoveryComplete, &newGen](TabId, uint64_t gen) {
+            newGen = gen;
             recoveryComplete.store(true, std::memory_order_release);
         }
     );
@@ -313,6 +322,7 @@ TEST_CASE("B4-K5: two active tabs — isolate hang to affected tab", "[k5][isola
 
     watchdog.setTimeout(std::chrono::milliseconds(200));
     watchdog.setInterval(std::chrono::milliseconds(50));
+    watchdog.setAutoRecovery(false);  // Detection-only: don't trigger recovery
 
     // --- Tab A: hanging VM (flaggable for clean cleanup) ---
     uint64_t genA = vmLifecycle.vmCreate(tabA);
@@ -384,14 +394,22 @@ TEST_CASE("B4-K5: reverse isolation — hang B, A continues", "[k5][isolation][B
     TabId tabB = 1;
 
     VmWatchdog watchdog(&vmMgr, &vmLifecycle,
-        [&tabAHungDetected, &tabBHungDetected, &tabA, &tabB](
+        // Hang detection: clear the flag BEFORE recovery so forceDestroyVM's
+        // cooperative join succeeds without needing pthread_cancel.
+        [&tabAHungDetected, &tabBHungDetected, &tabA, &tabB, &hangFlagB, &vmMgr](
             TabId tabId, uint64_t, uint64_t, std::chrono::steady_clock::time_point) {
             if (tabId == tabA) tabAHungDetected.store(true, std::memory_order_release);
-            if (tabB == tabId) tabBHungDetected.store(true, std::memory_order_release);
+            if (tabB == tabId) {
+                tabBHungDetected.store(true, std::memory_order_release);
+                hangFlagB.store(false, std::memory_order_release);
+                vmMgr.setRenderCallback(ChuckVM::RenderCallback{
+                    [](float* outBuf, unsigned numFrames, unsigned) {
+                        if (outBuf) std::memset(outBuf, 0, numFrames * sizeof(float));
+                    }
+                });
+            }
         },
-        // Recovery callback: clear the hang flag so the new VM won't hang.
-        [&recoveryComplete, &hangFlagB](TabId, uint64_t) {
-            hangFlagB.store(false, std::memory_order_release);
+        [&recoveryComplete](TabId, uint64_t) {
             recoveryComplete.store(true, std::memory_order_release);
         }
     );
@@ -589,18 +607,20 @@ TEST_CASE("B4-K5: duplicate detection — only one recovery", "[k5][race][idempo
     TabId tabId = 9;
 
     VmWatchdog watchdog(&vmMgr, &vmLifecycle,
-        [&detectionCount](TabId, uint64_t, uint64_t, std::chrono::steady_clock::time_point) {
+        // Hang detection: clear the flag BEFORE recovery so forceDestroyVM's
+        // cooperative join succeeds without needing pthread_cancel.
+        [&detectionCount, &hangFlag, &vmMgr](TabId, uint64_t, uint64_t, std::chrono::steady_clock::time_point) {
             detectionCount.fetch_add(1, std::memory_order_acq_rel);
-        },
-        // Recovery callback: clear the hang flag + set silence callback
-        // so the new VM won't immediately hang.
-        [&recoveryCount, &hangFlag, &vmMgr](TabId, uint64_t) {
             hangFlag.store(false, std::memory_order_release);
+            // Set silence callback so the recovered VM doesn't hang.
             vmMgr.setRenderCallback(ChuckVM::RenderCallback{
                 [](float* outBuf, unsigned numFrames, unsigned /*numChannels*/) {
                     if (outBuf) std::memset(outBuf, 0, numFrames * sizeof(float));
                 }
             });
+        },
+        // Recovery callback: just count.
+        [&recoveryCount](TabId, uint64_t) {
             recoveryCount.fetch_add(1, std::memory_order_acq_rel);
         }
     );
