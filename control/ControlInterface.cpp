@@ -146,6 +146,8 @@ void ControlInterface::dispatch(std::string_view rawLine)
         handleQuit();
     } else if (cmd == "list-patterns") {
         handleListPatterns();
+    } else if (cmd == "list-samples") {
+        handleListSamples();
     } else if (cmd == "bpm") {
         handleBpm(trim(rest));
     } else if (cmd == "set-gain") {
@@ -504,6 +506,24 @@ void ControlInterface::handleListPatterns()
         {"ok",       true},
         {"cmd",      "list-patterns"},
         {"patterns", std::move(patterns)}
+    });
+}
+
+// ---------------------------------------------------------------------------
+// handleListSamples() — B8-K4 §6: enumerate registered sample names for autocomplete
+// ---------------------------------------------------------------------------
+
+void ControlInterface::handleListSamples()
+{
+    nlohmann::json samples = nlohmann::json::array();
+
+    for (const auto& name : bank_.listNames())
+        samples.push_back(name);
+
+    emitResponse({
+        {"ok",       true},
+        {"cmd",      "list-samples"},
+        {"samples",  std::move(samples)}
     });
 }
 

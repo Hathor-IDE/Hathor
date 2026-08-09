@@ -263,6 +263,112 @@ void SampleBank::load(const std::filesystem::path& root,
 }
 
 // ---------------------------------------------------------------------------
-// SampleBank diagnostics — now inline in the header (no JUCE needed).
+// B8-K4: Dynamic asset registration
 // ---------------------------------------------------------------------------
 
+void SampleBank::addEntry(std::string             name,
+                           int64_t                 index,
+                           std::vector<float>      data,
+                           int                     numChannels,
+                           double                  sampleRate,
+                           std::string             sourcePath)
+{
+    std::lock_guard<std::mutex> lock(registrationMutex_);
+    SampleEntry entry;
+    entry.name        = std::move(name);
+    entry.index       = index;
+    entry.data        = std::move(data);
+    entry.numChannels = numChannels;
+    entry.sampleRate  = sampleRate;
+    entry.sourcePath  = std::move(sourcePath);
+    entries_.push_back(std::move(entry));
+    ++loaded_;
+}
+
+void SampleBank::reloadStudioAssets(const std::filesystem::path&     dir,
+                                     juce::AudioFormatManager&        formats,
+                                     double                         sampleRate,
+                                     bool                           skipRegistered)
+{
+    if (!std::filesystem::is_directory(dir))
+        return;
+
+    for (const auto& entry : std::filesystem::directory_iterator(dir))
+    {
+        if (!entry.is_regular_file())
+            continue;
+
+        const auto ext = toLower(entry.path().extension().string());
+        if (!isAcceptedExtension(ext))
+            continue;
+
+        const std::string stem = entry.path().stem().string();
+
+        // Skip if already registered (unless skipRegistered is false).
+        if (skipRegistered)
+        {
+            std::lock_guard<std::mutex> lock(registrationMutex_);
+            bool already = false;
+            for (const auto& e : entries_)
+            {
+                if (e.name == stem && e.index == 0)
+                {
+                    already = true;
+                    break;
+                }
+            }
+            if (already)
+                continue;
+        }
+
+        // Decode and resample using the existing helpers.
+        juce::File juceFile(juce::String(entry.path().string()));
+        int    numChannels{};
+        double nativeRate{};
+        int64_t numSamples{};
+
+        auto sourceBuf = decodeFile(juceFile, formats,
+                                    numChannels, nativeRate, numSamples);
+        if (!sourceBuf)
+            continue;
+
+        std::vector<float> interleavedData;
+        if (std::abs(nativeRate - sampleRate) > 0.5)
+        {
+            auto resampled = resampleBuffer(*sourceBuf, numChannels,
+                                           nativeRate, sampleRate);
+            if (!resampled)
+                continue;
+            interleavedData = interleave(*resampled, numChannels);
+        }
+        else
+        {
+            interleavedData = interleave(*sourceBuf, numChannels);
+        }
+
+        addEntry(stem, 0, std::move(interleavedData),
+                 numChannels, sampleRate,
+                 entry.path().string());
+    }
+}
+
+std::vector<std::string> SampleBank::listNames() const noexcept
+{
+    std::vector<std::string> names;
+    for (const auto& e : entries_)
+    {
+        bool seen = false;
+        for (const auto& n : names)
+        {
+            if (n == e.name)
+            {
+                seen = true;
+                break;
+            }
+        }
+        if (!seen)
+            names.push_back(e.name);
+    }
+    std::sort(names.begin(), names.end());
+    return names;
+}

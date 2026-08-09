@@ -87,22 +87,35 @@ public:
 
         // Register audio formats and load SampleBank.
         formatManager_.registerBasicFormats();
-        bank_ = std::make_unique<SampleBank>();
-        try
-        {
-            bank_->load(samplesPath, formatManager_, 44100.0);
-        }
-        catch (const std::exception& ex)
-        {
-            juce::AlertWindow::showMessageBoxAsync(
-                juce::AlertWindow::WarningIcon,
-                "Hathor",
-                juce::String("Failed to load samples: ") + ex.what(),
-                "OK",
-                nullptr,
-                juce::ModalCallbackFunction::create([](int) { juce::JUCEApplication::getInstance()->quit(); }));
-            return;
-        }
+         bank_ = std::make_unique<SampleBank>();
+         try
+         {
+             bank_->load(samplesPath, formatManager_, 44100.0);
+         }
+          catch (const std::exception& ex)
+          {
+             juce::AlertWindow::showMessageBoxAsync(
+                 juce::AlertWindow::WarningIcon,
+                 "Hathor",
+                 juce::String("Failed to load samples: ") + ex.what(),
+                 "OK",
+                 nullptr,
+                 juce::ModalCallbackFunction::create([](int) { juce::JUCEApplication::getInstance()->quit(); }));
+             return;
+         }
+
+         // B8-K4 §4: Reload Studio-persisted baked WAV assets from the
+         // current project directory so previously-baked instruments are
+         // available for `s "name"` without re-baking.
+         {
+             const std::filesystem::path cwd =
+                 std::filesystem::current_path();
+             const std::filesystem::path studioDir =
+                 cwd / ".hathor_assets" / "chuck_instruments";
+             if (std::filesystem::is_directory(studioDir)) {
+                 bank_->reloadStudioAssets(studioDir, formatManager_, 44100.0);
+             }
+         }
 
         // Construct AudioEngine and open the audio device.
         audio_ = std::make_unique<AudioEngine>(*bank_);

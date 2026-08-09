@@ -23,6 +23,8 @@
 
 #include <memory>
 #include <string>
+#include <string_view>
+#include <vector>
 #include <filesystem>
 
 // Bring AssetTarget into the global namespace so AudioEngineFacade's method
@@ -181,4 +183,24 @@ public:
 
     /// Shut down all in-flight renders (called from application shutdown).
     virtual void shutdownRender() noexcept = 0;
+
+    // --- B8-K4: SampleBank registration after bake ---
+
+    /// Register a baked WAV asset in the SampleBank so that `s "name"` resolves
+    /// through the normal sample playback path.
+    ///
+    /// Called from the B8-K2 completion callback (on the render thread) after
+    /// a WAV has been successfully published and validated.  The AudioEngine
+    /// handles resampling to the device sample rate and SampleBank registration
+    /// on the caller's behalf.
+    ///
+    /// @param name        Sample name (filename stem, e.g. "acid_bass").
+    /// @param wavPath     Absolute path to the just-written .wav file.
+    /// @return true on successful registration; false on decode/error.
+    virtual bool registerBakedAsset(std::string name,
+                                    const std::filesystem::path& wavPath) = 0;
+
+    /// Return the list of all sample names currently registered in the SampleBank.
+    /// Used for editor autocomplete (B8-K4 §6) and the `list-samples` command.
+    virtual std::vector<std::string> listSamples() const = 0;
 };

@@ -821,8 +821,39 @@ hathor::RenderHandle AudioEngine::startBakeRender(
         });
         return hathor::RenderHandle{};
     }
+
+    // B8-K4: Wrap the caller's completion callback so that, on a successful
+    // bake, the rendered WAV is automatically registered in the SampleBank.
+    // This lets `s "instrument_name"` resolve through normal sample playback
+    // without any ChucK VM dependency after baking.
+    //
+    // The wrapped callback:
+    //   1. Calls registerBakedAsset() on the SampleBank (B8-K4 §3).
+    //   2. Forwards the original RenderResult to the caller's callback.
+    auto wrappedCallback = [this, destPath, userCallback = std::move(onComplete)]
+                           (const hathor::RenderResult& result) {
+        if (result.success && !result.outputPath.empty()) {
+            // Derive the sample name from the output path's filename stem.
+            // This matches the convention: <name>.wav → sample name "name".
+            const std::string sampleName =
+                result.outputPath.stem().string();
+
+            // Register the baked asset in the SampleBank.
+            // Failures are non-fatal — the WAV file still exists on disk.
+            if (!this->registerBakedAsset(sampleName, result.outputPath)) {
+                std::cerr << "[AudioEngine] B8-K4 warning: could not register "
+                          << sampleName << " in SampleBank after successful bake\n";
+            }
+        }
+
+        // Forward the result to the caller.
+        if (userCallback)
+            userCallback(result);
+    };
+
     return renderWriter_->startRender(tabId, std::move(ckSource), numSamples,
-                                      sampleRate, destPath, std::move(onComplete));
+                                      sampleRate, destPath,
+                                      std::move(wrappedCallback));
 }
 
 int AudioEngine::activeRenderCount() const noexcept
@@ -834,4 +865,133 @@ void AudioEngine::shutdownRender() noexcept
 {
     if (renderWriter_)
         renderWriter_->shutdown();
+}
+
+// ---------------------------------------------------------------------------
+// B8-K4: SampleBank registration after bake
+// ---------------------------------------------------------------------------
+// These methods are called from the B8-K2 completion callback (on the render
+// thread) after a WAV has been successfully published and validated.  They
+// decode the WAV, resample to the device rate, and register it in the
+// SampleBank via addEntry().
+//
+// The SampleBank is stored as `const SampleBank& bank_` in AudioEngine, but
+// addEntry() is a non-const method.  We cast away constness here because the
+// const-ness was inherited from the "load once at startup" design.  B8-K4
+// extends this to allow post-bake registration, and the registration mutex
+// ensures safe concurrent access.  The audio thread only reads via find()
+// (lock-free).
+// ---------------------------------------------------------------------------
+
+bool AudioEngine::registerBakedAsset(std::string name,
+                                      const std::filesystem::path& wavPath)
+{
+    if (wavPath.empty())
+        return false;
+
+    // Decode the WAV file.
+    juce::File juceFile(juce::String(wavPath.string()));
+    if (!juceFile.existsAsFile()) {
+        std::cerr << "[AudioEngine] registerBakedAsset: file not found: "
+                  << wavPath << '\n';
+        return false;
+    }
+
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+
+    std::unique_ptr<juce::AudioFormatReader> reader(formats.createReaderFor(juceFile));
+    if (!reader) {
+        std::cerr << "[AudioEngine] registerBakedAsset: failed to create reader for: "
+                  << wavPath << '\n';
+        return false;
+    }
+
+    const int    numChannels = static_cast<int>(std::min<int>(reader->numChannels, 2));
+    const double nativeRate  = reader->sampleRate;
+    const int64_t numSamples = static_cast<int64_t>(reader->lengthInSamples);
+
+    if (numSamples <= 0 || nativeRate <= 0.0) {
+        std::cerr << "[AudioEngine] registerBakedAsset: invalid metadata in: "
+                  << wavPath << '\n';
+        return false;
+    }
+
+    auto buf = std::make_unique<juce::AudioBuffer<float>>(numChannels,
+                                                           static_cast<int>(numSamples));
+    if (!reader->read(buf.get(), 0, static_cast<int>(numSamples), 0,
+                      true, numChannels > 1)) {
+        std::cerr << "[AudioEngine] registerBakedAsset: read failed for: "
+                  << wavPath << '\n';
+        return false;
+    }
+
+    // Resample to device rate if needed.
+    std::vector<float> interleavedData;
+    const double deviceRate = static_cast<double>(sampleRate_.load(std::memory_order_acquire));
+
+    if (std::abs(nativeRate - deviceRate) > 0.5) {
+        // Use the same resampling path as SampleBank::load().
+        // We inline it here since resampleBuffer is in an anonymous namespace.
+        const double ratio       = deviceRate / nativeRate;
+        const int    outSamples  = static_cast<int>(
+            std::ceil(static_cast<double>(buf->getNumSamples()) * ratio));
+
+        juce::AudioBuffer<float> outBuf(numChannels, outSamples);
+        juce::MemoryAudioSource   memSrc(*buf, /*keepInternalCopy=*/false);
+        juce::ResamplingAudioSource resampler(&memSrc, /*deleteSourceWhenDeleted=*/false,
+                                               numChannels);
+        resampler.setResamplingRatio(nativeRate / deviceRate);
+        resampler.prepareToPlay(outSamples, deviceRate);
+
+        juce::AudioSourceChannelInfo info(&outBuf, 0, outSamples);
+        resampler.getNextAudioBlock(info);
+
+        // Interleave.
+        interleavedData.resize(static_cast<std::size_t>(outSamples) * numChannels);
+        if (numChannels == 1) {
+            const float* src = outBuf.getReadPointer(0);
+            std::copy(src, src + outSamples, interleavedData.begin());
+        } else {
+            const float* left  = outBuf.getReadPointer(0);
+            const float* right = outBuf.getReadPointer(1);
+            for (int i = 0; i < outSamples; ++i) {
+                interleavedData[static_cast<std::size_t>(i) * 2]     = left[i];
+                interleavedData[static_cast<std::size_t>(i) * 2 + 1] = right[i];
+            }
+        }
+    } else {
+        // No resampling needed — just interleave.
+        interleavedData.resize(static_cast<std::size_t>(numSamples) * numChannels);
+        if (numChannels == 1) {
+            const float* src = buf->getReadPointer(0);
+            std::copy(src, src + static_cast<int>(numSamples), interleavedData.begin());
+        } else {
+            const float* left  = buf->getReadPointer(0);
+            const float* right = buf->getReadPointer(1);
+            for (int i = 0; i < static_cast<int>(numSamples); ++i) {
+                interleavedData[static_cast<std::size_t>(i) * 2]     = left[i];
+                interleavedData[static_cast<std::size_t>(i) * 2 + 1] = right[i];
+            }
+        }
+    }
+
+    // Register in the SampleBank.  bank_ is const by design (load-once), but
+    // addEntry() is a legitimate post-bake mutation.  The registration mutex
+    // ensures the audio thread's find() (lock-free read) is never in the
+    // middle of construction.
+    const_cast<SampleBank&>(bank_).addEntry(
+        std::move(name),
+        0,
+        std::move(interleavedData),
+        numChannels,
+        deviceRate,
+        wavPath.string());
+
+    return true;
+}
+
+std::vector<std::string> AudioEngine::listSamples() const
+{
+    return bank_.listNames();
 }

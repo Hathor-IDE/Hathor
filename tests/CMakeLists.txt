@@ -516,6 +516,41 @@ include(Catch)
 catch_discover_tests(hathor-b8-k3-vm-shutdown-tests DISCOVERY_MODE PRE_TEST)
 
 # ---------------------------------------------------------------------------
+# hathor-b8-k4-sample-registration-tests — B8-K4: bind baked WAV assets to
+# SampleBank so `s "name"` resolves through ordinary sample playback.
+#
+# Tests addEntry(), listNames(), find() with baked instrument data,
+# Studio persistence layout, and LiveJam session lifecycle.
+#
+# JUCE-free: SampleBank.hpp's find()/listNames()/addTestEntry are inline;
+# addEntry() is compiled from SampleBank.cpp (which includes JUCE for decoding
+# helpers used by load/reloadStudioAssets).  This test uses addEntry directly
+# and does NOT call reloadStudioAssets (which requires JUCE's
+# AudioFormatManager).  The flat-file WAV structure is verified via filesystem
+# checks + AssetPathResolver.
+# ---------------------------------------------------------------------------
+add_executable(hathor-b8-k4-sample-registration-tests
+    test_b8_k4_sample_registration.cpp
+    ${CMAKE_SOURCE_DIR}/app/SampleBank.cpp
+)
+
+target_compile_features(hathor-b8-k4-sample-registration-tests PRIVATE cxx_std_20)
+target_compile_options(hathor-b8-k4-sample-registration-tests PRIVATE -Wall -Wextra -Werror)
+
+target_include_directories(hathor-b8-k4-sample-registration-tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/app
+    ${CMAKE_SOURCE_DIR}/engine/include
+)
+
+target_link_libraries(hathor-b8-k4-sample-registration-tests PRIVATE
+    hathor-engine
+    Catch2::Catch2WithMain
+)
+
+include(Catch)
+catch_discover_tests(hathor-b8-k4-sample-registration-tests DISCOVERY_MODE PRE_TEST)
+
+# ---------------------------------------------------------------------------
 # Integration tests (require the full hathor binary; skipped if app is off)
 # ---------------------------------------------------------------------------
 add_subdirectory(integration)

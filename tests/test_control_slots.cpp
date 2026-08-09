@@ -98,19 +98,29 @@ public:
         return false;
     }
 
-    hathor::RenderHandle startBakeRender(uint8_t,
-                                         std::string,
-                                         uint64_t,
-                                         unsigned,
-                                         const std::filesystem::path&,
-                                         hathor::ChuckRenderWriter::CompletionCallback) override
-    {
-        return hathor::RenderHandle{};
-    }
-    int  activeRenderCount() const noexcept override { return 0; }
-    void shutdownRender() noexcept override {}
+     hathor::RenderHandle startBakeRender(uint8_t,
+                                          std::string,
+                                          uint64_t,
+                                          unsigned,
+                                          const std::filesystem::path&,
+                                          hathor::ChuckRenderWriter::CompletionCallback) override
+     {
+         return hathor::RenderHandle{};
+     }
+     int  activeRenderCount() const noexcept override { return 0; }
+     void shutdownRender() noexcept override {}
 
-    static constexpr int kNumSlots = 16;
+     // B8-K4 stubs
+     bool registerBakedAsset(std::string, const std::filesystem::path&) override
+     {
+         return false;
+     }
+     std::vector<std::string> listSamples() const override
+     {
+         return {};
+     }
+
+     static constexpr int kNumSlots = 16;
     std::string names_[kNumSlots];
     std::shared_ptr<SlotState> states_[kNumSlots];
     bool slotRunning_[kNumSlots] = {};

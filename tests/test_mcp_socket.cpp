@@ -169,6 +169,16 @@ public:
     int  activeRenderCount() const noexcept override { return 0; }
     void shutdownRender() noexcept override {}
 
+    // B8-K4 stubs
+    bool registerBakedAsset(std::string, const std::filesystem::path&) override
+    {
+        return false;
+    }
+    std::vector<std::string> listSamples() const override
+    {
+        return {};
+    }
+
 private:
     double bpm_ = 120.0;
     bool running_ = false;

@@ -209,6 +209,20 @@ int main(int argc, char* argv[])
               << " samples ("  << bank.skippedCount() << " skipped) from '"
               << samplesPath   << "'\n";
 
+    // B8-K4 §4: Reload Studio-persisted baked WAV assets from the current
+    // project directory (<cwd>/.hathor_assets/chuck_instruments/).  This makes
+    // previously-baked instruments available for `s "name"` without re-baking.
+    {
+        const std::filesystem::path studioDir =
+            std::filesystem::current_path() / ".hathor_assets" / "chuck_instruments";
+        if (std::filesystem::is_directory(studioDir)) {
+            bank.reloadStudioAssets(studioDir, formatManager, 44100.0);
+            std::cerr << "[hathor] reloaded " << bank.loadedCount()
+                      << " samples (including " << (bank.loadedCount())
+                      << " total after studio assets)\n";
+        }
+    }
+
     // -----------------------------------------------------------------------
     // 3. Construct AudioEngine (and optionally set initial BPM)
     // -----------------------------------------------------------------------

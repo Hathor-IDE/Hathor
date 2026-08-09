@@ -136,6 +136,9 @@ private:
     /// list-patterns  (Req 15.1)
     void handleListPatterns();
 
+    /// list-samples  (B8-K4 §6) — enumerate all registered sample names.
+    void handleListSamples();
+
     /// bpm <value>  (Req 14.3, 14.4)
     void handleBpm(std::string_view arg);
 

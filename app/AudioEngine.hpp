@@ -271,6 +271,21 @@ public:
     void shutdownRender() noexcept override;
 
     // ------------------------------------------------------------------
+    // B8-K4: SampleBank registration after bake
+    // ------------------------------------------------------------------
+
+    /// Register a baked WAV asset in the SampleBank (B8-K4 §2, §3).
+    /// Called from the B8-K2 completion callback after successful WAV
+    /// publication.  Decodes + resamples the WAV and calls SampleBank::addEntry().
+    /// Thread-safe (acquires SampleBank registration mutex) — may be called
+    /// from the render thread.
+    bool registerBakedAsset(std::string name,
+                            const std::filesystem::path& wavPath) override;
+
+    /// Return all sample names registered in the SampleBank (B8-K4 §6).
+    std::vector<std::string> listSamples() const override;
+
+    // ------------------------------------------------------------------
     // juce::AudioIODeviceCallback interface
     // ------------------------------------------------------------------
     void audioDeviceAboutToStart(juce::AudioIODevice* device) override;
