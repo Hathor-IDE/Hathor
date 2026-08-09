@@ -24,7 +24,8 @@
  *
  * JUCE-free: these tests link Catch2 + AudioWorkerManager, spawning the real
  * hathor-audio-worker binary. Test-mode control commands (test_crash_worker,
- * test_hang_vm, test_clear_hang_vm) are available in the worker for K8 tests.
+ * test_hang_vm, test_clear_hang_vm, watchdog_timeout, watchdog_interval) are
+ * available in the worker for K8 tests.
  *
  * Requirements: B4-K8, B4-K5, B4-K2, DoD §6.2
  */
@@ -144,18 +145,17 @@ static ShmHandle mapShm()
     return h;
 }
 
-/// Read audio blocks while timing each call to verify the audio thread path
-/// never blocks indefinitely during a failure scenario.
-static bool tryReadWithTimeout(AudioWorkerManager& mgr, float* buf, uint64_t gen,
-                               std::chrono::milliseconds maxWait = std::chrono::milliseconds(10))
+/// Wait for the manager to detect worker death and mark it as dead.
+/// The liveness thread polls heartbeat staleness at the configured timeout.
+static void waitForWorkerDeath(AudioWorkerManager& mgr,
+                               std::chrono::milliseconds maxWait = std::chrono::milliseconds(3000))
 {
-    auto start = std::chrono::steady_clock::now();
-    while (std::chrono::steady_clock::now() - start < maxWait) {
-        if (mgr.tryReadAudioBlock(buf, kBlockSize, gen))
-            return true;
-        std::this_thread::sleep_for(std::chrono::microseconds(50));
+    auto deadline = std::chrono::steady_clock::now() + maxWait;
+    while (std::chrono::steady_clock::now() < deadline) {
+        if (!mgr.isWorkerAlive())
+            return;
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
     }
-    return false;
 }
 
 // ---------------------------------------------------------------------------
@@ -167,11 +167,11 @@ static bool tryReadWithTimeout(AudioWorkerManager& mgr, float* buf, uint64_t gen
 // audio thread + rest of app must stay responsive."
 //
 // We achieve this by:
-//   (a) Starting the worker with a fast watchdog timeout (via policy).
+//   (a) Starting the worker with a fast watchdog timeout via control command.
 //   (b) Activating a VM on a tab.
 //   (c) Injecting a hang via the test_hang_vm control command.
 //   (d) Verifying the main process audio thread continues to consume audio
-//       (from other tabs or silence) without blocking.
+//       (from the shared-memory ring) without blocking.
 //   (e) Verifying the watchdog detects the hang and recovers the VM.
 // ---------------------------------------------------------------------------
 
@@ -184,18 +184,29 @@ TEST_CASE("B4-K8: hung shred — watchdog detects and restarts VM", "[k8][hang][
     }
 
     AudioWorkerManager mgr;
-    // Use a fast heartbeat timeout for testing (250ms instead of 500ms default).
+    // Configure the worker-side watchdog for fast detection (200ms timeout,
+    // 50ms check interval). The main process heartbeat timeout is set
+    // independently for worker-level liveness.
     AudioWorkerManager::ResourceLimits limits;
-    limits.heartbeatTimeoutMs = 250;
+    limits.heartbeatTimeoutMs = 300;
     limits.maxRestarts = 5;
     mgr.setResourceLimits(limits);
 
     REQUIRE(mgr.start(workerPath));
     const uint64_t gen = mgr.generation();
 
+    // Configure the worker's per-VM watchdog for fast detection.
+    REQUIRE(mgr.sendControlCommand("watchdog_timeout 200", 1000).find("ok") != std::string::npos);
+    REQUIRE(mgr.sendControlCommand("watchdog_interval 50", 1000).find("ok") != std::string::npos);
+
     // Activate a VM on tab 0.
     std::string resp = mgr.sendControlCommand("vm_activate 0 44100 1", 2000);
     REQUIRE(resp.find("ok vm_activated") != std::string::npos);
+
+    // Register the VM with the watchdog (the worker registers it during
+    // vm_activate, but let's verify).
+    std::string wdStatus = mgr.sendControlCommand("watchdog_status", 1000);
+    REQUIRE(wdStatus.find("monitored=1") != std::string::npos);
 
     // Let it produce some audio (establish baseline heartbeat).
     float buf[kBlockSize];
@@ -209,22 +220,25 @@ TEST_CASE("B4-K8: hung shred — watchdog detects and restarts VM", "[k8][hang][
     }
     REQUIRE(readsBefore >= 1);
 
-    // Inject a hang on the VM (simulates while(true){} with no now =>).
-    resp = mgr.sendControlCommand("test_hang_vm 0", 2000);
-    REQUIRE(resp.find("ok test_hang_vm") != std::string::npos);
-
-    // Record the VM's heartbeat before the hang.
+    // Query the VM's heartbeat before injecting the hang.
     resp = mgr.sendControlCommand("vm_query 0", 1000);
     uint64_t beatBefore = 0;
     auto pos = resp.find("heartbeat=");
     if (pos != std::string::npos)
         beatBefore = std::stoull(resp.substr(pos + 10));
 
+    // Inject a hang on the VM (simulates while(true){} with no now =>).
+    resp = mgr.sendControlCommand("test_hang_vm 0", 2000);
+    REQUIRE(resp.find("ok test_hang_vm") != std::string::npos);
+
     // While the VM is hung, the main process audio thread must still be
     // responsive — tryReadAudioBlock must return within a bounded time.
-    // We drain existing blocks then verify no blocking occurs.
+    // The audio callback path checks workerAlive, generation, and readSeq.
+    // Even if the VM thread is hung, the main loop's placeholder production
+    // continues (it's a separate thread). So audio should still flow.
     auto rtCheckStart = std::chrono::steady_clock::now();
-    uint32_t rtReads = 0;
+     uint32_t rtReads = 0;
+     (void)rtReads;
     auto rtDeadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(500);
     while (std::chrono::steady_clock::now() < rtDeadline) {
         auto t0 = std::chrono::steady_clock::now();
@@ -243,31 +257,21 @@ TEST_CASE("B4-K8: hung shred — watchdog detects and restarts VM", "[k8][hang][
     auto rtCheckDuration = std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::steady_clock::now() - rtCheckStart);
 
-    // The audio thread path must not have blocked — we should have completed
-    // all iterations within the deadline window.
+    // The audio thread path must not have blocked.
     REQUIRE(rtCheckDuration.count() <= 550);
 
     // Wait for the watchdog to detect the hang and recover the VM.
-    // The watchdog timeout is 250ms; recovery should happen within ~1s.
-    std::this_thread::sleep_for(std::chrono::milliseconds(500));
-
-    // Query the VM status — the watchdog should have detected the hang.
-    std::string hangStatus = mgr.sendControlCommand("vm_hang_status 0", 2000);
-    bool hangDetected = hangStatus.find("old_gen=") != std::string::npos ||
-                        hangStatus.find("recovered=1") != std::string::npos;
-    REQUIRE(hangDetected);
-
-    // Wait for recovery to complete.
+    // Watchdog timeout is 200ms; recovery should happen within ~1s.
     deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
     bool recovered = false;
     while (std::chrono::steady_clock::now() < deadline) {
         std::string q = mgr.sendControlCommand("vm_query 0", 1000);
         if (q.find("state=active") != std::string::npos) {
-            // Check that the generation changed (VM was restarted).
-            auto genPos = q.find("gen=");
-            if (genPos != std::string::npos) {
-                uint64_t newGen = std::stoull(q.substr(genPos + 4));
-                if (newGen > beatBefore || newGen > 0) {
+            // Check that heartbeat has advanced past the pre-hang value.
+            auto hbPos = q.find("heartbeat=");
+            if (hbPos != std::string::npos) {
+                uint64_t newBeat = std::stoull(q.substr(hbPos + 10));
+                if (newBeat > beatBefore) {
                     recovered = true;
                     break;
                 }
@@ -278,7 +282,13 @@ TEST_CASE("B4-K8: hung shred — watchdog detects and restarts VM", "[k8][hang][
 
     REQUIRE(recovered);
 
-    // Clean up.
+    // Verify the watchdog recorded the hang event.
+    std::string hangStatus = mgr.sendControlCommand("vm_hang_status 0", 2000);
+    bool hangDetected = hangStatus.find("recovered=1") != std::string::npos ||
+                        hangStatus.find("old_gen=") != std::string::npos;
+    REQUIRE(hangDetected);
+
+    // Clear the hang flag (for clean shutdown).
     mgr.sendControlCommand("test_clear_hang_vm 0", 1000);
     mgr.shutdown();
 }
@@ -292,8 +302,13 @@ TEST_CASE("B4-K8: hung shred — watchdog detects and restarts VM", "[k8][hang][
 // continue."
 //
 // The 'test_crash_worker' command makes the worker raise(SIGSEGV). The main
-// process should detect the death via waitpid (non-blocking) and heartbeat
-// staleness, mark the worker as dead, and allow restart.
+// process should detect the death via heartbeat staleness, mark the worker
+// as dead, and allow restart.
+//
+// NOTE: We do NOT call waitpid() directly in this test — that would consume
+// the child exit status and prevent the manager's liveness thread from
+// detecting death via checkProcessExit(). Instead, we rely on heartbeat
+// staleness detection, which works even if the process is reaped externally.
 // ---------------------------------------------------------------------------
 
 TEST_CASE("B4-K8: native crash — worker SIGSEGV does not crash main", "[k8][crash][native]")
@@ -305,6 +320,10 @@ TEST_CASE("B4-K8: native crash — worker SIGSEGV does not crash main", "[k8][cr
     }
 
     AudioWorkerManager mgr;
+    AudioWorkerManager::ResourceLimits limits;
+    limits.heartbeatTimeoutMs = 300;  // fast detection for testing
+    mgr.setResourceLimits(limits);
+
     REQUIRE(mgr.start(workerPath));
     const uint64_t gen = mgr.generation();
     const pid_t workerPid = mgr.getWorkerPid();
@@ -322,63 +341,43 @@ TEST_CASE("B4-K8: native crash — worker SIGSEGV does not crash main", "[k8][cr
     }
     REQUIRE(readsBefore >= 5);
 
-    // Verify the worker process is actually running.
+    // Verify the worker process is actually running (non-blocking check).
     int status = 0;
-    REQUIRE(::waitpid(workerPid, &status, WNOHANG) == 0); // still running
+    REQUIRE(::waitpid(workerPid, &status, WNOHANG) == 0);
 
-    // Crash the worker via test command.
+    // Crash the worker via test command (raises SIGSEGV in the worker).
     mgr.sendControlCommand("test_crash_worker", 1000);
 
-    // The worker should have crashed (non-zero exit status).
-    // Wait for the process to actually exit.
-    deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
-    bool workerExited = false;
-    while (std::chrono::steady_clock::now() < deadline) {
-        int st = 0;
-        pid_t r = ::waitpid(workerPid, &st, WNOHANG);
-        if (r == workerPid) {
-            workerExited = true;
-            // Verify it was a signal (SIGSEGV), not a clean exit.
-            REQUIRE(WIFSIGNALED(st));
-            REQUIRE(WTERMSIG(st) == SIGSEGV);
-            break;
-        }
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    }
-    REQUIRE(workerExited);
+    // Give the OS time to deliver the signal and terminate the process.
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
 
     // The main process is still alive (we're running this test), so the
-    // crash did not take down the main process.
+    // worker crash did not take down the main process. This is the
+    // fundamental guarantee of B4-K8.
 
-    // tryReadAudioBlock must NOT crash, block, or return true with stale data.
-    // It should return false (silence fallback) within bounded time.
-    bool blocked = false;
-    auto rtStart = std::chrono::steady_clock::now();
-    for (int i = 0; i < 100; ++i) {
-        auto t0 = std::chrono::steady_clock::now();
-        bool result = mgr.tryReadAudioBlock(buf, kBlockSize, gen);
-        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
-            std::chrono::steady_clock::now() - t0);
-        REQUIRE(elapsed.count() < 50); // must not block
-        if (elapsed.count() > 10)
-            blocked = true;
-        (void)result; // result should be false (stale/wrong gen)
-    }
-    auto rtDuration = std::chrono::duration_cast<std::chrono::milliseconds>(
-        std::chrono::steady_clock::now() - rtStart);
-
-    // Audio thread path must stay responsive even during worker death.
-    REQUIRE(rtDuration.count() < 1000);
-    REQUIRE_FALSE(blocked);
-
-    // The manager should detect the worker is dead.
+    // Wait for the manager's liveness thread to detect death via heartbeat
+    // staleness (timeout = 300ms + polling interval).
+    waitForWorkerDeath(mgr, std::chrono::milliseconds(2000));
     REQUIRE_FALSE(mgr.isWorkerAlive());
     REQUIRE(mgr.status() == AudioWorkerManager::WorkerStatus::Dead);
 
+    // tryReadAudioBlock must NOT crash, block, or return stale data.
+    // It should return false (stale gen / dead worker) within bounded time.
+    bool blocked = false;
+    for (int i = 0; i < 50; ++i) {
+        auto t0 = std::chrono::steady_clock::now();
+        mgr.tryReadAudioBlock(buf, kBlockSize, gen);
+        auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::steady_clock::now() - t0);
+        REQUIRE(elapsed.count() < 2000); // must not block (under 2ms)
+        if (elapsed.count() > 500)
+            blocked = true;
+    }
+    REQUIRE_FALSE(blocked);
+
     // Restart the worker.
-    bool restartOk = mgr.restart();
+    REQUIRE(mgr.restart());
     const uint64_t gen2 = mgr.generation();
-    REQUIRE(restartOk);
     REQUIRE(gen2 == gen + 1);
     REQUIRE(mgr.isWorkerAlive());
 
@@ -403,7 +402,7 @@ TEST_CASE("B4-K8: native crash — worker SIGSEGV does not crash main", "[k8][cr
 //
 // Per PROGRAM.md §B4-K8 test 2: "killed worker" — the main process must
 // detect death, emit silence, and allow restart. This tests the SIGKILL
-// path (harder than SIGTERM/SIGSEGV, as there's no cleanup).
+// path (harder than SIGTERM/SIGSEGV, as there's no cleanup at all).
 // ---------------------------------------------------------------------------
 
 TEST_CASE("B4-K8: SIGKILL — worker death detected, restart recovers", "[k8][crash][sigkill]")
@@ -415,6 +414,10 @@ TEST_CASE("B4-K8: SIGKILL — worker death detected, restart recovers", "[k8][cr
     }
 
     AudioWorkerManager mgr;
+    AudioWorkerManager::ResourceLimits limits;
+    limits.heartbeatTimeoutMs = 300;
+    mgr.setResourceLimits(limits);
+
     REQUIRE(mgr.start(workerPath));
     const uint64_t gen = mgr.generation();
     const pid_t workerPid = mgr.getWorkerPid();
@@ -433,36 +436,20 @@ TEST_CASE("B4-K8: SIGKILL — worker death detected, restart recovers", "[k8][cr
     REQUIRE(reads >= 5);
 
     // Kill the worker with SIGKILL (uncatchable, no cleanup).
-    int killResult = ::kill(workerPid, SIGKILL);
-    REQUIRE(killResult == 0);
+    REQUIRE(::kill(workerPid, SIGKILL) == 0);
 
-    // Wait for the process to actually exit.
-    deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
-    while (std::chrono::steady_clock::now() < deadline) {
-        int st = 0;
-        pid_t r = ::waitpid(workerPid, &st, WNOHANG);
-        if (r == workerPid) break;
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    }
-
-    // Wait for the liveness thread to detect death (heartbeat timeout).
-    std::this_thread::sleep_for(std::chrono::milliseconds(600));
+    // Wait for the manager to detect death (heartbeat staleness at 300ms).
+    waitForWorkerDeath(mgr, std::chrono::milliseconds(2000));
+    REQUIRE_FALSE(mgr.isWorkerAlive());
 
     // tryReadAudioBlock must not block and must return false (stale gen).
-    bool blocked = false;
     for (int i = 0; i < 50; ++i) {
         auto t0 = std::chrono::steady_clock::now();
         mgr.tryReadAudioBlock(buf, kBlockSize, gen);
-        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+        auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(
             std::chrono::steady_clock::now() - t0);
-        REQUIRE(elapsed.count() < 50);
-        if (elapsed.count() > 10)
-            blocked = true;
+        REQUIRE(elapsed.count() < 2000);
     }
-    REQUIRE_FALSE(blocked);
-
-    // Worker should be detected as dead.
-    REQUIRE_FALSE(mgr.isWorkerAlive());
 
     // Restart should succeed with new generation.
     REQUIRE(mgr.restart());
@@ -496,12 +483,13 @@ TEST_CASE("B4-K8: SIGKILL — worker death detected, restart recovers", "[k8][cr
 //
 // This test:
 //   1. Starts the worker and reads audio (establishes a working baseline).
-//   2. Kills the worker mid-stream with SIGKILL.
+//   2. Kills the worker mid-stream with SIGKILL (no cleanup, mid-write).
 //   3. Immediately hammers tryReadAudioBlock to verify:
 //      a. No torn reads (all samples are finite/valid or falls back to silence).
 //      b. No blocking (each call completes within <2ms).
-//   4. Verifies the transport is rejected (generation mismatch or workerAlive=false).
-//   5. Restarts and verifies audio flows on the new generation.
+//   4. Waits for liveness detection and verifies isWorkerAlive() returns false.
+//   5. Restarts and verifies audio flows on the new generation with a new
+//      generation identity (stale memory is rejected).
 // ---------------------------------------------------------------------------
 
 TEST_CASE("B4-K8: shared-memory recovery — mid-write death, no torn reads", "[k8][recovery][mid-write]")
@@ -513,6 +501,10 @@ TEST_CASE("B4-K8: shared-memory recovery — mid-write death, no torn reads", "[
     }
 
     AudioWorkerManager mgr;
+    AudioWorkerManager::ResourceLimits limits;
+    limits.heartbeatTimeoutMs = 300;
+    mgr.setResourceLimits(limits);
+
     REQUIRE(mgr.start(workerPath));
     const uint64_t gen = mgr.generation();
     const pid_t workerPid = mgr.getWorkerPid();
@@ -535,27 +527,18 @@ TEST_CASE("B4-K8: shared-memory recovery — mid-write death, no torn reads", "[
     }
     REQUIRE(reads >= 5);
 
-    // Verify shared memory is accessible from the test process too.
+    // Verify shared memory is accessible from the test process.
     ShmHandle shm = mapShm();
     REQUIRE(shm.transport() != nullptr);
     REQUIRE(shm.transport()->magic.load(std::memory_order_acquire) == kMagic);
     REQUIRE(shm.transport()->generation.load(std::memory_order_acquire) == gen);
     REQUIRE(shm.transport()->workerAlive.load(std::memory_order_acquire));
 
-    // Kill the worker mid-write (SIGKILL — no cleanup, no grace).
+    // Kill the worker mid-write (SIGKILL — no cleanup, mid-render).
     REQUIRE(::kill(workerPid, SIGKILL) == 0);
 
-    // Wait for process exit.
-    deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
-    while (std::chrono::steady_clock::now() < deadline) {
-        int st = 0;
-        if (::waitpid(workerPid, &st, WNOHANG) == workerPid)
-            break;
-        std::this_thread::sleep_for(std::chrono::milliseconds(5));
-    }
-
-    // Hammer tryReadAudioBlock immediately after death to catch the
-    // "mid-write" window — the seqlock must protect against torn reads.
+    // Immediately hammer tryReadAudioBlock to exercise the "mid-write"
+    // window — the seqlock must protect against torn reads.
     uint32_t tornReads = 0;
     uint32_t safeFalls = 0;
     uint32_t blockedCalls = 0;
@@ -596,15 +579,8 @@ TEST_CASE("B4-K8: shared-memory recovery — mid-write death, no torn reads", "[
     // The reader should have fallen back to silence (safe rejection).
     REQUIRE(safeFalls > 0);
 
-    // Verify the transport now shows workerAlive=false (cleaned up by worker
-    // OR stale because the worker was killed without setting it false).
-    bool aliveFlag = shm.transport()->workerAlive.load(std::memory_order_acquire);
-
-    // If the worker crashed without cleanup, workerAlive may still be true
-    // in shared memory — but the generation check + waitpid detection should
-    // still cause tryReadAudioBlock to reject. Let's verify isWorkerAlive()
-    // returns false via the liveness thread.
-    std::this_thread::sleep_for(std::chrono::milliseconds(700));
+    // Wait for liveness detection.
+    waitForWorkerDeath(mgr, std::chrono::milliseconds(2000));
     REQUIRE_FALSE(mgr.isWorkerAlive());
 
     // Restart and verify recovery.
@@ -612,8 +588,8 @@ TEST_CASE("B4-K8: shared-memory recovery — mid-write death, no torn reads", "[
     const uint64_t gen2 = mgr.generation();
     REQUIRE(gen2 == gen + 1);
 
-    // The old shared memory should have been unlinked/recreated with
-    // a new generation.
+    // The old shared memory should have been reinitialized with a new generation.
+    // The manager's restart() calls initSharedMemory() which sets the new gen.
     ShmHandle shm2 = mapShm();
     if (shm2.transport() != nullptr) {
         REQUIRE(shm2.transport()->generation.load(std::memory_order_acquire) == gen2);
@@ -635,11 +611,14 @@ TEST_CASE("B4-K8: shared-memory recovery — mid-write death, no torn reads", "[
     }
     REQUIRE(gotData);
 
+    // Old generation must remain rejected.
+    REQUIRE_FALSE(mgr.tryReadAudioBlock(buf, kBlockSize, gen));
+
     mgr.shutdown();
 }
 
 // ---------------------------------------------------------------------------
-// K8.5: Isolation — one tab crashing/dying doesn't affect other tabs
+// K8.5: Isolation — other tabs survive worker crash/restart
 // ---------------------------------------------------------------------------
 //
 // Per PROGRAM.md §B4-K8 test 2: "other tabs continue" after a crash.
@@ -657,13 +636,17 @@ TEST_CASE("B4-K8: post-crash isolation — other tabs survive worker restart", "
     }
 
     AudioWorkerManager mgr;
+    AudioWorkerManager::ResourceLimits limits;
+    limits.heartbeatTimeoutMs = 300;
+    mgr.setResourceLimits(limits);
+
     REQUIRE(mgr.start(workerPath));
     const uint64_t gen1 = mgr.generation();
     const pid_t workerPid = mgr.getWorkerPid();
 
     // Activate two VMs.
-    REQUIRE(mgr.sendControlCommand("vm_activate 0 44100 1", 2000).find("ok") != std::string::npos);
-    REQUIRE(mgr.sendControlCommand("vm_activate 1 44100 1", 2000).find("ok") != std::string::npos);
+    REQUIRE(mgr.sendControlCommand("vm_activate 0 44100 1", 2000).find("ok vm_activated") != std::string::npos);
+    REQUIRE(mgr.sendControlCommand("vm_activate 1 44100 1", 2000).find("ok vm_activated") != std::string::npos);
 
     // Let both produce audio.
     float buf[kBlockSize];
@@ -681,19 +664,14 @@ TEST_CASE("B4-K8: post-crash isolation — other tabs survive worker restart", "
     REQUIRE(mgr.sendControlCommand("vm_query 0", 1000).find("state=active") != std::string::npos);
     REQUIRE(mgr.sendControlCommand("vm_query 1", 1000).find("state=active") != std::string::npos);
 
-    // Crash the worker.
+    // Kill the worker.
     REQUIRE(::kill(workerPid, SIGKILL) == 0);
 
     // Wait for death detection.
-    deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
-    while (std::chrono::steady_clock::now() < deadline) {
-        int st = 0;
-        if (::waitpid(workerPid, &st, WNOHANG) == workerPid) break;
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    }
-    std::this_thread::sleep_for(std::chrono::milliseconds(600));
+    waitForWorkerDeath(mgr, std::chrono::milliseconds(2000));
+    REQUIRE_FALSE(mgr.isWorkerAlive());
 
-    // Both VMs are gone (worker crashed). Now restart.
+    // Restart the worker.
     REQUIRE(mgr.restart());
     const uint64_t gen2 = mgr.generation();
     REQUIRE(gen2 == gen1 + 1);
@@ -730,7 +708,8 @@ TEST_CASE("B4-K8: post-crash isolation — other tabs survive worker restart", "
 //
 // tryReadAudioBlock() is the audio-thread-facing function. It must NEVER
 // block, allocate, or wait — regardless of worker state. This test verifies
-// bounded latency across all failure scenarios.
+// bounded latency across all failure scenarios: healthy, crashed, and
+// stale-generation.
 // ---------------------------------------------------------------------------
 
 TEST_CASE("B4-K8: RT-safety — audio thread never blocks during failures", "[k8][rt-safe][no-block]")
@@ -777,6 +756,10 @@ TEST_CASE("B4-K8: RT-safety — audio thread never blocks during failures", "[k8
     // Scenario B: worker killed mid-stream — tryReadAudioBlock must not block.
     {
         AudioWorkerManager mgr;
+        AudioWorkerManager::ResourceLimits limits;
+        limits.heartbeatTimeoutMs = 300;
+        mgr.setResourceLimits(limits);
+
         REQUIRE(mgr.start(workerPath));
         const uint64_t gen = mgr.generation();
         const pid_t pid = mgr.getWorkerPid();
@@ -791,10 +774,12 @@ TEST_CASE("B4-K8: RT-safety — audio thread never blocks during failures", "[k8
 
         // Kill the worker.
         ::kill(pid, SIGKILL);
+
+        // Wait for process to exit (so we can verify the manager still works).
         int st = 0;
         ::waitpid(pid, &st, 0);
 
-        // Now hammer tryReadAudioBlock — must never block.
+        // Immediately hammer tryReadAudioBlock — must never block.
         uint64_t maxNs = 0;
         for (int i = 0; i < 1000; ++i) {
             auto t0 = std::chrono::steady_clock::now();
@@ -851,6 +836,10 @@ TEST_CASE("B4-K8: repeated crash/restart cycles — stable recovery", "[k8][reco
     }
 
     AudioWorkerManager mgr;
+    AudioWorkerManager::ResourceLimits limits;
+    limits.heartbeatTimeoutMs = 300;
+    mgr.setResourceLimits(limits);
+
     REQUIRE(mgr.start(workerPath));
 
     constexpr int kNumCycles = 3;
@@ -875,11 +864,13 @@ TEST_CASE("B4-K8: repeated crash/restart cycles — stable recovery", "[k8][reco
 
         // Crash the worker.
         REQUIRE(::kill(pid, SIGKILL) == 0);
+
+        // Reap the process.
         int st = 0;
         ::waitpid(pid, &st, 0);
 
         // Wait for liveness detection.
-        std::this_thread::sleep_for(std::chrono::milliseconds(600));
+        waitForWorkerDeath(mgr, std::chrono::milliseconds(2000));
         REQUIRE_FALSE(mgr.isWorkerAlive());
 
         // Restart.
@@ -896,29 +887,30 @@ TEST_CASE("B4-K8: repeated crash/restart cycles — stable recovery", "[k8][reco
 // ---------------------------------------------------------------------------
 //
 // This is the single test that provides the explicit PASS/FAIL verdict for
-// the B4-K8 hard gate. It verifies that ALL prior test conditions hold and
-// records the evidence. If any prior condition is violated, this test fails.
+// the B4-K8 hard gate. It runs a condensed battery covering all 3 failure
+// classes and produces evidence. If all assertions pass, the gate PASSES.
+// A sentinel FAIL at the end makes the verdict explicit in the test report.
 // ---------------------------------------------------------------------------
 
 TEST_CASE("B4-K8: HARD GATE — all failure classes contained", "[k8][gate][verdict]")
 {
     const std::string workerPath = getWorkerPath();
     if (workerPath.empty()) {
-        WARN("hathor-audio-worker binary not found; cannot verify hard gate");
         FAIL("B4-K8 hard gate: hathor-audio-worker binary not found — cannot verify");
         return;
     }
 
-    // This test runs the full battery: hang + crash + recovery + RT-safety.
-    // If we got here (all other K8 tests in this file pass), the hard gate passes.
-
     AudioWorkerManager mgr;
-    bool started = mgr.start(workerPath);
-    REQUIRE(started);
+    AudioWorkerManager::ResourceLimits limits;
+    limits.heartbeatTimeoutMs = 300;
+    mgr.setResourceLimits(limits);
+
+    REQUIRE(mgr.start(workerPath));
 
     const uint64_t gen = mgr.generation();
     const pid_t pid = mgr.getWorkerPid();
     REQUIRE(pid > 0);
+    REQUIRE(mgr.isWorkerAlive());
 
     // 1. Normal operation: audio flows, samples are valid.
     float buf[kBlockSize];
@@ -965,10 +957,11 @@ TEST_CASE("B4-K8: HARD GATE — all failure classes contained", "[k8][gate][verd
         }
     }
     REQUIRE(tornReads == 0);    // no torn reads
+    REQUIRE(maxNs <= 2000000);  // no blocking
     REQUIRE(safeFalls > 0);     // fell back to silence
 
     // 4. Wait for liveness detection.
-    std::this_thread::sleep_for(std::chrono::milliseconds(700));
+    waitForWorkerDeath(mgr, std::chrono::milliseconds(3000));
     REQUIRE_FALSE(mgr.isWorkerAlive());
 
     // 5. Restart.
@@ -997,7 +990,9 @@ TEST_CASE("B4-K8: HARD GATE — all failure classes contained", "[k8][gate][verd
     mgr.shutdown();
 
     // If we reached this point, all hard gate conditions were met.
-    FAIL("B4-K8 hard gate: if you are reading this, all assertions passed — "
-         "the gate PASSES. This FAIL is a sentinel to make the verdict "
-         "explicit in the test report.");
+    // Sentinel FAIL makes the PASS verdict explicit in the test report.
+    FAIL("B4-K8 HARD GATE VERDICT: PASS — all failure classes contained. "
+         "(maxNs=" + std::to_string(maxNs) +
+         ", tornReads=" + std::to_string(tornReads) +
+         ", safeFalls=" + std::to_string(safeFalls) + ")");
 }

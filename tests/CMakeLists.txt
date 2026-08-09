@@ -323,3 +323,25 @@ catch_discover_tests(hathor-b4-k8-hard-gate-tests DISCOVERY_MODE PRE_TEST)
 # Integration tests (require the full hathor binary; skipped if app is off)
 # ---------------------------------------------------------------------------
 add_subdirectory(integration)
+
+# Debug test for K8 investigation
+add_executable(k8-debug
+    test_k8_debug.cpp
+)
+target_compile_features(k8-debug PRIVATE cxx_std_20)
+target_compile_options(k8-debug PRIVATE -Wall -Wextra -Werror)
+target_include_directories(k8-debug PRIVATE
+    ${CMAKE_SOURCE_DIR}/app/audio-worker
+    ${CMAKE_SOURCE_DIR}/app
+    ${CMAKE_SOURCE_DIR}/engine/include
+)
+target_link_libraries(k8-debug PRIVATE
+    hathor-audio-worker-lib
+    Catch2::Catch2WithMain
+)
+target_compile_definitions(k8-debug PRIVATE
+    CMAKE_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+    CMAKE_BINARY_DIR="${CMAKE_BINARY_DIR}"
+)
+include(Catch)
+catch_discover_tests(k8-debug DISCOVERY_MODE PRE_TEST)

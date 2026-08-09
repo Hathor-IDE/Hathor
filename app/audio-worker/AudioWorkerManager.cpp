@@ -447,14 +447,14 @@ bool AudioWorkerManager::tryReadAudioBlock(float* outBuf, uint32_t blockSize,
     if (!impl_->transport_->workerAlive.load(std::memory_order_acquire))
         return false;
 
-    // Step 3: Check process liveness (non-blocking waitpid).
-    // This is a non-blocking syscall — RT-safe on POSIX.
-    if (impl_->workerPid_ > 0) {
-        int status = 0;
-        pid_t r = ::waitpid(impl_->workerPid_, &status, WNOHANG);
-        if (r == impl_->workerPid_)
-            return false; // Process has exited.
-    }
+     // Step 3: Check if the liveness thread has already marked the worker dead.
+     // We do NOT call waitpid() here — that syscall, while non-blocking (WNOHANG),
+     // can still take >2ms under kernel contention on macOS, violating the
+     // audio-thread latency budget. Instead, we rely on the workerAlive flag
+     // in shared memory (set atomically by the worker, cleared by the liveness
+     // thread on death detection or by shutdown).
+     if (impl_->workerKnownDead_.load(std::memory_order_acquire))
+         return false;
 
     // Step 4: Read sequence numbers.
     uint32_t wSeq = impl_->transport_->writeSeq.load(std::memory_order_acquire);

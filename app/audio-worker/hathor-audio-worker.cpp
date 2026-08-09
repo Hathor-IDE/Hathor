@@ -569,6 +569,30 @@ static void controlPlaneThread() {
                      gWatchdog ? gWatchdog->totalHangDetections() : 0)
                  + "\n";
         }
+        else if (cmd.rfind("watchdog_timeout", 0) == 0) {
+            // Configure the watchdog timeout (milliseconds).
+            std::string rest = cmd.substr(16);
+            trimSpaces(rest);
+            try {
+                int ms = std::stoi(rest);
+                if (gWatchdog) gWatchdog->setTimeout(std::chrono::milliseconds(ms));
+                resp = "ok watchdog_timeout ms=" + std::to_string(ms) + "\n";
+            } catch (...) {
+                resp = "err watchdog_timeout: invalid argument\n";
+            }
+        }
+        else if (cmd.rfind("watchdog_interval", 0) == 0) {
+            // Configure the watchdog check interval (milliseconds).
+            std::string rest = cmd.substr(18);
+            trimSpaces(rest);
+            try {
+                int ms = std::stoi(rest);
+                if (gWatchdog) gWatchdog->setInterval(std::chrono::milliseconds(ms));
+                resp = "ok watchdog_interval ms=" + std::to_string(ms) + "\n";
+            } catch (...) {
+                resp = "err watchdog_interval: invalid argument\n";
+            }
+        }
         else if (cmd.rfind("vm_destroy", 0) == 0) {
             std::string rest = cmd.substr(10);
             trimSpaces(rest);
