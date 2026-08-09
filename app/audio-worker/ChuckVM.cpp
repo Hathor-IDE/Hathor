@@ -327,14 +327,17 @@ std::string ChuckVM::lastError() const
 void ChuckVM::chucKThreadLoop()
 {
     // Enable pthread cancellation so the watchdog can forcibly terminate
-    // a hung thread (B4-K5 recovery path).  Cancellation is asynchronous —
-    // the thread can be cancelled at any point, which is necessary when the
-    // render callback is stuck in a CPU-bound infinite loop without any
-    // cancellation points.  This is safe here because ChuckVM holds no mutexes
-    // across the render callback call (the mutex is only held for state
-    // transitions, which are not in progress during normal rendering).
+    // a hung thread (B4-K5 recovery path).  Cancellation is deferred —
+    // the thread is only cancelled at well-defined cancellation points
+    // (e.g., sleep_for, condition_variable::wait, sched_yield).  This is
+    // safe for C++ threads: cleanup runs at defined points, no mid-
+    // instruction interruption.  The render callback must contain at least
+    // one cancellation point per iteration (e.g., std::this_thread::yield())
+    // for this to work.  The watchdog enforces this contract: render
+    // callbacks that spin without any cancellation points are a programming
+    // error (they hold a CPU core indefinitely and cannot be interrupted).
     pthread_setcancelstate(PTHREAD_CANCEL_ENABLE, nullptr);
-    pthread_setcanceltype(PTHREAD_CANCEL_ASYNCHRONOUS, nullptr);
+    pthread_setcanceltype(PTHREAD_CANCEL_DEFERRED, nullptr);
 
     // This thread is the sole owner of the ChucK instance.  It calls run()
     // (via the render callback) and handles suspend/resume coordination.

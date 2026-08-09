@@ -427,7 +427,7 @@ TEST_CASE("B4-K4: rapid sequential compiles — latest wins", "[k4][compile][rap
         .tabId = tab,
         .requestVersion = v1,
         .vmGeneration = gen,
-        .sourceCode = "code1",
+        .sourceCode = "SinOsc s1 => dac;",
         .onResponse = [&](std::shared_ptr<CompiledShred> r) {
             results[0] = r;
             doneCount.fetch_add(1, std::memory_order_acq_rel);
@@ -437,7 +437,7 @@ TEST_CASE("B4-K4: rapid sequential compiles — latest wins", "[k4][compile][rap
         .tabId = tab,
         .requestVersion = v2,
         .vmGeneration = gen,
-        .sourceCode = "code2",
+        .sourceCode = "SinOsc s2 => dac;",
         .onResponse = [&](std::shared_ptr<CompiledShred> r) {
             results[1] = r;
             doneCount.fetch_add(1, std::memory_order_acq_rel);
@@ -447,7 +447,7 @@ TEST_CASE("B4-K4: rapid sequential compiles — latest wins", "[k4][compile][rap
         .tabId = tab,
         .requestVersion = v3,
         .vmGeneration = gen,
-        .sourceCode = "code3",
+        .sourceCode = "SinOsc s3 => dac;",
         .onResponse = [&](std::shared_ptr<CompiledShred> r) {
             results[2] = r;
             doneCount.fetch_add(1, std::memory_order_acq_rel);

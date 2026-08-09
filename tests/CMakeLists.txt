@@ -203,6 +203,33 @@ include(Catch)
 catch_discover_tests(hathor-b4-k3-vm-isolation-tests DISCOVERY_MODE PRE_TEST)
 
 # ---------------------------------------------------------------------------
+# hathor-b4-k5-watchdog-tests — B4-K5 per-VM hang detection / watchdog
+#
+# Tests VmWatchdog, ChuckVM heartbeat, VMManager forceDestroyVM, and the
+# B4-K5 recovery flow.  Links Catch2 + hathor-audio-worker-lib.
+# ---------------------------------------------------------------------------
+add_executable(hathor-b4-k5-watchdog-tests
+    test_b4_k5_watchdog.cpp
+)
+
+target_compile_features(hathor-b4-k5-watchdog-tests PRIVATE cxx_std_20)
+target_compile_options(hathor-b4-k5-watchdog-tests PRIVATE -Wall -Wextra -Werror)
+
+target_include_directories(hathor-b4-k5-watchdog-tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/app/audio-worker
+    ${CMAKE_SOURCE_DIR}/app
+    ${CMAKE_SOURCE_DIR}/engine/include
+)
+
+target_link_libraries(hathor-b4-k5-watchdog-tests PRIVATE
+    hathor-audio-worker-lib
+    Catch2::Catch2WithMain
+)
+
+include(Catch)
+catch_discover_tests(hathor-b4-k5-watchdog-tests DISCOVERY_MODE PRE_TEST)
+
+# ---------------------------------------------------------------------------
 # hathor-vm-lifecycle-tests — B4-K3/K4 VmLifecycle + ChuckCompiler unit tests
 #
 # Pure unit tests for the VM lifecycle manager, compile dispatcher serialization,
@@ -229,6 +256,38 @@ target_link_libraries(hathor-vm-lifecycle-tests PRIVATE
 
 include(Catch)
 catch_discover_tests(hathor-vm-lifecycle-tests DISCOVERY_MODE PRE_TEST)
+
+# ---------------------------------------------------------------------------
+# hathor-b4-k7-ck-eval-tests — B4-K7 .ck tab evaluation (Ctrl+Enter path)
+#
+# Tests the full ck_genv → ck_compile → ck_stop command path through the
+# real worker process.  JUCE-free: links Catch2 + AudioWorkerManager only.
+# ---------------------------------------------------------------------------
+add_executable(hathor-b4-k7-ck-eval-tests
+    test_b4_k7_ck_eval.cpp
+)
+
+target_compile_features(hathor-b4-k7-ck-eval-tests PRIVATE cxx_std_20)
+target_compile_options(hathor-b4-k7-ck-eval-tests PRIVATE -Wall -Wextra -Werror)
+
+target_include_directories(hathor-b4-k7-ck-eval-tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/app/audio-worker
+    ${CMAKE_SOURCE_DIR}/app
+    ${CMAKE_SOURCE_DIR}/engine/include
+)
+
+target_link_libraries(hathor-b4-k7-ck-eval-tests PRIVATE
+    hathor-audio-worker-lib
+    Catch2::Catch2WithMain
+)
+
+target_compile_definitions(hathor-b4-k7-ck-eval-tests PRIVATE
+    CMAKE_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+    CMAKE_BINARY_DIR="${CMAKE_BINARY_DIR}"
+)
+
+include(Catch)
+catch_discover_tests(hathor-b4-k7-ck-eval-tests DISCOVERY_MODE PRE_TEST)
 
 # ---------------------------------------------------------------------------
 # Integration tests (require the full hathor binary; skipped if app is off)
