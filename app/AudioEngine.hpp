@@ -246,6 +246,31 @@ public:
     bool isStudioAssetPath(const std::filesystem::path& path) const override;
 
     // ------------------------------------------------------------------
+    // B8-K2: Background ChucK render → .wav
+    // ------------------------------------------------------------------
+    //
+    // Delegates to a ChuckRenderWriter that drains audio from the worker's
+    // shared-memory ring on a dedicated background thread.  The JUCE message
+    // thread is never blocked.
+    //
+    // The destination path is supplied by B8-K1 (resolveRenderPath above).
+    // The renderer never duplicates target-selection/path-resolution logic.
+
+    /// Start a background render.  Returns immediately with a handle.
+    hathor::RenderHandle startBakeRender(uint8_t                            tabId,
+                                         std::string                        ckSource,
+                                         uint64_t                           numSamples,
+                                         unsigned                           sampleRate,
+                                         const std::filesystem::path&       destPath,
+                                         hathor::ChuckRenderWriter::CompletionCallback onComplete) override;
+
+    /// Number of renders currently in progress.
+    int activeRenderCount() const noexcept override;
+
+    /// Shut down all in-flight renders (called from AudioEngine destructor).
+    void shutdownRender() noexcept override;
+
+    // ------------------------------------------------------------------
     // juce::AudioIODeviceCallback interface
     // ------------------------------------------------------------------
     void audioDeviceAboutToStart(juce::AudioIODevice* device) override;
@@ -385,7 +410,17 @@ private:
     hathor::AssetPathResolver     resolver_;
     hathor::LiveJamSessionManager liveJamSession_;
 
+    // B8-K2: render writer — created when the worker is started.
+    // nullptr when no worker process is configured (tests, etc.).
+    std::unique_ptr<hathor::ChuckRenderWriter> renderWriter_;
+
     // Storage for a caller-provided LiveJam session directory (when
     // setLiveJamSessionDir is called with a non-empty path).
     std::filesystem::path liveJamSessionDirStorage_;
+};
+
+    // ------------------------------------------------------------------
+    // B8-K2: Background render writer
+    // ------------------------------------------------------------------
+    std::unique_ptr<hathor::ChuckRenderWriter> renderWriter_;
 };

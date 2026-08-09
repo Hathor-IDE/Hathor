@@ -19,6 +19,7 @@
 #include "SlotState.hpp"
 #include "MasterEq.hpp"
 #include "AssetTarget.hpp"
+#include "ChuckRenderWriter.hpp"
 
 #include <memory>
 #include <string>
@@ -152,4 +153,32 @@ public:
 
     /// Returns true if the given path is inside the Studio permanent asset area.
     virtual bool isStudioAssetPath(const std::filesystem::path& path) const = 0;
+
+    // --- B8-K2: Background ChucK render → .wav ---
+
+    /// Start a background render of the active ChucK instrument.
+    ///
+    /// The destination path must have been resolved by B8-K1 (resolveRenderPath).
+    /// Rendering occurs entirely on a background thread — the JUCE message thread
+    /// is not blocked.  Completion (or failure) is reported via onComplete.
+    ///
+    /// @param tabId       Tab/slot index [0,16) for the render VM.
+    /// @param ckSource    ChucK source code to render.
+    /// @param numSamples  Number of samples to render at @p sampleRate.
+    /// @param sampleRate  Sample rate (typically 44100).
+    /// @param destPath    Resolved .wav destination (from B8-K1).
+    /// @param onComplete  Async completion callback (called on the render thread).
+    /// @return A RenderHandle for status polling / cancellation.
+    virtual hathor::RenderHandle startBakeRender(uint8_t                            tabId,
+                                                 std::string                        ckSource,
+                                                 uint64_t                           numSamples,
+                                                 unsigned                           sampleRate,
+                                                 const std::filesystem::path&       destPath,
+                                                 hathor::ChuckRenderWriter::CompletionCallback onComplete) = 0;
+
+    /// Number of renders currently in progress.
+    virtual int activeRenderCount() const noexcept = 0;
+
+    /// Shut down all in-flight renders (called from application shutdown).
+    virtual void shutdownRender() noexcept = 0;
 };

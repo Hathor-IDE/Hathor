@@ -445,6 +445,38 @@ include(Catch)
 catch_discover_tests(hathor-b8-k1-asset-target-tests DISCOVERY_MODE PRE_TEST)
 
 # ---------------------------------------------------------------------------
+# hathor-b8-k2-render-writer-tests — B8-K2 background ChucK render → .wav
+#
+# Tests WAV file format correctness, duration/sample count, cancellation,
+# state transitions, and error handling.  Uses a null worker (all-silence
+# path) to verify the writer produces a valid file regardless.
+#
+# JUCE-free: ChuckRenderWriter.hpp uses only std::filesystem and standard
+# headers.  Links hathor-engine + Catch2.
+# ---------------------------------------------------------------------------
+add_executable(hathor-b8-k2-render-writer-tests
+    test_b8_k2_render_writer.cpp
+)
+
+target_compile_features(hathor-b8-k2-render-writer-tests PRIVATE cxx_std_20)
+target_compile_options(hathor-b8-k2-render-writer-tests PRIVATE -Wall -Wextra -Werror)
+
+target_include_directories(hathor-b8-k2-render-writer-tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/app
+    ${CMAKE_SOURCE_DIR}/app/audio-worker
+    ${CMAKE_SOURCE_DIR}/engine/include
+)
+
+target_link_libraries(hathor-b8-k2-render-writer-tests PRIVATE
+    hathor-audio-worker-lib
+    hathor-engine
+    Catch2::Catch2WithMain
+)
+
+include(Catch)
+catch_discover_tests(hathor-b8-k2-render-writer-tests DISCOVERY_MODE PRE_TEST)
+
+# ---------------------------------------------------------------------------
 # Integration tests (require the full hathor binary; skipped if app is off)
 # ---------------------------------------------------------------------------
 add_subdirectory(integration)

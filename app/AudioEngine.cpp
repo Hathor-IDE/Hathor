@@ -58,6 +58,9 @@ std::string AudioEngine::startWorker(const std::string& workerPath)
     if (!workerMgr_->start(workerPath))
         return "failed to start worker: " + workerMgr_->getLastError();
 
+    // Create the render writer bound to the worker manager.
+    renderWriter_ = std::make_unique<hathor::ChuckRenderWriter>(workerMgr_.get());
+
     // Configure resource policy.
     hathor::AudioWorkerManager::ResourceLimits limits;
     limits.maxVms = hathor::audio_worker::kNumTabs;
@@ -74,6 +77,10 @@ std::string AudioEngine::startWorker(const std::string& workerPath)
 
 void AudioEngine::shutdownWorker() noexcept
 {
+    if (renderWriter_) {
+        renderWriter_->shutdown();
+        renderWriter_.reset();
+    }
     if (workerMgr_) {
         workerMgr_->shutdown();
         workerMgr_.reset();
@@ -792,4 +799,39 @@ void AudioEngine::cleanupLiveJamAssets()
 bool AudioEngine::isStudioAssetPath(const std::filesystem::path& path) const
 {
     return resolver_.isStudioPath(path);
+}
+
+// ---------------------------------------------------------------------------
+// B8-K2: Background render writer
+// ---------------------------------------------------------------------------
+
+hathor::RenderHandle AudioEngine::startBakeRender(
+    uint8_t                            tabId,
+    std::string                        ckSource,
+    uint64_t                           numSamples,
+    unsigned                           sampleRate,
+    const std::filesystem::path&       destPath,
+    hathor::ChuckRenderWriter::CompletionCallback onComplete)
+{
+    if (!renderWriter_) {
+        onComplete(hathor::RenderResult{
+            .success = false,
+            .state = hathor::RenderState::Failed,
+            .errorMessage = "Render writer not initialised (worker not started)",
+        });
+        return hathor::RenderHandle{};
+    }
+    return renderWriter_->startRender(tabId, std::move(ckSource), numSamples,
+                                      sampleRate, destPath, std::move(onComplete));
+}
+
+int AudioEngine::activeRenderCount() const noexcept
+{
+    return renderWriter_ ? renderWriter_->activeRenderCount() : 0;
+}
+
+void AudioEngine::shutdownRender() noexcept
+{
+    if (renderWriter_)
+        renderWriter_->shutdown();
 }
