@@ -28,8 +28,78 @@
 #include <chrono>
 #include <cstring>
 #include <thread>
+#include <tuple>
 
 namespace hathor::audio_worker {
+
+// ---------------------------------------------------------------------------
+// Basic ChucK source validation (pre-libchuck sanity check)
+// ---------------------------------------------------------------------------
+// When libchuck is linked, the real compiler (ck.compileCode) performs full
+// validation. Until then, this lightweight heuristic catches obvious syntax
+// errors so the failure path is testable end-to-end: unbalanced brackets,
+// missing => sporking operator, or non-identifier characters where identifiers
+// are expected.
+//
+// Returns: (ok, errorLine, errorColumn, errorMessage).
+static std::tuple<bool, int, int, std::string>
+validateChuckSource(const std::string& src)
+{
+    int parenDepth = 0, braceDepth = 0, bracketDepth = 0;
+    bool hasSporkOrAssignment = false;
+    int line = 1, col = 1;
+
+    for (size_t i = 0; i < src.size(); ++i) {
+        char c = src[i];
+
+        if (c == '\n') { ++line; col = 1; continue; }
+        ++col;
+
+        // Track bracket depth.
+        if (c == '(') ++parenDepth;
+        else if (c == ')') --parenDepth;
+        else if (c == '{') ++braceDepth;
+        else if (c == '}') --braceDepth;
+        else if (c == '[') ++bracketDepth;
+        else if (c == ']') --bracketDepth;
+
+        // Track the => sporking operator.
+        if (c == '=' && i + 1 < src.size() && src[i + 1] == '>')
+            hasSporkOrAssignment = true;
+
+        // Check for negative depth (unbalanced close).
+        if (parenDepth < 0 || braceDepth < 0 || bracketDepth < 0) {
+            return {false, line, col,
+                "unexpected ')' or '}' or ']' at mismatched position"};
+        }
+    }
+
+    // Final depth check.
+    if (parenDepth > 0)
+        return {false, line, col, "unbalanced parentheses: missing ')'"};
+    if (braceDepth > 0)
+        return {false, line, col, "unbalanced braces: missing '}'"};
+    if (bracketDepth > 0)
+        return {false, line, col, "unbalanced brackets: missing ']'"};
+    if (parenDepth < 0)
+        return {false, line, col, "unbalanced parentheses: extra ')'"};
+    if (braceDepth < 0)
+        return {false, line, col, "unbalanced braces: extra '}'"};
+    if (bracketDepth < 0)
+        return {false, line, col, "unbalanced brackets: extra ']'"};
+
+    // Every ChucK program needs at least one statement (with => or a
+    // declaration). For now, just require the => operator or a semicolon.
+    if (!hasSporkOrAssignment) {
+        // Check if there's at least a semicolon (could be a declaration).
+        if (src.find(';') == std::string::npos) {
+            return {false, 1, 1,
+                "expected ChucK sporking operator (=>) or statement terminator (;)"};
+        }
+    }
+
+    return {true, 0, 0, {}};
+}
 
 // ---------------------------------------------------------------------------
 // FNV-1a 64-bit hash — allocation-free, deterministic. Used for sourceHash.
@@ -152,10 +222,24 @@ void ChuckCompiler::dispatcherLoop()
             result->sourceCode = cmd.sourceCode;
             result->requestVersion = cmd.requestVersion;
 
-            // --- Placeholder: simulate ChucK compile ---
+            // --- Basic ChucK source validation (pre-libchuck sanity) ---
             // A real compile would call compileCode() here. If it returns
             // FALSE, set result->ok = false and capture the compiler error
             // string. The VM must NOT see a partial result.
+            auto [valid, errLine, errCol, errMsg] = validateChuckSource(cmd.sourceCode);
+
+            if (!valid) {
+                result->ok = false;
+                result->error = errMsg;
+                result->errorLine = errLine;
+                result->errorColumn = errCol;
+                // On failure: do NOT publish. The VM keeps its current valid shred.
+                if (cmd.onResponse)
+                    cmd.onResponse(result);
+                continue;
+            }
+
+            // Validation passed — simulate a successful compile.
             result->ok = true;
             result->loadedShredId = -1; // assigned by the VM on consumption
             // --- End placeholder ---

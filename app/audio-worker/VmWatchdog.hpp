@@ -208,6 +208,12 @@ public:
      */
     int totalHangDetections() const noexcept;
 
+    /**
+     * Get the number of restart attempts for a specific tab.
+     * Returns 0 if the tab has no watchdog entry.
+     */
+    int restartCountFor(TabId tabId) const noexcept;
+
 private:
     /// The watchdog thread's main loop.
     void watchdogLoop();

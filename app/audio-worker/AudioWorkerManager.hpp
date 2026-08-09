@@ -193,6 +193,25 @@ public:
     /// @return VMResult with ok=true on success.
     audio_worker::VMResult compileTabVM(uint8_t tabId, const std::string& code);
 
+    /// B4-K7: Evaluate a .ck tab — full compile→load→execute path.
+    /// Activates the VM for the tab (if not already active), queries its
+    /// generation, bumps the request version, and sends ck_compile with the
+    /// real generation.  The compile result is published via the atomic
+    /// handoff slot and consumed by the VM's render thread.
+    ///
+    /// If the tab's VM was destroyed by a previous ck_stop, this reactivates it.
+    /// On compile failure, the previously running shred is NOT replaced.
+    ///
+    /// @param tabId Slot index.
+    /// @param code  ChucK source code.
+    /// @return VMResult with ok=true on successful compile+publish.
+    audio_worker::VMResult evaluateCkTab(uint8_t tabId, const std::string& code);
+
+    /// B4-K7: Stop a .ck tab — destroy the VM and remove any pending handoff.
+    /// @param tabId Slot index.
+    /// @return VMResult with ok=true on success.
+    audio_worker::VMResult stopCkTab(uint8_t tabId);
+
     /// Query the state of a tab's VM.
     /// @param tabId Slot index.
     /// @return VMResult with state info in the message field.

@@ -54,9 +54,20 @@
  *       -> "err vm_compile_failed tab=<tabId> <error-text>"
  *
  *   vm_query <tabId>
- *       -> "ok vm_state tab=<tabId> state=<inactive|active| suspended|destroyed|error>"
- *          + " blocks=<n> heartbeat=<n> memory=<bytes>"
+ *       -> "ok vm_state tab=<tabId> state=<inactive|active| suspended|destroyed|error|failed|recreating>"
+ *          + " blocks=<n> heartbeat=<n> memory=<bytes> gen=<g>"
  *       -> "err vm_query_failed tab=<tabId> <reason>"
+ *
+ *   vm_hang_status [all|<tabId>]
+ *       -> "ok vm_hang_status events=<n> <event-list>"  (for "all")
+ *       -> "ok vm_hang_status tab=<tabId> old_gen=<g> hb=<n> new_gen=<g> recovered=<0|1> restarts=<n>"
+ *       -> "ok vm_hang_status tab=<tabId> no_hang_events"
+ *       -> "err ..."
+ *       (B4-K5: queried by the main process for UI notification)
+ *
+ *   watchdog_status
+ *       -> "ok watchdog monitored=<n> total_detections=<n>"
+ *       (B4-K5: general watchdog health)
  *
  *   vm_list
  *       -> "ok vm_list count=<n> active=<n> suspended=<n> destroyed=<n>"

@@ -51,7 +51,8 @@
  *   vm_list                                            — list all VMs
  *   vm_create <tabId>                                — legacy alias for vm_activate
  *   ck_compile <tabId> <vmGeneration> <version> <src> — compile (K4, serialized)
- *   status, ping, stop                               — lifecycle/standard
+ *   ck_stop <tabId>                                      — stop .ck tab (K7)
+ *   status, ping, stop                                 — lifecycle/standard
  *
  * Requirements: B4-K2, B4-K3, B4-K4, B4-K0.5, B4-K0.6, Decision #24
  */
@@ -553,7 +554,7 @@ static void controlPlaneThread() {
                          + " new_gen=" + std::to_string(e.newGeneration)
                          + " recovered=" + (e.recovered ? "1" : "0")
                          + " restarts=" + std::to_string(
-                             gWatchdog ? gWatchdog->monitoredCount() : 0)
+                             gWatchdog ? gWatchdog->restartCountFor(static_cast<TabId>(tabId)) : 0)
                          + "\n";
                 } else {
                     resp = "ok vm_hang_status tab=" + std::to_string(tabId)

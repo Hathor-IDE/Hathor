@@ -116,6 +116,15 @@ int VmWatchdog::totalHangDetections() const noexcept
     return totalHangDetections_.load(std::memory_order_acquire);
 }
 
+int VmWatchdog::restartCountFor(TabId tabId) const noexcept
+{
+    std::lock_guard<std::mutex> lock(entriesMtx_);
+    auto it = entries_.find(tabId);
+    if (it == entries_.end() || !it->second)
+        return 0;
+    return it->second->restartCount.load(std::memory_order_acquire);
+}
+
 // ---------------------------------------------------------------------------
 // Watchdog thread main loop
 // ---------------------------------------------------------------------------
