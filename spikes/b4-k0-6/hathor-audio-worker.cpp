@@ -12,6 +12,7 @@
 #include <thread>
 
 #include <fcntl.h>
+#include <poll.h>
 #include <signal.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
@@ -68,6 +69,13 @@ void controlPlaneThread() {
     ::listen(srvFd, 4);
 
     while (gRunning.load(std::memory_order_acquire)) {
+        struct pollfd pfd{};
+        pfd.fd = srvFd;
+        pfd.events = POLLIN;
+        int pr = ::poll(&pfd, 1, 50);
+        if (pr <= 0) continue;
+        if (!(pfd.revents & POLLIN)) continue;
+
         int connFd = ::accept(srvFd, nullptr, nullptr);
         if (connFd < 0) continue;
 
@@ -147,9 +155,13 @@ int main() {
     gTransport->writeSeq.store(0, std::memory_order_release);
     gTransport->readSeq.store(0, std::memory_order_release);
     gTransport->lastHeartbeat.store(0, std::memory_order_release);
+    gTransport->wrCount.store(0, std::memory_order_release);
+    gTransport->wrSumNs.store(0, std::memory_order_release);
+    gTransport->wrMaxNs.store(0, std::memory_order_release);
+    gTransport->wrMinNs.store(0, std::memory_order_release);
     gTransport->workerAlive.store(true, std::memory_order_release);
 
-    std::fprintf(stderr, "[worker] started, pid=%d, generation=%llu\n", getpid(),
+    std::fprintf(stderr, "[worker] started, pid=%d, generation=%llu, loop begin\n", getpid(),
                  static_cast<unsigned long long>(gen));
 
     std::thread ctrlThread(controlPlaneThread);
@@ -173,7 +185,18 @@ int main() {
         gen = gTransport->generation.load(std::memory_order_acquire);
 
         AudioBlock& block = gTransport->blocks[wSeq & kRingMask];
+        auto wStart = std::chrono::steady_clock::now();
         produceBlock(block, wSeq, gen);
+        auto wEnd = std::chrono::steady_clock::now();
+        uint64_t wNs = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(wEnd - wStart).count());
+        auto prevMin = gTransport->wrMinNs.load(std::memory_order_relaxed);
+        while (prevMin > wNs &&
+               !gTransport->wrMinNs.compare_exchange_weak(prevMin, wNs, std::memory_order_relaxed)) {}
+        auto prevMax = gTransport->wrMaxNs.load(std::memory_order_relaxed);
+        while (wNs > prevMax &&
+               !gTransport->wrMaxNs.compare_exchange_weak(prevMax, wNs, std::memory_order_relaxed)) {}
+        gTransport->wrSumNs.fetch_add(wNs, std::memory_order_relaxed);
+        gTransport->wrCount.fetch_add(1, std::memory_order_relaxed);
 
         gTransport->lastHeartbeat.store(beat, std::memory_order_release);
         ++beat;

@@ -31,6 +31,12 @@ struct SharedAudioTransport {
     std::atomic<bool> workerAlive{false};
     std::atomic<uint64_t> lastHeartbeat{0};
 
+    // Writer-side RT instrumentation (best-effort, published by producer).
+    std::atomic<uint64_t> wrCount{0};
+    std::atomic<uint64_t> wrSumNs{0};
+    std::atomic<uint64_t> wrMaxNs{0};
+    std::atomic<uint64_t> wrMinNs{0};
+
     AudioBlock blocks[kRingCapacity];
 
     static constexpr size_t blockSize() { return kBlockSize; }
