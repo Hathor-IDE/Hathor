@@ -261,10 +261,10 @@ TEST_CASE("B4-K4: invalid compile rejected, handoff not published", "[k4][compil
     // Should fail because the VM was destroyed (generation mismatch).
     REQUIRE(result != nullptr);
     REQUIRE_FALSE(result->ok);
-    REQUIRE(result->error.find("generation") != std::string::npos ||
-            result->error.find("inactive") != std::string::npos ||
-            result->error.find("Destroyed") != std::string::npos);
-
+    bool hasGenMsg = result->error.find("generation") != std::string::npos;
+    bool hasInactiveMsg = result->error.find("inactive") != std::string::npos;
+    bool hasDestroyedMsg = result->error.find("Destroyed") != std::string::npos;
+    REQUIRE((hasGenMsg || hasInactiveMsg || hasDestroyedMsg));
     h.teardown();
 }
 
@@ -329,9 +329,10 @@ TEST_CASE("B4-K4: VM replacement invalidates in-flight compile", "[k4][compile][
     auto result = h.compileAndWait(tab, gen1, "SinOsc s => dac;");
 
     REQUIRE(result != nullptr);
-    REQUIRE_FALSE(result->ok);  // rejected due to generation mismatch
-    REQUIRE(result->error.find("generation") != std::string::npos ||
-            result->error.find("mismatch") != std::string::npos);
+    REQUIRE_FALSE(result->ok);
+    bool genMismatch = result->error.find("generation") != std::string::npos;
+    bool mismatchMsg = result->error.find("mismatch") != std::string::npos;
+    REQUIRE((genMismatch || mismatchMsg));
 
     // The handoff should NOT be published for the old generation.
     auto handoff = h.lifecycle.loadHandoff(tab);
@@ -606,7 +607,7 @@ TEST_CASE("K0.5: ChuckCompiler dispatches sequentially (no concurrent compile)",
         .requestVersion = v1,
         .vmGeneration = gen,
         .sourceCode = "code1",
-        .onResponse = [&](std::shared_ptr<CompiledShred> r) {
+        .onResponse = [&](std::shared_ptr<CompiledShred>) {
             firstCaller.store(std::this_thread::get_id(), std::memory_order_release);
             callCount.fetch_add(1, std::memory_order_acq_rel);
             firstDone.store(true, std::memory_order_release);
@@ -618,7 +619,7 @@ TEST_CASE("K0.5: ChuckCompiler dispatches sequentially (no concurrent compile)",
         .requestVersion = v2,
         .vmGeneration = gen,
         .sourceCode = "code2",
-        .onResponse = [&](std::shared_ptr<CompiledShred> r) {
+        .onResponse = [&](std::shared_ptr<CompiledShred>) {
             secondCaller.store(std::this_thread::get_id(), std::memory_order_release);
             callCount.fetch_add(1, std::memory_order_acq_rel);
         }

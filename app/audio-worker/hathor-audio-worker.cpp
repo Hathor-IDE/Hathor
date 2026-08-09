@@ -59,7 +59,6 @@
 #include "audio_ipc.h"
 #include "ChuckCompiler.hpp"
 #include "ChuckVm.hpp"
-#include "ChuckVM.hpp"
 #include "VMManager.hpp"
 #include "VmLifecycle.hpp"
 #include "ResourcePolicy.hpp"
@@ -101,13 +100,13 @@ using hathor::audio_worker::kShmName;
 using hathor::audio_worker::kShmSize;
 using hathor::audio_worker::ChuckCompiler;
 using hathor::audio_worker::ChuckVmEntry;
-using hathor::audio_worker;
 using hathor::audio_worker::ChuckVM;
 using hathor::audio_worker::CompileCommand;
 using hathor::audio_worker::CompiledShred;
 using hathor::audio_worker::ResourcePolicy;
 using hathor::audio_worker::TabId;
 using hathor::audio_worker::VMManager;
+using hathor::audio_worker::VMResult;
 using hathor::audio_worker::VmLifecycle;
 using hathor::audio_worker::VmState;
 
@@ -502,6 +501,7 @@ static void controlPlaneThread() {
                 int tabId = std::stoi(std::string(tabStr));
                 uint64_t vmGeneration = std::stoull(std::string(genStr));
                 uint32_t version = static_cast<uint32_t>(std::stoul(std::string(verStr)));
+                (void)version;
 
                 if (srcStr.empty()) {
                     resp = "err ck_compile: empty source\n";

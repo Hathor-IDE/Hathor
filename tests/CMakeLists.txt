@@ -142,6 +142,40 @@ include(Catch)
 catch_discover_tests(hathor-audio-worker-tests DISCOVERY_MODE PRE_TEST)
 
 # ---------------------------------------------------------------------------
+# hathor-b4-k3-vm-isolation-tests — B4-K3 per-tab VM isolation + resource policy
+#
+# Tests the VM lifecycle state machine, resource ceiling, suspension/resume,
+# failure isolation, and worker restart recovery.  Links Catch2 +
+# the audio-worker-lib (ChuckVM, VMManager, ResourcePolicy, ChuckCompiler,
+# VmLifecycle) + AudioWorkerManager.
+# ---------------------------------------------------------------------------
+add_executable(hathor-b4-k3-vm-isolation-tests
+    test_b4_k3_vm_isolation.cpp
+)
+
+target_compile_features(hathor-b4-k3-vm-isolation-tests PRIVATE cxx_std_20)
+target_compile_options(hathor-b4-k3-vm-isolation-tests PRIVATE -Wall -Wextra -Werror)
+
+target_include_directories(hathor-b4-k3-vm-isolation-tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/app/audio-worker
+    ${CMAKE_SOURCE_DIR}/app
+    ${CMAKE_SOURCE_DIR}/engine/include
+)
+
+target_link_libraries(hathor-b4-k3-vm-isolation-tests PRIVATE
+    hathor-audio-worker-lib
+    Catch2::Catch2WithMain
+)
+
+target_compile_definitions(hathor-b4-k3-vm-isolation-tests PRIVATE
+    CMAKE_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+    CMAKE_BINARY_DIR="${CMAKE_BINARY_DIR}"
+)
+
+include(Catch)
+catch_discover_tests(hathor-b4-k3-vm-isolation-tests DISCOVERY_MODE PRE_TEST)
+
+# ---------------------------------------------------------------------------
 # hathor-vm-lifecycle-tests — B4-K3/K4 VmLifecycle + ChuckCompiler unit tests
 #
 # Pure unit tests for the VM lifecycle manager, compile dispatcher serialization,
