@@ -107,6 +107,40 @@ include(Catch)
 catch_discover_tests(hathor-audio-transport-tests DISCOVERY_MODE PRE_TEST)
 
 # ---------------------------------------------------------------------------
+# hathor-audio-worker-tests — B4-K2 worker lifecycle, generation, RT-safe audio
+#
+# These tests spawn the real hathor-audio-worker executable built by
+# app/audio-worker/CMakeLists.txt.  JUCE-free: the manager is a pure POSIX
+# process lifecycle wrapper.  Tests link Catch2 + AudioWorkerManager only.
+# ---------------------------------------------------------------------------
+add_executable(hathor-audio-worker-tests
+    test_audio_worker_manager.cpp
+)
+
+target_compile_features(hathor-audio-worker-tests PRIVATE cxx_std_20)
+target_compile_options(hathor-audio-worker-tests PRIVATE -Wall -Wextra -Werror)
+
+target_include_directories(hathor-audio-worker-tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/app/audio-worker
+    ${CMAKE_SOURCE_DIR}/app
+    ${CMAKE_SOURCE_DIR}/engine/include
+)
+
+target_link_libraries(hathor-audio-worker-tests PRIVATE
+    Catch2::Catch2WithMain
+)
+
+# The test needs to locate the hathor-audio-worker binary at runtime.
+# Pass the build directory as a compile definition.
+target_compile_definitions(hathor-audio-worker-tests PRIVATE
+    CMAKE_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+    CMAKE_BINARY_DIR="${CMAKE_BINARY_DIR}"
+)
+
+include(Catch)
+catch_discover_tests(hathor-audio-worker-tests DISCOVERY_MODE PRE_TEST)
+
+# ---------------------------------------------------------------------------
 # Integration tests (require the full hathor binary; skipped if app is off)
 # ---------------------------------------------------------------------------
 add_subdirectory(integration)

@@ -1,8 +1,16 @@
 # Copyright (C) 2024 Hathor Contributors
 # SPDX-License-Identifier: GPL-3.0-or-later
 
-# Opt-out flag: controlled by the top-level CMakeLists.txt option HATHOR_BUILD_APP.
+# ---------------------------------------------------------------------------
+# hathor-audio-worker — JUCE-free companion process (B4-K2)
+#
+# This is built unconditionally (independent of HATHOR_BUILD_APP) so the
+# AudioWorkerManager can spawn it for testing and production use.
+# It does NOT depend on JUCE.
+# ---------------------------------------------------------------------------
+add_subdirectory(audio-worker)
 
+# Opt-out flag: controlled by the top-level CMakeLists.txt option HATHOR_BUILD_APP.
 if(NOT HATHOR_BUILD_APP)
     message(STATUS "HATHOR_BUILD_APP=OFF — skipping app/ (hathor executable)")
     return()
