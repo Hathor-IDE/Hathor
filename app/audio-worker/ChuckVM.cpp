@@ -335,8 +335,10 @@ void ChuckVM::chucKThreadLoop()
             }
             else if (shred && !shred->ok)
             {
-                lastErrorMsg_.store(shred->error, std::memory_order_release);
+                std::lock_guard<std::mutex> lock(errorMtx_);
+                lastErrorMsg_ = shred->error;
                 lastErrorLine_.store(shred->errorLine, std::memory_order_release);
+                lastError_ = shred->error;
             }
         }
 

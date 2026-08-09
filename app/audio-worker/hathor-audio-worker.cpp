@@ -607,6 +607,29 @@ static void controlPlaneThread() {
         else if (cmd == "vm_list") {
             resp = gVmManager.listVMs() + "\n";
         }
+        else if (cmd.rfind("ck_genv", 0) == 0) {
+            // B4-K7: Query the current VM generation for a tab.
+            // The main process needs the real generation to send to ck_compile
+            // so the dispatcher's generation-mismatch check passes.
+            std::string rest = cmd.substr(7);
+            trimSpaces(rest);
+            try {
+                int tabId = std::stoi(rest);
+                if (tabId < 0 || tabId >= kNumTabs) {
+                    resp = "err ck_genv: tab id out of range [0," + std::to_string(kNumTabs) + ")\n";
+                } else {
+                    uint64_t gen = gVmLifecycle.generationOf(tabId);
+                    uint64_t ver = gVmLifecycle.currentVersionOf(tabId);
+                    bool active = gVmLifecycle.hasActiveVm(tabId);
+                    resp = "ok ck_genv tab=" + std::to_string(tabId)
+                         + " gen=" + std::to_string(gen)
+                         + " version=" + std::to_string(ver)
+                         + " active=" + (active ? "true" : "false") + "\n";
+                }
+            } catch (...) {
+                resp = "err invalid ck_genv arguments\n";
+            }
+        }
         else if (cmd.rfind("ck_compile", 0) == 0) {
             std::string rest = cmd.substr(10);
             trimSpaces(rest);

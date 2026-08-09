@@ -52,8 +52,7 @@ namespace hathor::audio_worker {
      *     block for watchdog consumption (B4-K5).
      *   - B4-K7: The render thread consumes handoff shreds via an injected
      *     HandoffLoader callback, keeping the VM decoupled from VmLifecycle.
-     */
-class ChuckVM {
+      */
 class ChuckVM {
 public:
     /// Audio render callback signature.

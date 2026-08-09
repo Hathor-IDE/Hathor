@@ -196,9 +196,7 @@ public:
     /**
      * Set the watchdog check interval (default: kDefaultWatchdogIntervalMs = 500ms).
      */
-    void setInterval(std::chrono::milliseconds interval) noexcept;
-
-    /**
+    void setInterval(std::chrono::milliseconds interval) noexcept;    /**
      * Get the number of VMs currently being monitored.
      */
     int monitoredCount() const noexcept;
@@ -256,7 +254,7 @@ private:
     std::thread watchdogThread_;
 
     std::chrono::milliseconds timeout_;
-    std::atomic<std::chrono::milliseconds> interval_;
+    std::atomic<int> intervalMs_;  // stored as int ms, not atomic<milliseconds>
 
     std::atomic<int> totalHangDetections_{0};
 };

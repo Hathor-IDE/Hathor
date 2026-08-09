@@ -613,8 +613,85 @@ VMResult AudioWorkerManager::compileTabVM(uint8_t tabId, const std::string& code
 {
     if (tabId >= kNumTabs)
         return {false, 1, "tab id out of range"};
+
+    // Query the VM generation for this tab.  If the VM was destroyed/replaced,
+    // the worker will return the current generation (0 if no VM exists).
+    // The ck_compile command itself handles the generation mismatch check.
+    std::string genResp = sendControlCommand(
+        "vm_query " + std::to_string(tabId), 5000);
+
+    // Parse generation from the vm_query response if present.
+    // The worker returns: "ok tab=<id> state=<state> ... gen=<gen>"
+    // If we can't parse it, default to 0 (the worker will handle it).
+    uint64_t vmGen = 0;
+    {
+        // Send a dedicated generation query command.
+        std::string genResp2 = sendControlCommand(
+            "ck_genv " + std::to_string(tabId), 5000);
+        // Parse "gen=<value>" from the response.
+        auto pos = genResp2.find("gen=");
+        if (pos != std::string::npos) {
+            vmGen = std::stoull(genResp2.substr(pos + 4));
+        }
+    }
+
     std::string resp = sendControlCommand(
-        "ck_compile " + std::to_string(tabId) + " 0 0 " + code, 5000);
+        "ck_compile " + std::to_string(tabId) + " " + std::to_string(vmGen) + " 0 " + code, 5000);
+    if (resp.rfind("ok", 0) == 0)
+        return {true, 0, resp};
+    return {false, 2, resp};
+}
+
+// ---------------------------------------------------------------------------
+// B4-K7: Evaluate a .ck tab — full compile→load→execute path
+// ---------------------------------------------------------------------------
+
+VMResult AudioWorkerManager::evaluateCkTab(uint8_t tabId, const std::string& code)
+{
+    if (tabId >= kNumTabs)
+        return {false, 1, "tab id out of range"};
+
+    // Step 1: Ensure the VM is activated for this tab.
+    // If the VM was previously stopped (ck_stop → destroy), this recreates it.
+    std::string resp = sendControlCommand(
+        "vm_activate " + std::to_string(tabId), 5000);
+    if (resp.rfind("ok", 0) != 0) {
+        // VM may already be active — that's fine, check state.
+        // Fall through to compile; the worker handles already-active VMs.
+    }
+
+    // Step 2: Query the current VM generation for this tab.
+    // We need the real generation so the compile dispatcher's generation
+    // check passes (it rejects results targeting a stale generation).
+    std::string genResp = sendControlCommand(
+        "ck_genv " + std::to_string(tabId), 5000);
+
+    uint64_t vmGen = 0;
+    auto pos = genResp.find("gen=");
+    if (pos != std::string::npos) {
+        vmGen = std::stoull(genResp.substr(pos + 4));
+    }
+
+    // Step 3: Send the compile command with the real generation.
+    resp = sendControlCommand(
+        "ck_compile " + std::to_string(tabId) + " " + std::to_string(vmGen) + " 0 " + code, 5000);
+
+    if (resp.rfind("ok", 0) == 0) {
+        return {true, 0, resp};
+    }
+    return {false, 2, resp};
+}
+
+// ---------------------------------------------------------------------------
+// B4-K7: Stop a .ck tab
+// ---------------------------------------------------------------------------
+
+VMResult AudioWorkerManager::stopCkTab(uint8_t tabId)
+{
+    if (tabId >= kNumTabs)
+        return {false, 1, "tab id out of range"};
+
+    std::string resp = sendControlCommand("ck_stop " + std::to_string(tabId), 5000);
     if (resp.rfind("ok", 0) == 0)
         return {true, 0, resp};
     return {false, 2, resp};

@@ -74,4 +74,28 @@ public:
 
     /// Load the current SlotState for slot @p idx (acquire ordering).
     virtual std::shared_ptr<SlotState> loadSlot(int idx) const noexcept = 0;
+
+    // --- B4-K7: Per-tab ChucK VM evaluation ---
+
+    /// Check if the audio worker process is running.
+    virtual bool hasWorker() const noexcept = 0;
+
+    /// Evaluate ChucK source code for a tab (compile→load→execute path).
+    /// This is the .ck equivalent of set-pattern for mini-notation.
+    /// @param slotIdx  Pattern slot index (maps to tab slot).
+    /// @param code     ChucK source code.
+    /// @return true on successful compile+publish; false on error.
+    virtual bool ckEval(int slotIdx, const std::string& code) noexcept = 0;
+
+    /// Stop a .ck tab: destroy the per-tab VM and clear any pending handoff.
+    /// The previously running shred is not affected (the VM is destroyed).
+    /// @param slotIdx  Pattern slot index.
+    /// @return true on success; false if no VM was running.
+    virtual bool stopCkTab(int slotIdx) noexcept = 0;
+
+    /// Query the .ck VM state for a tab slot.  Returns a human-readable
+    /// status string (e.g. "active shred_id=5 source_hash=0x1234").
+    /// @param slotIdx  Pattern slot index.
+    /// @return Status string (empty if no worker or VM).
+    virtual std::string queryCkTab(int slotIdx) const = 0;
 };

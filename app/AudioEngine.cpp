@@ -312,6 +312,53 @@ std::shared_ptr<SlotState> AudioEngine::loadSlot(int idx) const noexcept
 }
 
 // ---------------------------------------------------------------------------
+// B4-K7: Per-tab ChucK VM evaluation
+// ---------------------------------------------------------------------------
+
+bool AudioEngine::hasWorker() const noexcept
+{
+    return workerMgr_ != nullptr && workerMgr_->isWorkerAlive();
+}
+
+bool AudioEngine::ckEval(int slotIdx, const std::string& code) noexcept
+{
+    if (slotIdx < 0 || slotIdx >= kNumSlots)
+        return false;
+
+    if (!workerMgr_)
+        return false;
+
+    auto result = workerMgr_->evaluateCkTab(
+        static_cast<uint8_t>(slotIdx), code);
+
+    return result.ok;
+}
+
+bool AudioEngine::stopCkTab(int slotIdx) noexcept
+{
+    if (slotIdx < 0 || slotIdx >= kNumSlots)
+        return false;
+
+    if (!workerMgr_)
+        return false;
+
+    auto result = workerMgr_->stopCkTab(static_cast<uint8_t>(slotIdx));
+    return result.ok;
+}
+
+std::string AudioEngine::queryCkTab(int slotIdx) const
+{
+    if (slotIdx < 0 || slotIdx >= kNumSlots)
+        return "";
+
+    if (!workerMgr_)
+        return "";
+
+    auto result = workerMgr_->queryTabVM(static_cast<uint8_t>(slotIdx));
+    return result.message;
+}
+
+// ---------------------------------------------------------------------------
 // juce::AudioIODeviceCallback — device lifecycle
 // ---------------------------------------------------------------------------
 

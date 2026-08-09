@@ -31,7 +31,7 @@ VmWatchdog::VmWatchdog(VMManager* vmManager,
     , onHangDetected_(std::move(onHangDetected))
     , onRecoveryComplete_(std::move(onRecoveryComplete))
     , timeout_(kDefaultHeartbeatTimeoutMs)
-    , interval_(kDefaultWatchdogIntervalMs)
+    , intervalMs_(kDefaultWatchdogIntervalMs)
 {
 }
 
@@ -102,7 +102,7 @@ void VmWatchdog::setTimeout(std::chrono::milliseconds timeout) noexcept
 
 void VmWatchdog::setInterval(std::chrono::milliseconds interval) noexcept
 {
-    interval_ = interval;
+    intervalMs_.store(static_cast<int>(interval.count()), std::memory_order_release);
 }
 
 int VmWatchdog::monitoredCount() const noexcept
@@ -154,7 +154,8 @@ void VmWatchdog::watchdogLoop()
         }
 
         // Low-frequency polling: sleep for the check interval.
-        std::this_thread::sleep_for(interval_.load(std::memory_order_acquire));
+        std::this_thread::sleep_for(std::chrono::milliseconds(
+            intervalMs_.load(std::memory_order_acquire)));
     }
 }
 

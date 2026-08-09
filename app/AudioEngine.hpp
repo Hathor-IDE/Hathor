@@ -163,6 +163,22 @@ public:
     std::shared_ptr<SlotState> loadSlot(int idx) const noexcept override;
 
     // ------------------------------------------------------------------
+    // B4-K7: Per-tab ChucK VM evaluation
+    // ------------------------------------------------------------------
+
+    /// Check if the audio worker process is running.
+    bool hasWorker() const noexcept override;
+
+    /// Evaluate ChucK source code for a tab (compile→load→execute path).
+    bool ckEval(int slotIdx, const std::string& code) noexcept override;
+
+    /// Stop a .ck tab: destroy the per-tab VM and clear pending handoff.
+    bool stopCkTab(int slotIdx) noexcept override;
+
+    /// Query the .ck VM state for a tab slot.
+    std::string queryCkTab(int slotIdx) const override;
+
+    // ------------------------------------------------------------------
     // juce::AudioIODeviceCallback interface
     // ------------------------------------------------------------------
     void audioDeviceAboutToStart(juce::AudioIODevice* device) override;
