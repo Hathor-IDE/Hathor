@@ -456,6 +456,7 @@ catch_discover_tests(hathor-b8-k1-asset-target-tests DISCOVERY_MODE PRE_TEST)
 # ---------------------------------------------------------------------------
 add_executable(hathor-b8-k2-render-writer-tests
     test_b8_k2_render_writer.cpp
+    ${CMAKE_SOURCE_DIR}/app/ChuckRenderWriter.cpp
 )
 
 target_compile_features(hathor-b8-k2-render-writer-tests PRIVATE cxx_std_20)

@@ -40,6 +40,7 @@ juce_add_console_app(hathor
 target_sources(hathor
     PRIVATE
         AudioEngine.cpp
+        ChuckRenderWriter.cpp
         SampleBank.cpp
         VoicePool.cpp
         LiveJamSessionManager.cpp

@@ -56,8 +56,9 @@ target_sources(hathor-ui
         WindowAppearanceController.mm  # B5
          # App-layer sources (AudioEngine, SampleBank, VoicePool live in app/,
          # not in a linkable static lib — include them directly here)
-         ${CMAKE_SOURCE_DIR}/app/AudioEngine.cpp
-         ${CMAKE_SOURCE_DIR}/app/SampleBank.cpp
+          ${CMAKE_SOURCE_DIR}/app/AudioEngine.cpp
+          ${CMAKE_SOURCE_DIR}/app/ChuckRenderWriter.cpp
+          ${CMAKE_SOURCE_DIR}/app/SampleBank.cpp
          ${CMAKE_SOURCE_DIR}/app/VoicePool.cpp
          ${CMAKE_SOURCE_DIR}/app/LiveJamSessionManager.cpp
 )

@@ -76,6 +76,12 @@
 
 namespace hathor {
 
+// Forward declaration — RenderJob is defined privately in ChuckRenderWriter's
+// .cpp to hide implementation details.  RenderHandle holds a shared_ptr to it
+// so the background thread is not destroyed while the handle is alive.
+class ChuckRenderWriter;
+namespace detail { struct RenderJob; }
+
 // ---------------------------------------------------------------------------
 // Render state — observable by the UI (B8-K2 §8)
 // ---------------------------------------------------------------------------
@@ -124,8 +130,10 @@ public:
     RenderHandle() = default;
     explicit RenderHandle(uint64_t id,
                             std::shared_ptr<std::atomic<RenderState>> state,
-                            std::shared_ptr<std::atomic<bool>> cancelFlag) noexcept
-        : id_(id), state_(std::move(state)), cancelFlag_(std::move(cancelFlag)) {}
+                             std::shared_ptr<std::atomic<bool>> cancelFlag,
+                             std::shared_ptr<detail::RenderJob> job) noexcept
+        : id_(id), state_(std::move(state)), cancelFlag_(std::move(cancelFlag)),
+          job_(std::move(job)) {}
 
     /// Unique identifier for this render job.
     uint64_t id() const noexcept { return id_; }
@@ -167,9 +175,10 @@ public:
     }
 
 private:
-    uint64_t id_ = 0;
-    std::shared_ptr<std::atomic<RenderState>> state_;
-    std::shared_ptr<std::atomic<bool>>        cancelFlag_;
+    uint64_t                                               id_ = 0;
+    std::shared_ptr<std::atomic<RenderState>>              state_;
+    std::shared_ptr<std::atomic<bool>>                     cancelFlag_;
+    std::shared_ptr<detail::RenderJob>                     job_;  // keeps thread alive
 };
 
 // ---------------------------------------------------------------------------
@@ -188,12 +197,12 @@ private:
  *                                               "acid_bass", projectDir);
  *
  *     RenderHandle handle = writer.startRender(
- *         /*tabId*/ 0,
- *         /*ckSource*/ "SinOsc s => dac; 2::second => now;",
- *         /*numSamples*/ 44100 * 4,  // 4 seconds @ 44.1 kHz
- *         /*sampleRate*/ 44100,
- *         /*destPath*/ dest,
- *         /*onComplete*/ [](const RenderResult& r) { ... });
+ *         0,                             // tabId
+ *         "SinOsc s => dac; 2::second => now;", // ckSource
+ *         44100 * 4,                     // numSamples (4 seconds @ 44.1 kHz)
+ *         44100,                         // sampleRate
+ *         dest,                          // destPath
+ *         [](const RenderResult& r) { ... }); // onComplete
  *
  *     // UI can poll handle.state() or wait for the callback.
  */
@@ -262,21 +271,19 @@ public:
     void shutdown() noexcept;
 
 private:
-    struct RenderJob;
-
     AudioWorkerManager* worker_;
 
     // Active render jobs (protected by jobsMtx_).
     // Each job is held via shared_ptr so both the tracking list and the
-    // background thread can access it without ownership races.
-    std::mutex jobsMtx_;
-    std::vector<std::shared_ptr<RenderJob>> jobs_;
+    // RenderHandle can access it without ownership races.
+    mutable std::mutex jobsMtx_;
+    std::vector<std::shared_ptr<detail::RenderJob>> jobs_;
 
     // Monotonic job-id counter.
     std::atomic<uint64_t> nextJobId_{1};
 
     // Background thread entry point — runs entirely on the render thread.
-    void runRender(std::shared_ptr<RenderJob> job);
+    void runRender(std::shared_ptr<detail::RenderJob> job);
 };
 
 } // namespace hathor

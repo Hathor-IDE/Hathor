@@ -156,6 +156,19 @@ public:
         return false;
     }
 
+    // B8-K2 stubs — not exercised by the MCP socket tests.
+    hathor::RenderHandle startBakeRender(uint8_t,
+                                         std::string,
+                                         uint64_t,
+                                         unsigned,
+                                         const std::filesystem::path&,
+                                         hathor::ChuckRenderWriter::CompletionCallback) override
+    {
+        return hathor::RenderHandle{};
+    }
+    int  activeRenderCount() const noexcept override { return 0; }
+    void shutdownRender() noexcept override {}
+
 private:
     double bpm_ = 120.0;
     bool running_ = false;

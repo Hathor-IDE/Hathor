@@ -414,13 +414,7 @@ private:
     // nullptr when no worker process is configured (tests, etc.).
     std::unique_ptr<hathor::ChuckRenderWriter> renderWriter_;
 
-    // Storage for a caller-provided LiveJam session directory (when
+     // Storage for a caller-provided LiveJam session directory (when
     // setLiveJamSessionDir is called with a non-empty path).
     std::filesystem::path liveJamSessionDirStorage_;
-};
-
-    // ------------------------------------------------------------------
-    // B8-K2: Background render writer
-    // ------------------------------------------------------------------
-    std::unique_ptr<hathor::ChuckRenderWriter> renderWriter_;
 };

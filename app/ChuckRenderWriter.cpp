@@ -322,7 +322,9 @@ bool validateWavHeader(const std::filesystem::path& path,
 // RenderJob — internal state for a single background render
 // ---------------------------------------------------------------------------
 
-struct ChuckRenderWriter::RenderJob {
+namespace detail {
+
+struct RenderJob {
     uint64_t                                               jobId;
     uint8_t                                                tabId;
     std::string                                            ckSource;
@@ -337,6 +339,9 @@ struct ChuckRenderWriter::RenderJob {
     std::shared_ptr<std::atomic<bool>>         cancelFlag;
     std::shared_ptr<std::atomic<uint64_t>>     samplesProduced;
 
+    // The background render thread (started in startRender, joined in shutdown).
+    std::thread thread;
+
     RenderJob()
         : jobId(0)
         , tabId(0)
@@ -348,6 +353,8 @@ struct ChuckRenderWriter::RenderJob {
         , samplesProduced(std::make_shared<std::atomic<uint64_t>>(0))
     {}
 };
+
+} // namespace detail
 
 // ---------------------------------------------------------------------------
 // Construction / destruction
@@ -402,7 +409,7 @@ RenderHandle ChuckRenderWriter::startRender(
 
     const uint64_t jobId = nextJobId_.fetch_add(1, std::memory_order_relaxed);
 
-    auto job = std::make_shared<RenderJob>();
+    auto job = std::make_shared<detail::RenderJob>();
     job->jobId = jobId;
     job->tabId = tabId;
     job->ckSource = std::move(ckSource);
@@ -421,7 +428,7 @@ RenderHandle ChuckRenderWriter::startRender(
     // Spawn the background render thread.
     job->thread = std::thread(&ChuckRenderWriter::runRender, this, job);
 
-    return RenderHandle(jobId, job->state, job->cancelFlag);
+    return RenderHandle(jobId, job->state, job->cancelFlag, job);
 }
 
 // ---------------------------------------------------------------------------
@@ -431,13 +438,23 @@ RenderHandle ChuckRenderWriter::startRender(
 int ChuckRenderWriter::activeRenderCount() const noexcept
 {
     std::lock_guard<std::mutex> lock(jobsMtx_);
-    return static_cast<int>(jobs_.size());
+    int count = 0;
+    for (const auto& j : jobs_) {
+        const RenderState s = j->state->load(std::memory_order_acquire);
+        if (s != RenderState::Completed &&
+            s != RenderState::Failed &&
+            s != RenderState::Cancelled &&
+            s != RenderState::Pending) {
+            ++count;
+        }
+    }
+    return count;
 }
 
 void ChuckRenderWriter::shutdown() noexcept
 {
     // Signal all in-flight renders to cancel, then join their threads.
-    std::vector<std::shared_ptr<RenderJob>> jobsToJoin;
+    std::vector<std::shared_ptr<detail::RenderJob>> jobsToJoin;
     {
         std::lock_guard<std::mutex> lock(jobsMtx_);
         for (auto& j : jobs_) {
@@ -460,7 +477,7 @@ void ChuckRenderWriter::shutdown() noexcept
 // B8-K2 main render loop — runs entirely on the background thread
 // ---------------------------------------------------------------------------
 
-void ChuckRenderWriter::runRender(std::shared_ptr<RenderJob> job)
+void ChuckRenderWriter::runRender(std::shared_ptr<detail::RenderJob> job)
 {
     const uint64_t jobId = job->jobId;
     (void)jobId;
@@ -486,9 +503,6 @@ void ChuckRenderWriter::runRender(std::shared_ptr<RenderJob> job)
         job->state->store(RenderState::Failed, std::memory_order_release);
         if (job->onComplete)
             job->onComplete(result);
-        // Remove ourselves from the tracking list.
-        std::lock_guard<std::mutex> lock(jobsMtx_);
-        jobs_.erase(std::remove(jobs_.begin(), jobs_.end(), job), jobs_.end());
         return;
     }
 
@@ -504,8 +518,6 @@ void ChuckRenderWriter::runRender(std::shared_ptr<RenderJob> job)
         job->state->store(RenderState::Failed, std::memory_order_release);
         if (job->onComplete)
             job->onComplete(result);
-        std::lock_guard<std::mutex> lock(jobsMtx_);
-        jobs_.erase(std::remove(jobs_.begin(), jobs_.end(), job), jobs_.end());
         return;
     }
 
@@ -521,8 +533,6 @@ void ChuckRenderWriter::runRender(std::shared_ptr<RenderJob> job)
         worker_->destroyTabVM(tabId);
         if (job->onComplete)
             job->onComplete(result);
-        std::lock_guard<std::mutex> lock(jobsMtx_);
-        jobs_.erase(std::remove(jobs_.begin(), jobs_.end(), job), jobs_.end());
         return;
     }
 
@@ -546,8 +556,6 @@ void ChuckRenderWriter::runRender(std::shared_ptr<RenderJob> job)
             worker_->destroyTabVM(tabId);
             if (job->onComplete)
                 job->onComplete(result);
-            std::lock_guard<std::mutex> lock(jobsMtx_);
-            jobs_.erase(std::remove(jobs_.begin(), jobs_.end(), job), jobs_.end());
             return;
         }
 
@@ -579,8 +587,6 @@ void ChuckRenderWriter::runRender(std::shared_ptr<RenderJob> job)
                                      / static_cast<double>(sampleRate);
             job->onComplete(result);
         }
-        std::lock_guard<std::mutex> lock(jobsMtx_);
-        jobs_.erase(std::remove(jobs_.begin(), jobs_.end(), job), jobs_.end());
         return;
     }
 
@@ -621,8 +627,6 @@ void ChuckRenderWriter::runRender(std::shared_ptr<RenderJob> job)
         worker_->destroyTabVM(tabId);
         if (job->onComplete)
             job->onComplete(result);
-        std::lock_guard<std::mutex> lock(jobsMtx_);
-        jobs_.erase(std::remove(jobs_.begin(), jobs_.end(), job), jobs_.end());
         return;
     }
 
@@ -637,8 +641,6 @@ void ChuckRenderWriter::runRender(std::shared_ptr<RenderJob> job)
         worker_->destroyTabVM(tabId);
         if (job->onComplete)
             job->onComplete(result);
-        std::lock_guard<std::mutex> lock(jobsMtx_);
-        jobs_.erase(std::remove(jobs_.begin(), jobs_.end(), job), jobs_.end());
         return;
     }
 
@@ -671,8 +673,6 @@ void ChuckRenderWriter::runRender(std::shared_ptr<RenderJob> job)
             worker_->destroyTabVM(tabId);
             if (job->onComplete)
                 job->onComplete(result);
-            std::lock_guard<std::mutex> lock(jobsMtx_);
-            jobs_.erase(std::remove(jobs_.begin(), jobs_.end(), job), jobs_.end());
             return;
         }
         std::filesystem::remove(tempFile, ec);
@@ -687,8 +687,6 @@ void ChuckRenderWriter::runRender(std::shared_ptr<RenderJob> job)
         worker_->destroyTabVM(tabId);
         if (job->onComplete)
             job->onComplete(result);
-        std::lock_guard<std::mutex> lock(jobsMtx_);
-        jobs_.erase(std::remove(jobs_.begin(), jobs_.end(), job), jobs_.end());
         return;
     }
 
@@ -715,8 +713,7 @@ void ChuckRenderWriter::runRender(std::shared_ptr<RenderJob> job)
         job->onComplete(result);
 
     // Remove ourselves from the tracking list.
-    std::lock_guard<std::mutex> lock(jobsMtx_);
-    jobs_.erase(std::remove(jobs_.begin(), jobs_.end(), job), jobs_.end());
+    return;
 }
 
 } // namespace hathor
