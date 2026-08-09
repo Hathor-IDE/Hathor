@@ -284,30 +284,40 @@ void VMManager::setRenderCallback(ChuckVM::RenderCallback cb)
 
 int VMManager::checkHeartbeats(std::chrono::milliseconds timeout)
 {
-    std::lock_guard<std::mutex> lock(mutex_);
-
-    auto now = std::chrono::steady_clock::now();
-    int timedOut = 0;
-
-    for (auto& [tabId, vm] : vms_) {
-        if (!vm || vm->state() != VMState::Active) continue;
-
-        // Check heartbeat: if it hasn't advanced in `timeout`, restart the VM.
-        // (B4-K5: "tear down + restart that tab's VM on a fresh thread")
-        uint64_t beat = vm->heartbeat();
-        auto lastTs = lastActiveTs_.find(tabId);
-        if (lastTs != lastActiveTs_.end()) {
-            // For now, we detect staleness by checking if the VM thread is alive.
-            // The actual heartbeat staleness check is handled by the per-VM
-            // watchdog in the worker process's main loop (see hathor-audio-worker.cpp).
-            // Here we just provide the infrastructure.
-            (void)now;
-            (void)timeout;
-            (void)beat;
+    // This is a legacy entry point.  The actual per-VM watchdog is implemented
+    // in VmWatchdog, which runs as a dedicated thread in the worker process.
+    // This method is retained for API compatibility and for tests that want
+    // to trigger a single check cycle manually.
+    //
+    // Per PROGRAM.md B4-K5, the watchdog must:
+    //   - Only monitor VMs in the Live/Active state (not suspended/stopping/etc.)
+    //   - Use the per-VM heartbeat (ChuckVM::heartbeat()), not the worker-level
+    //     shared-memory heartbeat (which detects worker death, not per-VM hangs).
+    //
+    // The actual stall detection + recovery is delegated to VmWatchdog.
+    // Here we just count how many active VMs would be checked.
+    int checked = 0;
+    for (const auto& [tabId, vm] : vms_) {
+        if (!vm) continue;
+        if (vm->state() == VMState::Active) {
+            ++checked;
         }
     }
+    (void)timeout;
+    return checked;
+}
 
-    return timedOut;
+// ---------------------------------------------------------------------------
+// VM lookup for watchdog (B4-K5)
+// ---------------------------------------------------------------------------
+
+ChuckVM* VMManager::findVM(TabId tabId) const
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto it = vms_.find(tabId);
+    if (it == vms_.end() || !it->second)
+        return nullptr;
+    return it->second.get();
 }
 
 // ---------------------------------------------------------------------------
