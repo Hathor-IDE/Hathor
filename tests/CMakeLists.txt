@@ -83,6 +83,30 @@ include(Catch)
 catch_discover_tests(hathor-control-tests DISCOVERY_MODE PRE_TEST)
 
 # ---------------------------------------------------------------------------
+# hathor-audio-transport-tests — lock-free SPSC sample ring (B4-K1)
+#
+# Links no JUCE dependency — the ring is header-only and lives in app/.
+# ---------------------------------------------------------------------------
+add_executable(hathor-audio-transport-tests
+    test_spsc_sample_ring.cpp
+)
+
+target_compile_features(hathor-audio-transport-tests PRIVATE cxx_std_20)
+target_compile_options(hathor-audio-transport-tests PRIVATE -Wall -Wextra -Werror)
+
+target_include_directories(hathor-audio-transport-tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/app
+    ${CMAKE_SOURCE_DIR}/engine/include
+)
+
+target_link_libraries(hathor-audio-transport-tests PRIVATE
+    Catch2::Catch2WithMain
+)
+
+include(Catch)
+catch_discover_tests(hathor-audio-transport-tests DISCOVERY_MODE PRE_TEST)
+
+# ---------------------------------------------------------------------------
 # Integration tests (require the full hathor binary; skipped if app is off)
 # ---------------------------------------------------------------------------
 add_subdirectory(integration)
