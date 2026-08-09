@@ -4,37 +4,40 @@
 #pragma once
 
 /**
- * ChatSidebar.hpp — AI chat sidebar with message history, input, and sliders.
+ * ChatSidebar.hpp — AI chat sidebar with thread tabs and sliders.
+ *
+ * Per decision #3 (PROGRAM.md §2) and B6: one AcpAgentSession per chat
+ * thread tab. Per C2: each thread tracks its own connection state
+ * (Connected / Disconnected / Reconnecting) and has its own reconnect
+ * action. A reconnect on one thread does NOT affect other threads.
  *
  * Component hierarchy (320 px wide, full window height):
  *
  *   ┌─────────────────────────────────┐
- *   │  [Status/error label]           │  ← hidden unless there's a message
- *   │  [Reconnect banner]             │  ← hidden unless disconnected (Req 32.8)
- *   │  [Permission prompt]            │  ← hidden unless permission pending
+ *   │  [Tab bar: Thread 1 | Thread 2] │  ← one tab button per thread
  *   ├─────────────────────────────────┤
  *   │                                 │
- *   │  MessageHistoryView (Viewport)  │  ← scrollable agent/user bubbles
- *   │                                 │
+ *   │  Active ChatThread viewport:    │
+ *   │  ├─ [Reconnect banner]          │  ← per-thread, C2
+ *   │  ├─ [Permission prompt]         │  ← per-thread
+ *   │  ├─ MessageHistoryView          │  ← per-thread bubbles
+ *   │  ├─ ChatInputField              │  ← per-thread
+ *   │  └─ ASCII art header            │
  *   ├─────────────────────────────────┤
- *   │  ChatInputField (TextEditor)    │  ← max 2048 chars, Enter to send
- *   ├─────────────────────────────────┤
- *   │  SliderPanel (BPM + Gain)       │  ← always visible, always interactive
+ *   │  SliderPanel (BPM + Gain)       │  ← shared, always visible
  *   └─────────────────────────────────┘
  *
  * Thread model:
  *   - All public methods run on the JUCE message thread.
- *   - AcpAgentSession callbacks are already marshalled to the message thread
- *     before reaching ChatSidebar — no additional synchronisation needed.
+ *   - AcpAgentSession callbacks are marshalled to the message thread
+ *     before reaching ChatThread — no additional synchronisation needed.
  *
  * Audio isolation (Req 32.9):
- *   - ChatSidebar and AcpAgentSession have no access to AudioEngine state.
- *   - SliderPanel dispatches commands via ControlInterface (worker thread).
- *   - The SPSC ring buffer and AudioEngine teardown paths are completely
- *     independent of the chat/agent lifecycle.
+ *   - No AudioEngine members; SliderPanel holds the only CI reference.
+ *   - AcpAgentSession teardown does not touch AudioEngine state.
  *
  * Requirements: 25.1, 25.2, 25.3, 25.5, 25.6, 26.1, 32.1, 32.3, 32.5,
- *               32.6, 32.8, 32.9
+ *               32.6, 32.8, 32.9, B6, C2
  */
 
 // This guard is checked in MainWindow.cpp to suppress the stub ChatSidebar.
@@ -45,7 +48,6 @@
 #include <vector>
 
 #include <juce_gui_basics/juce_gui_basics.h>
-#include <nlohmann/json.hpp>
 
 // App / control
 #include "../app/AudioEngine.hpp"
@@ -53,130 +55,38 @@
 
 // Sibling UI components
 #include "AcpAgentSession.hpp"
-#include "PermissionPromptComponent.hpp"
 #include "SliderPanel.hpp"
+#include "ChatThread.hpp"
+#include "MessageHistoryView.hpp"
+#include "PermissionPromptComponent.hpp"
 
 namespace hathor::ui {
 
-// ---------------------------------------------------------------------------
-// AsciiArtHeader — decorative generative ASCII art (Req 25.4)
-// ---------------------------------------------------------------------------
-
 /**
- * Renders decorative procedural ASCII art in the ChatSidebar panel header.
+ * ChatSidebar
  *
- * The art is generative: a simple sine-based pattern that cycles through
- * different character sets and phases. No heap allocation on paint, no
- * heavy computation.
- *
- * Requirement 25.4: LOW PRIORITY / NON-BLOCKING — this component is fully
- * optional and must not gate any other Phase 2 work.
- */
-class AsciiArtHeader : public juce::Component,
-                       public juce::Timer
-{
-public:
-    AsciiArtHeader();
-
-    void paint(juce::Graphics& g) override;
-
-    /// Preferred height for this header.
-    static constexpr int kPreferredHeight = 48;
-
-private:
-    void timerCallback() override;
-
-    float phase_ = 0.0f;  ///< Animation phase counter
-
-    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(AsciiArtHeader)
-};
-
-// ---------------------------------------------------------------------------
-// MessageBubble — one message entry in the history view
-// ---------------------------------------------------------------------------
-
-/**
- * A single message bubble rendered inside the scrollable history viewport.
- *
- * User messages are right-aligned with a slight accent tint.
- * Agent messages (and tool-call status lines) are left-aligned.
- */
-class MessageBubble : public juce::Component
-{
-public:
-    enum class Role { User, Agent, ToolCall, StatusLine };
-
-    MessageBubble(const juce::String& text, Role role);
-
-    /// Append more text to the bubble (for streaming agent_message_chunk).
-    void appendText(const juce::String& extra);
-
-    /// Replace the label text entirely.
-    void setText(const juce::String& t);
-
-    /// Compute the preferred height for this bubble given a fixed width.
-    int preferredHeight(int width) const;
-
-    void resized() override;
-    void paint(juce::Graphics& g) override;
-
-private:
-    juce::TextEditor label_;
-    Role             role_;
-
-    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(MessageBubble)
-};
-
-// ---------------------------------------------------------------------------
-// MessageHistoryContainer — inner content component inside the Viewport
-// ---------------------------------------------------------------------------
-
-/**
- * Holds an ordered list of MessageBubble children and stacks them vertically.
- * The Viewport scrolls this component.
- */
-class MessageHistoryContainer : public juce::Component
-{
-public:
-    MessageHistoryContainer();
-
-    /// Add a new bubble and return a raw pointer to it.
-    MessageBubble* addBubble(const juce::String& text, MessageBubble::Role role);
-
-    /// Reflow all bubbles to the given width and update the component height.
-    void reflowToWidth(int w);
-
-private:
-    juce::OwnedArray<MessageBubble> bubbles_;
-
-    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(MessageHistoryContainer)
-};
-
-// ---------------------------------------------------------------------------
-// ChatSidebar
-// ---------------------------------------------------------------------------
-
-/**
  * The AI chat sidebar: 320 px wide right-hand panel.
+ *
+ * Manages multiple chat threads (B6). Each ChatThread owns its own
+ * AcpAgentSession (one subprocess per tab, decision #3) and its own
+ * thread-scoped connection state (C2 §7).
  *
  * Lifecycle:
  *   1. Construct (MainWindow constructor)
- *   2. Call setSession() to wire the AcpAgentSession callbacks
- *   3. AcpAgentSession::start() is called by the application after construction
+ *   2. Call addThread() to create a new chat thread tab
+ *   3. Call setActiveThread() to switch between threads
+ *   4. Each ChatThread::setSession() wires the session before start()
  *
- * Disconnect / reconnect (Req 32.8):
- *   - onDisconnected() is registered as AcpAgentSession::setOnAgentDisconnected().
- *   - When called (on JUCE message thread), shows reconnectBanner_ and disables
- *     the input field.
- *   - Clicking reconnectBanner_ hides it, re-enables input, and calls
- *     session_->restart(...).
+ * Disconnect / reconnect (C2):
+ *   - Each ChatThread independently tracks its own connection state.
+ *   - A reconnect on Thread A calls Thread A's session_->restart() only.
+ *   - Thread B remains unaffected.
  *
  * Audio independence (Req 32.9):
  *   - No AudioEngine members; SliderPanel holds the only CI reference.
  *   - AcpAgentSession teardown does not touch AudioEngine state.
  */
-class ChatSidebar : public juce::Component,
-                    public juce::TextEditor::Listener
+class ChatSidebar : public juce::Component
 {
 public:
     /**
@@ -189,24 +99,37 @@ public:
     ~ChatSidebar() override;
 
     // -----------------------------------------------------------------------
-    // Session wiring — call before AcpAgentSession::start()
+    // Thread management (B6)
     // -----------------------------------------------------------------------
 
     /**
-     * Wire all AcpAgentSession callbacks to this sidebar.
+     * Create a new chat thread with its own AcpAgentSession.
      *
-     * Must be called on the JUCE message thread before session.start().
-     * Does NOT take ownership of the session.
-     *
-     * @param session       The session whose callbacks we register on.
-     * @param agentExePath  Stored so reconnect can pass it to restart().
-     * @param projectDir    Stored so reconnect can pass it to restart().
-     * @param mcpPath       Stored so reconnect can pass it to restart().
+     * @param agentExePath  Path to the agent executable.
+     * @param projectDir    Project directory (cwd for session/new).
+     * @param mcpPath       Path to hathor-mcp.
+     * @return The index of the new thread.
      */
-    void setSession(AcpAgentSession& session,
-                    std::string agentExePath,
-                    std::string projectDir,
-                    std::string mcpPath);
+    int addThread(const std::string& agentExePath,
+                  const std::string& projectDir,
+                  const std::string& mcpPath);
+
+    /**
+     * Switch to a different chat thread (tab).
+     * Background threads retain their connection state (C2 §8).
+     */
+    void setActiveThread(int threadIndex);
+
+    /** Returns the number of chat threads. */
+    int threadCount() const noexcept { return static_cast<int>(threads_.size()); }
+
+    /** Returns the index of the currently active thread, or -1 if none. */
+    int activeThreadIndex() const noexcept { return activeThreadIndex_; }
+
+    /**
+     * Returns the active ChatThread, or nullptr if there are no threads.
+     */
+    ChatThread* activeThread() const noexcept;
 
     // -----------------------------------------------------------------------
     // SliderPanel access (for UITimer bidirectional sync)
@@ -219,101 +142,49 @@ public:
     void resized() override;
     void paint(juce::Graphics& g) override;
 
-    // -----------------------------------------------------------------------
-    // juce::TextEditor::Listener overrides
-    // -----------------------------------------------------------------------
-
-    /// Called when the user presses Enter in the input field (Req 25.2).
-    void textEditorReturnKeyPressed(juce::TextEditor& editor) override;
-
-    /// Enforce 2048-character limit (Req 25.6).
-    void textEditorTextChanged(juce::TextEditor& editor) override;
-
 private:
-    // -----------------------------------------------------------------------
-    // Session callback handlers — all called on the JUCE message thread
-    // -----------------------------------------------------------------------
-
-    /// onError_ — start failure or fatal error.
-    void onError(const std::string& reason);
-
-    /// onAgentDisconnected_ — subprocess stdout EOF (Req 32.8, 32.9).
-    void onDisconnected();
-
-    /// onAgentMessageChunk_ — streaming text chunk from agent (Req 32.5).
-    void onAgentMessageChunk(const std::string& text);
-
-    /// onToolCallUpdate_ — tool_call / tool_call_update notification.
-    void onToolCallUpdate(nlohmann::json update);
-
-    /// onPermissionRequest_ — session/request_permission (Req 32.6).
-    void onPermissionRequest(int requestId, nlohmann::json options);
-
-    // -----------------------------------------------------------------------
-    // Internal helpers
-    // -----------------------------------------------------------------------
-
-    /// Show a one-line status message (error / info) at the top.
-    void showStatus(const juce::String& msg);
-
-    /// Clear the status message.
-    void clearStatus();
-
-    /// Scroll the history viewport to the bottom.
-    void scrollToBottom();
-
-    /// Enable / disable the chat input field.
-    void setInputEnabled(bool enabled);
-
     // -----------------------------------------------------------------------
     // Layout constants
     // -----------------------------------------------------------------------
-    static constexpr int kStatusH      = 28;   ///< Status label height
-    static constexpr int kReconnectH   = 36;   ///< Reconnect banner height
-    static constexpr int kPermissionH  = 120;  ///< Permission prompt height
-    static constexpr int kInputH       = 36;   ///< Chat input field height
-    static constexpr int kSliderH      = 80;   ///< SliderPanel height
-    static constexpr int kAsciiArtH    = AsciiArtHeader::kPreferredHeight;  ///< ASCII art header height
+    static constexpr int kTabAreaH    = 32;  ///< Tab bar height
+    static constexpr int kSliderH     = 80;  ///< SliderPanel height
+
+    // -----------------------------------------------------------------------
+    // Tab bar UI helpers
+    // -----------------------------------------------------------------------
+    void buildTabButtons();
+    void updateTabButtons();
+    void onTabClicked(int index);
+    void closeTab(int index);
 
     // -----------------------------------------------------------------------
     // Members
     // -----------------------------------------------------------------------
 
-    /// Pointer to the session (not owned). Set by setSession().
-    AcpAgentSession* session_ = nullptr;
+    /** All chat threads — each owns its own AcpAgentSession (decision #3, B6). */
+    juce::OwnedArray<ChatThread> threads_;
 
-    /// Stored for restart() calls (Req 32.8).
-    std::string agentExePath_;
-    std::string projectDir_;
-    std::string mcpPath_;
+    /** Each thread's AcpAgentSession is owned by the ChatSidebar (one per tab). */
+    juce::OwnedArray<AcpAgentSession> sessions_;
 
-    // ASCII art header — decorative, generative (Req 25.4)
-    AsciiArtHeader asciiHeader_;
+    /** Index of the currently visible/active thread. */
+    int activeThreadIndex_ = -1;
 
-    // Status bar (errors / info)
-    juce::Label statusLabel_;
-    bool        statusVisible_ = false;
+    /** Tab bar buttons — one per thread. */
+    juce::OwnedArray<juce::TextButton> tabButtons_;
 
-    // Reconnect banner (Req 32.8): hidden unless the subprocess exits unexpectedly.
-    juce::TextButton reconnectBanner_;
-    bool             disconnected_ = false;
+    /** Container component for the tab bar. */
+    juce::Component tabBarArea_;
 
-    // Permission prompt (Req 32.6): shown as an overlay in the sidebar.
-    // Owned via unique_ptr; replaced each time a new permission request arrives.
-    std::unique_ptr<PermissionPromptComponent> permissionPrompt_;
+    /** Scroll buttons for tab bar when there are too many tabs. */
+    juce::TextButton scrollLeftBtn_;
+    juce::TextButton scrollRightBtn_;
+    int tabScrollOffset_ = 0;
 
-    // Message history — Viewport wraps a MessageHistoryContainer.
-    juce::Viewport                            historyViewport_;
-    std::unique_ptr<MessageHistoryContainer>  historyContainer_;
+    /** Flag to suppress tab button callbacks during programmatic updates. */
+    bool updatingTabs_ = false;
 
-    /// Raw pointer to the last agent bubble — used for streaming appends.
-    /// Invalidated when a non-agent bubble is added.
-    MessageBubble* lastAgentBubble_ = nullptr;
-
-    // Chat input field (Req 25.2, 25.6)
-    juce::TextEditor inputField_;
-
-    // Slider panel (Req 26.1)
+    // SliderPanel (shared across all threads — BPM/gain are global)
     std::unique_ptr<SliderPanel> sliderPanel_;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(ChatSidebar)
