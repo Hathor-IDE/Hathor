@@ -41,6 +41,10 @@
 #include <mach-o/dyld.h>
 #endif
 
+// Declare environ in the global namespace so we can reference it as ::environ
+// on macOS, where <unistd.h> does not expose it in the global namespace.
+extern char** environ;
+
 namespace {
 
 using hathor::audio_worker::kBlockSize;
@@ -58,7 +62,7 @@ using hathor::audio_worker::SharedAudioTransport;
 // This is a conservative default; the actual timeout is configurable via
 // ResourceLimits::heartbeatTimeoutMs.
 // ---------------------------------------------------------------------------
-constexpr int kDefaultHeartbeatTimeoutMs = 500;
+// (no default constant — the timeout is always driven by ResourceLimits)
 
 } // namespace
 
@@ -105,8 +109,8 @@ struct AudioWorkerManager::Impl {
 
     Impl()
         : resourceLimits_{}
-        , lastHeartbeatChange_(std::chrono::steady_clock::now())
     {
+        lastHeartbeatChange_ = std::chrono::steady_clock::now();
     }
 
     ~Impl()
@@ -604,7 +608,7 @@ bool AudioWorkerManager::spawnWorker(const std::string& workerPath)
             // Resolve via realpath for a clean path.
             if (const char* rp = ::realpath(exePath.c_str(), nullptr)) {
                 exePath = rp;
-                ::free(rp);
+                ::free(const_cast<char*>(rp));
             }
             const auto pos = exePath.find_last_of('/');
             if (pos != std::string::npos) {

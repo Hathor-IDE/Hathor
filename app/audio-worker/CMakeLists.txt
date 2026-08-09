@@ -1,13 +1,31 @@
 # Copyright (C) 2024 Hathor Contributors
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# worker/CMakeLists.txt — hathor-audio-worker companion process (B4-K2)
+# app/audio-worker/CMakeLists.txt — K2 AudioWorkerManager + worker executable
 #
-# This is a JUCE-free standalone executable that owns ChucK VM lifecycle
-# (filled in by B4-K3) and produces audio samples into shared memory.
-# It is built unconditionally (independent of HATHOR_BUILD_APP) so the
-# AudioWorkerManager tests can run it as a child process.
+# The AudioWorkerManager is compiled as a JUCE-free static library so it can be
+# linked by both the main app (when HATHOR_BUILD_APP=ON) and the test targets
+# (which do not depend on JUCE).
 
+# ---------------------------------------------------------------------------
+# hathor-audio-worker-lib — JUCE-free static library (AudioWorkerManager)
+# ---------------------------------------------------------------------------
+add_library(hathor-audio-worker-lib STATIC
+    AudioWorkerManager.cpp
+)
+
+target_include_directories(hathor-audio-worker-lib
+    PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_SOURCE_DIR}/engine/include
+)
+
+target_compile_features(hathor-audio-worker-lib PUBLIC cxx_std_20)
+target_compile_options(hathor-audio-worker-lib PRIVATE -Wall -Wextra -Werror)
+
+# ---------------------------------------------------------------------------
+# hathor-audio-worker — standalone JUCE-free companion process executable
+# ---------------------------------------------------------------------------
 add_executable(hathor-audio-worker
     hathor-audio-worker.cpp
 )
@@ -21,8 +39,7 @@ target_include_directories(hathor-audio-worker
 target_compile_features(hathor-audio-worker PRIVATE cxx_std_20)
 target_compile_options(hathor-audio-worker PRIVATE -Wall -Wextra -Werror)
 
-# The worker does not link JUCE — it is a pure POSIX process.
-# It only needs the standard C/C++ library and POSIX realtime extensions.
+# POSIX realtime libraries for shm_open / mmap / posix_spawn
 if(APPLE)
     find_library(LIBRT rt)
     if(LIBRT)

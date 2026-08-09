@@ -127,6 +127,7 @@ target_include_directories(hathor-audio-worker-tests PRIVATE
 )
 
 target_link_libraries(hathor-audio-worker-tests PRIVATE
+    hathor-audio-worker-lib
     Catch2::Catch2WithMain
 )
 

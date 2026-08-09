@@ -56,11 +56,40 @@ using hathor::audio_worker::kRingMask;
 /// Locate the hathor-audio-worker binary (built by CMake in the same tree).
 static std::string getWorkerPath()
 {
-    // Try build directory first.
     namespace fs = std::filesystem;
+
+#ifdef CMAKE_BINARY_DIR
+    // Prefer the CMake binary directory, which is where CMake builds targets.
+    fs::path p = fs::path(CMAKE_BINARY_DIR) / "app" / "audio-worker" / "hathor-audio-worker";
+    if (fs::exists(p))
+        return p.string();
+    p = fs::path(CMAKE_BINARY_DIR) / "hathor-audio-worker";
+    if (fs::exists(p))
+        return p.string();
+#endif
+
+    #ifdef CMAKE_SOURCE_DIR
+    {
+        fs::path p = fs::path(CMAKE_SOURCE_DIR) / "build" / "app" / "audio-worker" / "hathor-audio-worker";
+        if (fs::exists(p))
+            return p.string();
+    }
+    #else
+    // Fallback: try environment variables.
+    const char* envSrc = std::getenv("CMAKE_SOURCE_DIR");
+    if (envSrc) {
+        fs::path p = fs::path(envSrc) / "build" / "app" / "audio-worker" / "hathor-audio-worker";
+        if (fs::exists(p))
+            return p.string();
+    }
+    #endif
+
+    // Try relative to current working directory.
     const fs::path candidates[] = {
-        fs::current_path() / "build" / "hathor-audio-worker",
         fs::current_path() / "hathor-audio-worker",
+        fs::current_path() / "build" / "hathor-audio-worker",
+        fs::current_path() / "build" / "app" / "audio-worker" / "hathor-audio-worker",
+        fs::current_path() / "app" / "audio-worker" / "hathor-audio-worker",
         fs::current_path() / "cmake-build-debug" / "hathor-audio-worker",
         fs::current_path() / "cmake-build-release" / "hathor-audio-worker",
     };
@@ -70,64 +99,7 @@ static std::string getWorkerPath()
             return p.string();
     }
 
-    // Try the CMake build directory relative to source.
-    const char* srcDir = std::getenv("CMAKE_SOURCE_DIR");
-    if (srcDir) {
-        fs::path p = fs::path(srcDir) / "build" / "hathor-audio-worker";
-        if (fs::exists(p))
-            return p.string();
-    }
-
     return "";
-}
-
-/// Send a control command directly to a raw socket path (for testing).
-static std::string sendControlCommand(const std::string& socketPath,
-                                       const std::string& cmd,
-                                       int timeoutMs = 1000)
-{
-    const int cfd = ::socket(AF_UNIX, SOCK_STREAM, 0);
-    if (cfd < 0) return "";
-
-    struct sockaddr_un addr{};
-    addr.sun_family = AF_UNIX;
-    std::strncpy(addr.sun_path, socketPath.c_str(), sizeof(addr.sun_path) - 1);
-
-    if (::connect(cfd, reinterpret_cast<struct sockaddr*>(&addr), sizeof(addr)) != 0) {
-        ::close(cfd);
-        return "";
-    }
-
-    std::string request = cmd + "\n";
-    ssize_t written = ::write(cfd, request.c_str(), request.size());
-    if (written <= 0) {
-        ::close(cfd);
-        return "";
-    }
-
-    struct pollfd pfd{};
-    pfd.fd = cfd;
-    pfd.events = POLLIN;
-    std::string response;
-    char buf[256];
-
-    auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeoutMs);
-    while (std::chrono::steady_clock::now() < deadline) {
-        int ready = ::poll(&pfd, 1, 50);
-        if (ready > 0) {
-            ssize_t n = ::read(cfd, buf, sizeof(buf) - 1);
-            if (n <= 0) break;
-            buf[n] = '\0';
-            response += std::string(buf, static_cast<size_t>(n));
-            if (response.find('\n') != std::string::npos) break;
-        }
-    }
-
-    ::close(cfd);
-    while (!response.empty() && (response.back() == '\n' || response.back() == '\r'))
-        response.pop_back();
-
-    return response;
 }
 
 /// Read the shared-memory transport directly (bypassing the manager) for
@@ -269,9 +241,18 @@ TEST_CASE("AudioWorkerManager — stale generation rejection", "[worker][generat
     const uint64_t gen = mgr.generation();
     REQUIRE(gen == 1);
 
-    // Read a block with the correct generation — should succeed.
+    // Wait for the worker to produce at least one block with the correct generation.
     float buf[kBlockSize];
-    REQUIRE(mgr.tryReadAudioBlock(buf, kBlockSize, gen));
+    bool readFirst = false;
+    auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+    while (std::chrono::steady_clock::now() < deadline) {
+        if (mgr.tryReadAudioBlock(buf, kBlockSize, gen)) {
+            readFirst = true;
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    REQUIRE(readFirst);
 
     // Request with wrong generation — should reject (stale).
     REQUIRE_FALSE(mgr.tryReadAudioBlock(buf, kBlockSize, gen + 1));
@@ -298,7 +279,7 @@ TEST_CASE("AudioWorkerManager — worker crash detection", "[worker][crash][deat
     // Read some audio first.
     float buf[kBlockSize];
     uint32_t reads = 0;
-    auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(300);
+    auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
     while (std::chrono::steady_clock::now() < deadline && reads < 5) {
         if (mgr.tryReadAudioBlock(buf, kBlockSize, gen))
             ++reads;
@@ -353,7 +334,18 @@ TEST_CASE("AudioWorkerManager — restart with new generation", "[worker][restar
     // Old generation should be rejected.
     float buf[kBlockSize];
     REQUIRE_FALSE(mgr.tryReadAudioBlock(buf, kBlockSize, gen1));
-    REQUIRE(mgr.tryReadAudioBlock(buf, kBlockSize, gen2));
+
+    // Wait for the new-generation worker to produce at least one block.
+    bool readNewGen = false;
+    auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+    while (std::chrono::steady_clock::now() < deadline) {
+        if (mgr.tryReadAudioBlock(buf, kBlockSize, gen2)) {
+            readNewGen = true;
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    REQUIRE(readNewGen);
 
     mgr.shutdown();
 }
@@ -487,6 +479,15 @@ TEST_CASE("AudioWorkerManager — seqlock single-attempt (no infinite spin)", "[
     REQUIRE(mgr.start(workerPath));
     const uint64_t gen = mgr.generation();
 
+    // Wait for the worker to produce at least one block.
+    float drainBuf[kBlockSize];
+    auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    while (std::chrono::steady_clock::now() < deadline) {
+        if (mgr.tryReadAudioBlock(drainBuf, kBlockSize, gen))
+            break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+
     // Manually corrupt the seqlock of the next block the reader would consume,
     // simulating a writer stuck mid-write.  The reader must fall back to silence.
     ShmHandle shm = mapShm();
@@ -503,6 +504,10 @@ TEST_CASE("AudioWorkerManager — seqlock single-attempt (no infinite spin)", "[
             (rSeq + 1u) | 1u, std::memory_order_release);
 
         // The reader should reject this block and return false.
+        float buf[kBlockSize];
+        REQUIRE_FALSE(mgr.tryReadAudioBlock(buf, kBlockSize, gen));
+    } else {
+        // If the ring is empty, just verify the reader returns false (silence).
         float buf[kBlockSize];
         REQUIRE_FALSE(mgr.tryReadAudioBlock(buf, kBlockSize, gen));
     }

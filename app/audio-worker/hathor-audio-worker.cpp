@@ -209,11 +209,10 @@ static void audioProductionLoop() {
 
         const uint32_t wSeq = gTransport->writeSeq.load(std::memory_order_relaxed);
         const uint32_t rSeq = gTransport->readSeq.load(std::memory_order_acquire);
-        const uint32_t nextW = wSeq + 1u;
 
         // If the consumer (main process) is falling behind, drop old blocks
         // to prevent the ring from stalling.
-        if (nextW - rSeq > kRingCapacity) {
+        if (wSeq - rSeq >= kRingCapacity) {
             const uint32_t newRSeq = wSeq - kRingCapacity + 1u;
             gTransport->readSeq.store(newRSeq, std::memory_order_release);
         }
@@ -222,10 +221,12 @@ static void audioProductionLoop() {
         // in normal operation, but the contract allows it).
         const uint64_t gen = gTransport->generation.load(std::memory_order_acquire);
 
-        // Produce the block.
+        // Produce the block at slot wSeq (matching the seqlock contract:
+        // block[wSeq].sequence transitions 0→wSeq|1→wSeq+2, and the reader
+        // checks block[rSeq].sequence == rSeq + 2).
         const auto wStart = std::chrono::steady_clock::now();
-        AudioBlock& block = gTransport->blocks[nextW & kRingMask];
-        produceBlock(block, nextW, gen);
+        AudioBlock& block = gTransport->blocks[wSeq & kRingMask];
+        produceBlock(block, wSeq, gen);
         const auto wEnd = std::chrono::steady_clock::now();
 
         // Update writer-side instrumentation (best-effort).
@@ -246,7 +247,7 @@ static void audioProductionLoop() {
         // Advance the heartbeat and write sequence.
         gTransport->lastHeartbeat.store(beat, std::memory_order_release);
         ++beat;
-        gTransport->writeSeq.store(nextW, std::memory_order_release);
+        gTransport->writeSeq.store(wSeq + 1u, std::memory_order_release);
     }
 }
 
