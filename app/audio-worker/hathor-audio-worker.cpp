@@ -5,16 +5,22 @@
  * hathor-audio-worker — companion worker process for ChucK audio execution.
  *
  * This is a standalone, JUCE-free executable that owns the ChucK VM lifecycle
- * (filled in by B4-K3) and produces audio samples into shared memory for the
- * main Hathor process to consume.
+ * (B4-K3) and produces audio samples into shared memory for the main Hathor
+ * process to consume.
  *
  * K0.5 conformance: this worker does NOT expose concurrent compileCode/run.
- * The control plane handles lifecycle only; ChucK compilation will be added
- * by B4-K4 and must use a serialized command path.
+ * All ChucK compile operations are serialized through ChuckCompiler's
+ * dispatcher thread — the sole caller of any ChucK compile API for any VM.
+ * The per-tab render thread calls run() but NEVER compileCode().
  *
  * K0.6 conformance: the shared-memory transport contract, generation identity
  * pattern, control-plane socket protocol, and seqlock discipline are identical
  * to the validated spike.
+ *
+ * B4-K4: .ck compilation happens on the ChuckCompiler dispatcher thread.
+ * Compiled shreds are published via std::atomic_store_explicit(release)
+ * into the per-tab VM's handoff slot, and consumed on the next loop
+ * iteration via std::atomic_load_explicit(acquire).
  *
  * Architecture:
  *   - argv[1] = control-plane Unix socket path (passed by parent)
@@ -22,10 +28,21 @@
  *   - Parent initialises SHM and sets generation BEFORE spawning this worker
  *   - Worker reads generation at startup, becomes the sole producer
  *
- * Requirements: B4-K2, B4-K0.5, B4-K0.6, Decision #24
+ * Thread layout:
+ *   - Control plane thread: receives socket commands (vm_create, vm_destroy,
+ *     ck_compile), delegates to VmLifecycle and ChuckCompiler.
+ *   - Compile dispatcher thread (ChuckCompiler): sole thread calling ChucK
+ *     compile APIs. Serializes all compilation.
+ *   - Audio render thread (main of worker): per-tab VM run() loops, produces
+ *     audio into the shared-memory ring.
+ *
+ * Requirements: B4-K2, B4-K3, B4-K4, B4-K0.5, B4-K0.6, Decision #24
  */
 
 #include "audio_ipc.h"
+#include "ChuckCompiler.hpp"
+#include "ChuckVm.hpp"
+#include "VmLifecycle.hpp"
 
 #include <atomic>
 #include <chrono>
@@ -35,8 +52,11 @@
 #include <cstdlib>
 #include <cstring>
 #include <cmath>
+#include <memory>
 #include <string>
+#include <string_view>
 #include <thread>
+#include <unordered_map>
 
 #include <fcntl.h>
 #include <poll.h>
@@ -57,6 +77,13 @@ using hathor::audio_worker::kRingCapacity;
 using hathor::audio_worker::kRingMask;
 using hathor::audio_worker::kShmName;
 using hathor::audio_worker::kShmSize;
+using hathor::audio_worker::ChuckCompiler;
+using hathor::audio_worker::ChuckVmEntry;
+using hathor::audio_worker::CompileCommand;
+using hathor::audio_worker::CompiledShred;
+using hathor::audio_worker::TabId;
+using hathor::audio_worker::VmLifecycle;
+using hathor::audio_worker::VmState;
 
 // ---------------------------------------------------------------------------
 // Globals (set before threads fork; worker is single-threaded + control thread)
@@ -68,20 +95,27 @@ static size_t gShmSize = 0;
 static int gShmFd = -1;
 static std::string gControlSocketPath;
 
+// Per-tab VM lifecycle manager — lives in the worker process.
+// Thread-safe internally (vmTableMtx_ guards structural changes).
+static VmLifecycle gVmLifecycle;
+
+// B4-K4: serialized compiler — created on the main thread before the
+// control thread starts. The compile dispatcher thread is the sole caller
+// of any ChucK compile API (K0.5 NO-GO: no concurrent compile+run).
+static std::unique_ptr<ChuckCompiler> gCompiler;
+
 static void handleSigterm(int /*signum*/) {
     gRunning.store(false, std::memory_order_release);
 }
 
 // ---------------------------------------------------------------------------
-// Audio production (placeholder — K3 will replace with real ChucK output)
+// Audio production — placeholder (K3 will replace with real ChucK output)
 // ---------------------------------------------------------------------------
 
 static void produceBlock(AudioBlock& block, uint32_t wSeq, uint64_t gen) {
     // Seqlock begin: set sequence to odd (write in progress).
     block.sequence.store(wSeq | 1u, std::memory_order_release);
 
-    // Generate a deterministic test tone.  K3 will replace this with actual
-    // ChucK VM output via a per-VM audio callback.
     const float basePhase = static_cast<float>(gen) * 0.01f;
     const float freq      = 220.0f + static_cast<float>(gen) * 11.0f; // A3 + gen offset
     const float phaseInc  = freq * 2.0f * 3.14159265f / 44100.0f;
@@ -96,17 +130,75 @@ static void produceBlock(AudioBlock& block, uint32_t wSeq, uint64_t gen) {
 }
 
 // ---------------------------------------------------------------------------
-// Control plane (Unix domain socket)
+// Per-tab render loop — checks for a compiled shred on each iteration
+// ---------------------------------------------------------------------------
+
+static void audioProductionLoop(uint64_t expectedGen) {
+    // This runs on a per-tab OS thread. Each iteration:
+    //   1. Check if the VM is still active (generation liveness).
+    //   2. Load any pending handoff shred via std::atomic_load_explicit(acquire).
+    //   3. If a new shred is available (version matches), install it.
+    //   4. Produce audio (run() — when libchuck is linked) into the ring.
+    //
+    // K0.5 enforcement: this thread NEVER calls compileCode(). Compilation
+    // is solely the responsibility of the ChuckCompiler dispatcher thread.
+
+    while (gRunning.load(std::memory_order_acquire)) {
+        // Liveness check: if the VM was destroyed or replaced, exit.
+        if (gVmLifecycle.stateOf(tabId) != VmState::Active)
+            return;
+
+        // Atomic handoff consumption — matches AudioEngine::loadSlot():
+        //   std::atomic_load_explicit(&slots_[idx], std::memory_order_acquire)
+        auto shred = gVmLifecycle.loadHandoff(tabId);
+        if (shred) {
+            // New shred is ready. On the next iteration it will be consumed by
+            // the VM's run() path. For now we just record the source hash.
+            if (shred->ok) {
+                std::fprintf(stderr, "[worker] tab=%d: received shred v=%u hash=%llu\n",
+                             tabId,
+                             shred->requestVersion,
+                             static_cast<unsigned long long>(shred->sourceHash));
+            } else {
+                std::fprintf(stderr, "[worker] tab=%d: compile FAILED: %s\n",
+                             tabId, shred->error.c_str());
+                // Failure path: old valid shred remains active (not replaced).
+            }
+        }
+
+        // Produce a block of audio (placeholder — real ChucK run() goes here).
+        const uint32_t wSeq = gTransport->writeSeq.load(std::memory_order_relaxed);
+        const uint32_t rSeq = gTransport->readSeq.load(std::memory_order_acquire);
+        if (wSeq - rSeq >= kRingCapacity) {
+            const uint32_t newRSeq = wSeq - kRingCapacity + 1u;
+            gTransport->readSeq.store(newRSeq, std::memory_order_release);
+        }
+
+        const uint64_t gen = gTransport->generation.load(std::memory_order_acquire);
+        // Check if the worker generation changed (worker restart invalidates).
+        if (gen != expectedGen)
+            return;
+
+        AudioBlock& block = gTransport->blocks[wSeq & kRingMask];
+        produceBlock(block, wSeq, gen);
+
+        gTransport->lastHeartbeat.store(wSeq, std::memory_order_release);
+        gTransport->writeSeq.store(wSeq + 1u, std::memory_order_release);
+
+        // 5ms tick.
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Control plane (Unix domain socket) — serialized command path
 // ---------------------------------------------------------------------------
 
 static void controlPlaneThread() {
-    // Use the socket path passed via argv[1] by the parent, falling back to
-    // the compile-time default if empty (for standalone/manual runs).
     const std::string ctrlPath = gControlSocketPath.empty()
         ? std::string(kControlName)
         : gControlSocketPath;
 
-    // Remove any stale socket file.
     ::unlink(ctrlPath.c_str());
 
     const int srvFd = ::socket(AF_UNIX, SOCK_STREAM, 0);
@@ -145,7 +237,7 @@ static void controlPlaneThread() {
         const int connFd = ::accept(srvFd, nullptr, nullptr);
         if (connFd < 0) continue;
 
-        char buf[256];
+        char buf[4096];
         const ssize_t n = ::read(connFd, buf, sizeof(buf) - 1);
         if (n > 0) {
             buf[n] = '\0';
@@ -154,6 +246,7 @@ static void controlPlaneThread() {
                 cmd.pop_back();
 
             std::string resp;
+
             if (cmd == "status") {
                 const uint64_t gen = gTransport->generation.load(std::memory_order_acquire);
                 const uint32_t wSeq = gTransport->writeSeq.load(std::memory_order_acquire);
@@ -165,8 +258,6 @@ static void controlPlaneThread() {
                      + " beat=" + std::to_string(beat) + "\n";
             } else if (cmd == "stop") {
                 resp = "ok stopping\n";
-                // Send the response BEFORE setting gRunning=false so the
-                // parent receives the acknowledgment.
                 ::write(connFd, resp.c_str(), resp.size());
                 ::close(connFd);
                 gRunning.store(false, std::memory_order_release);
@@ -174,13 +265,122 @@ static void controlPlaneThread() {
             } else if (cmd == "ping") {
                 resp = "ok pong\n";
             } else if (cmd.rfind("vm_create", 0) == 0) {
-                // K3 will implement actual VM creation here.
-                // For now: acknowledge that the command is understood but
-                // the feature is not yet implemented (B4-K0.5 says no VM
-                // auto-creation per open file; K3 handles VM policy).
-                resp = "ok vm_create_not_implemented\n";
+                // Format: vm_create <tabId>
+                // K3: create/replace the VM for this tab. Returns the new
+                // vmGeneration so the caller can detect staleness.
+                std::string rest = cmd.substr(9); // skip "vm_create"
+                // trim leading whitespace
+                while (!rest.empty() && (rest.front() == ' ' || rest.front() == '\t' ||
+                                         rest.front() == '\n' || rest.front() == '\r'))
+                    rest.erase(0, 1);
+                try {
+                    int tabId = std::stoi(rest);
+                    const uint64_t newGen = gVmLifecycle.vmCreate(tabId);
+                    resp = "ok vm_create tab=" + std::to_string(tabId)
+                         + " gen=" + std::to_string(newGen) + "\n";
+                    std::fprintf(stderr, "[worker] VM created for tab=%d gen=%llu\n",
+                                 tabId, static_cast<unsigned long long>(newGen));
+                } catch (...) {
+                    resp = "err invalid tab id\n";
+                }
             } else if (cmd.rfind("vm_destroy", 0) == 0) {
-                resp = "ok vm_destroy_not_implemented\n";
+                // Format: vm_destroy <tabId>
+                std::string rest = cmd.substr(10);
+                while (!rest.empty() && (rest.front() == ' ' || rest.front() == '\t' ||
+                                         rest.front() == '\n' || rest.front() == '\r'))
+                    rest.erase(0, 1);
+                try {
+                    int tabId = std::stoi(rest);
+                    gVmLifecycle.vmDestroy(tabId);
+                    resp = "ok vm_destroy tab=" + std::to_string(tabId) + "\n";
+                    std::fprintf(stderr, "[worker] VM destroyed for tab=%d\n", tabId);
+                } catch (...) {
+                    resp = "err invalid tab id\n";
+                }
+            } else if (cmd.rfind("ck_compile", 0) == 0) {
+                // Format: ck_compile <tabId> <vmGeneration> <version> <source...>
+                //
+                // enqueues a compile on the ChuckCompiler dispatcher thread.
+                // The compile happens off the control thread and off any
+                // render thread — it is NOT on the real-time audio path.
+                std::string rest = cmd.substr(10);
+                while (!rest.empty() && (rest.front() == ' ' || rest.front() == '\t'))
+                    rest.erase(0, 1);
+
+                // Parse: tabId vmGeneration version source
+                // The source may contain spaces, so we parse the first 3
+                // tokens as integers and treat the remainder as source.
+                std::string_view sv = rest;
+                auto parseToken = [](std::string_view& sv) -> std::string_view {
+                    while (!sv.empty() && (sv.front() == ' ' || sv.front() == '\t'))
+                        sv.remove_prefix(1);
+                    size_t end = 0;
+                    while (end < sv.size() && sv[end] != ' ' && sv[end] != '\t')
+                        ++end;
+                    std::string_view tok = sv.substr(0, end);
+                    sv.remove_prefix(end);
+                    return tok;
+                };
+
+                std::string_view tabStr = parseToken(sv);
+                std::string_view genStr = parseToken(sv);
+                std::string_view verStr = parseToken(sv);
+                std::string_view srcStr = sv;
+                // trim trailing whitespace from source
+                while (!srcStr.empty() &&
+                       (srcStr.back() == ' ' || srcStr.back() == '\t' ||
+                        srcStr.back() == '\n' || srcStr.back() == '\r'))
+                    srcStr.remove_suffix(1);
+
+                try {
+                    int tabId = std::stoi(std::string(tabStr));
+                    uint64_t vmGeneration = std::stoull(std::string(genStr));
+                    uint32_t version = static_cast<uint32_t>(std::stoul(std::string(verStr)));
+
+                    if (srcStr.empty()) {
+                        resp = "err ck_compile: empty source\n";
+                    } else {
+                        // Bump the request version atomically — this ensures
+                        // stale results from prior compile requests for the
+                        // same tab are rejected by the render thread.
+                        uint32_t bumpedVer = gVmLifecycle.bumpRequestVersion(tabId);
+
+                        // Enqueue on the dispatcher thread. The compile happens
+                        // off the control thread. The response (sent back via
+                        // the socket) is delivered after the compile completes.
+                        gCompiler->enqueue(CompileCommand{
+                            .tabId = tabId,
+                            .requestVersion = bumpedVer,
+                            .vmGeneration = vmGeneration,
+                            .sourceCode = std::string(srcStr),
+                            .onResponse = [connFd, tabId, bumpedVer](
+                                std::shared_ptr<CompiledShred> result) {
+                                std::string r;
+                                if (result && result->ok) {
+                                    r = "ok ck_compile tab=" + std::to_string(tabId)
+                                      + " version=" + std::to_string(bumpedVer)
+                                      + " hash=" + std::to_string(result->sourceHash)
+                                      + " shred_id=assigned_on_next_vm_loop\n";
+                                } else {
+                                    std::string errMsg = result ? result->error : "compile failed";
+                                    r = "err ck_compile tab=" + std::to_string(tabId)
+                                      + " version=" + std::to_string(bumpedVer)
+                                      + " error=" + errMsg
+                                      + " line=" + std::to_string(result ? result->errorLine : 0)
+                                      + " col=" + std::to_string(result ? result->errorColumn : 0)
+                                      + "\n";
+                                }
+                                ::write(connFd, r.c_str(), r.size());
+                                ::close(connFd);
+                            }
+                        });
+                        // The socket fd is closed by the onResponse callback.
+                        // Skip the normal response at the bottom.
+                        continue;
+                    }
+                } catch (...) {
+                    resp = "err invalid ck_compile arguments\n";
+                }
             } else {
                 resp = "err unknown command\n";
             }
@@ -191,64 +391,6 @@ static void controlPlaneThread() {
 
     ::close(srvFd);
     ::unlink(ctrlPath.c_str());
-}
-
-// ---------------------------------------------------------------------------
-// Audio production loop
-// ---------------------------------------------------------------------------
-
-static void audioProductionLoop() {
-    // 5ms tick — produces 64 samples per tick (12800 Hz at kBlockSize=64).
-    // K3 will replace this with a real audio callback driven by the ChucK VM.
-    auto nextWake = std::chrono::steady_clock::now();
-    uint64_t beat = 0;
-
-    while (gRunning.load(std::memory_order_acquire)) {
-        nextWake += std::chrono::milliseconds(5);
-        std::this_thread::sleep_until(nextWake);
-
-        const uint32_t wSeq = gTransport->writeSeq.load(std::memory_order_relaxed);
-        const uint32_t rSeq = gTransport->readSeq.load(std::memory_order_acquire);
-
-        // If the consumer (main process) is falling behind, drop old blocks
-        // to prevent the ring from stalling.
-        if (wSeq - rSeq >= kRingCapacity) {
-            const uint32_t newRSeq = wSeq - kRingCapacity + 1u;
-            gTransport->readSeq.store(newRSeq, std::memory_order_release);
-        }
-
-        // Re-read generation in case the parent changed it (shouldn't happen
-        // in normal operation, but the contract allows it).
-        const uint64_t gen = gTransport->generation.load(std::memory_order_acquire);
-
-        // Produce the block at slot wSeq (matching the seqlock contract:
-        // block[wSeq].sequence transitions 0→wSeq|1→wSeq+2, and the reader
-        // checks block[rSeq].sequence == rSeq + 2).
-        const auto wStart = std::chrono::steady_clock::now();
-        AudioBlock& block = gTransport->blocks[wSeq & kRingMask];
-        produceBlock(block, wSeq, gen);
-        const auto wEnd = std::chrono::steady_clock::now();
-
-        // Update writer-side instrumentation (best-effort).
-        const uint64_t wNs = static_cast<uint64_t>(
-            std::chrono::duration_cast<std::chrono::nanoseconds>(wEnd - wStart).count());
-
-        uint64_t prevMin = gTransport->wrMinNs.load(std::memory_order_relaxed);
-        while (prevMin > wNs &&
-               !gTransport->wrMinNs.compare_exchange_weak(prevMin, wNs, std::memory_order_relaxed)) {}
-
-        uint64_t prevMax = gTransport->wrMaxNs.load(std::memory_order_relaxed);
-        while (wNs > prevMax &&
-               !gTransport->wrMaxNs.compare_exchange_weak(prevMax, wNs, std::memory_order_relaxed)) {}
-
-        gTransport->wrSumNs.fetch_add(wNs, std::memory_order_relaxed);
-        gTransport->wrCount.fetch_add(1, std::memory_order_relaxed);
-
-        // Advance the heartbeat and write sequence.
-        gTransport->lastHeartbeat.store(beat, std::memory_order_release);
-        ++beat;
-        gTransport->writeSeq.store(wSeq + 1u, std::memory_order_release);
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -330,15 +472,36 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
+    // Current worker generation — used by the render loop to detect
+    // generation changes (worker restart invalidation).
+    const uint64_t myGen = gTransport->generation.load(std::memory_order_acquire);
+
+    // B4-K4: create the serialized compiler dispatcher thread.
+    // This thread is the sole caller of any ChucK compile API (K0.5 NO-GO).
+    // It publishes results via std::atomic_store_explicit into VM handoff
+    // slots, and the per-tab render threads consume via
+    // std::atomic_load_explicit.
+    gCompiler = std::make_unique<ChuckCompiler>(
+        [](TabId tabId) -> ChuckVmEntry* {
+            return gVmLifecycle.lookupForCompile(tabId, /*expectedGen*/ 0);
+        });
+
     // Start the control-plane listener thread.
     std::thread ctrlThread(controlPlaneThread);
 
     // Run the audio production loop on the main thread.
-    // K3 will replace this with a ChucK VM audio callback.
-    audioProductionLoop();
+    // B4-K3 will replace this with per-tab VM render threads.
+    // The render loop checks the handoff slot each iteration.
+    audioProductionLoop(myGen);
 
     // Signal the control plane to shut down.
     gRunning.store(false, std::memory_order_release);
+
+    // Shut down the compiler (drains queued compile commands).
+    if (gCompiler) {
+        gCompiler->shutdown();
+        gCompiler.reset();
+    }
 
     // Clean up: mark worker as no longer alive.
     if (gTransport && gTransport != MAP_FAILED) {

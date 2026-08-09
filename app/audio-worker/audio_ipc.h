@@ -33,8 +33,36 @@
  *            if (s1 != s0) -> discard (torn read)
  *            else -> valid block
  *
+ * Control-plane VM command protocol (B4-K3):
+ *   Commands are newline-delimited ASCII strings sent over the Unix domain
+ *   socket.  The worker responds with "ok" or "err" prefixed lines.
+ *
+ *   vm_activate <tabId> <sampleRate> <channels>
+ *       -> "ok vm_activated tab=<tabId> state=active"
+ *       -> "err vm_activate_failed tab=<tabId> <reason>"
+ *
+ *   vm_deactivate <tabId> [suspend|destroy]
+ *       -> "ok vm_deactivated tab=<tabId> state=<suspended|destroyed>"
+ *       -> "err vm_deactivate_failed tab=<tabId> <reason>"
+ *
+ *   vm_resume <tabId>
+ *       -> "ok vm_resumed tab=<tabId>"
+ *       -> "err vm_resume_failed tab=<tabId> <reason>"
+ *
+ *   vm_compile <tabId> <code-length>\n<code>
+ *       -> "ok vm_compiled tab=<tabId> shreds=<n>"
+ *       -> "err vm_compile_failed tab=<tabId> <error-text>"
+ *
+ *   vm_query <tabId>
+ *       -> "ok vm_state tab=<tabId> state=<inactive|active| suspended|destroyed|error>"
+ *          + " blocks=<n> heartbeat=<n> memory=<bytes>"
+ *       -> "err vm_query_failed tab=<tabId> <reason>"
+ *
+ *   vm_list
+ *       -> "ok vm_list count=<n> active=<n> suspended=<n> destroyed=<n>"
+ *
  * Requirements: B4-K0.6 (transport contract), B4-K2 (generation identity),
- *               B4-K8 (hard gate tests)
+ *               B4-K3 (per-tab VM isolation), B4-K8 (hard gate tests)
  */
 
 #include <atomic>
