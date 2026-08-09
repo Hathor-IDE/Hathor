@@ -105,10 +105,22 @@ constexpr int kMaxTabs = 16;
 /// are in the range [0, AudioEngine::kNumSlots) = [0, 16).
 using TabId = uint8_t;
 
-/// Heartbeat timeout for watchdog (milliseconds).
+/// Default heartbeat timeout for watchdog (milliseconds).
 /// Per PROGRAM.md B4-K5: ~2s staleness = hung VM.
-/// This is the default; the actual timeout is configurable via ResourcePolicy.
+/// The actual timeout is configurable via ResourcePolicy.
 constexpr int kDefaultHeartbeatTimeoutMs = 2000;
+
+/// Watchdog check interval (milliseconds).
+/// The watchdog thread polls VM heartbeats at this cadence.
+constexpr int kDefaultWatchdogIntervalMs = 500;
+
+/// Maximum restart attempts before marking a tab as permanently failed.
+/// Per B4-K5 §RESTART_LOOP_PROTECTION.
+constexpr int kMaxRestartAttempts = 5;
+
+/// Cooldown between restart attempts for the same tab (milliseconds).
+/// Prevents restart storms when a tab immediately hangs again.
+constexpr int kRestartCooldownMs = 1000;
 
 /// Alias used by VmLifecycle/ChuckCompiler (lowercase per existing codebase).
 inline constexpr int kNumTabs = kMaxTabs;
@@ -120,12 +132,18 @@ inline constexpr int kNumTabs = kMaxTabs;
 /// Per-VM lifecycle states (Decision #24: explicit, not implicit per-file).
 /// Defined here in the IPC header so both the worker process and the main
 /// process share the same enumeration without a JUCE dependency.
+///
+/// B4-K5 extends this with hang-detection states:
+///   - Failed:    VM was detected as hung or hit an error; recovery pending.
+///   - Recreating: VM is being torn down and a fresh one created.
 enum class VMState : uint8_t {
-    Inactive,   ///< No VM allocated (tab is open but not playing/eval'd).
-    Active,     ///< VM exists and is running on its dedicated thread.
-    Suspended,  ///< VM paused deterministically; Chuck instance alive, thread blocked.
-    Destroyed,  ///< VM fully torn down; metadata retained for re-creation.
-    Error,      ///< VM hit a fatal error; needs restart.
+    Inactive,    ///< No VM allocated (tab is open but not playing/eval'd).
+    Active,      ///< VM exists and is running on its dedicated thread.
+    Suspended,   ///< VM paused deterministically; Chuck instance alive, thread blocked.
+    Destroyed,   ///< VM fully torn down; metadata retained for re-creation.
+    Error,       ///< VM hit a fatal error; needs restart.
+    Failed,      ///< VM was detected as hung (B4-K5); recovery pending.
+    Recreating,  ///< VM is being torn down and a fresh one is being created (B4-K5).
 };
 
 /// Lowercase alias used throughout the existing worker code (VmLifecycle,

@@ -107,6 +107,11 @@ public:
     /// @return Number of VMs that timed out and were restarted.
     int checkHeartbeats(std::chrono::milliseconds timeout);
 
+    /// Look up a VM by tab ID (non-owning pointer).
+    /// Used by the watchdog (VmWatchdog) to read heartbeat/state.
+    /// Returns nullptr if no VM exists for the tab.
+    ChuckVM* findVM(TabId tabId) const;
+
 private:
     /// Count active VMs assuming mutex_ is already held.
     int countActiveLocked() const;

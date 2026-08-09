@@ -110,6 +110,12 @@ public:
     /// Current lifecycle state.
     VMState state() const noexcept { return state_.load(std::memory_order_acquire); }
 
+    /// Set the lifecycle state (used by watchdog for hang detection/recovery).
+    void setState(VMState s, std::memory_order /*order*/ = std::memory_order_release) noexcept
+    {
+        state_.store(s, std::memory_order_release);
+    }
+
     /// Tab identity.
     TabId tabId() const noexcept { return tabId_; }
 
@@ -154,6 +160,17 @@ public:
         return s == VMState::Inactive || s == VMState::Destroyed || s == VMState::Error;
     }
 
+    /// VM generation — increments on every create/replace/destroy.
+    /// Used by the watchdog (B4-K5) to detect stale recovery attempts.
+    uint64_t generation() const noexcept {
+        return generation_.load(std::memory_order_acquire);
+    }
+
+    /// Set the VM generation (called by VMManager on activation/recreation).
+    void setGeneration(uint64_t gen) noexcept {
+        generation_.store(gen, std::memory_order_release);
+    }
+
 private:
     // -----------------------------------------------------------------------
     // Internal: ChucK thread entry point
@@ -184,6 +201,10 @@ private:
 
     /// Lifecycle state (atomic for lock-free checks from watchdog/control thread).
     std::atomic<VMState> state_{VMState::Inactive};
+
+    /// VM generation — increments on every create/replace/destroy.
+    /// Used by the watchdog (B4-K5) for stale-runtime protection.
+    std::atomic<uint64_t> generation_{0};
 
     /// Control mutex for state transitions (non-RT, called from control thread).
     mutable std::mutex mutex_;
