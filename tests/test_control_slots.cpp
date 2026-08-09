@@ -110,15 +110,35 @@ public:
      int  activeRenderCount() const noexcept override { return 0; }
      void shutdownRender() noexcept override {}
 
-     // B8-K4 stubs
-     bool registerBakedAsset(std::string, const std::filesystem::path&) override
-     {
-         return false;
-     }
-     std::vector<std::string> listSamples() const override
-     {
-         return {};
-     }
+      // B8-K4 stubs
+      bool registerBakedAsset(std::string, const std::filesystem::path&) override
+      {
+          return false;
+      }
+      std::vector<std::string> listSamples() const override
+      {
+          return {};
+      }
+
+      // --- AI-2 read-only introspection stubs ---
+      std::vector<SlotInfo> listSlots() const noexcept override { return {}; }
+      SlotInfo getSlotInfo(int idx) const noexcept override
+      {
+          SlotInfo info;
+          info.slotIndex = idx;
+          return info;
+      }
+      VmStatus getVmStatus(int) const noexcept override { return VmStatus{}; }
+      AudioStatus getAudioStatus() const noexcept override
+      {
+          return AudioStatus{false, 120.0, 0, 1.0f, "flat", 0, false, 0};
+      }
+      std::vector<SlotPlayback> listSlotPlayback() const noexcept override { return {}; }
+      std::vector<InstrumentInfo> listChuckInstruments(
+          const std::filesystem::path&) const noexcept override { return {}; }
+      std::filesystem::path studioInstrumentsDir(
+          const std::filesystem::path&) const noexcept override { return {}; }
+      std::filesystem::path currentProjectDir() const noexcept override { return {}; }
 
      static constexpr int kNumSlots = 16;
     std::string names_[kNumSlots];

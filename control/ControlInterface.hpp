@@ -15,6 +15,7 @@
 
 #include <chrono>
 #include <functional>
+#include <memory>
 #include <string>
 #include <string_view>
 
@@ -25,6 +26,8 @@ class AudioEngineFacade;
 class SampleBank;
 
 namespace hathor::control {
+
+class ProjectReadFacade;
 
 /**
  * ControlInterface — owns the WorkerThread and processes ACP commands.
@@ -118,8 +121,35 @@ public:
      * @param onResult  Callback invoked with the JSON response.
      */
     void dispatchSlotPlayStop(const std::string& slotName,
-                              bool start,
-                              std::function<void(nlohmann::json)> onResult);
+                               bool start,
+                               std::function<void(nlohmann::json)> onResult);
+
+    // -----------------------------------------------------------------------
+    // AI-2: Read-only introspection commands (Phase 2.5 H0)
+    // -----------------------------------------------------------------------
+    // These commands route through ProjectReadFacade (the canonical AI-2 service
+    // layer) which delegates to the real AudioEngineFacade + SampleBank
+    // subsystems.  No MCP business logic is implemented here — each handler
+    // simply delegates to the corresponding ProjectReadFacade method.
+    //
+    // Requirement: AI-2 §12 (MCP routes through canonical service layer)
+
+    /// Handle a read-only introspection command.
+    /// @return true if the command was recognised, false if not.
+    ///
+    /// Supported commands:
+    ///   inspect_project       → ProjectReadFacade::inspectProject()
+    ///   get_current_song      → ProjectReadFacade::getCurrentSong()
+    ///   list_samples          → ProjectReadFacade::listSamples()
+    ///   list_chuck_instruments <projectDir> → ProjectReadFacade::listChuckInstruments()
+    ///   get_diagnostics <sourceId> <isChuck> <content...>  → ProjectReadFacade::getDiagnostics()
+    ///   get_audio_status      → ProjectReadFacade::getAudioStatus()
+    bool handleReadOnlyCommand(std::string_view cmd, std::string_view rest);
+
+    /// ProjectReadFacade — the canonical AI-2 read-only service layer.
+    /// Constructed in the ControlInterface constructor; all read operations
+    /// route through it.
+    ProjectReadFacade& readOnly() noexcept { return *readFacade_; }
 
 private:
     // --- Command handlers ---------------------------------------------------
@@ -164,6 +194,9 @@ private:
     // --- Members ------------------------------------------------------------
     AudioEngineFacade& audio_;
     SampleBank&  bank_;
+
+    // AI-2: Read-only introspection service layer (canonical service contract).
+    std::unique_ptr<ProjectReadFacade> readFacade_;
 
     // WorkerThread is allocated on the heap to keep this header JUCE-free.
     // (WorkerThread.hpp only forward-declares AudioEngine, so it is safe.)

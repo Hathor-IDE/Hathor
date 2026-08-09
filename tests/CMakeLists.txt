@@ -68,12 +68,14 @@ target_compile_options(hathor-control-tests PRIVATE -Wall -Wextra -Werror)
 
 target_include_directories(hathor-control-tests PRIVATE
     ${CMAKE_SOURCE_DIR}/app
+    ${CMAKE_SOURCE_DIR}/app/audio-worker
     ${CMAKE_SOURCE_DIR}/control
     ${CMAKE_SOURCE_DIR}/engine/include
 )
 
 target_link_libraries(hathor-control-tests PRIVATE
     hathor-control
+    hathor-chuck-diagnostics
     hathor-engine
     Catch2::Catch2WithMain
     nlohmann_json::nlohmann_json

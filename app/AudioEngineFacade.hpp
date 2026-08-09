@@ -203,4 +203,102 @@ public:
     /// Return the list of all sample names currently registered in the SampleBank.
     /// Used for editor autocomplete (B8-K4 §6) and the `list-samples` command.
     virtual std::vector<std::string> listSamples() const = 0;
+
+    // --- AI-2: Read-only project introspection (Phase 2.5 H0) ---
+    //
+    // These methods provide semantic, read-only access to the application's
+    // current state.  They route through the real subsystems (SlotState,
+    // AudioWorkerManager, AssetPathResolver, SampleBank) without bypassing
+    // the facade layer.  None of these methods may mutate persistent state.
+    //
+    // Return types use plain structs (no JUCE) so control/ can serialize them
+    // to JSON without depending on the JUCE module graph.
+
+    /// Information about one registered pattern slot, returned by listSlots().
+    struct SlotInfo {
+        int         slotIndex;        ///< 0-based slot index [0, 16)
+        std::string slotName;         ///< e.g. "d0", "d1" (empty if unregistered)
+        bool        active;           ///< true if a SlotState is stored for this slot
+        bool        running;          ///< true if the slot's running flag is set (A3)
+        std::string notation;         ///< canonical mini-notation string (empty if no state)
+        int         eventCount;       ///< max events per cycle for this slot's pattern
+    };
+
+    /// Read-only inventory of every registered slot.
+    /// Source of truth: AudioEngine::slots_[] + slotNames_[] + slotNameCount_.
+    virtual std::vector<SlotInfo> listSlots() const noexcept = 0;
+
+    /// Detailed read-only status of a single slot (by index).
+    /// Returns a SlotInfo with active=false if the slot is unregistered.
+    virtual SlotInfo getSlotInfo(int slotIndex) const noexcept = 0;
+
+    /// Per-tab ChucK VM introspection snapshot (B4-K3).
+    /// Source of truth: AudioWorkerManager + VMManager::queryVM().
+    struct VmStatus {
+        bool         hasWorker;      ///< true if the worker process is alive
+        std::string  state;          ///< "inactive" | "active" | "suspended" |
+                                     ///  "destroyed" | "error" | "failed" | "recreating"
+        std::string  shredInfo;      ///< e.g. "shred_id=5 source_hash=0x1234" (from queryTabVM)
+        uint64_t     generation;     ///< VM generation counter (0 if none)
+        std::string  lastError;      ///< last error message (empty if none)
+    };
+
+    /// Query the ChucK VM status for a tab/slot.
+    /// Does NOT start or stop VMs — pure read path through the control plane.
+    virtual VmStatus getVmStatus(int slotIndex) const noexcept = 0;
+
+    /// Overall audio runtime state snapshot.
+    /// Source of truth: AudioEngine atomics (running_, bpm_, sampleRate_).
+    struct AudioStatus {
+        bool         running;       ///< transport running flag
+        double       bpm;           ///< current tempo [20, 400]
+        int          sampleRate;    ///< device sample rate (Hz, 0 if not opened)
+        float        masterGain;    ///< current master gain [0, 2]
+        std::string  eqPreset;      ///< current EQ preset name ("flat", "bass-boost", "vocal", "bright")
+        uint64_t     sampleClock;   ///< current sample clock value (monotonic)
+        bool         deviceOpen;    ///< true if the audio device is open
+        int          activeRenders; ///< number of in-flight bake renders
+    };
+
+    /// Snapshot of the current audio transport / engine state.
+    virtual AudioStatus getAudioStatus() const noexcept = 0;
+
+    /// Per-slot playback status.
+    struct SlotPlayback {
+        int         slotIndex;
+        std::string slotName;
+        bool        running;       ///< per-slot running flag (A3)
+        bool        hasPattern;    ///< true if a SlotState is stored
+        std::string notation;      ///< canonical mini-notation (empty if no pattern)
+    };
+
+    /// Per-slot playback status for all registered slots.
+    virtual std::vector<SlotPlayback> listSlotPlayback() const noexcept = 0;
+
+    /// Instrument asset lifecycle information (B8-K1/K2/K3/K4).
+    struct InstrumentInfo {
+        std::string name;         ///< instrument/sample name (sanitised)
+        bool        sourceCkExists;    ///< true if the .ck source file exists
+        bool        renderedWavExists; ///< true if the baked .wav exists in Studio assets
+        bool        boundToSampleBank; ///< true if registered in SampleBank (addEntry)
+        std::string sourcePath;   ///< path to the .ck source (empty if not found)
+        std::string renderedPath; ///< path to the .wav (empty if not found)
+        double      durationSeconds; ///< WAV duration (0.0 if not available)
+    };
+
+    /// Read-only inventory of ChucK instruments and their asset lifecycle state.
+    /// Source of truth: AssetPathResolver (Studio .ck + .wav paths) + SampleBank.
+    /// Does NOT compile or render — pure filesystem + SampleBank inspection.
+    virtual std::vector<InstrumentInfo> listChuckInstruments(
+        const std::filesystem::path& projectDir) const noexcept = 0;
+
+    /// Resolve the Studio instruments directory for a project.
+    /// Source of truth: AssetPathResolver::studioInstrumentsDir().
+    virtual std::filesystem::path studioInstrumentsDir(
+        const std::filesystem::path& projectDir) const noexcept = 0;
+
+    /// The project directory last used for render-path resolution.
+    /// Source of truth: AssetPathResolver::projectDir().
+    virtual std::filesystem::path currentProjectDir() const noexcept = 0;
+};
 };

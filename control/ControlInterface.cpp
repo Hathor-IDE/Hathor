@@ -9,6 +9,7 @@
 
 #include "ControlInterface.hpp"
 #include "Commands.hpp"
+#include "ProjectReadFacade.hpp"
 #include "WorkerThread.hpp"
 
 // App headers (available when compiled as part of the hathor executable;
@@ -16,6 +17,8 @@
 // even without app/ in hathor-control's include_directories).
 #include "../app/AudioEngineFacade.hpp"
 #include "../app/SampleBank.hpp"
+#include "../app/AudioWorkerManager.hpp"
+#include "../app/AssetPathResolver.hpp"
 
 #include <nlohmann/json.hpp>
 
@@ -53,6 +56,7 @@ struct ControlInterface::Impl {
 ControlInterface::ControlInterface(AudioEngineFacade& audio, SampleBank& bank)
     : audio_(audio)
     , bank_(bank)
+    , readFacade_(std::make_unique<ProjectReadFacade>(audio, bank))
     , impl_(new Impl(audio))
 {}
 
@@ -165,6 +169,15 @@ void ControlInterface::dispatch(std::string_view rawLine)
         handleSlotPlayStop(trim(rest), /*start=*/true);
     } else if (cmd == "slot-stop") {
         handleSlotPlayStop(trim(rest), /*start=*/false);
+    } else if (cmd == "inspect_project" ||
+               cmd == "get_current_song" ||
+               cmd == "list_samples" ||
+               cmd == "list_chuck_instruments" ||
+               cmd == "get_diagnostics" ||
+               cmd == "get_audio_status") {
+        // AI-2 read-only introspection commands — route through the canonical
+        // ProjectReadFacade service layer (Phase 2.5 H0).
+        handleReadOnlyCommand(cmd, rest);
     } else {
         emitResponse({
             {"ok",    false},
@@ -584,6 +597,79 @@ void ControlInterface::handleSlotPlayStop(std::string_view slotSV, bool start)
         {"cmd",  cmdName},
         {"slot", slotName}
     });
+}
+
+// ---------------------------------------------------------------------------
+// AI-2: Read-only introspection command handlers (Phase 2.5 H0)
+// ---------------------------------------------------------------------------
+// All operations route through ProjectReadFacade — the canonical read-only
+// service layer.  No direct filesystem access, no JUCE dependency, no
+// mutation of engine state.
+// Requirement: AI-2 §1, §12
+
+bool ControlInterface::handleReadOnlyCommand(std::string_view cmd,
+                                              std::string_view rest)
+{
+    if (cmd == "inspect_project") {
+        emitResponse(readFacade_->inspectProject());
+        return true;
+    }
+
+    if (cmd == "get_current_song") {
+        emitResponse(readFacade_->getCurrentSong());
+        return true;
+    }
+
+    if (cmd == "list_samples") {
+        emitResponse(readFacade_->listSamples());
+        return true;
+    }
+
+    if (cmd == "list_chuck_instruments") {
+        // Argument: <projectDir>
+        const std::string_view arg = trim(rest);
+        std::filesystem::path projectDir;
+        if (!arg.empty())
+            projectDir = std::filesystem::path(std::string(arg));
+        else
+            projectDir = audio_.currentProjectDir();
+
+        emitResponse(readFacade_->listChuckInstruments(projectDir));
+        return true;
+    }
+
+    if (cmd == "get_diagnostics") {
+        // Argument format: <sourceId> <isChuck: true|false> <content>
+        auto [sourceId, afterSource] = splitFirst(rest);
+        auto [isChuckStr, contentRaw] = splitFirst(afterSource);
+
+        const std::string sourceIdStr = std::string(sourceId);
+        const bool isChuck = (isChuckStr == "true" || isChuckStr == "1" ||
+                              isChuckStr == "ck" || isChuckStr == "chuck");
+
+        // Content is everything after the two tokens — it may contain spaces.
+        // We need the full remaining string as the source text to diagnose.
+        const std::string content = std::string(contentRaw);
+
+        if (sourceIdStr.empty() || content.empty()) {
+            emitResponse({
+                {"ok",    false},
+                {"cmd",   "get_diagnostics"},
+                {"error", "usage: get_diagnostics <sourceId> <isChuck: true|false> <content>"}
+            });
+            return true;
+        }
+
+        emitResponse(readFacade_->getDiagnostics(content, sourceIdStr, isChuck));
+        return true;
+    }
+
+    if (cmd == "get_audio_status") {
+        emitResponse(readFacade_->getAudioStatus());
+        return true;
+    }
+
+    return false;  // not recognised — caller handles the error response
 }
 
 } // namespace hathor::control

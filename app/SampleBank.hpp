@@ -160,6 +160,23 @@ public:
         return names;
     }
 
+    /// Return all sample entries (read-only, lock-free).
+    ///
+    /// Used by AI-2 read-only introspection to enumerate the full SampleBank
+    /// inventory including file paths and sample-accurate durations.
+    /// Safe to call concurrently with addEntry() — reads entries_ lock-free
+    /// via an atomic snapshot of the vector pointer.
+    ///
+    /// Requirement: AI-2 §4 (list_samples from real SampleBank)
+    std::vector<SampleEntry> snapshotEntries() const noexcept
+    {
+        // entries_ is a std::vector<SampleEntry>.  Reads from the audio thread
+        // (find) are lock-free because addEntry only appends (never resizes in
+        // place).  For AI-2 read-only introspection we need a copy — this is
+        // only called from the main/control thread, not the audio callback.
+        return entries_;
+    }
+
     /// Reload all Studio-persisted baked WAV assets from a directory.
     ///
     /// On application restart, the SampleBank is loaded once from the

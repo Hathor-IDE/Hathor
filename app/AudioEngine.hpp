@@ -286,6 +286,15 @@ public:
     std::vector<std::string> listSamples() const override;
 
     // ------------------------------------------------------------------
+    // AI-2: Read-only introspection helpers
+    // ------------------------------------------------------------------
+
+    /// Compute the duration of a WAV file in seconds (read-only).
+    /// Uses JUCE's AudioFormatManager — must be called from the main thread,
+    /// not the audio callback.  Returns 0.0 on any error.
+    static double wavDurationSeconds(const std::filesystem::path& wavPath) noexcept;
+
+    // ------------------------------------------------------------------
     // juce::AudioIODeviceCallback interface
     // ------------------------------------------------------------------
     void audioDeviceAboutToStart(juce::AudioIODevice* device) override;

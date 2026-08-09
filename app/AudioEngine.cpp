@@ -20,6 +20,40 @@
 using hathor::AssetPathResolver;
 
 // ---------------------------------------------------------------------------
+// WAV duration helper (read-only) — parses the 'fact' or 'data' chunk to
+// determine duration without full decode.  Returns 0.0 on any error.
+// Uses JUCE's AudioFormatManager for WAV parsing.
+// ---------------------------------------------------------------------------
+
+double AudioEngine::wavDurationSeconds(const std::filesystem::path& wavPath) noexcept
+{
+    if (wavPath.empty())
+        return 0.0;
+
+    std::error_code ec;
+    if (!std::filesystem::exists(wavPath, ec))
+        return 0.0;
+
+    try {
+        juce::AudioFormatManager formats;
+        formats.registerBasicFormats();
+
+        juce::File juceFile(juce::String(wavPath.string()));
+        std::unique_ptr<juce::AudioFormatReader> reader(formats.createReaderFor(juceFile));
+        if (!reader)
+            return 0.0;
+
+        const double rate = reader->sampleRate;
+        if (rate <= 0.0)
+            return 0.0;
+
+        return static_cast<double>(reader->lengthInSamples) / rate;
+    } catch (...) {
+        return 0.0;
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Construction / destruction
 // ---------------------------------------------------------------------------
 
@@ -995,3 +1029,176 @@ std::vector<std::string> AudioEngine::listSamples() const
 {
     return bank_.listNames();
 }
+
+// ---------------------------------------------------------------------------
+// AI-2: Read-only introspection (Phase 2.5 H0)
+// ---------------------------------------------------------------------------
+
+std::vector<AudioEngineFacade::SlotInfo> AudioEngine::listSlots() const noexcept
+{
+    std::vector<SlotInfo> result;
+    result.reserve(kNumSlots);
+
+    for (int i = 0; i < kNumSlots; ++i) {
+        AudioEngineFacade::SlotInfo info;
+        info.slotIndex = i;
+        info.slotName  = slotNames_[i];
+        auto state = std::atomic_load_explicit(&slots_[i], std::memory_order_acquire);
+        info.active   = (state != nullptr);
+        info.running  = false;
+        info.eventCount = 0;
+        if (state) {
+            info.running     = state->running.load(std::memory_order_acquire);
+            info.notation    = state->notation;
+            info.eventCount  = static_cast<int>(state->eventBuffer.size());
+        }
+        result.push_back(std::move(info));
+    }
+    return result;
+}
+
+AudioEngineFacade::SlotInfo AudioEngine::getSlotInfo(int slotIndex) const noexcept
+{
+    SlotInfo info;
+    if (slotIndex < 0 || slotIndex >= kNumSlots)
+        return info;  // active defaults to false
+
+    info.slotIndex = slotIndex;
+    info.slotName  = slotNames_[slotIndex];
+    auto state = std::atomic_load_explicit(&slots_[slotIndex], std::memory_order_acquire);
+    info.active = (state != nullptr);
+    if (state) {
+        info.running    = state->running.load(std::memory_order_acquire);
+        info.notation   = state->notation;
+        info.eventCount = static_cast<int>(state->eventBuffer.size());
+    }
+    return info;
+}
+
+AudioEngineFacade::VmStatus AudioEngine::getVmStatus(int slotIndex) const noexcept
+{
+    VmStatus status;
+    status.hasWorker = (workerMgr_ != nullptr) && workerMgr_->isWorkerAlive();
+
+    if (slotIndex < 0 || slotIndex >= kNumSlots) {
+        if (!status.hasWorker)
+            status.state = "not_started";
+        else
+            status.state = "inactive";
+        return status;
+    }
+
+    if (workerMgr_ && status.hasWorker) {
+        const auto vmResult = workerMgr_->queryTabVM(static_cast<uint8_t>(slotIndex));
+        status.state = vmResult.message;  // queryTabVM returns a human-readable status string
+        if (vmResult.ok)
+            status.shredInfo = status.state;  // combined status
+        else
+            status.lastError = vmResult.message;  // error text in message field
+        status.generation = workerMgr_->generation();
+    } else if (!status.hasWorker) {
+        status.state = "not_started";
+    }
+
+    return status;
+}
+
+AudioEngineFacade::AudioStatus AudioEngine::getAudioStatus() const noexcept
+{
+    AudioStatus s;
+    s.running    = running_.load(std::memory_order_relaxed);
+    s.bpm        = bpm_.load(std::memory_order_relaxed);
+    s.sampleRate = sampleRate_.load(std::memory_order_relaxed);
+    s.masterGain = masterGain_.load(std::memory_order_relaxed);
+    s.eqPreset   = hathor::toString(getMasterEqPreset());
+    s.sampleClock = sampleClock_.load(std::memory_order_relaxed);
+    s.deviceOpen = (s.sampleRate > 0);  // sample rate set when device opens
+    s.activeRenders = activeRenderCount();
+    return s;
+}
+
+std::vector<AudioEngineFacade::SlotPlayback> AudioEngine::listSlotPlayback() const noexcept
+{
+    std::vector<SlotPlayback> result;
+    result.reserve(kNumSlots);
+
+    for (int i = 0; i < kNumSlots; ++i) {
+        SlotPlayback sp;
+        sp.slotIndex = i;
+        sp.slotName  = slotNames_[i];
+        auto state = std::atomic_load_explicit(&slots_[i], std::memory_order_acquire);
+        sp.hasPattern = (state != nullptr);
+        sp.running    = false;
+        if (state) {
+            sp.running   = state->running.load(std::memory_order_acquire);
+            sp.notation  = state->notation;
+        }
+        result.push_back(std::move(sp));
+    }
+    return result;
+}
+
+std::vector<AudioEngineFacade::InstrumentInfo> AudioEngine::listChuckInstruments(
+    const std::filesystem::path& projectDir) const noexcept
+{
+    std::vector<InstrumentInfo> result;
+
+    const auto instrDir = resolver_.studioInstrumentsDir();
+    std::error_code ec;
+    if (!std::filesystem::exists(instrDir, ec))
+        return result;
+
+    // Scan the Studio instruments directory for .wav and .ck files.
+    // The .wav files are the rendered assets; matching .ck sources may exist.
+    std::vector<std::string> wavStems;
+
+    for (const auto& entry : std::filesystem::directory_iterator(instrDir, ec)) {
+        if (!entry.is_regular_file())
+            continue;
+        const auto ext = entry.path().extension();
+        if (ext == ".wav")
+            wavStems.push_back(entry.path().stem().string());
+    }
+    std::sort(wavStems.begin(), wavStems.end());
+
+    for (const auto& stem : wavStems) {
+        InstrumentInfo info;
+        info.name = stem;
+
+        // Check for .ck source — look in the instruments dir and the project root.
+        std::filesystem::path ckPath = instrDir / (stem + ".ck");
+        if (!std::filesystem::exists(ckPath, ec))
+            ckPath = projectDir / (stem + ".ck");
+        info.sourceCkExists = std::filesystem::exists(ckPath, ec);
+        info.sourcePath = info.sourceCkExists ? ckPath.string() : "";
+
+        // The rendered .wav is in the Studio instruments dir.
+        std::filesystem::path wavPath = instrDir / (stem + ".wav");
+        info.renderedWavExists = std::filesystem::exists(wavPath, ec);
+        info.renderedPath = info.renderedWavExists ? wavPath.string() : "";
+
+        // Check if bound to SampleBank via name lookup (addEntry registers
+        // with name = stem, index = 0).
+        info.boundToSampleBank = (bank_.find(stem, 0) != nullptr);
+
+        // Duration — read from the WAV file header if available.
+        if (info.renderedWavExists)
+            info.durationSeconds = AudioEngine::wavDurationSeconds(wavPath);
+
+        result.push_back(std::move(info));
+    }
+
+    return result;
+}
+
+std::filesystem::path AudioEngine::studioInstrumentsDir(
+    const std::filesystem::path& projectDir) const noexcept
+{
+    return AssetPathResolver(projectDir).studioInstrumentsDir();
+}
+
+std::filesystem::path AudioEngine::currentProjectDir() const noexcept
+{
+    return resolver_.projectDir();
+}
+

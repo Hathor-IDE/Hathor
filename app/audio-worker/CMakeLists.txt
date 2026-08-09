@@ -13,6 +13,7 @@
 add_library(hathor-audio-worker-lib STATIC
     AudioWorkerManager.cpp
     ChuckCompiler.cpp
+    ChuckDiagnostics.cpp
     ChuckVM.cpp
     ResourcePolicy.cpp
     VMManager.cpp
