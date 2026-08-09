@@ -151,26 +151,41 @@ VMResult VMManager::destroyVM(TabId tabId)
 
 VMResult VMManager::forceDestroyVM(TabId tabId, std::chrono::milliseconds timeout)
 {
-    std::lock_guard<std::mutex> lock(mutex_);
-
-    auto it = vms_.find(tabId);
-    if (it == vms_.end()) {
-        return {true, 0, "no VM for tab " + std::to_string(tabId)};
+    // Extract the VM pointer under the lock, then release the lock before
+    // the potentially-blocking forceDestroy call (which joins the VM thread).
+    // This prevents the control-plane thread from blocking if the VM thread
+    // can't be killed within the timeout.
+    ChuckVM* vm = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        auto it = vms_.find(tabId);
+        if (it == vms_.end()) {
+            return {true, 0, "no VM for tab " + std::to_string(tabId)};
+        }
+        vm = it->second.get();
     }
 
-    if (it->second) {
-        VMResult result = it->second->forceDestroy(timeout);
+    VMResult result;
+    if (vm) {
+        result = vm->forceDestroy(timeout);
         if (!result.ok) {
             return result;
         }
+    } else {
+        result = {true, 0, "no VM for tab " + std::to_string(tabId)};
     }
 
-    vms_.erase(it);
-    lruList_.erase(std::remove(lruList_.begin(), lruList_.end(), tabId), lruList_.end());
-    lastActiveTs_.erase(tabId);
-    lastPauseTs_.erase(tabId);
+    // Re-acquire the lock to erase the entry.
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto it = vms_.find(tabId);
+    if (it != vms_.end()) {
+        vms_.erase(it);
+        lruList_.erase(std::remove(lruList_.begin(), lruList_.end(), tabId), lruList_.end());
+        lastActiveTs_.erase(tabId);
+        lastPauseTs_.erase(tabId);
+    }
 
-    return {true, 0, "vm force-destroyed for tab " + std::to_string(tabId)};
+    return result;
 }
 
 VMResult VMManager::compileVM(TabId tabId, const std::string& code)

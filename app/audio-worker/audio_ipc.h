@@ -22,9 +22,9 @@
  * on worker replacement).
  *
  * Seqlock discipline for AudioBlock:
- *   Writer:  sequence.store(seq | 1, release);  // odd = in-progress
+ *   Writer:  sequence.store((wSeq << 1) | 1, release);  // odd = in-progress
  *            ... fill samples[] ...
- *            sequence.store(seq + 2, release);   // even = complete
+ *            sequence.store((wSeq << 1) + 2, release);   // even = complete
  *
  *   Reader:  s0 = sequence.load(acquire);
  *            if (s0 & 1) -> discard (write in progress)

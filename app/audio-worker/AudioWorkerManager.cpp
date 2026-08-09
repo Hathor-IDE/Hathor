@@ -253,6 +253,7 @@ bool AudioWorkerManager::start(std::string workerPath)
     impl_->lastHeartbeatSeen_.store(
         impl_->transport_->lastHeartbeat.load(std::memory_order_acquire),
         std::memory_order_relaxed);
+    impl_->lastHeartbeatChange_ = std::chrono::steady_clock::now();
     impl_->status_.store(WorkerStatus::Healthy, std::memory_order_release);
 
     // Start the liveness monitoring thread (non-RT, non-blocking for audio thread).
@@ -380,8 +381,7 @@ bool AudioWorkerManager::isWorkerAlive() const noexcept
             return false;
     }
 
-    return impl_->status_.load(std::memory_order_acquire) != WorkerStatus::Dead
-        && impl_->status_.load(std::memory_order_acquire) != WorkerStatus::NotStarted;
+    return impl_->status_.load(std::memory_order_acquire) == WorkerStatus::Healthy;
 }
 
 std::string AudioWorkerManager::getLastError() const
@@ -453,11 +453,11 @@ bool AudioWorkerManager::tryReadAudioBlock(float* outBuf, uint32_t blockSize,
     const uint32_t slot = rSeq & kRingMask;
     const auto& block = impl_->transport_->blocks[slot];
 
-    uint32_t seq0 = block.sequence.load(std::memory_order_acquire);
-    if (seq0 & 1u)
-        return false; // Write in progress — fall back to silence.
-    if (seq0 != rSeq + 2u)
-        return false; // Seqlock mismatch — data not for this read position.
+     uint32_t seq0 = block.sequence.load(std::memory_order_acquire);
+     if (seq0 & 1u)
+         return false; // Write in progress — fall back to silence.
+     if (seq0 != (rSeq << 1) + 2u)
+         return false; // Seqlock mismatch — data not for this read position.
 
     // Step 7: Copy the audio data (bounded memcpy — RT-safe).
     const uint32_t copySize = (blockSize < kBlockSize) ? blockSize : kBlockSize;

@@ -181,7 +181,7 @@ static void perTabRenderCallback(TabId tabId, float* /*outBuf*/,
     }
 
     AudioBlock& block = gTransport->blocks[wSeq & kRingMask];
-    block.sequence.store(wSeq | 1u, std::memory_order_release);
+    block.sequence.store((wSeq << 1) | 1u, std::memory_order_release);
 
     // Placeholder: deterministic tone per tab (silence for non-active tabs).
     const float basePhase = static_cast<float>(tabId) * 0.1f;
@@ -193,7 +193,7 @@ static void perTabRenderCallback(TabId tabId, float* /*outBuf*/,
         block.samples[i] = std::sin(phase) * 0.05f;
     }
 
-    block.sequence.store(wSeq + 2u, std::memory_order_release);
+    block.sequence.store((wSeq << 1) + 2u, std::memory_order_release);
     gTransport->writeSeq.store(wSeq + 1u, std::memory_order_release);
 }
 
@@ -202,7 +202,7 @@ static void perTabRenderCallback(TabId tabId, float* /*outBuf*/,
 // ---------------------------------------------------------------------------
 
 static void produceBlock(AudioBlock& block, uint32_t wSeq, uint64_t gen) {
-    block.sequence.store(wSeq | 1u, std::memory_order_release);
+    block.sequence.store((wSeq << 1) | 1u, std::memory_order_release);
 
     const float basePhase = static_cast<float>(gen) * 0.01f;
     const float freq      = 220.0f + static_cast<float>(gen) * 11.0f;
@@ -213,7 +213,7 @@ static void produceBlock(AudioBlock& block, uint32_t wSeq, uint64_t gen) {
         block.samples[i] = std::sin(phase) * 0.1f;
     }
 
-    block.sequence.store(wSeq + 2u, std::memory_order_release);
+    block.sequence.store((wSeq << 1) + 2u, std::memory_order_release);
 }
 
 static void placeholderProductionLoop(uint64_t expectedGen) {
