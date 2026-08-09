@@ -478,6 +478,44 @@ include(Catch)
 catch_discover_tests(hathor-b8-k2-render-writer-tests DISCOVERY_MODE PRE_TEST)
 
 # ---------------------------------------------------------------------------
+# hathor-b8-k3-vm-shutdown-tests — B8-K3 VM shutdown after successful bake
+#
+# Tests that ChuckRenderWriter destroys the tab's VM via destroyTabVM on the
+# success path (and failure/cancel paths), per B8-K3.  Spawns the real
+# hathor-audio-worker binary to verify end-to-end VM lifecycle:
+# active → rendering → destroyed.
+#
+# JUCE-free: links hathor-audio-worker-lib + hathor-engine + Catch2.
+# ---------------------------------------------------------------------------
+add_executable(hathor-b8-k3-vm-shutdown-tests
+    test_b8_k3_vm_shutdown.cpp
+    ${CMAKE_SOURCE_DIR}/app/ChuckRenderWriter.cpp
+)
+
+target_compile_features(hathor-b8-k3-vm-shutdown-tests PRIVATE cxx_std_20)
+target_compile_options(hathor-b8-k3-vm-shutdown-tests PRIVATE -Wall -Wextra -Werror)
+
+target_include_directories(hathor-b8-k3-vm-shutdown-tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/app
+    ${CMAKE_SOURCE_DIR}/app/audio-worker
+    ${CMAKE_SOURCE_DIR}/engine/include
+)
+
+target_link_libraries(hathor-b8-k3-vm-shutdown-tests PRIVATE
+    hathor-audio-worker-lib
+    hathor-engine
+    Catch2::Catch2WithMain
+)
+
+target_compile_definitions(hathor-b8-k3-vm-shutdown-tests PRIVATE
+    CMAKE_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+    CMAKE_BINARY_DIR="${CMAKE_BINARY_DIR}"
+)
+
+include(Catch)
+catch_discover_tests(hathor-b8-k3-vm-shutdown-tests DISCOVERY_MODE PRE_TEST)
+
+# ---------------------------------------------------------------------------
 # Integration tests (require the full hathor binary; skipped if app is off)
 # ---------------------------------------------------------------------------
 add_subdirectory(integration)
