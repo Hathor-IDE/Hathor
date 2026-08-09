@@ -17,9 +17,13 @@
  * pattern, control-plane socket protocol, and seqlock discipline are identical
  * to the validated spike.
  *
+ * B4-K3: per-tab Chuck_VM isolation — each active .ck tab owns one ChuckVM,
+ * one dedicated OS thread, one watchdog attachment point.  A failure in one
+ * VM never silences another.  Resource policy is data-driven (Decision #24).
+ *
  * B4-K4: .ck compilation happens on the ChuckCompiler dispatcher thread.
  * Compiled shreds are published via std::atomic_store_explicit(release)
- * into the per-tab VM's handoff slot, and consumed on the next loop
+ * into the per-tab VM's handoffShred slot, and consumed on the next loop
  * iteration via std::atomic_load_explicit(acquire).
  *
  * Architecture:
@@ -29,12 +33,25 @@
  *   - Worker reads generation at startup, becomes the sole producer
  *
  * Thread layout:
- *   - Control plane thread: receives socket commands (vm_create, vm_destroy,
- *     ck_compile), delegates to VmLifecycle and ChuckCompiler.
+ *   - Control plane thread: receives socket commands (vm_activate, vm_create,
+ *     vm_deactivate, vm_resume, vm_destroy, ck_compile), delegates to VMManager
+ *     and ChuckCompiler.
  *   - Compile dispatcher thread (ChuckCompiler): sole thread calling ChucK
  *     compile APIs. Serializes all compilation.
- *   - Audio render thread (main of worker): per-tab VM run() loops, produces
- *     audio into the shared-memory ring.
+ *   - Per-tab render threads (ChuckVM): one OS thread per active VM.
+ *     Calls run() via render callback, consumes handoff shreds, publishes
+ *     audio to the shared-memory ring.
+ *
+ * Control-plane protocol (see audio_ipc.h for full spec):
+ *   vm_activate <tabId> <sampleRate> <channels>     — create/resume VM
+ *   vm_deactivate <tabId> [suspend|destroy]          — suspend/destroy VM
+ *   vm_resume <tabId>                                — resume suspended VM
+ *   vm_destroy <tabId>                               — full destroy + remove
+ *   vm_query <tabId>                                 — query VM state
+ *   vm_list                                            — list all VMs
+ *   vm_create <tabId>                                — legacy alias for vm_activate
+ *   ck_compile <tabId> <vmGeneration> <version> <src> — compile (K4, serialized)
+ *   status, ping, stop                               — lifecycle/standard
  *
  * Requirements: B4-K2, B4-K3, B4-K4, B4-K0.5, B4-K0.6, Decision #24
  */
@@ -42,7 +59,10 @@
 #include "audio_ipc.h"
 #include "ChuckCompiler.hpp"
 #include "ChuckVm.hpp"
+#include "ChuckVM.hpp"
+#include "VMManager.hpp"
 #include "VmLifecycle.hpp"
+#include "ResourcePolicy.hpp"
 
 #include <atomic>
 #include <chrono>
@@ -52,6 +72,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <cmath>
+#include <cctype>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -73,20 +94,25 @@ using hathor::audio_worker::SharedAudioTransport;
 using hathor::audio_worker::kBlockSize;
 using hathor::audio_worker::kControlName;
 using hathor::audio_worker::kMagic;
+using hathor::audio_worker::kNumTabs;
 using hathor::audio_worker::kRingCapacity;
 using hathor::audio_worker::kRingMask;
 using hathor::audio_worker::kShmName;
 using hathor::audio_worker::kShmSize;
 using hathor::audio_worker::ChuckCompiler;
 using hathor::audio_worker::ChuckVmEntry;
+using hathor::audio_worker;
+using hathor::audio_worker::ChuckVM;
 using hathor::audio_worker::CompileCommand;
 using hathor::audio_worker::CompiledShred;
+using hathor::audio_worker::ResourcePolicy;
 using hathor::audio_worker::TabId;
+using hathor::audio_worker::VMManager;
 using hathor::audio_worker::VmLifecycle;
 using hathor::audio_worker::VmState;
 
 // ---------------------------------------------------------------------------
-// Globals (set before threads fork; worker is single-threaded + control thread)
+// Globals
 // ---------------------------------------------------------------------------
 
 static std::atomic<bool> gRunning{true};
@@ -95,13 +121,14 @@ static size_t gShmSize = 0;
 static int gShmFd = -1;
 static std::string gControlSocketPath;
 
-// Per-tab VM lifecycle manager — lives in the worker process.
-// Thread-safe internally (vmTableMtx_ guards structural changes).
+// Per-tab VM lifecycle manager (table + handoff slots for K4).
 static VmLifecycle gVmLifecycle;
 
-// B4-K4: serialized compiler — created on the main thread before the
-// control thread starts. The compile dispatcher thread is the sole caller
-// of any ChucK compile API (K0.5 NO-GO: no concurrent compile+run).
+// K3: VM manager — manages ChuckVM instances with per-tab OS threads,
+// resource policy enforcement, and lifecycle state machine.
+static VMManager gVmManager;
+
+// B4-K4: serialized compiler — the sole caller of any ChucK compile API.
 static std::unique_ptr<ChuckCompiler> gCompiler;
 
 static void handleSigterm(int /*signum*/) {
@@ -109,15 +136,53 @@ static void handleSigterm(int /*signum*/) {
 }
 
 // ---------------------------------------------------------------------------
-// Audio production — placeholder (K3 will replace with real ChucK output)
+// Per-tab render callback — used by ChuckVM to produce audio into the ring
+// ---------------------------------------------------------------------------
+
+static void perTabRenderCallback(TabId tabId, float* /*outBuf*/,
+                                  unsigned numFrames, unsigned /*numChannels*/,
+                                  uint64_t expectedGen)
+{
+    // Check generation liveness — if the worker was restarted, return.
+    const uint64_t gen = gTransport->generation.load(std::memory_order_acquire);
+    if (gen != expectedGen)
+        return;
+
+    // Produce a block into the ring buffer (placeholder tone per tab).
+    const uint32_t wSeq = gTransport->writeSeq.load(std::memory_order_relaxed);
+    const uint32_t rSeq = gTransport->readSeq.load(std::memory_order_acquire);
+
+    if (wSeq - rSeq >= kRingCapacity) {
+        const uint32_t newRSeq = wSeq - kRingCapacity + 1u;
+        gTransport->readSeq.store(newRSeq, std::memory_order_release);
+    }
+
+    AudioBlock& block = gTransport->blocks[wSeq & kRingMask];
+    block.sequence.store(wSeq | 1u, std::memory_order_release);
+
+    // Placeholder: deterministic tone per tab (silence for non-active tabs).
+    const float basePhase = static_cast<float>(tabId) * 0.1f;
+    const float freq = 220.0f + static_cast<float>(tabId) * 22.0f;
+    const float phaseInc = freq * 2.0f * 3.14159265f / 44100.0f;
+
+    for (uint32_t i = 0; i < numFrames; ++i) {
+        const float phase = basePhase + static_cast<float>(wSeq * kBlockSize + i) * phaseInc;
+        block.samples[i] = std::sin(phase) * 0.05f;
+    }
+
+    block.sequence.store(wSeq + 2u, std::memory_order_release);
+    gTransport->writeSeq.store(wSeq + 1u, std::memory_order_release);
+}
+
+// ---------------------------------------------------------------------------
+// Audio production — legacy placeholder (used when no VMs are active)
 // ---------------------------------------------------------------------------
 
 static void produceBlock(AudioBlock& block, uint32_t wSeq, uint64_t gen) {
-    // Seqlock begin: set sequence to odd (write in progress).
     block.sequence.store(wSeq | 1u, std::memory_order_release);
 
     const float basePhase = static_cast<float>(gen) * 0.01f;
-    const float freq      = 220.0f + static_cast<float>(gen) * 11.0f; // A3 + gen offset
+    const float freq      = 220.0f + static_cast<float>(gen) * 11.0f;
     const float phaseInc  = freq * 2.0f * 3.14159265f / 44100.0f;
 
     for (uint32_t i = 0; i < kBlockSize; ++i) {
@@ -125,101 +190,14 @@ static void produceBlock(AudioBlock& block, uint32_t wSeq, uint64_t gen) {
         block.samples[i] = std::sin(phase) * 0.1f;
     }
 
-    // Seqlock end: set sequence to even (write complete).
     block.sequence.store(wSeq + 2u, std::memory_order_release);
 }
 
-// ---------------------------------------------------------------------------
-// Per-tab render loop — checks for a compiled shred on each iteration
-// ---------------------------------------------------------------------------
-
-[[maybe_unused]] static void vmRenderLoop(TabId tabId, uint64_t expectedGen) {
-    // This runs on a per-tab OS thread. Each iteration:
-    //   1. Check if the VM is still active (generation liveness).
-    //   2. Load any pending handoff shred via std::atomic_load_explicit(acquire).
-    //   3. If a new shred is available (version matches), install it.
-    //   4. Produce audio (run() — when libchuck is linked) into the ring.
-    //
-    // K0.5 enforcement: this thread NEVER calls compileCode(). Compilation
-    // is solely the responsibility of the ChuckCompiler dispatcher thread.
-
+static void placeholderProductionLoop(uint64_t expectedGen) {
     while (gRunning.load(std::memory_order_acquire)) {
-        // Liveness check: if the VM was destroyed or replaced, exit.
-        if (gVmLifecycle.stateOf(tabId) != VmState::Active)
-            return;
-
-        // Atomic handoff consumption — matches AudioEngine::loadSlot():
-        //   std::atomic_load_explicit(&slots_[idx], std::memory_order_acquire)
-        auto shred = gVmLifecycle.loadHandoff(tabId);
-        if (shred) {
-            // New shred is ready. On the next iteration it will be consumed by
-            // the VM's run() path. For now we just record the source hash.
-            if (shred->ok) {
-                std::fprintf(stderr, "[worker] tab=%d: received shred v=%u hash=%llu\n",
-                             tabId,
-                             shred->requestVersion,
-                             static_cast<unsigned long long>(shred->sourceHash));
-            } else {
-                std::fprintf(stderr, "[worker] tab=%d: compile FAILED: %s\n",
-                             tabId, shred->error.c_str());
-                // Failure path: old valid shred remains active (not replaced).
-            }
-        }
-
-        // Produce a block of audio (placeholder — real ChucK run() goes here).
         const uint32_t wSeq = gTransport->writeSeq.load(std::memory_order_relaxed);
         const uint32_t rSeq = gTransport->readSeq.load(std::memory_order_acquire);
-        if (wSeq - rSeq >= kRingCapacity) {
-            const uint32_t newRSeq = wSeq - kRingCapacity + 1u;
-            gTransport->readSeq.store(newRSeq, std::memory_order_release);
-        }
 
-        const uint64_t gen = gTransport->generation.load(std::memory_order_acquire);
-        // Check if the worker generation changed (worker restart invalidates).
-        if (gen != expectedGen)
-            return;
-
-        AudioBlock& block = gTransport->blocks[wSeq & kRingMask];
-        produceBlock(block, wSeq, gen);
-
-        gTransport->lastHeartbeat.store(wSeq, std::memory_order_release);
-        gTransport->writeSeq.store(wSeq + 1u, std::memory_order_release);
-
-        // 5ms tick.
-        std::this_thread::sleep_for(std::chrono::milliseconds(5));
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Audio production loop — runs on the main worker thread
-// ---------------------------------------------------------------------------
-
-static void audioProductionLoop(uint64_t expectedGen) {
-    // In B4-K3, each active tab gets its own render thread (vmRenderLoop).
-    // For now (B4-K4 phase), we run a single placeholder loop that covers
-    // all active VMs. The per-tab render thread model is introduced by K3.
-    //
-    // The key B4-K4 requirement: compilation does NOT happen here.
-    // The compile dispatcher thread (ChuckCompiler) handles compilation
-    // and publishes via atomic handoff. This loop only consumes handoff
-    // results and produces audio — it never allocates for compilation.
-
-    while (gRunning.load(std::memory_order_acquire)) {
-        // Scan for active VMs and check their handoffs.
-        for (int tab = 0; tab < hathor::audio_worker::kNumTabs; ++tab) {
-            if (gVmLifecycle.stateOf(static_cast<TabId>(tab)) != VmState::Active)
-                continue;
-            // Non-blocking load of any pending handoff.
-            auto shred = gVmLifecycle.loadHandoff(static_cast<TabId>(tab));
-            if (shred && shred->ok) {
-                std::fprintf(stderr, "[worker] tab=%d: render loop received shred v=%u\n",
-                             tab, shred->requestVersion);
-            }
-        }
-
-        // Produce a placeholder audio block (K3 replaces with per-VM output).
-        const uint32_t wSeq = gTransport->writeSeq.load(std::memory_order_relaxed);
-        const uint32_t rSeq = gTransport->readSeq.load(std::memory_order_acquire);
         if (wSeq - rSeq >= kRingCapacity) {
             const uint32_t newRSeq = wSeq - kRingCapacity + 1u;
             gTransport->readSeq.store(newRSeq, std::memory_order_release);
@@ -268,7 +246,7 @@ static void controlPlaneThread() {
         return;
     }
 
-    if (::listen(srvFd, 4) != 0) {
+    if (::listen(srvFd, 8) != 0) {
         std::fprintf(stderr, "[worker] listen() failed: %s\n", std::strerror(errno));
         ::close(srvFd);
         ::unlink(ctrlPath.c_str());
@@ -286,9 +264,6 @@ static void controlPlaneThread() {
         const int connFd = ::accept(srvFd, nullptr, nullptr);
         if (connFd < 0) continue;
 
-        // Read the full command line. The control protocol is newline-terminated.
-        // ck_compile carries .ck source which may exceed a single read, so we
-        // loop until we see a newline or fill the buffer.
         char buf[8192];
         std::string cmd;
         bool cmdComplete = false;
@@ -300,24 +275,35 @@ static void controlPlaneThread() {
                 cmdComplete = true;
                 cmd.pop_back();
             }
-            if (cmd.size() >= sizeof(buf)) break; // safety cap
+            if (cmd.size() >= sizeof(buf)) break;
         }
-        // Strip trailing CR if present (CRLF safety).
         while (!cmd.empty() && (cmd.back() == '\n' || cmd.back() == '\r'))
             cmd.pop_back();
 
         std::string resp;
 
-        if (cmd == "status") {
-            const uint64_t gen = gTransport->generation.load(std::memory_order_acquire);
-            const uint32_t wSeq = gTransport->writeSeq.load(std::memory_order_acquire);
-            const uint32_t rSeq = gTransport->readSeq.load(std::memory_order_acquire);
-            const uint64_t beat = gTransport->lastHeartbeat.load(std::memory_order_acquire);
-            resp = "ok gen=" + std::to_string(gen)
-                 + " wSeq=" + std::to_string(wSeq)
-                 + " rSeq=" + std::to_string(rSeq)
-                 + " beat=" + std::to_string(beat) + "\n";
-        } else if (cmd == "stop") {
+        auto parseToken = [](std::string_view& sv) -> std::string_view {
+            while (!sv.empty() && std::isspace(static_cast<unsigned char>(sv.front())))
+                sv.remove_prefix(1);
+            size_t end = 0;
+            while (end < sv.size() && !std::isspace(static_cast<unsigned char>(sv[end])))
+                ++end;
+            std::string_view tok = sv.substr(0, end);
+            sv.remove_prefix(end);
+            return tok;
+        };
+
+        auto trimSpaces = [](std::string& s) {
+            while (!s.empty() && std::isspace(static_cast<unsigned char>(s.front())))
+                s.erase(0, 1);
+            while (!s.empty() && std::isspace(static_cast<unsigned char>(s.back())))
+                s.pop_back();
+        };
+
+        // -----------------------------------------------------------------
+        // Standard lifecycle commands
+        // -----------------------------------------------------------------
+        if (cmd == "stop") {
             resp = "ok stopping\n";
             ::write(connFd, resp.c_str(), resp.size());
             ::close(connFd);
@@ -325,93 +311,205 @@ static void controlPlaneThread() {
             continue;
         } else if (cmd == "ping") {
             resp = "ok pong\n";
-        } else if (cmd.rfind("vm_create", 0) == 0) {
-            // Format: vm_create <tabId>
-            // K3: create/replace the VM for this tab. Returns the new
-            // vmGeneration so the caller can detect staleness.
-            std::string rest = cmd.substr(9); // skip "vm_create"
-            // trim leading whitespace
-            while (!rest.empty() && (rest.front() == ' ' || rest.front() == '\t' ||
-                                     rest.front() == '\n' || rest.front() == '\r'))
-                rest.erase(0, 1);
-            try {
-                TabId tabId = static_cast<TabId>(std::stoi(rest));
-                const uint64_t newGen = gVmLifecycle.vmCreate(tabId);
-                resp = "ok vm_create tab=" + std::to_string(tabId)
-                     + " gen=" + std::to_string(newGen) + "\n";
-                std::fprintf(stderr, "[worker] VM created for tab=%d gen=%llu\n",
-                             static_cast<int>(tabId), static_cast<unsigned long long>(newGen));
-            } catch (...) {
-                resp = "err invalid tab id\n";
-            }
-        } else if (cmd.rfind("vm_destroy", 0) == 0) {
-            // Format: vm_destroy <tabId>
-            std::string rest = cmd.substr(10);
-            while (!rest.empty() && (rest.front() == ' ' || rest.front() == '\t' ||
-                                     rest.front() == '\n' || rest.front() == '\r'))
-                rest.erase(0, 1);
-            try {
-                TabId tabId = static_cast<TabId>(std::stoi(rest));
-                gVmLifecycle.vmDestroy(tabId);
-                resp = "ok vm_destroy tab=" + std::to_string(tabId) + "\n";
-                std::fprintf(stderr, "[worker] VM destroyed for tab=%d\n", static_cast<int>(tabId));
-            } catch (...) {
-                resp = "err invalid tab id\n";
-            }
-        } else if (cmd.rfind("ck_compile", 0) == 0) {
-            // Format: ck_compile <tabId> <vmGeneration> <version> <source...>
-            //
-            // enqueues a compile on the ChuckCompiler dispatcher thread.
-            // The compile happens off the control thread and off any
-            // render thread — it is NOT on the real-time audio path.
-            std::string rest = cmd.substr(10);
-            while (!rest.empty() && (rest.front() == ' ' || rest.front() == '\t'))
-                rest.erase(0, 1);
-
-            // Parse: tabId vmGeneration version source
-            // The source may contain spaces, so we parse the first 3
-            // tokens as integers and treat the remainder as source.
+        } else if (cmd == "status") {
+            const uint64_t gen = gTransport->generation.load(std::memory_order_acquire);
+            const uint32_t wSeq = gTransport->writeSeq.load(std::memory_order_acquire);
+            const uint32_t rSeq = gTransport->readSeq.load(std::memory_order_acquire);
+            const uint64_t beat = gTransport->lastHeartbeat.load(std::memory_order_acquire);
+            int activeVms = gVmManager.countActive();
+            resp = "ok gen=" + std::to_string(gen)
+                 + " wSeq=" + std::to_string(wSeq)
+                 + " rSeq=" + std::to_string(rSeq)
+                 + " beat=" + std::to_string(beat)
+                 + " active_vms=" + std::to_string(activeVms) + "\n";
+        }
+        // -----------------------------------------------------------------
+        // B4-K3: VM lifecycle commands
+        // -----------------------------------------------------------------
+        else if (cmd.rfind("vm_activate", 0) == 0) {
+            std::string rest = cmd.substr(11);
+            trimSpaces(rest);
             std::string_view sv = rest;
-            auto parseToken = [](std::string_view& sv) -> std::string_view {
-                while (!sv.empty() && (sv.front() == ' ' || sv.front() == '\t'))
-                    sv.remove_prefix(1);
-                size_t end = 0;
-                while (end < sv.size() && sv[end] != ' ' && sv[end] != '\t')
-                    ++end;
-                std::string_view tok = sv.substr(0, end);
-                sv.remove_prefix(end);
-                return tok;
-            };
+
+            std::string_view tabStr = parseToken(sv);
+            std::string_view srStr  = parseToken(sv);
+            std::string_view chStr  = parseToken(sv);
+
+            try {
+                int tabId = std::stoi(std::string(tabStr));
+                unsigned sampleRate = srStr.empty() ? 44100 : std::stoul(std::string(srStr));
+                unsigned channels = chStr.empty() ? 1 : std::stoul(std::string(chStr));
+
+                if (tabId < 0 || tabId >= kNumTabs) {
+                    resp = "err vm_activate: tab id out of range [0," + std::to_string(kNumTabs) + ")\n";
+                } else {
+                    uint64_t vmGen = gVmLifecycle.vmCreate(static_cast<TabId>(tabId));
+
+                    // Set up the render callback for this VM.
+                    const uint64_t genForCb = gTransport->generation.load(std::memory_order_acquire);
+                    gVmManager.setRenderCallback(
+                        [tabId, genForCb]
+                        (float* outBuf, unsigned numFrames, unsigned numChannels) {
+                            perTabRenderCallback(static_cast<TabId>(tabId), outBuf,
+                                                  numFrames, numChannels, genForCb);
+                        });
+
+                    auto result = gVmManager.activateVM(static_cast<TabId>(tabId),
+                                                         sampleRate, channels);
+                    if (result.ok) {
+                        resp = "ok vm_activated tab=" + std::to_string(tabId)
+                             + " gen=" + std::to_string(vmGen)
+                             + " state=active\n";
+                    } else {
+                        resp = "err vm_activate_failed tab=" + std::to_string(tabId)
+                             + " code=" + std::to_string(result.errorCode)
+                             + " " + result.message + "\n";
+                    }
+                }
+            } catch (...) {
+                resp = "err invalid vm_activate arguments\n";
+            }
+        }
+        else if (cmd.rfind("vm_create", 0) == 0) {
+            // Legacy alias for vm_activate (kept for backward compatibility).
+            std::string rest = cmd.substr(9);
+            trimSpaces(rest);
+            try {
+                int tabId = std::stoi(rest);
+                if (tabId < 0 || tabId >= kNumTabs) {
+                    resp = "err vm_create: tab id out of range\n";
+                } else {
+                    uint64_t vmGen = gVmLifecycle.vmCreate(static_cast<TabId>(tabId));
+
+                    const uint64_t genForCb = gTransport->generation.load(std::memory_order_acquire);
+                    gVmManager.setRenderCallback(
+                        [tabId, genForCb]
+                        (float* outBuf, unsigned numFrames, unsigned numChannels) {
+                            perTabRenderCallback(static_cast<TabId>(tabId), outBuf,
+                                                  numFrames, numChannels, genForCb);
+                        });
+
+                    auto result = gVmManager.activateVM(static_cast<TabId>(tabId));
+                    if (result.ok) {
+                        resp = "ok vm_create tab=" + std::to_string(tabId)
+                             + " gen=" + std::to_string(vmGen) + "\n";
+                    } else {
+                        resp = "err vm_create_failed tab=" + std::to_string(tabId)
+                             + " " + result.message + "\n";
+                    }
+                }
+            } catch (...) {
+                resp = "err invalid tab id\n";
+            }
+        }
+        else if (cmd.rfind("vm_deactivate", 0) == 0) {
+            std::string rest = cmd.substr(13);
+            trimSpaces(rest);
+            std::string_view sv = rest;
+
+            std::string_view tabStr = parseToken(sv);
+            std::string_view modeStr = parseToken(sv);
+
+            try {
+                int tabId = std::stoi(std::string(tabStr));
+                bool suspend = true;
+                if (!modeStr.empty()) {
+                    std::string mode(static_cast<std::string>(modeStr));
+                    if (mode == "destroy") suspend = false;
+                }
+
+                auto result = gVmManager.deactivateVM(static_cast<TabId>(tabId), suspend);
+                if (result.ok) {
+                    resp = "ok vm_deactivated tab=" + std::to_string(tabId)
+                         + " " + result.message + "\n";
+                } else {
+                    resp = "err vm_deactivate_failed tab=" + std::to_string(tabId)
+                         + " " + result.message + "\n";
+                }
+            } catch (...) {
+                resp = "err invalid vm_deactivate arguments\n";
+            }
+        }
+        else if (cmd.rfind("vm_resume", 0) == 0) {
+            std::string rest = cmd.substr(9);
+            trimSpaces(rest);
+            try {
+                int tabId = std::stoi(rest);
+                if (tabId < 0 || tabId >= kNumTabs) {
+                    resp = "err vm_resume: tab id out of range\n";
+                } else {
+                    auto result = gVmManager.resumeVM(static_cast<TabId>(tabId));
+                    if (result.ok) {
+                        resp = "ok vm_resumed tab=" + std::to_string(tabId)
+                             + " state=active\n";
+                    } else {
+                        resp = "err vm_resume_failed tab=" + std::to_string(tabId)
+                             + " " + result.message + "\n";
+                    }
+                }
+            } catch (...) {
+                resp = "err invalid vm_resume arguments\n";
+            }
+        }
+        else if (cmd.rfind("vm_destroy", 0) == 0) {
+            std::string rest = cmd.substr(10);
+            trimSpaces(rest);
+            try {
+                int tabId = std::stoi(rest);
+                if (tabId < 0 || tabId >= kNumTabs) {
+                    resp = "err vm_destroy: tab id out of range\n";
+                } else {
+                    gVmLifecycle.vmDestroy(tabId);
+                    gVmManager.destroyVM(static_cast<TabId>(tabId));
+                    resp = "ok vm_destroyed tab=" + std::to_string(tabId) + "\n";
+                }
+            } catch (...) {
+                resp = "err invalid vm_destroy arguments\n";
+            }
+        }
+        else if (cmd.rfind("vm_query", 0) == 0) {
+            std::string rest = cmd.substr(8);
+            trimSpaces(rest);
+            try {
+                int tabId = std::stoi(rest);
+                if (tabId < 0 || tabId >= kNumTabs) {
+                    resp = "err vm_query: tab id out of range\n";
+                } else {
+                    VMResult qr = gVmManager.queryVM(static_cast<TabId>(tabId));
+                    resp = (qr.ok ? "ok " : "err ") + qr.message + "\n";
+                }
+            } catch (...) {
+                resp = "err invalid vm_query arguments\n";
+            }
+        }
+        else if (cmd == "vm_list") {
+            resp = gVmManager.listVMs() + "\n";
+        }
+        else if (cmd.rfind("ck_compile", 0) == 0) {
+            std::string rest = cmd.substr(10);
+            trimSpaces(rest);
+            std::string_view sv = rest;
 
             std::string_view tabStr = parseToken(sv);
             std::string_view genStr = parseToken(sv);
             std::string_view verStr = parseToken(sv);
             std::string_view srcStr = sv;
-            // trim trailing whitespace from source
             while (!srcStr.empty() &&
-                   (srcStr.back() == ' ' || srcStr.back() == '\t' ||
-                    srcStr.back() == '\n' || srcStr.back() == '\r'))
+                   std::isspace(static_cast<unsigned char>(srcStr.back())))
                 srcStr.remove_suffix(1);
 
             try {
-                int tabIdInt = std::stoi(std::string(tabStr));
-                TabId tabId = static_cast<TabId>(tabIdInt);
+                int tabId = std::stoi(std::string(tabStr));
                 uint64_t vmGeneration = std::stoull(std::string(genStr));
-                [[maybe_unused]] uint32_t version = static_cast<uint32_t>(std::stoul(std::string(verStr)));
+                uint32_t version = static_cast<uint32_t>(std::stoul(std::string(verStr)));
 
                 if (srcStr.empty()) {
                     resp = "err ck_compile: empty source\n";
                 } else {
-                    // Bump the request version atomically — this ensures
-                    // stale results from prior compile requests for the
-                    // same tab are rejected by the render thread.
-                    uint32_t bumpedVer = gVmLifecycle.bumpRequestVersion(tabId);
+                    uint32_t bumpedVer = gVmLifecycle.bumpRequestVersion(static_cast<TabId>(tabId));
 
-                    // Enqueue on the dispatcher thread. The compile happens
-                    // off the control thread. The response (sent back via
-                    // the socket) is delivered after the compile completes.
                     gCompiler->enqueue(CompileCommand{
-                        .tabId = tabId,
+                        .tabId = static_cast<TabId>(tabId),
                         .requestVersion = bumpedVer,
                         .vmGeneration = vmGeneration,
                         .sourceCode = std::string(srcStr),
@@ -436,14 +534,27 @@ static void controlPlaneThread() {
                             ::close(connFd);
                         }
                     });
-                    // The socket fd is closed by the onResponse callback.
-                    // Skip the normal response at the bottom.
                     continue;
                 }
             } catch (...) {
                 resp = "err invalid ck_compile arguments\n";
             }
-        } else {
+        }
+        else if (cmd.rfind("policy", 0) == 0) {
+            std::string rest = cmd.substr(6);
+            trimSpaces(rest);
+            if (rest.size() >= 2 && rest.front() == '"' && rest.back() == '"')
+                rest = rest.substr(1, rest.size() - 2);
+
+            ResourcePolicy policy;
+            if (policy.deserialize(rest)) {
+                gVmManager.setPolicy(policy);
+                resp = "ok policy_set max_vms=" + std::to_string(policy.maxConcurrentLiveVMs) + "\n";
+            } else {
+                resp = "err policy_parse_failed\n";
+            }
+        }
+        else {
             resp = "err unknown command\n";
         }
         ::write(connFd, resp.c_str(), resp.size());
@@ -459,12 +570,8 @@ static void controlPlaneThread() {
 // ---------------------------------------------------------------------------
 
 static bool initSharedMemory() {
-    // The parent process creates and sizes the SHM segment BEFORE spawning us.
-    // We open it read-write.  If it doesn't exist (standalone/manual run),
-    // we create it ourselves.
     gShmFd = ::shm_open(kShmName, O_RDWR, 0600);
     if (gShmFd < 0) {
-        // Fallback: create it ourselves (standalone mode).
         gShmFd = ::shm_open(kShmName, O_CREAT | O_RDWR, 0600);
         if (gShmFd < 0) {
             std::fprintf(stderr, "[worker] shm_open failed: %s\n", std::strerror(errno));
@@ -497,10 +604,8 @@ static bool initSharedMemory() {
         return false;
     }
 
-    // Read generation from the transport — set by the parent before spawn.
     const uint64_t gen = gTransport->generation.load(std::memory_order_acquire);
 
-    // Ensure magic is set (parent should have already done this, but verify).
     gTransport->magic.store(kMagic, std::memory_order_release);
     gTransport->sampleRate.store(44100, std::memory_order_release);
     gTransport->channels.store(1, std::memory_order_release);
@@ -519,11 +624,9 @@ static bool initSharedMemory() {
 // ---------------------------------------------------------------------------
 
 int main(int argc, char* argv[]) {
-    // Install signal handlers for graceful shutdown.
     ::signal(SIGTERM, handleSigterm);
     ::signal(SIGINT, handleSigterm);
 
-    // Read the control socket path from argv[1] (passed by the parent).
     if (argc >= 2) {
         gControlSocketPath = argv[1];
     }
@@ -533,15 +636,9 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    // Current worker generation — used by the render loop to detect
-    // generation changes (worker restart invalidation).
     const uint64_t myGen = gTransport->generation.load(std::memory_order_acquire);
 
     // B4-K4: create the serialized compiler dispatcher thread.
-    // This thread is the sole caller of any ChucK compile API (K0.5 NO-GO).
-    // It publishes results via std::atomic_store_explicit into VM handoff
-    // slots, and the per-tab render threads consume via
-    // std::atomic_load_explicit.
     gCompiler = std::make_unique<ChuckCompiler>(
         [](TabId tabId, uint64_t vmGeneration) -> ChuckVmEntry* {
             return gVmLifecycle.lookupForCompile(tabId, vmGeneration);
@@ -550,32 +647,26 @@ int main(int argc, char* argv[]) {
     // Start the control-plane listener thread.
     std::thread ctrlThread(controlPlaneThread);
 
-    // Run the audio production loop on the main thread.
-    // B4-K3 will replace this with per-tab VM render threads.
-    // The render loop checks the handoff slot each iteration.
-    audioProductionLoop(myGen);
+    // Run production loop (per-tab threads are spawned on vm_activate commands).
+    placeholderProductionLoop(myGen);
 
-    // Signal the control plane to shut down.
+    // Signal shutdown.
     gRunning.store(false, std::memory_order_release);
 
-    // Shut down the compiler (drains queued compile commands).
     if (gCompiler) {
         gCompiler->shutdown();
         gCompiler.reset();
     }
 
-    // Clean up: mark worker as no longer alive.
     if (gTransport && gTransport != MAP_FAILED) {
         gTransport->workerAlive.store(false, std::memory_order_release);
     }
 
     std::fprintf(stderr, "[worker] shutting down, pid=%d\n", static_cast<int>(::getpid()));
 
-    // Wait for the control thread to finish.
     if (ctrlThread.joinable())
         ctrlThread.join();
 
-    // Unmap and close shared memory.
     if (gTransport && gTransport != MAP_FAILED) {
         ::munmap(gTransport, gShmSize);
     }
@@ -585,8 +676,5 @@ int main(int argc, char* argv[]) {
 
     // NOTE: We do NOT unlink the SHM here — the parent process owns SHM
     // lifetime and is responsible for shm_unlink after waitpid.
-    // This avoids race conditions where the parent cleans up while we
-    // are still reading or writing.
-
     return 0;
 }

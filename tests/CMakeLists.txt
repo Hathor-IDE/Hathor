@@ -142,6 +142,34 @@ include(Catch)
 catch_discover_tests(hathor-audio-worker-tests DISCOVERY_MODE PRE_TEST)
 
 # ---------------------------------------------------------------------------
+# hathor-vm-lifecycle-tests — B4-K3/K4 VmLifecycle + ChuckCompiler unit tests
+#
+# Pure unit tests for the VM lifecycle manager, compile dispatcher serialization,
+# and the atomic handoff pattern (no worker process spawn needed).
+# Links hathor-audio-worker-lib + Catch2.
+# ---------------------------------------------------------------------------
+add_executable(hathor-vm-lifecycle-tests
+    test_vm_lifecycle.cpp
+)
+
+target_compile_features(hathor-vm-lifecycle-tests PRIVATE cxx_std_20)
+target_compile_options(hathor-vm-lifecycle-tests PRIVATE -Wall -Wextra -Werror)
+
+target_include_directories(hathor-vm-lifecycle-tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/app/audio-worker
+    ${CMAKE_SOURCE_DIR}/app
+    ${CMAKE_SOURCE_DIR}/engine/include
+)
+
+target_link_libraries(hathor-vm-lifecycle-tests PRIVATE
+    hathor-audio-worker-lib
+    Catch2::Catch2WithMain
+)
+
+include(Catch)
+catch_discover_tests(hathor-vm-lifecycle-tests DISCOVERY_MODE PRE_TEST)
+
+# ---------------------------------------------------------------------------
 # Integration tests (require the full hathor binary; skipped if app is off)
 # ---------------------------------------------------------------------------
 add_subdirectory(integration)
