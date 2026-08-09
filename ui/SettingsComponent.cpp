@@ -11,14 +11,19 @@
 
 #include <cstdlib>
 
+#include "MasterEq.hpp"
+#include "AudioEngineFacade.hpp"
+
 namespace hathor::ui {
 
 // ---------------------------------------------------------------------------
 // Construction / destruction
 // ---------------------------------------------------------------------------
 
-SettingsComponent::SettingsComponent(juce::ApplicationProperties* props)
+SettingsComponent::SettingsComponent(juce::ApplicationProperties* props,
+                                       AudioEngineFacade* audio)
     : appProperties_(props)
+    , audioEngine_(audio)
 {
     setInterceptsMouseClicks(true, true);
 
@@ -65,7 +70,6 @@ SettingsComponent::SettingsComponent(juce::ApplicationProperties* props)
     buildAgentSection(hathorMcpPath);
     buildPetdexSection();
     buildChuckPlaceholder();
-    buildEqPlaceholder();
     buildActionButtons();
 
     // Wrap in a viewport.
@@ -81,8 +85,38 @@ SettingsComponent::SettingsComponent(juce::ApplicationProperties* props)
 SettingsComponent::~SettingsComponent() = default;
 
 // ---------------------------------------------------------------------------
-// Settings persistence (ApplicationProperties pattern from MainWindow.cpp:193)
+// B7-K3: EQ preset persistence helpers
 // ---------------------------------------------------------------------------
+
+namespace {
+
+/// Stable string identifiers for the four v1 EQ presets (B7-K3 §1, §7).
+/// These are stable keys independent of UI display text — the UI displays
+/// presetName() but persistence stores the canonical lowercase identifier.
+const char* eqPresetKey(hathor::EqPreset p) noexcept
+{
+    switch (p) {
+        case hathor::EqPreset::Flat:      return "flat";
+        case hathor::EqPreset::BassBoost: return "bass-boost";
+        case hathor::EqPreset::Vocal:     return "vocal";
+        case hathor::EqPreset::Bright:    return "bright";
+    }
+    return "flat";
+}
+
+/// Parse a preset identifier string back into EqPreset.
+/// Unknown values fall back to Flat (the v1 default).
+hathor::EqPreset parseEqPreset(const juce::String& s) noexcept
+{
+    const juce::String lc = s.toLowerCase();
+    if (lc == "flat")                       return hathor::EqPreset::Flat;
+    if (lc == "bass-boost" || lc == "bassboost") return hathor::EqPreset::BassBoost;
+    if (lc == "vocal")                      return hathor::EqPreset::Vocal;
+    if (lc == "bright")                     return hathor::EqPreset::Bright;
+    return hathor::EqPreset::Flat;
+}
+
+} // anonymous namespace
 
 SettingsComponent::SettingsModel
 SettingsComponent::loadSettings() const
@@ -97,6 +131,7 @@ SettingsComponent::loadSettings() const
         m.windowsAcrylic  = false;
         m.agentExePath    = "";
         m.petSelection    = "";
+        m.eqPreset        = hathor::EqPreset::Flat;
         return m;
     }
 
@@ -111,6 +146,7 @@ SettingsComponent::loadSettings() const
                               ? std::string(std::getenv("HATHOR_AGENT"))
                               : "";
         m.petSelection    = "";
+        m.eqPreset        = hathor::EqPreset::Flat;
         return m;
     }
 
@@ -134,6 +170,9 @@ SettingsComponent::loadSettings() const
     m.agentExePath = props->getValue("settings.agentExePath").toStdString();
     m.petSelection = props->getValue("settings.petSelection").toStdString();
 
+    // B7-K3: Load persisted EQ preset (stable key, not display text).
+    m.eqPreset = parseEqPreset(props->getValue("settings.eqPreset", "flat"));
+
     return m;
 }
 
@@ -152,6 +191,7 @@ void SettingsComponent::saveSettings(const SettingsModel& model) const
     props->setValue("settings.windowsAcrylic",  model.windowsAcrylic);
     props->setValue("settings.agentExePath",   juce::String(model.agentExePath));
     props->setValue("settings.petSelection",   juce::String(model.petSelection));
+    props->setValue("settings.eqPreset",       juce::String(eqPresetKey(model.eqPreset)));
 
     props->saveIfNeeded();
 }
@@ -219,6 +259,21 @@ void SettingsComponent::buildAppearanceSection()
 
     // Build the opacity + blur/acrylic controls
     buildWindowSubsection(y);
+
+    // --- Audio subsection header (B7-K3) ---
+    // Master EQ preset selector lives under Appearance > Audio.
+    auto* audioHeader = new juce::Label();
+    audioHeader->setText("Audio", juce::dontSendNotification);
+    audioHeader->setFont(HathorLookAndFeel::fontSemiBold(HathorLookAndFeel::Typography::headlineMd));
+    audioHeader->setColour(juce::Label::textColourId, palette.textPrimary);
+    audioHeader->setJustificationType(juce::Justification::centredLeft);
+    audioHeader->setBounds(0, y, contentW, kControlHeight);
+    contentPanel_->addAndMakeVisible(audioHeader);
+
+    y += kControlHeight + 8;
+
+    // Build the EQ preset selector.
+    buildAudioSection(y);
 
     contentPanel_->setBounds(0, 0, contentW, y + 16);
 }
@@ -501,34 +556,45 @@ void SettingsComponent::buildChuckPlaceholder()
     contentPanel_->setBounds(0, 0, 600, y);
 }
 
-void SettingsComponent::buildEqPlaceholder()
+void SettingsComponent::buildAudioSection(int& y)
 {
     const auto& palette = HathorLookAndFeel::fromComponent(*this).getPalette();
+    const int labelW   = kLabelWidth;
+    const int controlX = labelW + 8;
+    const int controlW = 300;
+    const int contentW = 600;
 
-    int y = contentPanel_->getHeight() + 8;
+    // --- Master EQ Preset label ---
+    eqPresetLabel_.setBounds(0, y, labelW, kControlHeight);
+    eqPresetLabel_.setText("Master EQ Preset:", juce::dontSendNotification);
+    eqPresetLabel_.setFont(HathorLookAndFeel::fontMedium(HathorLookAndFeel::Typography::bodySm));
+    eqPresetLabel_.setColour(juce::Label::textColourId, palette.textSecondary);
+    eqPresetLabel_.setJustificationType(juce::Justification::centredRight);
+    contentPanel_->addAndMakeVisible(eqPresetLabel_);
 
-    auto* header = new juce::Label();
-    header->setText("EQ", juce::dontSendNotification);
-    header->setFont(HathorLookAndFeel::fontSemiBold(HathorLookAndFeel::Typography::headlineMd));
-    header->setColour(juce::Label::textColourId, palette.textPrimary);
-    header->setJustificationType(juce::Justification::centredLeft);
-    header->setBounds(0, y, 600, kControlHeight);
-    contentPanel_->addAndMakeVisible(header);
+    // --- Preset selector combo box ---
+    // Uses the existing B7-K2 EqPreset enum.  Each preset is added with a
+    // stable ID = static_cast<int>(EqPreset) + 1 (JUCE combo box IDs are 1-based
+    // and 0 means "no selection").  The presetName() function from MasterEq.hpp
+    // provides the human-readable display labels.
+    eqPresetCombo_.setBounds(controlX, y, controlW, kControlHeight);
+    eqPresetCombo_.setEditableText(false);
 
-    y += kControlHeight + 8;
+    for (int i = 0; i < hathor::kNumEqPresets; ++i) {
+        const hathor::EqPreset preset = hathor::allPresets()[static_cast<std::size_t>(i)];
+        eqPresetCombo_.addItem(juce::String(hathor::presetName(preset)),
+                               static_cast<int>(preset) + 1);
+    }
 
-    auto* note = new juce::Label();
-    note->setText("EQ integration - implemented in Phase D (B7).",
-                  juce::dontSendNotification);
-    note->setFont(HathorLookAndFeel::fontRegular(HathorLookAndFeel::Typography::bodySm));
-    note->setColour(juce::Label::textColourId, palette.textMuted);
-    note->setJustificationType(juce::Justification::centredLeft);
-    note->setBounds(0, y, 600, kControlHeight);
-    contentPanel_->addAndMakeVisible(note);
+    eqPresetCombo_.setSelectedId(
+        static_cast<int>(pending_.eqPreset) + 1,
+        juce::dontSendNotification);
+    eqPresetCombo_.addListener(this);
+    contentPanel_->addAndMakeVisible(eqPresetCombo_);
 
-    y += kControlHeight + 24;
+    y += kControlHeight + 16;
 
-    contentPanel_->setBounds(0, 0, 600, y);
+    contentPanel_->setBounds(0, 0, contentW, y);
 }
 
 void SettingsComponent::buildActionButtons()
@@ -640,6 +706,12 @@ void SettingsComponent::buttonClicked(juce::Button* button)
         saveSettings(committed_);
         applyTheme(committed_.theme);
         applyWindowAppearance(committed_);
+
+        // B7-K3: Apply the EQ preset to the live AudioEngine via B7-K2's
+        // atomic swap.  This is the only place the EQ preset reaches the
+        // engine — the UI does NOT touch coefficients or audio-thread state.
+        applyEqPreset(committed_.eqPreset);
+
         pendingChanges_ = false;
         applyButton_.setEnabled(false);
         resetButton_.setEnabled(false);
@@ -648,6 +720,9 @@ void SettingsComponent::buttonClicked(juce::Button* button)
 
         if (onSettingsApplied)
             onSettingsApplied();
+
+        if (onEqPresetApplied)
+            onEqPresetApplied(committed_.eqPreset);
     }
     else if (button == &resetButton_)
     {
@@ -697,6 +772,15 @@ void SettingsComponent::comboBoxChanged(juce::ComboBox* comboBox)
 
         updateDirtyFlag();
     }
+    else if (comboBox == &eqPresetCombo_)
+    {
+        const int selectedId = comboBox->getSelectedId();
+        if (selectedId > 0)
+        {
+            pending_.eqPreset = static_cast<hathor::EqPreset>(selectedId - 1);
+            updateDirtyFlag();
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -723,7 +807,8 @@ void SettingsComponent::updateDirtyFlag()
                    || (pending_.macosBlurRadius != committed_.macosBlurRadius)
                    || (pending_.windowsAcrylic  != committed_.windowsAcrylic)
                    || (pending_.agentExePath    != committed_.agentExePath)
-                   || (pending_.petSelection    != committed_.petSelection);
+                   || (pending_.petSelection    != committed_.petSelection)
+                   || (pending_.eqPreset        != committed_.eqPreset);
 
     applyButton_.setEnabled(pendingChanges_);
     resetButton_.setEnabled(pendingChanges_);
@@ -771,6 +856,16 @@ void SettingsComponent::applyWindowAppearance(const SettingsModel& model)
             }
         }
     }
+}
+
+void SettingsComponent::applyEqPreset(hathor::EqPreset preset)
+{
+    // B7-K3: Route the preset selection to B7-K2's existing atomic swap.
+    // The AudioEngine computes coefficients on the control thread and publishes
+    // a complete MasterEqState via std::atomic_store — no mutex, no allocation
+    // on the audio thread.  The UI never touches DSP state directly.
+    if (audioEngine_ != nullptr)
+        audioEngine_->setMasterEqPreset(preset);
 }
 
 void SettingsComponent::updateBlurControlState()
@@ -829,6 +924,11 @@ void SettingsComponent::resetToCommitted()
     {
         petCombo_.setText("(none)", juce::dontSendNotification);
     }
+
+    // B7-K3: Restore the EQ preset combo to the committed (last-applied) value.
+    // Reset does NOT push to the engine — the live audio stays on the applied preset.
+    eqPresetCombo_.setSelectedId(static_cast<int>(pending_.eqPreset) + 1,
+                                 juce::dontSendNotification);
 
     // Restore live preview to the committed state
     applyWindowAppearance(committed_);

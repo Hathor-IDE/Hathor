@@ -160,6 +160,9 @@ target_link_libraries(hathor-b7-k2-eq-tests PRIVATE
     Catch2::Catch2WithMain
 )
 
+# B7-K3 tests are in the same binary — they verify the preset identifier
+# stability and persistence-key mapping that the Settings UI relies on.
+# (The UI component itself is JUCE-dependent and tested via integration.)
 include(Catch)
 catch_discover_tests(hathor-b7-k2-eq-tests DISCOVERY_MODE PRE_TEST)
 

@@ -196,10 +196,10 @@ public:
       * and activates it.  The caller should install onSettingsApplied on the
       * returned SettingsComponent if it wants to react to Apply.
       *
-      * @param props  ApplicationProperties for persistence (passed to SettingsComponent).
-      * @return Pointer to the SettingsComponent, or nullptr if the tab could
-      *         not be created (e.g. all slots full — never, but kept for symmetry).
-      */
+     * @param props  ApplicationProperties for persistence (passed to SettingsComponent).
+     * @return Pointer to the SettingsComponent, or nullptr if the tab could
+     *         not be created (e.g. all slots full — never, but kept for symmetry).
+     */
     SettingsComponent* openSettingsTab(juce::ApplicationProperties* props);
 
     /// Number of open tabs.

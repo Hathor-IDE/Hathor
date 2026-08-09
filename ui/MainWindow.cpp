@@ -204,6 +204,20 @@ MainWindow::MainWindow(AudioEngine& audio,
         const ThemeId appliedTheme =
             static_cast<ThemeId>(juce::jlimit(kMinTheme, kMaxTheme, themeIdx));
         lookAndFeel_.setPalette(paletteForTheme(appliedTheme));
+
+        // B7-K3: Restore the persisted EQ preset on startup.
+        // Loads from "settings.eqPreset" (stable identifier key).
+        // Calls AudioEngine::setMasterEqPreset() which performs the atomic
+        // swap into the master bus chain.  If the audio device isn't open yet,
+        // AudioEngine::audioDeviceAboutToStart() will re-apply the current
+        // preset once the sample rate is known.
+        const juce::String eqPresetStr = props->getValue("settings.eqPreset", "flat");
+        const hathor::EqPreset startupPreset =
+            (eqPresetStr == "bass-boost") ? hathor::EqPreset::BassBoost
+            : (eqPresetStr == "vocal")     ? hathor::EqPreset::Vocal
+            : (eqPresetStr == "bright")    ? hathor::EqPreset::Bright
+            :                                hathor::EqPreset::Flat;
+        audio_.setMasterEqPreset(startupPreset);
     }
 
     // Restore the last-used root directory if one was persisted; otherwise

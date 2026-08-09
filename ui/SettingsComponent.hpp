@@ -11,11 +11,12 @@
  * Ribbon Settings/Profile button.
  *
  * Sections:
- *   1. Appearance — theme picker (5 themes from A1); opacity slider + blur/acrylic (B5).
+ *   1. Appearance — theme picker (5 themes from A1); opacity slider + blur/acrylic (B5);
+ *      Audio subsection — Master EQ preset selector (B7-K3, drives B7-K2).
  *   2. Agent / ACP — agent executable path; hathor-mcp path (read-only inferred).
  *   3. Petdex — browse/select a mascot (D1–D4); opt-in only, no default.
  *   4. ChucK placeholder — inert until B4 ships.
- *   5. EQ placeholder — inert until B7 ships.
+ *   5. EQ — implemented in Appearance > Audio (B7-K3).
  *
  * Apply/Reset/Close semantics (PROGRAM.md §A2):
  *   - Two-state model: _committed (source of truth from ApplicationProperties)
@@ -31,11 +32,15 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <juce_gui_extra/juce_gui_extra.h>
 
+#include <functional>
 #include <memory>
 #include <string>
 
 #include "HathorLookAndFeel.hpp"
 #include "WindowAppearanceController.hpp"
+#include "MasterEq.hpp"
+
+class AudioEngineFacade;
 
 namespace hathor::ui {
 
@@ -47,12 +52,16 @@ class SettingsComponent : public juce::Component,
 {
 public:
     /**
-     * Construct the settings panel.
-     *
-     * @param props    ApplicationProperties for persistence (same instance as MainWindow).
-     *                 May be nullptr — in which case defaults are used and no persistence occurs.
-     */
-    explicit SettingsComponent(juce::ApplicationProperties* props);
+      * Construct the settings panel.
+      *
+      * @param props    ApplicationProperties for persistence (same instance as MainWindow).
+      *                 May be nullptr — in which case defaults are used and no persistence occurs.
+      * @param audio    AudioEngineFacade for applying B7-K2 EQ preset changes live (B7-K3).
+      *                 May be nullptr — in which case the EQ preset selector is inert
+      *                 (loads/persists only, does not call setMasterEqPreset).
+      */
+    explicit SettingsComponent(juce::ApplicationProperties* props,
+                               AudioEngineFacade* audio = nullptr);
 
     ~SettingsComponent() override;
 
@@ -77,6 +86,13 @@ public:
        agent executable path.
      */
     std::function<void()> onSettingsApplied;
+
+    /**
+       Callback invoked after Apply commits the EQ preset to live state.
+       MainWindow can use this to react to preset changes if needed (B7-K3).
+       The EQ preset is already applied to the AudioEngine before this fires.
+     */
+    std::function<void(hathor::EqPreset)> onEqPresetApplied;
 
     /**
        Return the display label for the tab bar.
@@ -133,6 +149,7 @@ private:
         bool      windowsAcrylic  = false;  // Windows only: Acrylic on/off
         std::string agentExePath;
         std::string petSelection;
+        hathor::EqPreset eqPreset  = hathor::EqPreset::Flat;  // B7-K3
     };
 
     // -----------------------------------------------------------------------
@@ -171,6 +188,10 @@ private:
     juce::ComboBox   petCombo_;
     juce::Label      petLabel_;
 
+    // Appearance — Audio subsection (B7-K3)
+    juce::ComboBox   eqPresetCombo_;
+    juce::Label      eqPresetLabel_;
+
     // Action buttons
     juce::TextButton applyButton_;
     juce::TextButton resetButton_;
@@ -185,6 +206,7 @@ private:
 
     juce::ApplicationProperties* appProperties_;
     WindowAppearanceController* appearanceController_ = nullptr;
+    AudioEngineFacade*           audioEngine_ = nullptr;  // B7-K3: for setMasterEqPreset
 
     // -----------------------------------------------------------------------
     // State
@@ -219,8 +241,8 @@ private:
     /** Build the ChucK placeholder section. */
     void buildChuckPlaceholder();
 
-    /** Build the EQ placeholder section. */
-    void buildEqPlaceholder();
+    /** Build the Appearance > Audio subsection (EQ preset selector, B7-K3). */
+    void buildAudioSection(int& y);
 
     /** Build the Apply/Reset buttons. */
     void buildActionButtons();
@@ -236,6 +258,9 @@ private:
 
     /** Apply opacity + blur/acylic to the live window (delegates to controller or direct setAlpha). */
     void applyWindowAppearance(const SettingsModel& model);
+
+    /** Apply the EQ preset to the live AudioEngine via B7-K2's atomic swap (B7-K3). */
+    void applyEqPreset(hathor::EqPreset preset);
 
     /** Update the enabled/disabled state of blur controls based on opacity. */
     void updateBlurControlState();

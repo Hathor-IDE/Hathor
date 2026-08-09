@@ -452,7 +452,7 @@ SettingsComponent* EditorArea::openSettingsTab(juce::ApplicationProperties* prop
     }
 
     // Create the Settings tab (A2).
-    settingsTab_ = std::make_unique<SettingsComponent>(props);
+    settingsTab_ = std::make_unique<SettingsComponent>(props, &audio_);
     addAndMakeVisible(*settingsTab_);
     settingsTab_->setVisible(false);  // will be shown by activateTab
 
