@@ -354,35 +354,70 @@ inline BiquadCoeffs computeEqCoeffs(EqFilterType type,
 
     switch (type) {
         case EqFilterType::LowShelf: {
-            // RBJ Audio EQ Cookbook — Low Shelf (fixed Q variant)
+            // RBJ Audio EQ Cookbook — Low Shelf (exact formulas from the
+            // canonical cookbook by Robert Bristow-Johnson).
+            //   b0 = A*((A+1) - (A-1)*cos(w) + 2*sqrt(A)*alpha)
+            //   b1 = 2*A*((A-1) - (A+1)*cos(w))
+            //   b2 = A*((A+1) - (A-1)*cos(w) - 2*sqrt(A)*alpha)
+            //   a0 = (A+1) + (A-1)*cos(w) + 2*sqrt(A)*alpha
+            //   a1 = -2*((A-1) + (A+1)*cos(w))
+            //   a2 = (A+1) + (A-1)*cos(w) - 2*sqrt(A)*alpha
             const double sqrtA = std::sqrt(A);
-            a0 =        (A + 1.0) - (A - 1.0) * cosOmega + 2.0 * sqrtA * alpha;
-            b0 = 2.0 * A * ((A + 1.0) - (A - 1.0) * cosOmega + 2.0 * sqrtA * alpha);
+            b0 = A * ((A + 1.0) - (A - 1.0) * cosOmega + 2.0 * sqrtA * alpha);
             b1 = 2.0 * A * ((A - 1.0) - (A + 1.0) * cosOmega);
-            b2 = 2.0 * A * ((A + 1.0) - (A - 1.0) * cosOmega - 2.0 * sqrtA * alpha);
-            a1 = 2.0 * ((A - 1.0) + (A + 1.0) * cosOmega);
-            a2 =        (A + 1.0) - (A - 1.0) * cosOmega - 2.0 * sqrtA * alpha;
+            b2 = A * ((A + 1.0) - (A - 1.0) * cosOmega - 2.0 * sqrtA * alpha);
+            a0 = (A + 1.0) + (A - 1.0) * cosOmega + 2.0 * sqrtA * alpha;
+            a1 = -2.0 * ((A - 1.0) + (A + 1.0) * cosOmega);
+            a2 = (A + 1.0) + (A - 1.0) * cosOmega - 2.0 * sqrtA * alpha;
             break;
         }
         case EqFilterType::HighShelf: {
-            // RBJ Audio EQ Cookbook — High Shelf (fixed Q variant)
+            // RBJ Audio EQ Cookbook — High Shelf (exact formulas).
+            //   b0 = A*((A+1) + (A-1)*cos(w) + 2*sqrt(A)*alpha)
+            //   b1 = -2*A*((A-1) + (A+1)*cos(w))
+            //   b2 = A*((A+1) + (A-1)*cos(w) - 2*sqrt(A)*alpha)
+            //   a0 = (A+1) - (A-1)*cos(w) + 2*sqrt(A)*alpha
+            //   a1 = 2*((A-1) - (A+1)*cos(w))
+            //   a2 = (A+1) - (A-1)*cos(w) - 2*sqrt(A)*alpha
             const double sqrtA = std::sqrt(A);
-            a0 =        (A + 1.0) + (A - 1.0) * cosOmega + 2.0 * sqrtA * alpha;
-            b0 = 2.0 * A * ((A + 1.0) + (A - 1.0) * cosOmega + 2.0 * sqrtA * alpha);
+            b0 = A * ((A + 1.0) + (A - 1.0) * cosOmega + 2.0 * sqrtA * alpha);
             b1 = -2.0 * A * ((A - 1.0) + (A + 1.0) * cosOmega);
-            b2 = 2.0 * A * ((A + 1.0) + (A - 1.0) * cosOmega - 2.0 * sqrtA * alpha);
-            a1 = -2.0 * ((A - 1.0) - (A + 1.0) * cosOmega);
-            a2 =        (A + 1.0) + (A - 1.0) * cosOmega - 2.0 * sqrtA * alpha;
+            b2 = A * ((A + 1.0) + (A - 1.0) * cosOmega - 2.0 * sqrtA * alpha);
+            a0 = (A + 1.0) - (A - 1.0) * cosOmega + 2.0 * sqrtA * alpha;
+            a1 = 2.0 * ((A - 1.0) - (A + 1.0) * cosOmega);
+            a2 = (A + 1.0) - (A - 1.0) * cosOmega - 2.0 * sqrtA * alpha;
             break;
         }
         case EqFilterType::Peak: {
-            // RBJ Audio EQ Cookbook — Peaking EQ
-            a0 = 1.0 + alpha / A;
-            b0 = 1.0 + alpha * A;
-            b1 = -2.0 * cosOmega;
-            b2 = 1.0 - alpha * A;
-            a1 = 2.0 * (alpha / A - cosOmega);
-            a2 = 1.0 - alpha / A;
+            // Exact bilinear-transform Peaking EQ.
+            //
+            // The RBJ cookbook alpha = sin(w0)/(2*Q) is an approximation
+            // that does NOT preserve unity DC/Nyquist gain for peaking EQ.
+            // The exact bilinear transform of the analog prototype
+            //   H(s) = (s^2 + s*(A/Q)*W + W^2) / (s^2 + s*W/(A*Q) + W^2)
+            // where W = 2*Fs*tan(w0/2) (pre-warmed), gives:
+            //   - DC gain = 1.0 (unity)
+            //   - Nyquist gain = 1.0 (unity)
+            //   - Gain at w0 = A^2 = 10^(gain_dB/20)
+            //
+            // where A = 10^(gain_dB/40) (so A^2 = 10^(gain_dB/20) is the
+            // amplitude ratio, matching 20*log10(A^2) = gain_dB).
+            //
+            // Requirement references: B7-K2 §2, B7-K2 §6, B7-K2 §13
+            const double twoFs = static_cast<double>(sampleRate);
+            const double W = 2.0 * twoFs * std::tan(omega / 2.0); // pre-warp
+            const double K = 2.0 * twoFs;
+            const double c = A * W / q;       // numerator s-coefficient
+            const double d = W / (A * q);     // denominator s-coefficient
+
+            // Bilinear transform: s = K*(z-1)/(z+1)
+            // Expanding (z-1)^2, (z^2-1), (z+1)^2:
+            b0 = K*K + c*K + W*W;      // z^2
+            b1 = -2.0*K*K + 2.0*W*W;   // z^1
+            b2 = K*K - c*K + W*W;      // z^0
+            a0 = K*K + d*K + W*W;      // z^2
+            a1 = -2.0*K*K + 2.0*W*W;   // z^1 (same as b1)
+            a2 = K*K - d*K + W*W;      // z^0
             break;
         }
     }

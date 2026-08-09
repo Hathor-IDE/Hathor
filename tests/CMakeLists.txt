@@ -136,6 +136,34 @@ include(Catch)
 catch_discover_tests(hathor-b7-k1-filter-tests DISCOVERY_MODE PRE_TEST)
 
 # ---------------------------------------------------------------------------
+# hathor-b7-k2-eq-tests — B7-K2 master-bus preset EQ
+#
+# Tests preset existence, coefficient generation, Flat neutrality,
+# preset differentiation, atomic publication, and audio-thread safety.
+# JUCE-free: MasterEq.hpp and BiquadFilter.hpp are header-only with no
+# JUCE dependency.
+# ---------------------------------------------------------------------------
+add_executable(hathor-b7-k2-eq-tests
+    test_b7_k2_eq.cpp
+)
+
+target_compile_features(hathor-b7-k2-eq-tests PRIVATE cxx_std_20)
+target_compile_options(hathor-b7-k2-eq-tests PRIVATE -Wall -Wextra -Werror)
+
+target_include_directories(hathor-b7-k2-eq-tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/app
+    ${CMAKE_SOURCE_DIR}/engine/include
+)
+
+target_link_libraries(hathor-b7-k2-eq-tests PRIVATE
+    hathor-engine
+    Catch2::Catch2WithMain
+)
+
+include(Catch)
+catch_discover_tests(hathor-b7-k2-eq-tests DISCOVERY_MODE PRE_TEST)
+
+# ---------------------------------------------------------------------------
 # hathor-b4-k6-event-queue-tests — B4-K6 timestamped musical event queue
 #
 # Tests MusicalEvent, SpscEventRing, ClockSync, EventTransport, EventScheduler,
