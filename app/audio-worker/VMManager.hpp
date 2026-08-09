@@ -20,7 +20,7 @@
  * concurrently with run() from a different thread.
  */
 
-#include "ChuckVM.hpp"
+#include "ChuckVm.hpp"
 #include "ResourcePolicy.hpp"
 #include "audio_ipc.h"
 

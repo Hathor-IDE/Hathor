@@ -180,7 +180,7 @@ private:
     const TabId tabId_;
 
     /// Render callback (set at construction; invoked on the ChucK thread).
-    const RenderCallback renderCb_;
+    RenderCallback renderCb_;
 
     /// Lifecycle state (atomic for lock-free checks from watchdog/control thread).
     std::atomic<VMState> state_{VMState::Inactive};

@@ -12,27 +12,6 @@
 
 namespace hathor::audio_worker {
 
-// ---------------------------------------------------------------------------
-// Minimal JSON serialization (no external JSON dependency in the worker)
-// ---------------------------------------------------------------------------
-
-static std::string escapeString(const std::string& s)
-{
-    std::string out;
-    out.reserve(s.size() + 2);
-    for (char c : s) {
-        switch (c) {
-            case '"':  out += "\\\""; break;
-            case '\\': out += "\\\\"; break;
-            case '\n': out += "\\n";  break;
-            case '\r': out += "\\r";  break;
-            case '\t': out += "\\t";  break;
-            default:   out += c;      break;
-        }
-    }
-    return out;
-}
-
 std::string ResourcePolicy::serialize() const
 {
     std::ostringstream ss;

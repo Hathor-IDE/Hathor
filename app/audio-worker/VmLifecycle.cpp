@@ -19,15 +19,17 @@ uint64_t VmLifecycle::vmCreate(TabId tabId)
     ChuckVmEntry& entry = vmTable_[tabId];
     // Increment generation — any in-flight compile for the old generation
     // will be rejected by the compile dispatcher's generation check.
-    entry.vmGeneration.fetch_add(1, std::memory_order_release);
-    ++entry.vmGeneration; // ensure it's at least 1 (generation 0 = not started)
+    // Use fetch_add to get the previous value, then verify it's >= 0.
+    entry.vmGeneration.fetch_add(1, std::memory_order_acq_rel);
     entry.tabId = tabId;
     entry.state.store(VmState::Active, std::memory_order_release);
     entry.currentRequestVersion.store(0, std::memory_order_release);
     entry.loadedSourceHash = 0;
     entry.loadedShredId = -1;
     // Clear any pending handoff from a previous VM lifecycle.
-    std::atomic_store_explicit(&entry.handoffShred, nullptr,
+    // Note: std::atomic_store_explicit on shared_ptr* expects shared_ptr<T>,
+    // not nullptr, per libc++ API.
+    std::atomic_store_explicit(&entry.handoffShred, std::shared_ptr<CompiledShred>{},
                                std::memory_order_release);
     return entry.vmGeneration;
 }
@@ -48,7 +50,7 @@ void VmLifecycle::vmDestroy(TabId tabId)
     entry.currentRequestVersion.store(0, std::memory_order_release);
     // The render thread, on its next iteration, will see state == Destroyed
     // and discard the handoff. We clear it here for cleanliness.
-    std::atomic_store_explicit(&entry.handoffShred, nullptr,
+    std::atomic_store_explicit(&entry.handoffShred, std::shared_ptr<CompiledShred>{},
                                std::memory_order_release);
 }
 
@@ -122,7 +124,7 @@ std::shared_ptr<CompiledShred> VmLifecycle::loadHandoff(TabId tabId) noexcept
 
     // Clear the handoff slot so the result is consumed exactly once.
     // If this is a replacement, the old shred is released here.
-    std::atomic_store_explicit(&entry.handoffShred, nullptr,
+    std::atomic_store_explicit(&entry.handoffShred, std::shared_ptr<CompiledShred>{},
                                std::memory_order_release);
 
     return shred;

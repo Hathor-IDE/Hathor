@@ -13,6 +13,9 @@
 add_library(hathor-audio-worker-lib STATIC
     AudioWorkerManager.cpp
     ChuckCompiler.cpp
+    ChuckVM.cpp
+    ResourcePolicy.cpp
+    VMManager.cpp
     VmLifecycle.cpp
 )
 
@@ -40,6 +43,8 @@ target_include_directories(hathor-audio-worker
 
 target_compile_features(hathor-audio-worker PRIVATE cxx_std_20)
 target_compile_options(hathor-audio-worker PRIVATE -Wall -Wextra -Werror)
+
+target_link_libraries(hathor-audio-worker PRIVATE hathor-audio-worker-lib)
 
 # POSIX realtime libraries for shm_open / mmap / posix_spawn
 if(APPLE)

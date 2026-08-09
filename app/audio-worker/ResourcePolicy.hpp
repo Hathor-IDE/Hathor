@@ -25,6 +25,9 @@
 #include "audio_ipc.h"
 
 namespace hathor::audio_worker {
+
+/**
+ * Per-VM resource cost estimates.
  *
  * These values are measured by the B4-K3 measurement harness
  * (see docs/b4-k3-measurements.md) and stored as configuration.

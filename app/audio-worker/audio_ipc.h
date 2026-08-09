@@ -68,6 +68,7 @@
 #include <atomic>
 #include <cstdint>
 #include <cstring>
+#include <memory>
 #include <string>
 
 namespace hathor::audio_worker {
@@ -109,6 +110,9 @@ using TabId = uint8_t;
 /// This is the default; the actual timeout is configurable via ResourcePolicy.
 constexpr int kDefaultHeartbeatTimeoutMs = 2000;
 
+/// Alias used by VmLifecycle/ChuckCompiler (lowercase per existing codebase).
+inline constexpr int kNumTabs = kMaxTabs;
+
 // ---------------------------------------------------------------------------
 // VM lifecycle state (B4-K3 — used by both worker and main process)
 // ---------------------------------------------------------------------------
@@ -124,11 +128,79 @@ enum class VMState : uint8_t {
     Error,      ///< VM hit a fatal error; needs restart.
 };
 
+/// Lowercase alias used throughout the existing worker code (VmLifecycle,
+/// ChuckCompiler, hathor-audio-worker).  This avoids renaming all references.
+using VmState = VMState;
+
 /// Result of a VM control operation.
 struct VMResult {
     bool     ok            = false;
     unsigned errorCode     = 0;
     std::string message;
+};
+
+// ---------------------------------------------------------------------------
+// Compiled shred — result of ChucK compilation (B4-K4 handoff unit)
+// ---------------------------------------------------------------------------
+
+/**
+ * CompiledShred — the atomic handoff unit from compile dispatcher to VM.
+ *
+ * Published via std::atomic_store_explicit(release) on ChuckVmEntry::handoffShred
+ * and consumed via std::atomic_load_explicit(acquire) on the per-tab render thread.
+ * This matches the AudioEngine::slots_ handoff pattern (atomic_store/load on
+ * shared_ptr, Apple-Clang compatible free-function API).
+ */
+struct CompiledShred {
+    bool     ok                = false;  ///< compilation succeeded
+    uint32_t requestVersion    = 0;      ///< version tag for stale-result rejection
+    uint64_t vmGeneration      = 0;      ///< the VM generation this result targets
+    std::string sourceCode;              ///< original source (for hash / debugging)
+    std::size_t sourceHash     = 0;      ///< FNV-1a hash of source
+    int        loadedShredId   = -1;     ///< assigned by VM on consumption
+    std::string error;                   ///< error text if ok==false
+    int        errorLine      = 0;       ///< compiler error line if ok==false
+    int        errorColumn    = 0;       ///< compiler error column if ok==false
+};
+
+/**
+ * ChuckVmEntry — a single slot in the fixed-size VM table (VmLifecycle).
+ *
+ * The VM table is a fixed array of ChuckVmEntry (kNumTabs entries).
+ * Structural modifications (create/destroy/version bump) are guarded by
+ * vmTableMtx_.  The handoffShred field is read lock-free by the render
+ * thread and written by the compile dispatcher via atomic store/load.
+ */
+struct ChuckVmEntry {
+    /// Tab identity (slot index).  Immutable after construction.
+    TabId tabId = 0;
+
+    /// VM generation counter.  Increments on every create/replace/destroy.
+    /// In-flight compile results for a stale generation are rejected.
+    std::atomic<uint64_t> vmGeneration{0};
+
+    /// Current lifecycle state (active/suspended/destroyed/error).
+    std::atomic<VMState> state{VMState::Inactive};
+
+    /// Per-tab request version (monotonic).  Bumped on each compile request.
+    /// The VM render thread checks that a handoff result's requestVersion
+    /// matches currentRequestVersion before accepting it.
+    std::atomic<uint32_t> currentRequestVersion{0};
+
+    /// Source hash of the currently loaded shred (0 if none).
+    std::atomic<std::size_t> loadedSourceHash{0};
+
+    /// Loaded shred ID (-1 if none loaded).
+    std::atomic<int> loadedShredId{-1};
+
+    /// Atomic handoff slot: compile dispatcher publishes here, render thread
+    /// consumes here.  Uses std::atomic_store/load_explicit on shared_ptr
+    /// (Apple-Clang compatible free-function API).
+    std::shared_ptr<CompiledShred> handoffShred;
+
+    ChuckVmEntry() = default;
+    ChuckVmEntry(const ChuckVmEntry&) = delete;
+    ChuckVmEntry& operator=(const ChuckVmEntry&) = delete;
 };
 
 // ---------------------------------------------------------------------------

@@ -9,7 +9,7 @@
  * tracking.
  */
 
-#include "ChuckVM.hpp"
+#include "ChuckVm.hpp"
 
 #include <atomic>
 #include <chrono>
@@ -27,14 +27,11 @@ namespace hathor::audio_worker {
 
 ChuckVM::ChuckVM(TabId tabId, RenderCallback renderCb)
     : tabId_(tabId)
-    , renderCb_(renderCb)
+    , renderCb_(renderCb ? renderCb : RenderCallback{
+        [](float* outBuf, unsigned numFrames, unsigned /*numChannels*/) {
+            std::memset(outBuf, 0, numFrames * sizeof(float));
+        }})
 {
-    if (!renderCb_) {
-        // Default render callback: silence (K3 placeholder, B4-K4 replaces).
-        renderCb_ = [](float* outBuf, unsigned /*numFrames*/, unsigned /*numChannels*/) {
-            std::memset(outBuf, 0, 64 * sizeof(float));
-        };
-    }
 }
 
 ChuckVM::~ChuckVM()
@@ -220,6 +217,7 @@ VMResult ChuckVM::compileCode(const std::string& code)
     // compilation happens on the worker control thread, and only when the
     // VM is in a known state.  Here we enforce that the VM is active or
     // that we're in the suspended state (safe to compile without running).
+    (void)code;  // K3 placeholder — actual libchuck compile lands in B4-K4
     auto currentState = state_.load(std::memory_order_acquire);
 
     if (currentState == VMState::Active) {

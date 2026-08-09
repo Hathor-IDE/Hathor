@@ -133,7 +133,7 @@ static void produceBlock(AudioBlock& block, uint32_t wSeq, uint64_t gen) {
 // Per-tab render loop — checks for a compiled shred on each iteration
 // ---------------------------------------------------------------------------
 
-static void vmRenderLoop(TabId tabId, uint64_t expectedGen) {
+[[maybe_unused]] static void vmRenderLoop(TabId tabId, uint64_t expectedGen) {
     // This runs on a per-tab OS thread. Each iteration:
     //   1. Check if the VM is still active (generation liveness).
     //   2. Load any pending handoff shred via std::atomic_load_explicit(acquire).
@@ -335,12 +335,12 @@ static void controlPlaneThread() {
                                      rest.front() == '\n' || rest.front() == '\r'))
                 rest.erase(0, 1);
             try {
-                int tabId = std::stoi(rest);
+                TabId tabId = static_cast<TabId>(std::stoi(rest));
                 const uint64_t newGen = gVmLifecycle.vmCreate(tabId);
                 resp = "ok vm_create tab=" + std::to_string(tabId)
                      + " gen=" + std::to_string(newGen) + "\n";
                 std::fprintf(stderr, "[worker] VM created for tab=%d gen=%llu\n",
-                             tabId, static_cast<unsigned long long>(newGen));
+                             static_cast<int>(tabId), static_cast<unsigned long long>(newGen));
             } catch (...) {
                 resp = "err invalid tab id\n";
             }
@@ -351,102 +351,102 @@ static void controlPlaneThread() {
                                      rest.front() == '\n' || rest.front() == '\r'))
                 rest.erase(0, 1);
             try {
-                int tabId = std::stoi(rest);
+                TabId tabId = static_cast<TabId>(std::stoi(rest));
                 gVmLifecycle.vmDestroy(tabId);
                 resp = "ok vm_destroy tab=" + std::to_string(tabId) + "\n";
-                std::fprintf(stderr, "[worker] VM destroyed for tab=%d\n", tabId);
+                std::fprintf(stderr, "[worker] VM destroyed for tab=%d\n", static_cast<int>(tabId));
             } catch (...) {
                 resp = "err invalid tab id\n";
             }
         } else if (cmd.rfind("ck_compile", 0) == 0) {
-                // Format: ck_compile <tabId> <vmGeneration> <version> <source...>
-                //
-                // enqueues a compile on the ChuckCompiler dispatcher thread.
-                // The compile happens off the control thread and off any
-                // render thread — it is NOT on the real-time audio path.
-                std::string rest = cmd.substr(10);
-                while (!rest.empty() && (rest.front() == ' ' || rest.front() == '\t'))
-                    rest.erase(0, 1);
+            // Format: ck_compile <tabId> <vmGeneration> <version> <source...>
+            //
+            // enqueues a compile on the ChuckCompiler dispatcher thread.
+            // The compile happens off the control thread and off any
+            // render thread — it is NOT on the real-time audio path.
+            std::string rest = cmd.substr(10);
+            while (!rest.empty() && (rest.front() == ' ' || rest.front() == '\t'))
+                rest.erase(0, 1);
 
-                // Parse: tabId vmGeneration version source
-                // The source may contain spaces, so we parse the first 3
-                // tokens as integers and treat the remainder as source.
-                std::string_view sv = rest;
-                auto parseToken = [](std::string_view& sv) -> std::string_view {
-                    while (!sv.empty() && (sv.front() == ' ' || sv.front() == '\t'))
-                        sv.remove_prefix(1);
-                    size_t end = 0;
-                    while (end < sv.size() && sv[end] != ' ' && sv[end] != '\t')
-                        ++end;
-                    std::string_view tok = sv.substr(0, end);
-                    sv.remove_prefix(end);
-                    return tok;
-                };
+            // Parse: tabId vmGeneration version source
+            // The source may contain spaces, so we parse the first 3
+            // tokens as integers and treat the remainder as source.
+            std::string_view sv = rest;
+            auto parseToken = [](std::string_view& sv) -> std::string_view {
+                while (!sv.empty() && (sv.front() == ' ' || sv.front() == '\t'))
+                    sv.remove_prefix(1);
+                size_t end = 0;
+                while (end < sv.size() && sv[end] != ' ' && sv[end] != '\t')
+                    ++end;
+                std::string_view tok = sv.substr(0, end);
+                sv.remove_prefix(end);
+                return tok;
+            };
 
-                std::string_view tabStr = parseToken(sv);
-                std::string_view genStr = parseToken(sv);
-                std::string_view verStr = parseToken(sv);
-                std::string_view srcStr = sv;
-                // trim trailing whitespace from source
-                while (!srcStr.empty() &&
-                       (srcStr.back() == ' ' || srcStr.back() == '\t' ||
-                        srcStr.back() == '\n' || srcStr.back() == '\r'))
-                    srcStr.remove_suffix(1);
+            std::string_view tabStr = parseToken(sv);
+            std::string_view genStr = parseToken(sv);
+            std::string_view verStr = parseToken(sv);
+            std::string_view srcStr = sv;
+            // trim trailing whitespace from source
+            while (!srcStr.empty() &&
+                   (srcStr.back() == ' ' || srcStr.back() == '\t' ||
+                    srcStr.back() == '\n' || srcStr.back() == '\r'))
+                srcStr.remove_suffix(1);
 
-                try {
-                    int tabId = std::stoi(std::string(tabStr));
-                    uint64_t vmGeneration = std::stoull(std::string(genStr));
-                    uint32_t version = static_cast<uint32_t>(std::stoul(std::string(verStr)));
+            try {
+                int tabIdInt = std::stoi(std::string(tabStr));
+                TabId tabId = static_cast<TabId>(tabIdInt);
+                uint64_t vmGeneration = std::stoull(std::string(genStr));
+                [[maybe_unused]] uint32_t version = static_cast<uint32_t>(std::stoul(std::string(verStr)));
 
-                    if (srcStr.empty()) {
-                        resp = "err ck_compile: empty source\n";
-                    } else {
-                        // Bump the request version atomically — this ensures
-                        // stale results from prior compile requests for the
-                        // same tab are rejected by the render thread.
-                        uint32_t bumpedVer = gVmLifecycle.bumpRequestVersion(tabId);
+                if (srcStr.empty()) {
+                    resp = "err ck_compile: empty source\n";
+                } else {
+                    // Bump the request version atomically — this ensures
+                    // stale results from prior compile requests for the
+                    // same tab are rejected by the render thread.
+                    uint32_t bumpedVer = gVmLifecycle.bumpRequestVersion(tabId);
 
-                        // Enqueue on the dispatcher thread. The compile happens
-                        // off the control thread. The response (sent back via
-                        // the socket) is delivered after the compile completes.
-                        gCompiler->enqueue(CompileCommand{
-                            .tabId = tabId,
-                            .requestVersion = bumpedVer,
-                            .vmGeneration = vmGeneration,
-                            .sourceCode = std::string(srcStr),
-                            .onResponse = [connFd, tabId, bumpedVer](
-                                std::shared_ptr<CompiledShred> result) {
-                                std::string r;
-                                if (result && result->ok) {
-                                    r = "ok ck_compile tab=" + std::to_string(tabId)
-                                      + " version=" + std::to_string(bumpedVer)
-                                      + " hash=" + std::to_string(result->sourceHash)
-                                      + " shred_id=assigned_on_next_vm_loop\n";
-                                } else {
-                                    std::string errMsg = result ? result->error : "compile failed";
-                                    r = "err ck_compile tab=" + std::to_string(tabId)
-                                      + " version=" + std::to_string(bumpedVer)
-                                      + " error=" + errMsg
-                                      + " line=" + std::to_string(result ? result->errorLine : 0)
-                                      + " col=" + std::to_string(result ? result->errorColumn : 0)
-                                      + "\n";
-                                }
-                                ::write(connFd, r.c_str(), r.size());
-                                ::close(connFd);
+                    // Enqueue on the dispatcher thread. The compile happens
+                    // off the control thread. The response (sent back via
+                    // the socket) is delivered after the compile completes.
+                    gCompiler->enqueue(CompileCommand{
+                        .tabId = tabId,
+                        .requestVersion = bumpedVer,
+                        .vmGeneration = vmGeneration,
+                        .sourceCode = std::string(srcStr),
+                        .onResponse = [connFd, tabId, bumpedVer](
+                            std::shared_ptr<CompiledShred> result) {
+                            std::string r;
+                            if (result && result->ok) {
+                                r = "ok ck_compile tab=" + std::to_string(tabId)
+                                  + " version=" + std::to_string(bumpedVer)
+                                  + " hash=" + std::to_string(result->sourceHash)
+                                  + " shred_id=assigned_on_next_vm_loop\n";
+                            } else {
+                                std::string errMsg = result ? result->error : "compile failed";
+                                r = "err ck_compile tab=" + std::to_string(tabId)
+                                  + " version=" + std::to_string(bumpedVer)
+                                  + " error=" + errMsg
+                                  + " line=" + std::to_string(result ? result->errorLine : 0)
+                                  + " col=" + std::to_string(result ? result->errorColumn : 0)
+                                  + "\n";
                             }
-                        });
-                        // The socket fd is closed by the onResponse callback.
-                        // Skip the normal response at the bottom.
-                        continue;
-                    }
-                } catch (...) {
-                    resp = "err invalid ck_compile arguments\n";
+                            ::write(connFd, r.c_str(), r.size());
+                            ::close(connFd);
+                        }
+                    });
+                    // The socket fd is closed by the onResponse callback.
+                    // Skip the normal response at the bottom.
+                    continue;
                 }
-            } else {
-                resp = "err unknown command\n";
+            } catch (...) {
+                resp = "err invalid ck_compile arguments\n";
             }
-            ::write(connFd, resp.c_str(), resp.size());
+        } else {
+            resp = "err unknown command\n";
         }
+        ::write(connFd, resp.c_str(), resp.size());
         ::close(connFd);
     }
 
