@@ -284,20 +284,32 @@ private:
         int cursorLine) noexcept;
 
     /**
-     * Dispatch `set-pattern <slotName> <text>` on the worker thread.
-     * On completion, if ok==true clears the tab's unsaved dot and repaints
-     * the tab bar; if ok==false shows the error field in the status bar.
-     * (Req 23.4, 23.5, 23.7)
-     *
-     * @param tab      The source tab (must outlive the lambda — it is
-     *                 ref-counted via weak ownership check on JUCE message
-     *                 thread via callAsync).
-     * @param slotName AudioEngine slot name string (e.g. "d0").
-     * @param text     Mini-notation text to compile.
-     */
-    void evalOnWorkerThread(HathorTab* tab,
-                            const juce::String& slotName,
-                            const juce::String& text);
+      * Dispatch `set-pattern <slotName> <text>` on the worker thread (Req 23.7)
+      * ...existing doc...
+      *
+      * @param tab      The source tab (must outlive the lambda).
+      * @param slotName AudioEngine slot name string (e.g. "d0").
+      * @param text     Mini-notation text to compile.
+      */
+     void evalOnWorkerThread(HathorTab* tab,
+                             const juce::String& slotName,
+                             const juce::String& text);
+
+     // -----------------------------------------------------------------------
+     // B4-K7: .ck tab evaluation — compile→load→execute path
+     // -----------------------------------------------------------------------
+
+     /**
+      * Evaluate ChucK source for a .ck tab via AudioEngine::ckEval().
+      * Runs on a detached worker thread so the JUCE message thread is
+      * never blocked.  On completion, marshals the result to the message
+      * thread to update the tab's eval state and status bar.
+      *
+      * @param tab   The .ck source tab.
+      * @param code  Full ChucK source code (entire buffer for both
+      *              Ctrl+Enter and Ctrl+Alt+Enter on .ck tabs).
+      */
+     void evalCkOnWorkerThread(HathorTab* tab, const juce::String& code);
 
     // -----------------------------------------------------------------------
     // Per-tab KeyListener — bridges CodeEditorComponent key events into

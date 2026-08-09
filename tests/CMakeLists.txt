@@ -107,6 +107,33 @@ include(Catch)
 catch_discover_tests(hathor-audio-transport-tests DISCOVERY_MODE PRE_TEST)
 
 # ---------------------------------------------------------------------------
+# hathor-b4-k6-event-queue-tests — B4-K6 timestamped musical event queue
+#
+# Tests MusicalEvent, SpscEventRing, ClockSync, EventTransport, EventScheduler,
+# and EventPublisher.  JUCE-free: all components are header-only or in-process.
+# ---------------------------------------------------------------------------
+add_executable(hathor-b4-k6-event-queue-tests
+    test_b4_k6_timestamped_event_queue.cpp
+)
+
+target_compile_features(hathor-b4-k6-event-queue-tests PRIVATE cxx_std_20)
+target_compile_options(hathor-b4-k6-event-queue-tests PRIVATE -Wall -Wextra -Werror)
+
+target_include_directories(hathor-b4-k6-event-queue-tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/app
+    ${CMAKE_SOURCE_DIR}/app/audio-worker
+    ${CMAKE_SOURCE_DIR}/engine/include
+)
+
+target_link_libraries(hathor-b4-k6-event-queue-tests PRIVATE
+    hathor-engine
+    Catch2::Catch2WithMain
+)
+
+include(Catch)
+catch_discover_tests(hathor-b4-k6-event-queue-tests DISCOVERY_MODE PRE_TEST)
+
+# ---------------------------------------------------------------------------
 # hathor-audio-worker-tests — B4-K2 worker lifecycle, generation, RT-safe audio
 #
 # These tests spawn the real hathor-audio-worker executable built by

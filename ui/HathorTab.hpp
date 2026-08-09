@@ -114,6 +114,25 @@ public:
     bool isChuckTab() const noexcept { return useChuckTokeniser_; }
 
     // -----------------------------------------------------------------------
+    // B4-K7: Per-tab .ck eval state
+    // -----------------------------------------------------------------------
+
+    /// Eval state for .ck tabs (B4-K7).
+    /// Tracks the compile→load→execute lifecycle of the current shred.
+    enum class CkevalState : uint8_t {
+        Idle,       ///< No shred loaded (never evaluated, or stopped)
+        Compiling,  ///< Compile in progress (dispatching ck_compile)
+        Running,    ///< Shred loaded and VM active
+        Error,      ///< Last compile failed
+    };
+
+    /// Current .ck eval state.
+    CkevalState ckEvalState() const noexcept { return ckEvalState_; }
+
+    /// Set the .ck eval state and update the Play/Stop button visual.
+    void setCkEvalState(CkevalState s) noexcept;
+
+    // -----------------------------------------------------------------------
     // Callback — installed by EditorArea; fired when unsavedDot changes.
     // -----------------------------------------------------------------------
     std::function<void()> onUnsavedDotChanged;
@@ -177,7 +196,10 @@ private:
     // Per-slot Play/Stop button visual state (B1).
     // This is NOT a source of truth — the engine's SlotState::running atomic
     // is. This flag is synced from the engine via setSlotRunningVisual().
-    bool                       slotRunning_{ false };
+    bool                      slotRunning_{ false };
+
+    // B4-K7: Per-tab .ck eval state (compiling / running / error / idle).
+    CkevalState               ckEvalState_{ CkevalState::Idle };
 
     // Tokenisers for both file types.  Exactly one is active at a time;
     // the editor_ holds a non-owning pointer to whichever is active.

@@ -185,6 +185,29 @@ void HathorTab::slotPlayButtonClicked()
         onPlayStopClicked();
 }
 
+// ---------------------------------------------------------------------------
+// B4-K7: Per-tab .ck eval state
+// ---------------------------------------------------------------------------
+
+void HathorTab::setCkEvalState(CkevalState s) noexcept
+{
+    if (ckEvalState_ == s)
+        return;
+
+    ckEvalState_ = s;
+
+    // For .ck tabs, sync the Play/Stop button visual to the eval state.
+    // Running = Stop icon (red), Compiling = amber, Error = red (X or stop),
+    // Idle = Play icon (default).
+    if (useChuckTokeniser_)
+    {
+        setSlotRunningVisual(s == CkevalState::Running || s == CkevalState::Compiling);
+    }
+
+    // Repaint to update the button icon.
+    slotPlayButton_.repaint();
+}
+
 void HathorTab::paintSlotPlayButton(juce::Graphics& /*g*/)
 {
     // Button is a juce::TextButton — paint is handled by JUCE.

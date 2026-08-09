@@ -15,6 +15,7 @@
 
 #include <algorithm>
 #include <optional>
+#include <thread>
 
 namespace hathor::ui {
 
@@ -687,40 +688,74 @@ void EditorArea::wirePlayStopCallback(HathorTab& tab)
     // detached worker thread (same pattern as SliderPanel).  The slot name is
     // resolved from the engine via audio_.slotName(slotIndex).
     //
-    // This does NOT maintain an independent playback state — the engine's
-    // SlotState::running atomic is the source of truth.  The button visual
-    // is synced from that state via syncSlotButtonStates() (called at 60 Hz
-    // by UITimer).
+    // For .ck tabs (B4-K7): the play/stop button triggers ck_stop (destroy
+    // the VM + clear handoff). The "play" direction is handled by Ctrl+Enter
+    // (which compiles and activates the VM). Clicking stop when a shred is
+    // loaded sends ck_stop to the worker.
     //
     // We capture the slot index (int, stable) rather than a pointer to the
     // tab, since tabs_ is a vector of unique_ptr and may reallocate.
     const int slotIdx = tab.slotIndex();
+    const bool isChuck = tab.isChuckTab();
     hathor::control::ControlInterface& ci = ci_;
 
-    tab.onPlayStopClicked = [this, slotIdx, &ci]()
+    tab.onPlayStopClicked = [this, slotIdx, isChuck, &ci]()
     {
-        const std::string slotName =
-            audio_.slotName(slotIdx).empty()
-                ? ("d" + std::to_string(slotIdx))
-                : audio_.slotName(slotIdx);
-
-        const bool currentlyRunning = audio_.isSlotRunning(slotIdx);
-        const bool start = !currentlyRunning;
-
-        const std::string cmd =
-            (start ? "slot-play " : "slot-stop ") + slotName;
-
-        std::thread([&ci, cmd]()
+        if (isChuck)
         {
-            ci.dispatch(cmd);
-        }).detach();
+            // B4-K7: .ck tab — dispatch ck_stop via the AudioEngine.
+            // On a detached thread so the JUCE message thread isn't blocked.
+            std::thread([this, slotIdx]()
+            {
+                audio_.stopCkTab(slotIdx);
+                juce::MessageManager::callAsync([this, slotIdx]()
+                {
+                    // Find the tab and update its state.
+                    for (const auto& t : tabs_)
+                    {
+                        if (t->slotIndex() == slotIdx && t->isChuckTab())
+                        {
+                            t->setCkEvalState(HathorTab::CkevalState::Idle);
+                            showStatus("Stopped .ck tab");
+                            break;
+                        }
+                    }
+                });
+            }).detach();
+        }
+        else
+        {
+            // Mini-notation path (existing B1 behavior).
+            const std::string slotName =
+                audio_.slotName(slotIdx).empty()
+                    ? ("d" + std::to_string(slotIdx))
+                    : audio_.slotName(slotIdx);
+
+            const bool currentlyRunning = audio_.isSlotRunning(slotIdx);
+            const bool start = !currentlyRunning;
+
+            const std::string cmd =
+                (start ? "slot-play " : "slot-stop ") + slotName;
+
+            std::thread([&ci, cmd]()
+            {
+                ci.dispatch(cmd);
+            }).detach();
+        }
     };
 }
 
 void EditorArea::syncSlotButtonStates()
 {
     for (const auto& t : tabs_)
-        t->setSlotRunningVisual(audio_.isSlotRunning(t->slotIndex()));
+    {
+        // Sync mini-notation slot running visual (existing B1 behavior).
+        if (!t->isChuckTab())
+            t->setSlotRunningVisual(audio_.isSlotRunning(t->slotIndex()));
+        // For .ck tabs, the eval state is managed by ckEval/stopCkTab
+        // and the eval callback. No action needed here beyond the
+        // button visual already set by setCkEvalState().
+    }
 }
 
 void EditorArea::refreshTabBar()
@@ -770,37 +805,22 @@ bool EditorArea::handleKeyPress(const juce::KeyPress& key, HathorTab* tab)
     if (!ctrlHeld)
         return false;
 
-    // Determine slot name from the AudioEngine (e.g. "d0").
-    // If the engine hasn't registered the slot yet, derive a default name.
-    juce::String slotName;
-    const std::string engineName = audio_.slotName(tab->slotIndex());
-    if (!engineName.empty())
-        slotName = juce::String(engineName);
-    else
-        slotName = "d" + juce::String(tab->slotIndex()); // fallback
-
-    if (altHeld)
+    // -----------------------------------------------------------------
+    // B4-K7: Route .ck tabs through the ChucK compile→load→execute path.
+    // Ctrl+Enter and Ctrl+Alt+Enter both evaluate the entire .ck source —
+    // ChucK does not have Tidal-style "Eval_Block" semantics, so the
+    // whole file is always compiled.
+    // -----------------------------------------------------------------
+    if (tab->isChuckTab())
     {
-        // Ctrl+Alt+Enter — evaluate entire buffer (Req 23.3)
-        const juce::String text = tab->document().getAllContent();
-        evalOnWorkerThread(tab, slotName, text);
+        const juce::String code = tab->document().getAllContent();
+        evalCkOnWorkerThread(tab, code);
         return true;
     }
 
-    // Ctrl+Enter — evaluate Eval_Block (Req 23.1, 23.2)
-    const int cursorLine = tab->editor().getCaretPos().getLineNumber();
-    const auto block = extractEvalBlock(tab->document(), cursorLine);
-
-    if (!block.has_value())
-    {
-        // Cursor is on a blank line (Req 23.2)
-        showStatus("Cursor is on a blank line \xe2\x80\x94 nothing to evaluate");
-        return true;
-    }
-
-    evalOnWorkerThread(tab, slotName, *block);
-    return true;
-}
+    // -----------------------------------------------------------------
+    // Mini-notation path (existing — .hathor tabs)
+    // -----------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
 // extractEvalBlock — maximal contiguous non-blank lines containing cursorLine
@@ -914,6 +934,69 @@ void EditorArea::evalOnWorkerThread(HathorTab* tab,
                     }
                 });
         });
+}
+
+// ---------------------------------------------------------------------------
+// B4-K7: .ck tab evaluation — compile→load→execute path
+// ---------------------------------------------------------------------------
+
+void EditorArea::evalCkOnWorkerThread(HathorTab* tab,
+                                       const juce::String& code)
+{
+    HathorTab* tabPtr = tab;
+    const int slotIdx = tab->slotIndex();
+
+    // Set "compiling" state immediately so the user gets feedback.
+    juce::MessageManager::callAsync([this, tabPtr]() {
+        for (const auto& t : tabs_)
+        {
+            if (t.get() == tabPtr)
+            {
+                tabPtr->setCkEvalState(HathorTab::CkevalState::Compiling);
+                break;
+            }
+        }
+    });
+
+    // Dispatch ckEval on a detached thread. The AudioEngineFacade::ckEval
+    // method sends ck_compile via the control plane and returns synchronously
+    // (bounded 5s timeout).
+    std::thread([this, tabPtr, slotIdx, code = code.toStdString()]()
+    {
+        const bool ok = audio_.ckEval(slotIdx, code);
+
+        // Marshal result to the JUCE message thread.
+        juce::MessageManager::callAsync(
+            [this, tabPtr, slotIdx, ok]() mutable
+            {
+                // Verify the tab is still open.
+                bool tabStillOpen = false;
+                for (const auto& t : tabs_)
+                {
+                    if (t.get() == tabPtr)
+                    {
+                        tabStillOpen = true;
+                        break;
+                    }
+                }
+
+                if (!tabStillOpen)
+                    return;
+
+                if (ok)
+                {
+                    tabPtr->clearUnsavedDot();
+                    tabPtr->setCkEvalState(HathorTab::CkevalState::Running);
+                    showStatus("\xe2\x9c\x93 compiled (Ctrl+Enter: re-eval, Play/Stop: stop)");
+                }
+                else
+                {
+                    const std::string qStatus = audio_.queryCkTab(slotIdx);
+                    tabPtr->setCkEvalState(HathorTab::CkevalState::Error);
+                    showStatus("ChucK compile error: " + juce::String(qStatus));
+                }
+            });
+    }).detach();
 }
 
 } // namespace hathor::ui
