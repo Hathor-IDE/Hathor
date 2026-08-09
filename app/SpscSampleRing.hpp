@@ -82,8 +82,8 @@ public:
     // -----------------------------------------------------------------------
     // push() — producer thread only (B4-K1: no back-pressure)
     //
-    // Writes a single float sample.  If the ring is full, drops the oldest
-    // unread sample by advancing readIdx_ before committing the new write.
+    // Writes a single float sample.  If the ring is full (producer has lapped
+    // the consumer), drops the oldest unread sample by advancing readIdx_.
     // The per-slot seqlock ensures the consumer never observes a torn write.
     // -----------------------------------------------------------------------
     void push(float sample) noexcept
@@ -105,11 +105,15 @@ public:
         const uint32_t nextW = wIdx + 1u;
         writeIdx_.store(nextW, std::memory_order_release);
 
-        // Lap detection: if nextW == readIdx_ (wrapped) the consumer is
-        // stalled.  Advance readIdx_ by 1 to discard the oldest unread
-        // sample (drop-oldest overflow policy).
+        // Lap detection: if producer has advanced more than Capacity items
+        // past the consumer, the ring is full — silently discard oldest by
+        // advancing readIdx_ (drop-oldest overflow policy).
+        //
+        // Using subtraction on uint32_t indices: nextW - rIdx is the number of
+        // items in the ring after this push.  When it exceeds Capacity, the
+        // oldest slot has been (or is about to be) overwritten.
         const uint32_t rIdx = readIdx_.load(std::memory_order_acquire);
-        if ((nextW & kMask) == (rIdx & kMask) && nextW != rIdx) {
+        if (nextW - rIdx > Capacity) {
             readIdx_.store(rIdx + 1u, std::memory_order_release);
         }
     }
