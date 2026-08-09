@@ -27,6 +27,7 @@
 #include <string>
 #include <vector>
 #include <variant>
+#include <optional>
 
 #include "ExplorerFileTypes.hpp"
 
@@ -49,6 +50,49 @@ struct SongNode
         : name(std::move(n)), path(std::move(p)), fileType(ft) {}
 };
 
+/// A managed logical asset — e.g. a ChucK instrument represented as a single
+/// entry that may have a .ck source and/or a baked .wav audio component.
+///
+/// B8-K5: `.hathor_assets/chuck_instruments/acid_bass.ck` + `acid_bass.wav`
+/// is presented as a single `acid_bass` instrument node under an
+/// `Instruments` category, rather than two unrelated files.
+///
+/// The physical filesystem layout is never modified — the managed node
+/// resolves back to the real .ck and .wav paths.
+struct AssetNode
+{
+    /// The asset category (e.g. "Instruments").  This is the display name of
+    /// the managed category folder, not a filesystem path.
+    std::string              category;
+
+    /// The logical asset name (e.g. "acid_bass") — the stem shared by the
+    /// .ck source and .wav rendering.
+    std::string              name;
+
+    /// Path to the .ck source file, if it exists.
+    std::optional<std::filesystem::path> ckSource;
+
+    /// Path to the baked .wav file, if it exists.
+    std::optional<std::filesystem::path> wavAsset;
+
+    /// True if the .wav has been baked (exists on disk).
+    bool hasBakedAudio() const noexcept { return wavAsset.has_value(); }
+
+    /// True if the .ck source exists on disk.
+    bool hasSource() const noexcept { return ckSource.has_value(); }
+
+    AssetNode() = default;
+
+    AssetNode(std::string cat, std::string n,
+              std::optional<std::filesystem::path> ck,
+              std::optional<std::filesystem::path> wav)
+        : category(std::move(cat))
+        , name(std::move(n))
+        , ckSource(std::move(ck))
+        , wavAsset(std::move(wav))
+    {}
+};
+
 /// A folder (album) node in the tree.
 struct FolderNode
 {
@@ -58,12 +102,29 @@ struct FolderNode
     std::vector<FolderNode>          folders;   ///< child folders (sorted)
     std::vector<SongNode>            songs;     ///< child song files (sorted)
 
+    /// Managed logical assets synthesized from `.hathor_assets`.
+    /// Each entry is a category (e.g. "Instruments") → list of asset nodes.
+    /// Populated by the managed-directory walker; empty for ordinary folders.
+    std::vector<FolderNode>          managedCategories;  ///< category folder nodes
+    std::vector<AssetNode>           managedAssets;       ///< logical asset leaves
+
+    // Convenience accessor: true if this FolderNode is a managed category
+    // folder (e.g. "Instruments") synthesized from .hathor_assets.
+    // A managed category is distinguished by having managedAssets populated
+    // and a non-empty path pointing inside .hathor_assets.
+    bool isManagedCategory() const noexcept
+    {
+        return !name.empty() && !managedAssets.empty()
+            && path.has_parent_path()
+            && path.parent_path().filename() == ".hathor_assets";
+    }
+
     FolderNode() = default;
 
     FolderNode(std::string n, std::filesystem::path p)
         : name(std::move(n)), path(std::move(p)), expanded(false) {}
 
-    bool isEmpty() const noexcept { return folders.empty() && songs.empty(); }
+    bool isEmpty() const noexcept { return folders.empty() && songs.empty() && managedAssets.empty(); }
 };
 
 // ---------------------------------------------------------------------------
@@ -99,8 +160,15 @@ public:
     FolderNode buildTree(const std::filesystem::path& rootDir) noexcept;
 
 private:
-    /// Recursive helper — builds children of @p dir into @p out.
+    /// Recursively build children of @p dir into @p out.
     void buildChildren(const std::filesystem::path& dir, FolderNode& out) noexcept;
+
+    /// B8-K5: Walk a managed `.hathor_assets` directory and synthesize
+    /// logical asset nodes (Instrument category + instrument entries)
+    /// into @p parentOut's managedCategories / managedAssets collections.
+    /// The physical filesystem structure is never modified.
+    void buildManagedAssets(const std::filesystem::path& assetsDir,
+                            FolderNode&                parentOut) noexcept;
 };
 
 } // namespace hathor::ui

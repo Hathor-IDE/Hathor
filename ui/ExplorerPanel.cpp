@@ -12,6 +12,9 @@
 
 #include "ExplorerPanel.hpp"
 
+// juce_gui_extra for juce::DirectoryWatcher (B8-K5 §9 filesystem sync)
+#include <juce_gui_extra/juce_gui_extra.h>
+
 namespace hathor::ui {
 
 // ---------------------------------------------------------------------------
@@ -38,6 +41,22 @@ ExplorerPanel::ExplorerPanel()
     treeView_.setIndentSize(16);
     addAndMakeVisible(treeView_);
 
+    // B8-K5 §9: Set up filesystem watching so the managed view stays in sync
+    // with external changes (new instruments, re-bakes, deletions, renames).
+    // DirectoryWatcher fires on a background thread and the callback posts
+    // back to the message thread via MessageManager::callAsync.
+    dirWatcher_ = std::make_unique<juce::DirectoryWatcher>("", false);
+    dirWatcher_->addListener(
+        [this](const juce::String&)
+        {
+            // Fire-and-forget: rebuild the tree on any filesystem change
+            // within the watched directory.  The JUCE message-thread guard
+            // ensures refresh() only runs on the UI thread.
+            if (juce::MessageManager::getInstanceWithoutCreating() != nullptr)
+                juce::MessageManager::callAsync([this]() { refresh(); });
+        },
+        juce::StringRef("hathor-explorer"));
+
     // Build the initial tree. If appProperties_ is set later, restoreLastDirectory
     // will update the directory and rebuild.
     refresh();
@@ -54,6 +73,13 @@ void ExplorerPanel::setDirectory(const juce::File& dir)
 
     directory_ = dir;
 
+    // B8-K5 §9: Update the watched directory so the managed view stays
+    // in sync with filesystem changes.
+    if (dirWatcher_)
+    {
+        dirWatcher_->setDirectory(dir.getFullPathName(), false);
+    }
+
     // Persist the new directory for next launch.
     saveLastDirectory();
 
@@ -64,10 +90,25 @@ void ExplorerPanel::restoreLastDirectoryAndRefresh()
 {
     const juce::File restored = restoreLastDirectory();
     if (restored.isDirectory())
+    {
         directory_ = restored;
+        // B8-K5 §9: point the watcher at the restored directory.
+        if (dirWatcher_)
+            dirWatcher_->setDirectory(directory_.getFullPathName(), false);
+    }
     // If no persisted directory, keep the current one (cwd fallback).
 
     refresh();
+}
+
+void ExplorerPanel::handleFilesystemChange()
+{
+    // Called by the DirectoryWatcher callback on a background thread.
+    // Marshal to the message thread to rebuild the tree safely.
+    if (juce::MessageManager::getInstanceWithoutCreating() != nullptr)
+        juce::MessageManager::callAsync([this]() { refresh(); });
+    else
+        refresh(); // no message manager (e.g. in tests) — refresh directly
 }
 
 void ExplorerPanel::refresh()
@@ -91,14 +132,16 @@ void ExplorerPanel::buildRootItem()
     if (!rootData_)
         return;
 
-    // Create the callback that fires when a song is clicked.
+    // Create the callback that fires when a song file is clicked.
+    // This is shared for both ordinary song files and managed instrument
+    // .ck source files (B8-K5) — both open in the EditorArea.
     auto callback = [this](const juce::File& file)
     {
         if (onFileClicked)
             onFileClicked(file);
     };
 
-    rootItem_ = std::make_unique<FolderTreeItem>(*rootData_, callback);
+    rootItem_ = std::make_unique<FolderTreeItem>(*rootData_, callback, callback);
 }
 
 // ---------------------------------------------------------------------------

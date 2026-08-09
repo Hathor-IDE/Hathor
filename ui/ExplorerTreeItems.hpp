@@ -76,6 +76,50 @@ private:
 };
 
 // ---------------------------------------------------------------------------
+// AssetTreeItem — a logical managed asset (e.g. a ChucK instrument)
+// ---------------------------------------------------------------------------
+
+/**
+ * AssetTreeItem
+ *
+ * A TreeViewItem representing a managed logical asset (B8-K5).
+ * Instead of exposing the raw .ck and .wav files separately, a single
+ * instrument entry (e.g. "acid_bass") represents the pair:
+ *   source → acid_bass.ck
+ *   audio  → acid_bass.wav  (may be absent if not yet baked)
+ *
+ * Clicking/double-clicking opens the .ck source in the editor.  The .wav
+ * is associated with the instrument and registered in the SampleBank.
+ *
+ * The asset resolves back to the real filesystem paths — no shadow copies.
+ */
+class AssetTreeItem : public juce::TreeViewItem
+{
+public:
+    AssetTreeItem(AssetNode node, SongClickedCallback onOpenSource);
+    ~AssetTreeItem() override = default;
+
+    // juce::TreeViewItem overrides
+    void paintItem(juce::Graphics& g, int width, int height) override;
+    void itemOpennessChanged(bool isOpen) override;
+    bool mightContainSubItems() override { return false; }
+    void itemClicked(const juce::MouseEvent& e) override;
+    void itemDoubleClicked(const juce::MouseEvent& e) override;
+
+    /// The .ck source file, or an empty File if no source exists.
+    juce::File sourceFile() const noexcept;
+
+    /// The baked .wav file, or an empty File if not yet baked.
+    juce::File audioFile() const noexcept;
+
+private:
+    AssetNode          node_;
+    SongClickedCallback onSourceClicked_;
+
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(AssetTreeItem)
+};
+
+// ---------------------------------------------------------------------------
 // FolderTreeItem — a branch node for a directory
 // ---------------------------------------------------------------------------
 
@@ -86,11 +130,16 @@ private:
  * FolderNode data and lazily builds child tree items when first expanded.
  *
  * The root folder is expanded by default. Child folders start collapsed.
+ *
+ * Managed category folders (synthesized from .hathor_assets, e.g. "Instruments")
+ * are also FolderTreeItem instances — they contain logical AssetTreeItem
+ * children rather than raw filesystem entries.
  */
 class FolderTreeItem : public juce::TreeViewItem
 {
 public:
-    FolderTreeItem(FolderNode node, SongClickedCallback onClicked);
+    FolderTreeItem(FolderNode node, SongClickedCallback onClicked,
+                   SongClickedCallback onSourceClicked = nullptr);
     ~FolderTreeItem() override = default;
 
     // juce::TreeViewItem overrides
@@ -102,7 +151,8 @@ public:
 
 private:
     FolderNode        node_;          ///< owned copy of the folder data
-    SongClickedCallback onSongClicked_; ///< propagated to child items
+    SongClickedCallback onSongClicked_;       ///< propagated to child SongTreeItem
+    SongClickedCallback onSourceClicked_;      ///< propagated to child AssetTreeItem
     bool              childrenBuilt_{ false }; ///< true once children are added
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(FolderTreeItem)

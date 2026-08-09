@@ -106,12 +106,132 @@ void SongTreeItem::itemDoubleClicked(const juce::MouseEvent& /*e*/)
 }
 
 // ===========================================================================
+// AssetTreeItem — B8-K5: managed logical ChucK instrument
+// ===========================================================================
+
+AssetTreeItem::AssetTreeItem(AssetNode node, SongClickedCallback onOpenSource)
+    : node_(std::move(node)),
+      onSourceClicked_(std::move(onOpenSource))
+{
+}
+
+void AssetTreeItem::paintItem(juce::Graphics& g, int width, int height)
+{
+    const Palette& palette = paletteFor(*this);
+
+    const juce::Colour textCol     = palette.textPrimary;
+    const juce::Colour mutedCol    = palette.textSecondary;
+
+    // Icon + label layout
+    const int iconSize = 12;
+    const int iconX = 2;
+    const int iconY = (height - iconSize) / 2;
+    const int textX = iconX + iconSize + 6;
+    const int textW = width - textX - 12;
+
+    // Icon: an instrument glyph — a small rectangle with a wave/note symbol
+    // to distinguish from ordinary .ck song files.
+    g.setColour(textCol.withAlpha(0.7f));
+    g.fillRect(iconX, iconY, iconSize, iconSize);
+    g.setColour(palette.accent);
+    // Draw a small "sound wave" — two vertical bars indicating an audio asset.
+    const int barW = 2;
+    const int gap = 1;
+    g.fillRect(iconX + 2, iconY + 2, barW, iconSize - 4);
+    g.fillRect(iconX + 2 + barW + gap, iconY + 4, barW, iconSize - 6);
+    g.fillRect(iconX + 2 + (barW + gap) * 2, iconY + 3, barW, iconSize - 5);
+
+    // Draw the logical instrument name (stem, not ".ck" / ".wav")
+    g.setColour(textCol);
+    g.setFont(HathorLookAndFeel::fontRegular(13.0f));
+    g.drawText(juce::String(node_.name), textX, 0, textW, height,
+               juce::Justification::centredLeft, true);
+
+    // Status badge: show whether the instrument is baked
+    if (node_.hasBakedAudio())
+    {
+        // "baked" dot — green, like a "ready" indicator
+        const juce::Colour badgeCol = palette.accent;
+        const int dotSize = 6;
+        const int dotX = width - dotSize - 4;
+        const int dotY = (height - dotSize) / 2;
+        g.setColour(badgeCol);
+        g.fillEllipse(static_cast<float>(dotX),
+                      static_cast<float>(dotY),
+                      static_cast<float>(dotSize),
+                      static_cast<float>(dotSize));
+    }
+    else if (node_.hasSource())
+    {
+        // "needs bake" indicator — amber dot, indicating source exists but
+        // no .wav yet.
+        g.setColour(palette.warning);
+        const int dotSize = 6;
+        const int dotX = width - dotSize - 4;
+        const int dotY = (height - dotSize) / 2;
+        g.fillEllipse(static_cast<float>(dotX),
+                      static_cast<float>(dotY),
+                      static_cast<float>(dotSize),
+                      static_cast<float>(dotSize));
+    }
+
+    // Show source indicator (muted suffix)
+    const juce::String suffix = node_.hasBakedAudio()
+        ? "  baked"
+        : (node_.hasSource() ? "  source-only" : "  audio-only");
+    if (!suffix.isEmpty())
+    {
+        g.setColour(mutedCol);
+        g.setFont(HathorLookAndFeel::fontRegular(11.0f));
+        g.drawText(suffix, textX, 0, textW, height,
+                   juce::Justification::centredRight, true);
+    }
+}
+
+void AssetTreeItem::itemOpennessChanged(bool /*isOpen*/)
+{
+    // Assets are leaves — nothing to do.
+}
+
+void AssetTreeItem::itemClicked(const juce::MouseEvent& /*e*/)
+{
+    // Clicking an instrument opens its .ck source for editing (B8-K5 §4).
+    // If no source exists, the .wav is still associated but there's
+    // nothing to open — the click is a no-op in that case.
+    if (onSourceClicked_)
+        if (const juce::File f = sourceFile(); f.getFullPathName().isNotEmpty())
+            onSourceClicked_(f);
+}
+
+void AssetTreeItem::itemDoubleClicked(const juce::MouseEvent& /*e*/)
+{
+    // Double-click: same as single-click — open .ck source.
+    itemClicked(juce::MouseEvent{});
+}
+
+juce::File AssetTreeItem::sourceFile() const noexcept
+{
+    if (node_.hasSource() && node_.ckSource)
+        return juce::File(juce::String(node_.ckSource->string()));
+    return {};
+}
+
+juce::File AssetTreeItem::audioFile() const noexcept
+{
+    if (node_.hasBakedAudio() && node_.wavAsset)
+        return juce::File(juce::String(node_.wavAsset->string()));
+    return {};
+}
+
+// ===========================================================================
 // FolderTreeItem
 // ===========================================================================
 
-FolderTreeItem::FolderTreeItem(FolderNode node, SongClickedCallback onClicked)
+FolderTreeItem::FolderTreeItem(FolderNode node, SongClickedCallback onClicked,
+                               SongClickedCallback onSourceClicked)
     : node_(std::move(node)),
-      onSongClicked_(std::move(onClicked))
+      onSongClicked_(std::move(onClicked)),
+      onSourceClicked_(std::move(onSourceClicked))
 {
     // Root is expanded by default; child folders inherit their node's
     // expanded flag (false for children).
@@ -146,8 +266,11 @@ void FolderTreeItem::paintItem(juce::Graphics& g, int width, int height)
     g.drawText(juce::String(node_.name), textX, 0, textW, height,
                juce::Justification::centredLeft, true);
 
-    // Show child count as muted suffix
-    const int childCount = static_cast<int>(node_.folders.size() + node_.songs.size());
+    // Show child count as muted suffix — include managed assets in the count.
+    const int childCount = static_cast<int>(node_.folders.size()
+                                          + node_.songs.size()
+                                          + node_.managedCategories.size()
+                                          + node_.managedAssets.size());
     if (childCount > 0)
     {
         const juce::String suffix = "(" + juce::String(childCount) + ")";
@@ -168,8 +291,16 @@ void FolderTreeItem::itemOpennessChanged(bool isOpen)
         // Add child folders first.
         for (const auto& childFolder : node_.folders)
         {
-            auto childItem = std::make_unique<FolderTreeItem>(childFolder, onSongClicked_);
+            auto childItem = std::make_unique<FolderTreeItem>(childFolder, onSongClicked_, onSourceClicked_);
             addSubItem(childItem.release());
+        }
+
+        // Add managed category folders (B8-K5).  These are synthesized from
+        // .hathor_assets and contain logical AssetTreeItem children.
+        for (const auto& managedCat : node_.managedCategories)
+        {
+            auto catItem = std::make_unique<FolderTreeItem>(managedCat, onSongClicked_, onSourceClicked_);
+            addSubItem(catItem.release());
         }
 
         // Add song leaves.
@@ -179,13 +310,24 @@ void FolderTreeItem::itemOpennessChanged(bool isOpen)
             addSubItem(songItem.release());
         }
 
+        // Add managed logical asset leaves (B8-K5).  These are direct
+        // children of the root folder (synthesized from .hathor_assets).
+        for (const auto& asset : node_.managedAssets)
+        {
+            auto assetItem = std::make_unique<AssetTreeItem>(asset, onSourceClicked_);
+            addSubItem(assetItem.release());
+        }
+
         childrenBuilt_ = true;
     }
 }
 
 bool FolderTreeItem::mightContainSubItems()
 {
-    return !node_.folders.empty() || !node_.songs.empty();
+    return !node_.folders.empty()
+        || !node_.songs.empty()
+        || !node_.managedCategories.empty()
+        || !node_.managedAssets.empty();
 }
 
 void FolderTreeItem::itemClicked(const juce::MouseEvent& /*e*/)

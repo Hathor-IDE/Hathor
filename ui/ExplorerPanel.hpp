@@ -78,6 +78,12 @@ public:
     /// is used. Rebuilds the tree in-place.
     void restoreLastDirectoryAndRefresh();
 
+    /// Notify the panel that the project directory's filesystem contents
+    /// may have changed externally (e.g. a new .ck instrument was baked).
+    /// This is wired to juce::DirectoryWatcher so the managed view stays
+    /// in sync with the real filesystem (B8-K5 §9).
+    void handleFilesystemChange();
+
     //==========================================================================
     // juce::Component overrides
     void paint(juce::Graphics& g) override;
@@ -104,6 +110,11 @@ private:
     std::unique_ptr<FolderTreeItem> rootItem_;
     juce::TreeView                treeView_;
     juce::Label                   headerLabel_;
+
+    /// B8-K5 §9: filesystem watcher so the managed view reflects external
+    /// changes (new instruments, re-bakes, deletions, renames) without
+    /// requiring a manual refresh.
+    std::unique_ptr<juce::DirectoryWatcher> dirWatcher_;
 
     // Non-owning — set by MainWindow after ApplicationProperties is created.
     juce::ApplicationProperties*  appProperties_{ nullptr };
