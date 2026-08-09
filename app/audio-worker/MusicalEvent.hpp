@@ -93,7 +93,7 @@ struct MusicalEvent {
         , vmGeneration(0)
     {}
 
-    // Full constructor for explicit construction.
+    // Full constructor for explicit construction (move payload).
     MusicalEvent(EventType   t,
                  ParamMap  && p,
                  Rational    musTs,
@@ -104,6 +104,25 @@ struct MusicalEvent {
                  uint64_t    gen   = 0)
         : type(t)
         , payload(std::move(p))
+        , musicalTs(musTs)
+        , sampleTs(sampTs)
+        , localExecTs(locTs)
+        , sequence(seq)
+        , targetTabId(tabId)
+        , vmGeneration(gen)
+    {}
+
+    // Full constructor for explicit construction (copy payload).
+    MusicalEvent(EventType   t,
+                 const ParamMap& p,
+                 Rational    musTs,
+                 uint64_t    sampTs,
+                 uint64_t    locTs,
+                 uint64_t    seq,
+                 uint8_t     tabId = 0,
+                 uint64_t    gen   = 0)
+        : type(t)
+        , payload(p)
         , musicalTs(musTs)
         , sampleTs(sampTs)
         , localExecTs(locTs)

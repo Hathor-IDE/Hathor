@@ -822,6 +822,38 @@ bool EditorArea::handleKeyPress(const juce::KeyPress& key, HathorTab* tab)
     // Mini-notation path (existing — .hathor tabs)
     // -----------------------------------------------------------------
 
+    // Determine slot name from the AudioEngine (e.g. "d0").
+    // If the engine hasn't registered the slot yet, derive a default name.
+    juce::String slotName;
+    const std::string engineName = audio_.slotName(tab->slotIndex());
+    if (!engineName.empty())
+        slotName = juce::String(engineName);
+    else
+        slotName = "d" + juce::String(tab->slotIndex()); // fallback
+
+    if (altHeld)
+    {
+        // Ctrl+Alt+Enter — evaluate entire buffer (Req 23.3)
+        const juce::String text = tab->document().getAllContent();
+        evalOnWorkerThread(tab, slotName, text);
+        return true;
+    }
+
+    // Ctrl+Enter — evaluate Eval_Block (Req 23.1, 23.2)
+    const int cursorLine = tab->editor().getCaretPos().getLineNumber();
+    const auto block = extractEvalBlock(tab->document(), cursorLine);
+
+    if (!block.has_value())
+    {
+        // Cursor is on a blank line (Req 23.2)
+        showStatus("Cursor is on a blank line \xe2\x80\x94 nothing to evaluate");
+        return true;
+    }
+
+    evalOnWorkerThread(tab, slotName, *block);
+    return true;
+}
+
 // ---------------------------------------------------------------------------
 // extractEvalBlock — maximal contiguous non-blank lines containing cursorLine
 // ---------------------------------------------------------------------------

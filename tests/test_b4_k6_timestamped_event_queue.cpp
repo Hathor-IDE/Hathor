@@ -677,10 +677,11 @@ TEST_CASE("EventPublisher — createEventFromPattern preserves musical and sampl
     const hathor::Rational cycleStart = hathor::Rational(44100, 22050); // 2.0 cycles
 
     // Create a pattern event with a specific Arc
-    Event<ParamMap> hathorEv;
-    hathorEv.active = Arc(Rational(5, 2), Rational(3, 1)); // starts at cycle 2.5
-    hathorEv.whole = hathorEv.active;
-    hathorEv.value.set(hathor::keys::kS, hathor::Value(std::string("snare")));
+    // Event<ParamMap> has no default constructor — construct with Arc
+    hathor::Arc arc(hathor::Rational(5, 2), hathor::Rational(3, 1)); // starts at cycle 2.5
+    hathor::ParamMap pm;
+    pm.set(hathor::keys::kS, hathor::Value(std::string("snare")));
+    Event<hathor::ParamMap> hathorEv{arc, arc, pm};
 
     const uint64_t vmGen = 1;
     MusicalEvent me = publisher.createEventFromPattern(hathorEv, cycleStart, clockNow,
@@ -709,12 +710,10 @@ TEST_CASE("EventPublisher — sequential events get monotonic sequence numbers",
     pm.set(hathor::keys::kS, hathor::Value(std::string("bd")));
 
     // Generate 100 events
-    uint64_t lastSeq = 0;
     for (uint64_t i = 0; i < 100; ++i) {
         MusicalEvent ev(hathor::EventType::NoteOn, std::move(pm),
                         Rational(i), 44100 + i, 44100 + i, 0, 0, 1);
         REQUIRE(publisher.publishEvent(ev));
-        lastSeq = ev.sequence;
         REQUIRE(ev.sequence == i);
     }
 }

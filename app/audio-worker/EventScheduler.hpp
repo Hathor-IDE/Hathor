@@ -90,7 +90,8 @@ public:
      * (min-heap) sorted by (localExecTs, sequence). Events targeting stale
      * VM generations are dropped. Late events are dropped.
      */
-    uint32_t stageEvents(SpscEventRing<audio_worker::kEventRingCapacity>& ring,
+    template<size_t RingCapacity>
+    uint32_t stageEvents(SpscEventRing<RingCapacity>& ring,
                          ClockSync& clock) {
         uint32_t staged = 0;
         uint32_t heapSize = m_stagedCount; // local copy; only off-RT thread writes
@@ -107,8 +108,10 @@ public:
             // --- VM generation guard ---
             // Drop events targeting a stale VM generation
             if (event.vmGeneration < currentGen) {
-                std::printf("[EventScheduler] Dropped: stale VM gen (event=%lu, current=%lu, seq=%lu)\n",
-                            event.vmGeneration, currentGen, event.sequence);
+                std::printf("[EventScheduler] Dropped: stale VM gen (event=%llu, current=%llu, seq=%llu)\n",
+                            static_cast<unsigned long long>(event.vmGeneration),
+                            static_cast<unsigned long long>(currentGen),
+                            static_cast<unsigned long long>(event.sequence));
                 continue;
             }
             // Events for future generations: skip (producer should not send
@@ -123,9 +126,11 @@ public:
             // --- Late event check ---
             if (static_cast<int64_t>(event.localExecTs) <
                 static_cast<int64_t>(localNow) - kLateGraceSamples) {
-                std::printf("[EventScheduler] Dropped late: seq=%lu, target=%lu, now=%lu, diff=%ld\n",
-                            event.sequence, event.localExecTs, localNow,
-                            static_cast<int64_t>(event.localExecTs) - static_cast<int64_t>(localNow));
+                std::printf("[EventScheduler] Dropped late: seq=%llu, target=%llu, now=%llu, diff=%lld\n",
+                            static_cast<unsigned long long>(event.sequence),
+                            static_cast<unsigned long long>(event.localExecTs),
+                            static_cast<unsigned long long>(localNow),
+                            static_cast<long long>(static_cast<int64_t>(event.localExecTs) - static_cast<int64_t>(localNow)));
                 continue;
             }
 
@@ -207,8 +212,10 @@ public:
             // --- Late event check ---
             if (static_cast<int64_t>(event.localExecTs) <
                 static_cast<int64_t>(localNow) - kLateGraceSamples) {
-                std::printf("[EventScheduler] Dropped late (shm): seq=%lu, target=%lu, now=%lu\n",
-                            event.sequence, event.localExecTs, localNow);
+                std::printf("[EventScheduler] Dropped late (shm): seq=%llu, target=%llu, now=%llu\n",
+                            static_cast<unsigned long long>(event.sequence),
+                            static_cast<unsigned long long>(event.localExecTs),
+                            static_cast<unsigned long long>(localNow));
                 continue;
             }
 

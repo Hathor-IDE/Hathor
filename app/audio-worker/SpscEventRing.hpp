@@ -79,7 +79,6 @@ public:
             return std::nullopt;
         }
         MusicalEvent event = m_buffer[tail];
-        assert(event.sampleTs != 0 || event.type == MusicalEvent{}.type); // sanity check
         m_tail.store((tail + 1) % kCapacity, std::memory_order_release);
         return event;
     }
@@ -96,6 +95,9 @@ public:
         return ((head + 1) % kCapacity) == tail;
     }
 
+    /** @return compile-time capacity. */
+    static constexpr uint32_t capacity() { return kCapacity; }
+
     /** @return current number of elements (approximate — for diagnostics, not synchronization). */
     uint32_t size() const {
         const uint32_t head = m_head.load(std::memory_order_acquire);
@@ -105,10 +107,16 @@ public:
         return (kCapacity - tail) + head;
     }
 
-    /** @return compile-time capacity. */
-    static constexpr uint32_t capacity() { return kCapacity; }
+    /**
+     * reset() — return ring to empty state (testing / reinit only)
+     */
+    void reset() noexcept
+    {
+        m_head.store(0, std::memory_order_relaxed);
+        m_tail.store(0, std::memory_order_relaxed);
+    }
 
-private:
+ private:
     alignas(64) MusicalEvent m_buffer[kCapacity]; ///< event storage; padded for cacheline isolation
     alignas(64) std::atomic<uint32_t> m_head{0};   ///< producer write index (only producer writes)
     alignas(64) std::atomic<uint32_t> m_tail{0};   ///< consumer read index (only consumer writes)

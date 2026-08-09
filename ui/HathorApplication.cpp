@@ -16,6 +16,7 @@
  */
 
 #include <cstdlib>
+#include <iostream>
 
 #include <juce_audio_devices/juce_audio_devices.h>
 #include <juce_audio_formats/juce_audio_formats.h>
@@ -120,6 +121,22 @@ public:
             return;
         }
 
+        // Start the audio worker process (B4-K7: needed for .ck tab eval).
+        // Resolve path as a sibling of the executable, same as hathor-mcp.
+        const std::string workerPath =
+            juce::File::getSpecialLocation(juce::File::currentExecutableFile)
+                .getSiblingFile("hathor-audio-worker")
+                .getFullPathName()
+                .toStdString();
+        const std::string workerError = audio_->startWorker(workerPath);
+        if (!workerError.empty())
+        {
+            // Worker failure is non-fatal — mini-notation still works.
+            // .ck tab eval will show error at eval time via hasWorker() check.
+            // Log to stderr for diagnosis but don't block startup.
+            std::cerr << "[HathorApplication] Worker startup: " << workerError << std::endl;
+        }
+
         // Construct ControlInterface (worker thread, worker stdin disabled in
         // GUI mode — ControlInterface::run() is not called here; dispatch() is
         // called directly from UI components on the worker thread pool).
@@ -142,6 +159,8 @@ public:
     {
         mainWindow_.reset();
         ci_.reset();
+        if (audio_)
+            audio_->shutdownWorker();
         audio_.reset();
         bank_.reset();
     }

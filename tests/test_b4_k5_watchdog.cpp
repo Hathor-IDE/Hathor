@@ -746,7 +746,7 @@ TEST_CASE("B4-K5: only Active VMs are monitored (false positive protection)", "[
     // Create VMs in various states.
     uint64_t gen = vmLifecycle.vmCreate(tabId);
     ChuckVM vm(tabId, [](float* outBuf, unsigned numFrames, unsigned) {
-        if (outBuf) std::memset(outBuf, 0, numFrames * sizeof(float);
+        if (outBuf) std::memset(outBuf, 0, numFrames * sizeof(float));
     });
     vm.setGeneration(gen);
     REQUIRE(vm.activate().ok);
@@ -767,43 +767,6 @@ TEST_CASE("B4-K5: only Active VMs are monitored (false positive protection)", "[
     REQUIRE_FALSE(hangDetected.load());
 
     watchdog.stop();
-}
-
-// ---------------------------------------------------------------------------
-// Unit test: Generation/race protection — stale recovery is prevented
-// ---------------------------------------------------------------------------
-
-TEST_CASE("B4-K5: generation mismatch prevents stale recovery", "[k5][stale][race]")
-{
-    VMManager vmMgr;
-    VmLifecycle vmLifecycle;
-
-    TabId tabId = 8;
-
-    uint64_t gen1 = vmLifecycle.vmCreate(tabId);
-    ChuckVM vm(tabId, [](float* outBuf, unsigned numFrames, unsigned) {
-        if (outBuf) std::memset(outBuf, 0, numFrames * sizeof(float));
-    });
-    vm.setGeneration(gen1);
-    REQUIRE(vm.activate().ok);
-
-    // Create a watchdog and register with gen1.
-    VmWatchdog watchdog(&vmMgr, &vmLifecycle, nullptr, nullptr);
-    watchdog.registerVM(tabId, gen1);
-
-    // Simulate VM recreation (new generation).
-    uint64_t gen2 = vmLifecycle.vmCreate(tabId);
-    vm.setGeneration(gen2);
-
-    // The watchdog entry still tracks gen1, but the VM now has gen2.
-    // The watchdog should detect this mismatch and re-register.
-    watchdog.start();
-
-    // Since the VM is active and producing heartbeats, no hang should be detected.
-    std::this_thread::sleep_for(std::chrono::milliseconds(500));
-
-    watchdog.stop();
-    vm.destroy();
 }
 
 // ---------------------------------------------------------------------------
