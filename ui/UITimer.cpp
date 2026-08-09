@@ -150,8 +150,18 @@ void UITimer::timerCallback()
     // setSlotRunningVisual() on each, so the button icon reflects the actual
     // armed/running state regardless of which path changed it.
     // -----------------------------------------------------------------------
-    if (onSyncSlotButtons)
-        onSyncSlotButtons();
-}
+     if (onSyncSlotButtons)
+         onSyncSlotButtons();
+
+     // -----------------------------------------------------------------------
+     // (e) C1: Now-playing highlight update
+     //
+     // Pass the drained events to the EditorArea so it can resolve
+     // sourceOffset → glyph bounds per-event, route by slotId, and apply
+     // the highlight overlay on the correct tab.
+     // -----------------------------------------------------------------------
+     if (onUpdateNowPlaying && !firedEvents_.empty())
+         onUpdateNowPlaying(firedEvents_);
+ }
 
 } // namespace hathor::ui

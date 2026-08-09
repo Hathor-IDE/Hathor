@@ -51,6 +51,13 @@ HathorTab::HathorTab(int slotIndex, const juce::File& file)
      // -----------------------------------------------------------------------
      document_.addListener(this);
 
+     // -----------------------------------------------------------------------
+     // C1: Register the playback highlight overlay as a child component.
+     // It sits on top of editor_ and paints only the transient highlight.
+     // -----------------------------------------------------------------------
+     addAndMakeVisible(highlightOverlay_);
+     highlightOverlay_.setInterceptsMouseClicks(false, false);
+
      addAndMakeVisible(editor_);
 
     // -----------------------------------------------------------------------
@@ -208,6 +215,77 @@ void HathorTab::setCkEvalState(CkevalState s) noexcept
     slotPlayButton_.repaint();
 }
 
+// ---------------------------------------------------------------------------
+// C1: Playback highlight overlay — HighlightOverlay implementation
+// ---------------------------------------------------------------------------
+
+void HathorTab::HighlightOverlay::paint(juce::Graphics& g)
+{
+    if (!active_ || highlightBounds_.isEmpty())
+        return;
+
+    const auto& palette = HathorLookAndFeel::fromComponent(*this).getPalette();
+
+    // Draw a semi-transparent accent overlay with a thin outline.
+    // Uses palette.accent with high alpha so it reads as "now playing"
+    // without obscuring the syntax highlighting beneath.
+    g.setColour(palette.accent.withAlpha(0.25f));
+    g.fillRect(highlightBounds_);
+
+    g.setColour(palette.accent.withAlpha(0.8f));
+    g.drawRect(highlightBounds_, 1);
+}
+
+void HathorTab::HighlightOverlay::setHighlight(
+    const juce::Rectangle<int>& bounds) noexcept
+{
+    const auto repaintRect =
+        highlightBounds_.toFloat().toCcwStandalone()
+            .toNearestInt().expanded(2).toFloat();
+    highlightBounds_ = bounds;
+    active_ = true;
+    // Repaint both old and new regions.
+    repaint();
+}
+
+void HathorTab::HighlightOverlay::clearHighlight() noexcept
+{
+    if (!active_)
+        return;
+    active_ = false;
+    repaint();
+}
+
+// ---------------------------------------------------------------------------
+// C1: setNowPlayingHighlight / clearNowPlayingHighlight
+// ---------------------------------------------------------------------------
+
+void HathorTab::setNowPlayingHighlight(std::size_t sourceOffset,
+                                       const juce::Rectangle<int>& glyphBounds) noexcept
+{
+    highlightBoundsPrev_ = highlightBounds_;
+    highlightOffset_     = sourceOffset;
+    highlightBounds_     = glyphBounds;
+    highlightActive_     = true;
+
+    // The overlay is a child of HathorTab, positioned to cover the editor.
+    // glyphBounds is in editor-local coordinates, so translate to the
+    // overlay's coordinate space (which matches the editor's since they
+    // share the same parent layout).
+    highlightOverlay_.setHighlight(glyphBounds);
+}
+
+void HathorTab::clearNowPlayingHighlight() noexcept
+{
+    if (!highlightActive_)
+        return;
+
+    highlightActive_     = false;
+    highlightBoundsPrev_ = highlightBounds_;
+    highlightBounds_     = {};
+    highlightOverlay_.clearHighlight();
+}
+
 void HathorTab::paintSlotPlayButton(juce::Graphics& /*g*/)
 {
     // Button is a juce::TextButton — paint is handled by JUCE.
@@ -233,6 +311,10 @@ void HathorTab::resized()
     // Editor fills the remaining space, below the button.
     const int editorTop = kButtonSize + kButtonMargin * 2;
     editor_.setBounds(0, editorTop, getWidth(), getHeight() - editorTop);
+
+    // Highlight overlay covers the same area as the editor so that glyph-box
+    // coordinates (editor-local) map directly to overlay-local coordinates.
+    highlightOverlay_.setBounds(0, editorTop, getWidth(), getHeight() - editorTop);
 }
 
 void HathorTab::lookAndFeelChanged()
@@ -265,6 +347,9 @@ void HathorTab::lookAndFeelChanged()
 
     // Re-apply button visual state to sync colours with the new palette.
     setSlotRunningVisual(slotRunning_);
+
+    // C1: repaint the highlight overlay so it picks up the new palette colours.
+    highlightOverlay_.repaint();
 }
 
 // ---------------------------------------------------------------------------

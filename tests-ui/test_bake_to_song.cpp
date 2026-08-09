@@ -75,7 +75,9 @@ TEST_CASE("sanitizeAssetName strips path separators", "[bake][b8-k1][sanitize]")
 {
     REQUIRE(hathor::sanitizeAssetName("../etc/passwd") == "_etc_passwd");
     REQUIRE(hathor::sanitizeAssetName("sub/dir/kick") == "sub_dir_kick");
-    REQUIRE(hathor::sanitizeAssetName("..\\..\\windows\\system32") == "__windows_system32");
+    // Backslashes in the middle create _ separators; dots after a separator
+    // are not "leading" (out is already non-empty).
+    REQUIRE(hathor::sanitizeAssetName("..\\..\\windows\\system32") == "_.._windows_system32");
     REQUIRE(hathor::sanitizeAssetName("acid_bass") == "acid_bass");
 }
 

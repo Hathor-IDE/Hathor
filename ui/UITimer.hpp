@@ -82,6 +82,13 @@ public:
     // button clicks).
     std::function<void()> onSyncSlotButtons;
 
+    // -----------------------------------------------------------------------
+    // C1: Now-playing highlight update
+    // -----------------------------------------------------------------------
+    // Installed by MainWindow after construction. Called at 60 Hz with the
+    // drained events vector so the editor can update the now-playing overlay.
+    std::function<void(const std::vector<hathor::Event<hathor::ParamMap>>&)> onUpdateNowPlaying;
+
     // juce::Timer override — three-step drain/sync logic.
     void timerCallback() override;
 

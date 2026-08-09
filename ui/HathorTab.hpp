@@ -155,6 +155,30 @@ public:
     std::function<void()> onPlayStopClicked;
 
     // -----------------------------------------------------------------------
+    // C1 — Editor now-playing highlight
+    // -----------------------------------------------------------------------
+    // Transient playback overlay: highlights the glyph box of the atom
+    // currently sounding in this tab's slot.  Driven exclusively by the
+    // B2 (slot, sourceOffset) data path via UITimer — never from the audio
+    // thread or cursor state.  Does NOT modify the document, tokeniser,
+    // AST, or static syntax highlighting.
+
+    /// Set the now-playing highlight for this tab.
+    /// Called by EditorArea from UITimer when the latest playback event
+    /// targets this tab's slot.
+    ///
+    /// @param sourceOffset  Byte offset of the sounding atom in the document.
+    /// @param glyphBounds  Pixel-rectangle of the atom's glyph box (resolved
+    ///                     from sourceOffset by EditorArea).  Must be in
+    ///                     editor component local coordinates.
+    void setNowPlayingHighlight(std::size_t sourceOffset,
+                                const juce::Rectangle<int>& glyphBounds) noexcept;
+
+    /// Clear the now-playing highlight (slot stopped or no event).
+    /// Repaints the previously highlighted region.
+    void clearNowPlayingHighlight() noexcept;
+
+    // -----------------------------------------------------------------------
     // juce::Component overrides
     // -----------------------------------------------------------------------
     void resized() override;
@@ -166,6 +190,29 @@ public:
     void lookAndFeelChanged() override;
 
 private:
+    // -----------------------------------------------------------------------
+    // C1: Playback highlight overlay component
+    // -----------------------------------------------------------------------
+    // A lightweight transparency overlay child of HathorTab, painted on top
+    // of editor_. Paints only the glyph-box highlight for the currently
+    // sounding atom. This preserves the editor's own painting (including
+    // static syntax highlighting) — the overlay is purely additive.
+    // -----------------------------------------------------------------------
+    class HighlightOverlay : public juce::Component
+    {
+    public:
+        HighlightOverlay() { setInterceptsMouseClicks(false, false); }
+        void paint(juce::Graphics& g) override;
+        void setHighlight(const juce::Rectangle<int>& bounds) noexcept;
+        void clearHighlight() noexcept;
+    private:
+        juce::Rectangle<int> highlightBounds_;
+        bool active_ = false;
+        JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(HighlightOverlay)
+    };
+
+    HighlightOverlay highlightOverlay_;
+
     // -----------------------------------------------------------------------
     // juce::CodeDocument::Listener
     // -----------------------------------------------------------------------
@@ -200,6 +247,18 @@ private:
 
     // B4-K7: Per-tab .ck eval state (compiling / running / error / idle).
     CkevalState               ckEvalState_{ CkevalState::Idle };
+
+    // -----------------------------------------------------------------------
+    // C1: Now-playing highlight state (transient, UI-only)
+    // -----------------------------------------------------------------------
+    // This is playback overlay state — NOT part of the document or tokeniser.
+    // It is updated exclusively from the UITimer path (driven by B2's
+    // (slotId, sourceOffset) data) and cleared when the slot stops playing.
+    // -----------------------------------------------------------------------
+    bool                      highlightActive_{ false };
+    std::size_t               highlightOffset_{ 0 };   ///< source byte offset of current atom
+    juce::Rectangle<int>      highlightBounds_;        ///< current glyph box (editor-local)
+    juce::Rectangle<int>      highlightBoundsPrev_;    ///< previous box (for repaint)
 
     // Tokenisers for both file types.  Exactly one is active at a time;
     // the editor_ holds a non-owning pointer to whichever is active.

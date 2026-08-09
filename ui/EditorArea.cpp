@@ -764,6 +764,176 @@ void EditorArea::syncSlotButtonStates()
 }
 
 // ---------------------------------------------------------------------------
+// C1: Now-playing highlight update — called by UITimer each tick
+// ---------------------------------------------------------------------------
+
+void EditorArea::updateNowPlayingHighlight(
+    const std::vector<hathor::Event<hathor::ParamMap>>& events)
+{
+    // -----------------------------------------------------------------------
+    // Step 1: Build a set of (slotId, latest sourceOffset) from the events.
+    // We track the *latest* event per slot (by slotId) because the ring buffer
+    // may contain events from multiple slots in one frame, and we want the
+    // most recently fired atom per slot.
+    // -----------------------------------------------------------------------
+    // Since we coalesce per-slot, use a small fixed-capacity map (max 16 slots).
+    struct SlotLatest {
+        int8_t slotId;
+        std::size_t sourceOffset;
+        bool valid;
+    };
+    SlotLatest latest[hathor::AudioEngine::kNumSlots] = {};
+    for (int i = 0; i < hathor::AudioEngine::kNumSlots; ++i)
+        latest[i] = { static_cast<int8_t>(i), 0, false };
+
+    for (const auto& ev : events)
+    {
+        if (ev.slotId < 0 || ev.slotId >= static_cast<int8_t>(hathor::AudioEngine::kNumSlots))
+            continue;
+
+        // Only consider events with a non-zero sourceOffset (0 means no position).
+        if (ev.sourceOffset == 0)
+            continue;
+
+        // Track the latest offset per slot (events may arrive out of order).
+        // Since we want "now playing", pick any event from this slot's frame.
+        latest[ev.slotId].valid = true;
+        latest[ev.slotId].sourceOffset = ev.sourceOffset;
+    }
+
+    // -----------------------------------------------------------------------
+    // Step 2: Route each slot's latest offset to the corresponding tab.
+    // -----------------------------------------------------------------------
+    for (int i = 0; i < hathor::AudioEngine::kNumSlots; ++i)
+    {
+        if (!latest[i].valid)
+        {
+            // No events for this slot — clear its highlight if it was active.
+            for (const auto& t : tabs_)
+            {
+                if (t->slotIndex() == i && !t->isChuckTab())
+                {
+                    t->clearNowPlayingHighlight();
+                    break;
+                }
+            }
+            continue;
+        }
+
+        // Find the tab assigned to this slot.
+        HathorTab* targetTab = nullptr;
+        for (const auto& t : tabs_)
+        {
+            if (t->slotIndex() == i && !t->isChuckTab())
+            {
+                targetTab = t.get();
+                break;
+            }
+        }
+
+        if (targetTab == nullptr)
+        {
+            // No open tab for this slot — ignore (C1 §5.3: discard the highlight
+            // while preserving normal playback).
+            continue;
+        }
+
+        // Step 3: Resolve sourceOffset → glyph bounds in the editor.
+        const std::size_t offset = latest[i].sourceOffset;
+        juce::Rectangle<int> glyphBounds = resolveGlyphBounds(*targetTab, offset);
+
+        if (glyphBounds.isEmpty())
+        {
+            // Could not resolve — skip this update (C1 §4: skip rather than
+            // draw an incorrect box).
+            continue;
+        }
+
+        targetTab->setNowPlayingHighlight(offset, glyphBounds);
+    }
+}
+
+juce::Rectangle<int> EditorArea::resolveGlyphBounds(HathorTab& tab,
+                                                     std::size_t sourceOffset)
+{
+    // -----------------------------------------------------------------------
+    // Resolve a byte offset in the mini-notation source to the glyph bounds
+    // of the atom at that position in the editor.
+    //
+    // The sourceOffset corresponds to the byte position in the text that was
+    // evaluated (see evalOnWorkerThread / evalCkOnWorkerThread). For full-
+    // buffer eval (Ctrl+Alt+Enter) this is directly the document position.
+    // For eval-block eval (Ctrl+Enter) the block text is a subset of the
+    // document; we track the base offset per tab to translate.
+    // -----------------------------------------------------------------------
+    const juce::CodeDocument& doc = tab.document();
+    const int docLen = doc.getNumCharacters();
+    const int charIdx = static_cast<int>(sourceOffset);
+
+    if (charIdx < 0 || charIdx > docLen)
+        return {};
+
+    // -----------------------------------------------------------------------
+    // Create a CodeDocument::Position at the source offset, then ask the
+    // CodeEditorComponent for its on-screen glyph bounds.
+    // -----------------------------------------------------------------------
+    juce::CodeDocument::Position docPos(tab.document(), charIdx);
+
+    // The editor component maps document positions to pixel coordinates.
+    // getCharacterBounds returns the rectangle of the character at the
+    // given position, in the editor's local coordinate space (which matches
+    // the highlight overlay's coordinate space since they share the same
+    // parent layout in HathorTab::resized()).
+    juce::Rectangle<int> bounds = tab.editor().getCharacterBounds(docPos);
+
+    // If the position is invalid or produces a degenerate rect, bail out.
+    if (bounds.getWidth() <= 0 || bounds.getHeight() <= 0)
+        return {};
+
+    // Expand the bounds slightly to cover the full atom token (the character
+    // bounds may be just one character; we want to highlight the whole atom).
+    // The tokeniser produces tokens with known lengths — we can look at the
+    // line text to find the extent of the atom starting at this position.
+    const int lineNum = docPos.getLineNumber();
+    if (lineNum >= 0 && lineNum < doc.getNumLines())
+    {
+            const juce::String lineText = doc.getLine(lineNum);
+            const int col = docPos.getIndexInLine();
+
+            // Scan forward from col to find the end of the current atom.
+            // An atom is a maximal run of non-whitespace, non-special characters
+            // (matching the tokeniser's TK_ATOM rule).
+            int atomStart = col;
+            while (atomStart < lineText.length())
+            {
+                const juce::juce_wchar c = lineText[atomStart];
+                if (c == ' ' || c == '\t' || c == '\n' || c == '\r' ||
+                    c == '[' || c == ']' || c == '<' || c == '>' ||
+                    c == '*' || c == '/' || c == '!' || c == '~' ||
+                    c == '(' || c == ')' || c == ',')
+                    break;
+                ++atomStart;
+            }
+
+        if (atomStart > col)
+        {
+            // Get the bounds of the character at atomStart-1 to extend the rect.
+            juce::CodeDocument::Position endPos(tab.document(),
+                                                 docPos.getPosition() + (atomStart - col));
+            juce::Rectangle<int> endBounds = tab.editor().getCharacterBounds(endPos);
+
+            // Extend the original bounds to cover the full atom.
+            if (!endBounds.isEmpty())
+            {
+                bounds.setRight(endBounds.getRight());
+            }
+        }
+    }
+
+    return bounds;
+}
+
+// ---------------------------------------------------------------------------
 // B8-K6: Bake to Song
 // ---------------------------------------------------------------------------
 

@@ -268,13 +268,22 @@ MainWindow::MainWindow(AudioEngine& audio,
     // B1: Sync per-tab Play/Stop button visuals to the engine's slot state.
     // This runs at 60 Hz so the UI reflects slot state changes from any path
     // (button clicks, slot-play/slot-stop commands, etc.) — not just clicks.
-    uiTimer_->onSyncSlotButtons = [this]()
-    {
-        if (editorArea_)
-            editorArea_->syncSlotButtonStates();
-    };
+     uiTimer_->onSyncSlotButtons = [this]()
+     {
+         if (editorArea_)
+             editorArea_->syncSlotButtonStates();
+     };
 
-    setVisible(true);
+     // C1: Now-playing highlight — route drained events to the editor area
+     // so it can resolve sourceOffset → glyph bounds and paint the overlay.
+     uiTimer_->onUpdateNowPlaying = [this](
+         const std::vector<hathor::Event<hathor::ParamMap>>& events)
+     {
+         if (editorArea_)
+             editorArea_->updateNowPlayingHighlight(events);
+     };
+
+     setVisible(true);
 }
 
 MainWindow::~MainWindow()

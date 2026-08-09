@@ -38,6 +38,7 @@
 
 // App
 #include "../app/AudioEngine.hpp"
+#include "hathor/Event.hpp"
 
 // Control
 #include "../control/ControlInterface.hpp"
@@ -232,12 +233,29 @@ public:
       */
     bool handleKeyPress(const juce::KeyPress& key, HathorTab* tab);
 
-    /**
-     * Sync all tabs' Play/Stop button visuals to the engine's slot state (B1).
-     * Called from UITimer at 60 Hz so the UI reflects engine state changes
-     * from any path, not only button clicks.
-     */
-    void syncSlotButtonStates();
+     /**
+       * Sync all tabs' Play/Stop button visuals to the engine's slot state (B1).
+       * Called from UITimer at 60 Hz so the UI reflects engine state changes
+       * from any path, not only button clicks.
+       */
+     void syncSlotButtonStates();
+
+     // -----------------------------------------------------------------------
+     // C1: Now-playing highlight update path
+     // -----------------------------------------------------------------------
+     // UITimer calls this once per tick with the latest playback events.
+     // It resolves sourceOffset → glyph bounds per-event, routes by slotId
+     // to the correct HathorTab, and applies/clears the highlight overlay.
+     // Must run on the JUCE message thread only.
+     // -----------------------------------------------------------------------
+      void updateNowPlayingHighlight(
+          const std::vector<hathor::Event<hathor::ParamMap>>& events);
+
+    private:
+      /// Resolve a sourceOffset in a tab's document to the pixel rectangle
+      /// of the glyph at that position. Returns empty rect if unresolvable.
+      juce::Rectangle<int> resolveGlyphBounds(HathorTab& tab,
+                                              std::size_t sourceOffset);
 
     // -----------------------------------------------------------------------
     // B8-K6: Bake to Song — triggered by Ctrl+Shift+B on an active .ck tab
