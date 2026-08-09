@@ -12,6 +12,13 @@
 #include "hathor/Arc.hpp"
 #include "hathor/Rational.hpp"
 
+#include "AssetPathResolver.hpp"
+#include "LiveJamSessionManager.hpp"
+
+// Bring hathor-namespace asset types into scope for AudioEngine's
+// implementation (the facade header already brings AssetTarget in).
+using hathor::AssetPathResolver;
+
 // ---------------------------------------------------------------------------
 // Construction / destruction
 // ---------------------------------------------------------------------------
@@ -723,7 +730,7 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
 // B8-K1: Asset target plumbing (Studio vs Live Jam)
 // ---------------------------------------------------------------------------
 
-std::filesystem::path AudioEngine::resolveRenderPath(AssetTarget target,
+std::filesystem::path AudioEngine::resolveRenderPath(hathor::AssetTarget target,
                                                      std::string_view name,
                                                      const std::filesystem::path& projectDir)
 {
@@ -746,7 +753,7 @@ std::filesystem::path AudioEngine::resolveRenderPath(AssetTarget target,
     if (!result.ok)
     {
         std::cerr << "[AudioEngine] resolveRenderPath failed for target="
-                  << toString(target) << " name=" << std::string(name)
+                  << hathor::toString(target) << " name=" << std::string(name)
                   << ": " << result.error << '\n';
         return {};
     }

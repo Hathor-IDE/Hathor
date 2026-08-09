@@ -78,10 +78,24 @@ public:
     bool stopCkTab(int) noexcept override { return false; }
     std::string queryCkTab(int) const override { return {}; }
 
-    void setMasterEqPreset(hathor::EqPreset) noexcept override {}
+     void setMasterEqPreset(hathor::EqPreset) noexcept override {}
     hathor::EqPreset getMasterEqPreset() const noexcept override
     {
         return hathor::EqPreset::Flat;
+    }
+
+    // B8-K1 stubs — not exercised by the control slot tests.
+    std::filesystem::path resolveRenderPath(hathor::AssetTarget,
+                                            std::string_view,
+                                            const std::filesystem::path&) override
+    {
+        return {};
+    }
+    void setLiveJamSessionDir(std::filesystem::path) override {}
+    void cleanupLiveJamAssets() override {}
+    bool isStudioAssetPath(const std::filesystem::path&) const override
+    {
+        return false;
     }
 
     static constexpr int kNumSlots = 16;

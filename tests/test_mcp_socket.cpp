@@ -137,9 +137,23 @@ public:
     {
         (void)preset;
     }
-    hathor::EqPreset getMasterEqPreset() const noexcept override
+     hathor::EqPreset getMasterEqPreset() const noexcept override
     {
         return hathor::EqPreset::Flat;
+    }
+
+    // B8-K1 stubs — not exercised by the MCP socket tests.
+    std::filesystem::path resolveRenderPath(hathor::AssetTarget /*target*/,
+                                            std::string_view /*name*/,
+                                            const std::filesystem::path& /*projectDir*/) override
+    {
+        return {};
+    }
+    void setLiveJamSessionDir(std::filesystem::path /*dir*/) override {}
+    void cleanupLiveJamAssets() override {}
+    bool isStudioAssetPath(const std::filesystem::path& /*path*/) const override
+    {
+        return false;
     }
 
 private:
