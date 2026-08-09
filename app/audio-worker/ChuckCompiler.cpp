@@ -115,26 +115,12 @@ void ChuckCompiler::dispatcherLoop()
         // Resolve the target VM. If it was destroyed/replaced, the
         // generation won't match — discard the result.
         // ---------------------------------------------------------------
-        ChuckVmEntry* vm = lookup_(cmd.tabId);
-        if (!vm || vm->state == VmState::Inactive
-                  || vm->state == VmState::Destroyed) {
-            // VM doesn't exist or was destroyed — discard compile result.
-            // Still invoke onResponse with an error so the caller knows.
+        ChuckVmEntry* vm = lookup_(cmd.tabId, cmd.vmGeneration);
+        if (!vm) {
+            // VM doesn't exist, was destroyed, or generation mismatch.
             auto result = std::make_shared<CompiledShred>();
             result->ok = false;
-            result->error = "target VM is inactive or destroyed";
-            result->requestVersion = cmd.requestVersion;
-            if (cmd.onResponse)
-                cmd.onResponse(std::move(result));
-            continue;
-        }
-
-        // Generation check: if the VM was recreated since this request was
-        // issued, the result does not belong to the current VM. Discard.
-        if (vm->vmGeneration != cmd.vmGeneration) {
-            auto result = std::make_shared<CompiledShred>();
-            result->ok = false;
-            result->error = "VM generation mismatch — VM was replaced";
+            result->error = "target VM is inactive, destroyed, or generation mismatch";
             result->requestVersion = cmd.requestVersion;
             if (cmd.onResponse)
                 cmd.onResponse(std::move(result));

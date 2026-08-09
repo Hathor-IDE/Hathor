@@ -68,6 +68,7 @@
 #include <atomic>
 #include <cstdint>
 #include <cstring>
+#include <string>
 
 namespace hathor::audio_worker {
 
@@ -90,6 +91,45 @@ inline constexpr const char* kShmName   = "/hathor-audio-worker";
 
 /// Control-plane Unix domain socket path (filesystem socket).
 inline constexpr const char* kControlName = "hathor-audio-worker-control";
+
+// ---------------------------------------------------------------------------
+// VM lifecycle constants (B4-K3)
+// ---------------------------------------------------------------------------
+
+/// Maximum number of tab slots (matches AudioEngine::kNumSlots).
+constexpr int kMaxTabs = 16;
+
+/// TabId is the stable tab identity: the slot index [0, kMaxSlots-1].
+/// This matches the existing SlotState and HathorTab::slotIndex_ which
+/// are in the range [0, AudioEngine::kNumSlots) = [0, 16).
+using TabId = uint8_t;
+
+/// Heartbeat timeout for watchdog (milliseconds).
+/// Per PROGRAM.md B4-K5: ~2s staleness = hung VM.
+/// This is the default; the actual timeout is configurable via ResourcePolicy.
+constexpr int kDefaultHeartbeatTimeoutMs = 2000;
+
+// ---------------------------------------------------------------------------
+// VM lifecycle state (B4-K3 — used by both worker and main process)
+// ---------------------------------------------------------------------------
+
+/// Per-VM lifecycle states (Decision #24: explicit, not implicit per-file).
+/// Defined here in the IPC header so both the worker process and the main
+/// process share the same enumeration without a JUCE dependency.
+enum class VMState : uint8_t {
+    Inactive,   ///< No VM allocated (tab is open but not playing/eval'd).
+    Active,     ///< VM exists and is running on its dedicated thread.
+    Suspended,  ///< VM paused deterministically; Chuck instance alive, thread blocked.
+    Destroyed,  ///< VM fully torn down; metadata retained for re-creation.
+    Error,      ///< VM hit a fatal error; needs restart.
+};
+
+/// Result of a VM control operation.
+struct VMResult {
+    bool     ok            = false;
+    unsigned errorCode     = 0;
+    std::string message;
+};
 
 // ---------------------------------------------------------------------------
 // AudioBlock — one transport block (seqlock-protected)

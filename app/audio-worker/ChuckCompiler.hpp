@@ -78,7 +78,9 @@ public:
     /// VM table accessor type — a function that resolves a TabId to its
     /// current VM entry. The compiler calls this to check liveness and
     /// publish the handoff. Must be callable from the dispatcher thread.
-    using VmLookup = std::function<ChuckVmEntry*(TabId)>;
+    /// Returns nullptr if the VM is Inactive, Destroyed, or if the
+    /// generation does not match cmd.vmGeneration.
+    using VmLookup = std::function<ChuckVmEntry*(TabId, uint64_t)>;
 
     explicit ChuckCompiler(VmLookup lookup);
     ~ChuckCompiler();

@@ -133,7 +133,7 @@ static void produceBlock(AudioBlock& block, uint32_t wSeq, uint64_t gen) {
 // Per-tab render loop — checks for a compiled shred on each iteration
 // ---------------------------------------------------------------------------
 
-static void audioProductionLoop(uint64_t expectedGen) {
+static void vmRenderLoop(TabId tabId, uint64_t expectedGen) {
     // This runs on a per-tab OS thread. Each iteration:
     //   1. Check if the VM is still active (generation liveness).
     //   2. Load any pending handoff shred via std::atomic_load_explicit(acquire).
@@ -191,6 +191,55 @@ static void audioProductionLoop(uint64_t expectedGen) {
 }
 
 // ---------------------------------------------------------------------------
+// Audio production loop — runs on the main worker thread
+// ---------------------------------------------------------------------------
+
+static void audioProductionLoop(uint64_t expectedGen) {
+    // In B4-K3, each active tab gets its own render thread (vmRenderLoop).
+    // For now (B4-K4 phase), we run a single placeholder loop that covers
+    // all active VMs. The per-tab render thread model is introduced by K3.
+    //
+    // The key B4-K4 requirement: compilation does NOT happen here.
+    // The compile dispatcher thread (ChuckCompiler) handles compilation
+    // and publishes via atomic handoff. This loop only consumes handoff
+    // results and produces audio — it never allocates for compilation.
+
+    while (gRunning.load(std::memory_order_acquire)) {
+        // Scan for active VMs and check their handoffs.
+        for (int tab = 0; tab < hathor::audio_worker::kNumTabs; ++tab) {
+            if (gVmLifecycle.stateOf(static_cast<TabId>(tab)) != VmState::Active)
+                continue;
+            // Non-blocking load of any pending handoff.
+            auto shred = gVmLifecycle.loadHandoff(static_cast<TabId>(tab));
+            if (shred && shred->ok) {
+                std::fprintf(stderr, "[worker] tab=%d: render loop received shred v=%u\n",
+                             tab, shred->requestVersion);
+            }
+        }
+
+        // Produce a placeholder audio block (K3 replaces with per-VM output).
+        const uint32_t wSeq = gTransport->writeSeq.load(std::memory_order_relaxed);
+        const uint32_t rSeq = gTransport->readSeq.load(std::memory_order_acquire);
+        if (wSeq - rSeq >= kRingCapacity) {
+            const uint32_t newRSeq = wSeq - kRingCapacity + 1u;
+            gTransport->readSeq.store(newRSeq, std::memory_order_release);
+        }
+
+        const uint64_t gen = gTransport->generation.load(std::memory_order_acquire);
+        if (gen != expectedGen)
+            return;
+
+        AudioBlock& block = gTransport->blocks[wSeq & kRingMask];
+        produceBlock(block, wSeq, gen);
+
+        gTransport->lastHeartbeat.store(wSeq, std::memory_order_release);
+        gTransport->writeSeq.store(wSeq + 1u, std::memory_order_release);
+
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Control plane (Unix domain socket) — serialized command path
 // ---------------------------------------------------------------------------
 
@@ -237,67 +286,79 @@ static void controlPlaneThread() {
         const int connFd = ::accept(srvFd, nullptr, nullptr);
         if (connFd < 0) continue;
 
-        char buf[4096];
-        const ssize_t n = ::read(connFd, buf, sizeof(buf) - 1);
-        if (n > 0) {
-            buf[n] = '\0';
-            std::string cmd(buf, static_cast<size_t>(n));
-            while (!cmd.empty() && (cmd.back() == '\n' || cmd.back() == '\r'))
+        // Read the full command line. The control protocol is newline-terminated.
+        // ck_compile carries .ck source which may exceed a single read, so we
+        // loop until we see a newline or fill the buffer.
+        char buf[8192];
+        std::string cmd;
+        bool cmdComplete = false;
+        while (!cmdComplete) {
+            const ssize_t n = ::read(connFd, buf, sizeof(buf));
+            if (n <= 0) break;
+            cmd.append(buf, static_cast<size_t>(n));
+            if (cmd.size() > 0 && cmd.back() == '\n') {
+                cmdComplete = true;
                 cmd.pop_back();
+            }
+            if (cmd.size() >= sizeof(buf)) break; // safety cap
+        }
+        // Strip trailing CR if present (CRLF safety).
+        while (!cmd.empty() && (cmd.back() == '\n' || cmd.back() == '\r'))
+            cmd.pop_back();
 
-            std::string resp;
+        std::string resp;
 
-            if (cmd == "status") {
-                const uint64_t gen = gTransport->generation.load(std::memory_order_acquire);
-                const uint32_t wSeq = gTransport->writeSeq.load(std::memory_order_acquire);
-                const uint32_t rSeq = gTransport->readSeq.load(std::memory_order_acquire);
-                const uint64_t beat = gTransport->lastHeartbeat.load(std::memory_order_acquire);
-                resp = "ok gen=" + std::to_string(gen)
-                     + " wSeq=" + std::to_string(wSeq)
-                     + " rSeq=" + std::to_string(rSeq)
-                     + " beat=" + std::to_string(beat) + "\n";
-            } else if (cmd == "stop") {
-                resp = "ok stopping\n";
-                ::write(connFd, resp.c_str(), resp.size());
-                ::close(connFd);
-                gRunning.store(false, std::memory_order_release);
-                continue;
-            } else if (cmd == "ping") {
-                resp = "ok pong\n";
-            } else if (cmd.rfind("vm_create", 0) == 0) {
-                // Format: vm_create <tabId>
-                // K3: create/replace the VM for this tab. Returns the new
-                // vmGeneration so the caller can detect staleness.
-                std::string rest = cmd.substr(9); // skip "vm_create"
-                // trim leading whitespace
-                while (!rest.empty() && (rest.front() == ' ' || rest.front() == '\t' ||
-                                         rest.front() == '\n' || rest.front() == '\r'))
-                    rest.erase(0, 1);
-                try {
-                    int tabId = std::stoi(rest);
-                    const uint64_t newGen = gVmLifecycle.vmCreate(tabId);
-                    resp = "ok vm_create tab=" + std::to_string(tabId)
-                         + " gen=" + std::to_string(newGen) + "\n";
-                    std::fprintf(stderr, "[worker] VM created for tab=%d gen=%llu\n",
-                                 tabId, static_cast<unsigned long long>(newGen));
-                } catch (...) {
-                    resp = "err invalid tab id\n";
-                }
-            } else if (cmd.rfind("vm_destroy", 0) == 0) {
-                // Format: vm_destroy <tabId>
-                std::string rest = cmd.substr(10);
-                while (!rest.empty() && (rest.front() == ' ' || rest.front() == '\t' ||
-                                         rest.front() == '\n' || rest.front() == '\r'))
-                    rest.erase(0, 1);
-                try {
-                    int tabId = std::stoi(rest);
-                    gVmLifecycle.vmDestroy(tabId);
-                    resp = "ok vm_destroy tab=" + std::to_string(tabId) + "\n";
-                    std::fprintf(stderr, "[worker] VM destroyed for tab=%d\n", tabId);
-                } catch (...) {
-                    resp = "err invalid tab id\n";
-                }
-            } else if (cmd.rfind("ck_compile", 0) == 0) {
+        if (cmd == "status") {
+            const uint64_t gen = gTransport->generation.load(std::memory_order_acquire);
+            const uint32_t wSeq = gTransport->writeSeq.load(std::memory_order_acquire);
+            const uint32_t rSeq = gTransport->readSeq.load(std::memory_order_acquire);
+            const uint64_t beat = gTransport->lastHeartbeat.load(std::memory_order_acquire);
+            resp = "ok gen=" + std::to_string(gen)
+                 + " wSeq=" + std::to_string(wSeq)
+                 + " rSeq=" + std::to_string(rSeq)
+                 + " beat=" + std::to_string(beat) + "\n";
+        } else if (cmd == "stop") {
+            resp = "ok stopping\n";
+            ::write(connFd, resp.c_str(), resp.size());
+            ::close(connFd);
+            gRunning.store(false, std::memory_order_release);
+            continue;
+        } else if (cmd == "ping") {
+            resp = "ok pong\n";
+        } else if (cmd.rfind("vm_create", 0) == 0) {
+            // Format: vm_create <tabId>
+            // K3: create/replace the VM for this tab. Returns the new
+            // vmGeneration so the caller can detect staleness.
+            std::string rest = cmd.substr(9); // skip "vm_create"
+            // trim leading whitespace
+            while (!rest.empty() && (rest.front() == ' ' || rest.front() == '\t' ||
+                                     rest.front() == '\n' || rest.front() == '\r'))
+                rest.erase(0, 1);
+            try {
+                int tabId = std::stoi(rest);
+                const uint64_t newGen = gVmLifecycle.vmCreate(tabId);
+                resp = "ok vm_create tab=" + std::to_string(tabId)
+                     + " gen=" + std::to_string(newGen) + "\n";
+                std::fprintf(stderr, "[worker] VM created for tab=%d gen=%llu\n",
+                             tabId, static_cast<unsigned long long>(newGen));
+            } catch (...) {
+                resp = "err invalid tab id\n";
+            }
+        } else if (cmd.rfind("vm_destroy", 0) == 0) {
+            // Format: vm_destroy <tabId>
+            std::string rest = cmd.substr(10);
+            while (!rest.empty() && (rest.front() == ' ' || rest.front() == '\t' ||
+                                     rest.front() == '\n' || rest.front() == '\r'))
+                rest.erase(0, 1);
+            try {
+                int tabId = std::stoi(rest);
+                gVmLifecycle.vmDestroy(tabId);
+                resp = "ok vm_destroy tab=" + std::to_string(tabId) + "\n";
+                std::fprintf(stderr, "[worker] VM destroyed for tab=%d\n", tabId);
+            } catch (...) {
+                resp = "err invalid tab id\n";
+            }
+        } else if (cmd.rfind("ck_compile", 0) == 0) {
                 // Format: ck_compile <tabId> <vmGeneration> <version> <source...>
                 //
                 // enqueues a compile on the ChuckCompiler dispatcher thread.
@@ -482,8 +543,8 @@ int main(int argc, char* argv[]) {
     // slots, and the per-tab render threads consume via
     // std::atomic_load_explicit.
     gCompiler = std::make_unique<ChuckCompiler>(
-        [](TabId tabId) -> ChuckVmEntry* {
-            return gVmLifecycle.lookupForCompile(tabId, /*expectedGen*/ 0);
+        [](TabId tabId, uint64_t vmGeneration) -> ChuckVmEntry* {
+            return gVmLifecycle.lookupForCompile(tabId, vmGeneration);
         });
 
     // Start the control-plane listener thread.

@@ -37,26 +37,9 @@
 #include <thread>
 #include <vector>
 
+#include "audio_ipc.h"
+
 namespace hathor::audio_worker {
-
-/// Stable tab identity: the slot index [0,15] from HathorTab.
-using TabId = uint8_t;
-
-/// Per-VM lifecycle states (Decision #24: explicit, not implicit per-file).
-enum class VMState : uint8_t {
-    Inactive,   ///< No VM allocated (tab is open but not playing/eval'd).
-    Active,     ///< VM exists and is running on its dedicated thread.
-    Suspended,  ///< VM paused deterministically; Chuck instance alive, thread blocked.
-    Destroyed,  ///< VM fully torn down; metadata retained for re-creation.
-    Error,      ///< VM hit a fatal error (e.g. native crash detected); needs restart.
-};
-
-/// Result of a VM control operation.
-struct VMResult {
-    bool     ok            = false;  ///< operation succeeded
-    unsigned errorCode     = 0;      ///< platform-defined error code (0 = success)
-    std::string message;             ///< human-readable status / error text
-};
 
 /**
  * ChuckVM — wraps a single ChucK VM instance with its dedicated OS thread.

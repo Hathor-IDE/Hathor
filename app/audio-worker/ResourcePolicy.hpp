@@ -22,13 +22,9 @@
 #include <string>
 #include <vector>
 
+#include "audio_ipc.h"
+
 namespace hathor::audio_worker {
-
-/// TabId is defined in ChuckVM.hpp as a slot index [0,15].
-using TabId = uint8_t;
-
-/**
- * Per-VM resource cost estimates.
  *
  * These values are measured by the B4-K3 measurement harness
  * (see docs/b4-k3-measurements.md) and stored as configuration.
