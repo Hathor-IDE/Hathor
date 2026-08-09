@@ -4,117 +4,249 @@
 #pragma once
 
 /**
- * ChuckVm.hpp — per-tab ChucK VM lifecycle inside the hathor-audio-worker process.
+ * ChuckVM.hpp — per-tab ChucK VM lifecycle with bounded resource policy (B4-K3).
  *
- * B4-K3 defines the per-tab isolated Chuck_VM lifecycle. This header provides
- * the worker-side representation: a tab identity (TabId) maps to a VM with
- * its own lifecycle state, generation counter, and atomic handoff slot for
- * compiled shreds.
+ * Each active .ck tab owns one ChuckVM instance, one dedicated OS thread,
+ * and one watchdog attachment point.  A failure in one VM never silences
+ * another.
  *
- * K0.5 constraint: compileCode() and run() must NOT be called concurrently on
- * the same ChucK instance. The serialized command path (ChuckCompiler) ensures
- * all ChucK operations on a given VM are serialized through a single dispatcher
- * thread. A VM's run() loop and the compile→handoff are therefore never on
- * the same call stack simultaneously.
+ * Lifecycle state machine:
  *
- * Tab identity:
- *   TabId = slot index [0, kNumTabs-1] from the editor/UI.
- *   Each TabId maps to at most one active VM. The VM carries a generation
- *   counter so stale compile results can be rejected.
+ *   Open (no VM)
+ *     │  activate (tab playing / eval'd)
+ *     ▼
+ *   Live ──► suspended ──► live  (suspend: deterministic pause, state retained)
+ *     │ deactivate (policy: suspend or destroy)
+ *     ▼
+ *   destroyed (VM torn down; metadata retained for re-activation)
  *
- * Compile handoff:
- *   Uses the same std::atomic_store_explicit / std::atomic_load_explicit
- *   discipline as AudioEngine::slots_ (app/AudioEngine.cpp). A shared_ptr
- *   to the compiled shred descriptor is published by the compile thread and
- *   consumed by the VM's loop on the next iteration.
+ * K0.5 conformance: compileCode() MUST be called with immediate=FALSE so
+ * shreds are queued via libchuck's lock-free FinalRingBuffer and sporked
+ * on the VM thread.  compileCode() is never called concurrently with
+ * run() on the same VM by another thread.
  *
- * Requirements: B4-K3, B4-K4, K0.5 NO-GO decision
+ * Requirements: B4-K3, B4-K0.5, Decision #24
  */
 
 #include <atomic>
 #include <cstdint>
+#include <functional>
 #include <memory>
+#include <mutex>
 #include <string>
+#include <thread>
+#include <vector>
 
 namespace hathor::audio_worker {
 
-/// Maximum number of simultaneous .ck tabs (matches AudioEngine::kNumSlots).
-static constexpr int kNumTabs = 16;
+/// Stable tab identity: the slot index [0,15] from HathorTab.
+using TabId = uint8_t;
 
-/// Tab identity — a small integer slot index assigned by the editor.
-using TabId = int;
-
-/// A compiled ChucK shred descriptor. This is the worker-side representation
-/// suitable for handoff. It contains only data that owns its lifetime
-/// explicitly — no raw VM pointers, no transient compiler state.
-///
-/// The compiled shred is represented by its source hash and a success flag.
-/// The actual shred ID is assigned by the VM when it processes the handoff.
-/// This decouples the compile result (which may outlive the originating VM)
-/// from the VM's internal shred table.
-struct CompiledShred {
-    /// Source code hash — allows the VM to skip re-compilation if the
-    /// incoming source is identical to what's already loaded (idempotent
-    /// re-eval). The hash is computed on the compile thread.
-    uint64_t sourceHash = 0;
-
-    /// The source snippet (for error reporting and re-compilation if the VM
-    /// was replaced). This is owned by the shared_ptr and lives as long as
-    /// the handoff object.
-    std::string sourceCode;
-
-    /// Version tag — monotonically increasing per-tab counter. The VM only
-    /// accepts the result if requestVersion == currentVersion. This handles
-    /// the rapid-successive-evaluation case (A → B → C) so stale results
-    /// cannot overwrite newer ones.
-    uint32_t requestVersion = 0;
-
-    /// Compile succeeded.
-    bool ok = false;
-
-    /// Error message (when ok == false). Populated on the compile thread;
-    /// may allocate.
-    std::string error;
-
-    /// Error line/column (1-based) from the ChucK compiler, if available.
-    int errorLine = 0;
-
-    /// Error column (1-based), if available.
-    int errorColumn = 0;
+/// Per-VM lifecycle states (Decision #24: explicit, not implicit per-file).
+enum class VMState : uint8_t {
+    Inactive,   ///< No VM allocated (tab is open but not playing/eval'd).
+    Active,     ///< VM exists and is running on its dedicated thread.
+    Suspended,  ///< VM paused deterministically; Chuck instance alive, thread blocked.
+    Destroyed,  ///< VM fully torn down; metadata retained for re-creation.
+    Error,      ///< VM hit a fatal error (e.g. native crash detected); needs restart.
 };
 
-/// VM lifecycle state (worker-side, written by the control/serialized thread,
-/// read by the audio-render loop via relaxed atomic).
-enum class VmState : uint8_t {
-    Inactive,   ///< no VM for this tab (never created or destroyed)
-    Active,     ///< VM exists and is running
-    Suspended,  ///< VM exists but suspended (not consuming CPU)
-    Destroyed,  ///< VM was explicitly destroyed; tab identity is stale
+/// Result of a VM control operation.
+struct VMResult {
+    bool     ok            = false;  ///< operation succeeded
+    unsigned errorCode     = 0;      ///< platform-defined error code (0 = success)
+    std::string message;             ///< human-readable status / error text
 };
 
-/// Per-tab VM descriptor. Lives in the worker process. Each tab maps to at
-/// most one of these. The descriptor is reference-counted via shared_ptr
-/// so that in-flight compile results can hold a weak reference to verify
-/// VM liveness at handoff time.
-struct ChuckVmEntry {
-    TabId         tabId = -1;
-    uint64_t      vmGeneration = 0;   ///< increments on every create/replace
-    VmState       state{VmState::Inactive};
-    uint32_t      currentRequestVersion = 0;  ///< bump on each new compile request
-    std::string   ckSource;  ///< last successfully compiled source (for idempotency)
-    uint64_t      loadedSourceHash = 0;       ///< hash of currently-loaded shred
-    int           loadedShredId = -1;         ///< shred ID assigned by the VM
+/**
+ * ChuckVM — wraps a single ChucK VM instance with its dedicated OS thread.
+ *
+ * Thread model:
+ *   - The ChucK thread is created/destroyed by activate()/deactivate(),
+ *     NEVER by the audio callback thread.
+ *   - compileCode() must use immediate=FALSE (deferred spork) per K0.5.
+ *   - The heartbeat counter is atomic and incremented once per render
+ *     block for watchdog consumption (B4-K5).
+ */
+class ChuckVM {
+public:
+    /// Audio render callback signature.
+    /// Produces numFrames of audio into outBuf (numFrames * numChannels).
+    /// Called on the ChucK thread only; must be real-time safe within the VM.
+    using RenderCallback = std::function<void(float* outBuf, unsigned numFrames,
+                                              unsigned numChannels)>;
 
-    /// Atomic handoff slot — follows the AudioEngine::slots_ pattern exactly.
-    /// The compile thread publishes a shared_ptr<CompiledShred> here via
-    /// std::atomic_store_explicit(release). The VM's render loop loads it
-    /// via std::atomic_load_explicit(acquire) and consumes on the next
-    /// iteration.
-    ///
-    /// Apple-Clang compatibility: std::atomic<shared_ptr<T>> is not
-    /// specialized in libc++, so we use the free-function API on a plain
-    /// shared_ptr member instead (same approach as AudioEngine::slots_).
-    std::shared_ptr<CompiledShred> handoffShred;
+    /// Construct a VM for the given tab, with a render callback to fill
+    /// the audio block buffer.
+    ChuckVM(TabId tabId, RenderCallback renderCb);
+    ~ChuckVM();
+
+    ChuckVM(const ChuckVM&)            = delete;
+    ChuckVM& operator=(const ChuckVM&) = delete;
+    ChuckVM(ChuckVM&&)                 = delete;
+    ChuckVM& operator=(ChuckVM&&)      = delete;
+
+    // -----------------------------------------------------------------------
+    // Lifecycle (called from the worker control thread, never RT)
+    // -----------------------------------------------------------------------
+
+    /// Create the ChucK instance and start the dedicated OS thread.
+    /// K0.5: initialisation is single-threaded; no concurrent compile/run.
+    /// @return VMResult with ok=true on success.
+    VMResult activate(unsigned sampleRate = 44100, unsigned channels = 1);
+
+    /// Stop the VM thread and tear down the ChucK instance.
+    /// Per policy this can be a suspend (retain state) or full destroy.
+    /// @param suspend  If true, keep the Chuck instance alive and just
+    ///                 pause the thread (deterministic suspend).  If false,
+    ///                 fully destroy the instance.
+    VMResult deactivate(bool suspend = true);
+
+    /// Resume a suspended VM: wake its thread without re-creating the
+    /// Chuck instance (state is retained).
+    VMResult resume();
+
+    /// Fully destroy the VM and release all resources.  The ChuckVM object
+    /// is then reusable via activate().
+    VMResult destroy();
+
+    // -----------------------------------------------------------------------
+    // Compile (K0.5 serialized — only from the VM's own thread context)
+    // -----------------------------------------------------------------------
+
+    /// Compile ChucK source code for this VM.
+    /// MUST be called from the VM's dedicated thread or via a serialized
+    /// request path.  Uses immediate=FALSE (deferred spork) per K0.5.
+    /// @return VMResult with ok=true on success; message contains error text on failure.
+    VMResult compileCode(const std::string& code);
+
+    // -----------------------------------------------------------------------
+    // State / introspection
+    // -----------------------------------------------------------------------
+
+    /// Current lifecycle state.
+    VMState state() const noexcept { return state_.load(std::memory_order_acquire); }
+
+    /// Tab identity.
+    TabId tabId() const noexcept { return tabId_; }
+
+    /// Thread ID of the ChucK thread (for watchdog identification).
+    /// Returns 0 if the thread is not running.
+    std::thread::native_handle_type threadHandle() const noexcept {
+        return chucKThreadId_;
+    }
+
+    /// Heartbeat counter — incremented once per render block.
+    /// Read by the watchdog (B4-K5) to detect stalls.
+    uint64_t heartbeat() const noexcept {
+        return heartbeat_.load(std::memory_order_acquire);
+    }
+
+    /// Number of render blocks produced since activation.
+    uint64_t blocksProduced() const noexcept {
+        return blocksProduced_.load(std::memory_order_acquire);
+    }
+
+    /// Estimated memory usage of this VM in bytes (best-effort).
+    std::size_t memoryUsage() const noexcept {
+        return memoryUsage_.load(std::memory_order_acquire);
+    }
+
+    /// Last error message (if state == Error).
+    std::string lastError() const;
+
+    /// Whether the VM is currently active (running on its thread).
+    bool isActive() const noexcept {
+        return state_.load(std::memory_order_acquire) == VMState::Active;
+    }
+
+    /// Whether the VM is suspended (paused but retainable).
+    bool isSuspended() const noexcept {
+        return state_.load(std::memory_order_acquire) == VMState::Suspended;
+    }
+
+    /// Whether the VM has been destroyed or is in an error state.
+    bool isTerminated() const noexcept {
+        auto s = state_.load(std::memory_order_acquire);
+        return s == VMState::Destroyed || s == VMState::Error;
+    }
+
+private:
+    // -----------------------------------------------------------------------
+    // Internal: ChucK thread entry point
+    // -----------------------------------------------------------------------
+
+    /// The ChucK thread's main loop.  Calls the render callback, increments
+    /// the heartbeat, and publishes audio to the shared-memory ring.
+    void chucKThreadLoop();
+
+    /// Signal the ChucK thread to pause (internal, called from deactivate).
+    void signalPause();
+
+    /// Signal the ChucK thread to resume (internal, called from resume).
+    void signalResume();
+
+    /// Wake the ChucK thread so it can observe the running flag change.
+    void wakeThread();
+
+    // -----------------------------------------------------------------------
+    // Members
+    // -----------------------------------------------------------------------
+
+    /// Tab identity (slot index [0,15]).
+    const TabId tabId_;
+
+    /// Render callback (set at construction; invoked on the ChucK thread).
+    const RenderCallback renderCb_;
+
+    /// Lifecycle state (atomic for lock-free checks from watchdog/control thread).
+    std::atomic<VMState> state_{VMState::Inactive};
+
+    /// Control mutex for state transitions (non-RT, called from control thread).
+    mutable std::mutex mutex_;
+
+    /// The ChucK thread (created on activate, joined on deactivate/destroy).
+    std::thread chucKThread_;
+    std::thread::native_handle_type chucKThreadId_{0};
+
+    /// Pulse mechanism for suspend/resume coordination.
+    std::mutex        suspendMtx_;
+    std::condition_variable suspendCv_;
+    std::atomic<bool>  suspendRequested_{false};
+    std::atomic<bool>  resumeRequested_{false};
+    std::atomic<bool>  vmRunning_{false};
+
+    /// Heartbeat counter (incremented per render block for watchdog).
+    std::atomic<uint64_t> heartbeat_{0};
+
+    /// Blocks produced since activation.
+    std::atomic<uint64_t> blocksProduced_{0};
+
+    /// Best-effort memory usage.
+    std::atomic<std::size_t> memoryUsage_{0};
+
+    /// Last error message (set when state transitions to Error).
+    std::string lastError_;
+    mutable std::mutex errorMtx_;
+
+    /// Audio format (set on activate).
+    unsigned sampleRate_{44100};
+    unsigned channels_{1};
+
+    /// Block size for rendering.
+    static constexpr unsigned kRenderBlockSize = 64;
+
+    // NOTE: The actual ChucK* instance is not stored here — this is a
+    // forward-compatible design.  When B4-K4 adds libchuck integration,
+    // the ChucK instance will be created here with immediate=FALSE compile
+    // semantics per the K0.5 decision.  For B4-K3 we manage the lifecycle
+    // state machine and thread model, with a placeholder render callback
+    // that produces silence (real ChucK output arrives via B4-K4).
+
+    /// Opaque placeholder for the ChucK instance (set when B4-K4 lands).
+    /// While B4-K3 is active, this remains null and the render callback
+    /// is expected to produce silence or a placeholder tone.
+    void* chuckInstance_{nullptr};
 };
 
 } // namespace hathor::audio_worker
