@@ -448,26 +448,19 @@ TEST_CASE("AudioWorkerManager — underrun falls back to silence safely", "[work
 
      // Drain all available blocks rapidly.
     float buf[kBlockSize];
-    uint32_t drained = 0;
     while (mgr.tryReadAudioBlock(buf, kBlockSize, gen))
-        ++drained;
-    INFO("drained " << drained << " blocks; gen=" << gen
-         << " isAlive=" << mgr.isWorkerAlive());
+        ;
 
     // Now the ring should be empty — tryReadAudioBlock returns false.
     bool gotBlock = false;
     auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(500);
-    uint32_t attempts = 0;
     while (std::chrono::steady_clock::now() < deadline) {
         if (mgr.tryReadAudioBlock(buf, kBlockSize, gen)) {
             gotBlock = true;
             break;
         }
-        ++attempts;
         std::this_thread::yield();
     }
-    INFO("post-drain: gen=" << gen << " isAlive=" << mgr.isWorkerAlive()
-         << " attempts=" << attempts);
     // Eventually the worker produces more blocks.
     REQUIRE(gotBlock);
 
