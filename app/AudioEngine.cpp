@@ -718,3 +718,71 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
     sampleClock_.fetch_add(static_cast<uint64_t>(numSamples),
                            std::memory_order_relaxed);
 }
+
+// ---------------------------------------------------------------------------
+// B8-K1: Asset target plumbing (Studio vs Live Jam)
+// ---------------------------------------------------------------------------
+
+std::filesystem::path AudioEngine::resolveRenderPath(AssetTarget target,
+                                                     std::string_view name,
+                                                     const std::filesystem::path& projectDir)
+{
+    // B8-K1 §5: centralised path resolution — never duplicated in the renderer.
+    // B8-K2 receives the resolved path and writes PCM data into it.
+    resolver_.setProjectDir(projectDir);
+
+    // Determine the LiveJam session directory: either the one managed by
+    // LiveJamSessionManager (initialised at startup), or a caller-provided
+    // directory stored in liveJamSessionDirStorage_.
+    std::filesystem::path liveJamDir;
+    if (liveJamSession_.isInitialised())
+        liveJamDir = liveJamSession_.sessionDir();
+    else if (!liveJamSessionDirStorage_.empty())
+        liveJamDir = liveJamSessionDirStorage_;
+
+    AssetPathResolver::ResolveResult result =
+        resolver_.resolve(target, name, liveJamDir);
+
+    if (!result.ok)
+    {
+        std::cerr << "[AudioEngine] resolveRenderPath failed for target="
+                  << toString(target) << " name=" << std::string(name)
+                  << ": " << result.error << '\n';
+        return {};
+    }
+
+    return result.path;
+}
+
+void AudioEngine::setLiveJamSessionDir(std::filesystem::path dir)
+{
+    // Register the session temp directory with the LiveJamSessionManager.
+    // If @p dir is empty, initialise() creates a fresh session-unique temp dir.
+    if (dir.empty())
+    {
+        if (!liveJamSession_.initialise())
+            std::cerr << "[AudioEngine] LiveJam session dir init failed: "
+                      << liveJamSession_.lastError() << '\n';
+    }
+    else
+    {
+        // Caller-supplied session directory — store it so resolveRenderPath
+        // can pass it to the resolver.  We don't call initialise() since the
+        // directory is already created.
+        liveJamSessionDirStorage_ = std::move(dir);
+    }
+}
+
+void AudioEngine::cleanupLiveJamAssets()
+{
+    // B8-K1 §8, §9: session-end cleanup.
+    // Removes only LiveJam temp files — NEVER Studio assets.
+    if (!liveJamSession_.cleanup())
+        std::cerr << "[AudioEngine] LiveJam cleanup warning: "
+                  << liveJamSession_.lastError() << '\n';
+}
+
+bool AudioEngine::isStudioAssetPath(const std::filesystem::path& path) const
+{
+    return resolver_.isStudioPath(path);
+}

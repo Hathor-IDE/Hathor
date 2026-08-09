@@ -18,9 +18,11 @@
 
 #include "SlotState.hpp"
 #include "MasterEq.hpp"
+#include "AssetTarget.hpp"
 
 #include <memory>
 #include <string>
+#include <filesystem>
 
 /**
  * Abstract facade for the methods AudioEngine exposes to the control layer.
@@ -108,4 +110,42 @@ public:
     /// @param slotIdx  Pattern slot index.
     /// @return Status string (empty if no worker or VM).
     virtual std::string queryCkTab(int slotIdx) const = 0;
+
+    // --- B8-K1: Bake-to-Song render target (Studio vs Live Jam) ---
+    //
+    // The bake pipeline receives the selected AssetTarget explicitly.
+    // B8-K1 owns target selection, representation, and path resolution;
+    // B8-K2 owns rendering the ChucK instrument and writing PCM data.
+    //
+    // resolveRenderPath() turns (target, name, projectDir) into a concrete
+    // .wav path.  The caller (B8-K2 renderer) then writes audio to that path.
+    // Studio is ALWAYS the default; LiveJam is an explicit opt-in.
+
+    /// Resolve the render destination path for a bake operation (B8-K1 §5).
+    ///
+    /// @param target      Studio (default) or LiveJam.
+    /// @param name        Instrument name (sanitised — see sanitizeAssetName).
+    /// @param projectDir  Current Hathor project directory.
+    /// @return Absolute path to the .wav destination.  Empty string on error.
+    ///
+    /// For Studio:  <projectDir>/.hathor_assets/chuck_instruments/<name>.wav
+    /// For LiveJam: <session-temp>/hathor_live_jam_<pid>_<seq>/<name>.wav
+    ///
+    /// The parent directory is created if it does not exist.
+    /// Path construction is centralised here — never duplicated in the renderer.
+    virtual std::filesystem::path resolveRenderPath(AssetTarget target,
+                                                     std::string_view name,
+                                                     const std::filesystem::path& projectDir) = 0;
+
+    /// Set the LiveJam session directory (for the current Hathor session).
+    /// Called once at session startup; required before resolveRenderPath(LiveJam, ...).
+    virtual void setLiveJamSessionDir(std::filesystem::path dir) = 0;
+
+    /// Trigger cleanup of all LiveJam assets for the current session.
+    /// Called from application shutdown (HathorApplication::shutdown).
+    /// Removes only LiveJam temp files — NEVER Studio assets.
+    virtual void cleanupLiveJamAssets() = 0;
+
+    /// Returns true if the given path is inside the Studio permanent asset area.
+    virtual bool isStudioAssetPath(const std::filesystem::path& path) const = 0;
 };

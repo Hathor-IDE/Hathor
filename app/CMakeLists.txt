@@ -42,6 +42,7 @@ target_sources(hathor
         AudioEngine.cpp
         SampleBank.cpp
         VoicePool.cpp
+        LiveJamSessionManager.cpp
         Main.cpp
         $<TARGET_OBJECTS:hathor-control>
 )

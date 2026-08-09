@@ -121,7 +121,7 @@ public:
             return;
         }
 
-        // Start the audio worker process (B4-K7: needed for .ck tab eval).
+         // Start the audio worker process (B4-K7: needed for .ck tab eval).
         // Resolve path as a sibling of the executable, same as hathor-mcp.
         const std::string workerPath =
             juce::File::getSpecialLocation(juce::File::currentExecutableFile)
@@ -136,6 +136,11 @@ public:
             // Log to stderr for diagnosis but don't block startup.
             std::cerr << "[HathorApplication] Worker startup: " << workerError << std::endl;
         }
+
+        // B8-K1 §9: Initialise the LiveJam session temp directory at startup.
+        // This creates a session-unique temp dir under the platform temp area
+        // for Live Jam assets (disposable renders).  Studio assets are unaffected.
+        audio_->setLiveJamSessionDir({});
 
         // Construct ControlInterface (worker thread, worker stdin disabled in
         // GUI mode — ControlInterface::run() is not called here; dispatch() is
@@ -152,11 +157,18 @@ public:
                 .toStdString();
 
         // Create and show the main window.
-        mainWindow_ = std::make_unique<MainWindow>(*audio_, *ci_, agentExePath, hathorMcpPath);
+         mainWindow_ = std::make_unique<MainWindow>(*audio_, *ci_, agentExePath, hathorMcpPath);
     }
 
     void shutdown() override
     {
+        // B8-K1 §9: Clean up LiveJam session assets before tearing down.
+        // This removes only temporary LiveJam files — NEVER Studio assets.
+        // Done before window destruction so the AudioEngine (and its
+        // LiveJamSessionManager) is still alive.
+        if (audio_)
+            audio_->cleanupLiveJamAssets();
+
         mainWindow_.reset();
         ci_.reset();
         if (audio_)

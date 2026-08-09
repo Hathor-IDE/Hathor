@@ -25,6 +25,9 @@
 #include "VisualizerFrame.hpp"
 #include "audio-worker/AudioWorkerManager.hpp"
 #include "MasterEq.hpp"
+#include "AssetTarget.hpp"
+#include "AssetPathResolver.hpp"
+#include "LiveJamSessionManager.hpp"
 
 // ---------------------------------------------------------------------------
 // SlotState — see app/SlotState.hpp
@@ -209,6 +212,40 @@ public:
     std::string queryCkTab(int slotIdx) const override;
 
     // ------------------------------------------------------------------
+    // B8-K1: Bake-to-Song render target (Studio vs Live Jam)
+    // ------------------------------------------------------------------
+    //
+    // B8-K1 owns target selection, representation, path resolution, and
+    // lifetime semantics.  B8-K2 receives the resolved path and renders
+    // PCM data into it.
+    //
+    // API surface:
+    //   resolveRenderPath()  — turn (target, name, projectDir) into a .wav path
+    //   setLiveJamSessionDir() — register the session temp dir for LiveJam
+    //   cleanupLiveJamAssets() — remove LiveJam temp files at session end
+    //   isStudioAssetPath()  — verify a path is in the permanent asset area
+
+    /// Resolve the render destination path for a bake operation (B8-K1).
+    /// @param target      Studio (default) or LiveJam.
+    /// @param name        Instrument name (sanitised).
+    /// @param projectDir  Current Hathor project directory.
+    /// @return Absolute .wav path, or empty on error.
+    std::filesystem::path resolveRenderPath(AssetTarget target,
+                                            std::string_view name,
+                                            const std::filesystem::path& projectDir) override;
+
+    /// Register the LiveJam session directory (created by LiveJamSessionManager).
+    /// Required before resolveRenderPath(LiveJam, ...) will succeed.
+    void setLiveJamSessionDir(std::filesystem::path dir) override;
+
+    /// Clean up all LiveJam assets for the current session (session end hook).
+    /// Removes only LiveJam temp files — NEVER Studio assets.
+    void cleanupLiveJamAssets() override;
+
+    /// Returns true if @p path is inside the Studio permanent asset area.
+    bool isStudioAssetPath(const std::filesystem::path& path) const override;
+
+    // ------------------------------------------------------------------
     // juce::AudioIODeviceCallback interface
     // ------------------------------------------------------------------
     void audioDeviceAboutToStart(juce::AudioIODevice* device) override;
@@ -334,4 +371,21 @@ private:
     std::shared_ptr<hathor::MasterEqState> activeEqState_;
     /// Current preset (atomic for quick introspection without loading the SP).
     std::atomic<int> eqPreset_{static_cast<int>(hathor::EqPreset::Flat)};
+
+    // ------------------------------------------------------------------
+    // B8-K1: Asset target plumbing (Studio vs Live Jam)
+    // ------------------------------------------------------------------
+    // B8-K1 owns target selection, representation, path resolution, and
+    // lifetime semantics.  These members provide the concrete implementation
+    // of the AudioEngineFacade bake API.
+    //
+    // The AssetPathResolver is stateless given a projectDir and is safe to
+    // call from any thread.  The LiveJamSessionManager owns the session temp
+    // directory and is initialised once per Hathor session (at startup).
+    hathor::AssetPathResolver     resolver_;
+    hathor::LiveJamSessionManager liveJamSession_;
+
+    // Storage for a caller-provided LiveJam session directory (when
+    // setLiveJamSessionDir is called with a non-empty path).
+    std::filesystem::path liveJamSessionDirStorage_;
 };

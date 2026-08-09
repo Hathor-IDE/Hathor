@@ -413,6 +413,38 @@ target_link_libraries(hathor-b7-k4-verification PRIVATE
 )
 
 # ---------------------------------------------------------------------------
+# hathor-b8-k1-asset-target-tests — B8-K1 Studio vs Live Jam asset target
+#
+# Tests target representation, path resolution (Studio permanent + LiveJam
+# session temp), name sanitisation / path-traversal prevention, collision
+# handling, Studio persistence across simulated reopen, and LiveJam session
+# cleanup isolation (never removes Studio assets).
+#
+# JUCE-free: AssetTarget.hpp, AssetPathResolver.hpp, and
+# LiveJamSessionManager.hpp/.cpp use std::filesystem only.
+# ---------------------------------------------------------------------------
+add_executable(hathor-b8-k1-asset-target-tests
+    test_b8_k1_asset_target.cpp
+    ${CMAKE_SOURCE_DIR}/app/LiveJamSessionManager.cpp
+)
+
+target_compile_features(hathor-b8-k1-asset-target-tests PRIVATE cxx_std_20)
+target_compile_options(hathor-b8-k1-asset-target-tests PRIVATE -Wall -Wextra -Werror)
+
+target_include_directories(hathor-b8-k1-asset-target-tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/app
+    ${CMAKE_SOURCE_DIR}/engine/include
+)
+
+target_link_libraries(hathor-b8-k1-asset-target-tests PRIVATE
+    hathor-engine
+    Catch2::Catch2WithMain
+)
+
+include(Catch)
+catch_discover_tests(hathor-b8-k1-asset-target-tests DISCOVERY_MODE PRE_TEST)
+
+# ---------------------------------------------------------------------------
 # Integration tests (require the full hathor binary; skipped if app is off)
 # ---------------------------------------------------------------------------
 add_subdirectory(integration)
