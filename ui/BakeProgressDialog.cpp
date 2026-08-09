@@ -54,7 +54,7 @@ BakeProgressDialog::BakeProgressDialog(juce::String instrumentName,
                                        juce::Component* parent)
     : juce::Component()
     , progressValue_(0.0)
-    , progressBar_(progressValue_, false)
+    , progressBar_(progressValue_)
     , titleLabel_()
     , stageLabel_()
     , detailLabel_()
@@ -63,28 +63,28 @@ BakeProgressDialog::BakeProgressDialog(juce::String instrumentName,
     instrumentName_ = std::move(instrumentName);
     target_ = target;
 
-    const auto& palette = HathorLookAndFeel::defaultPalette();
+    const auto& palette = HathorLookAndFeel::fromComponent(*this).getPalette();
 
     setName("BakeProgressDialog");
     setAlwaysOnTop(true);
     setOpaque(false);
-    setBounds(0, 0, kWindowWidth, kWindowHeight);
+    setSize(kWindowWidth, kWindowHeight);
 
     // Position centred on parent or primary display.
     if (parent != nullptr)
     {
         const juce::Rectangle<int> parentBounds = parent->getBounds();
-        const juce::Rectangle<int> centred = getLocalBounds()
-            .withSizeWithin(parentBounds)
-            .withCentre(parentBounds.getCentre());
-        const juce::Point<int> topLeft = parent->localAreaToGlobal(centred).getPosition();
-        setTopLeft(topLeft.x, topLeft.y);
+        const int cx = parentBounds.getCentreX();
+        const int cy = parentBounds.getCentreY();
+        setBounds(cx - kWindowWidth / 2, cy - kWindowHeight / 2,
+                  kWindowWidth, kWindowHeight);
     }
     else if (const auto* primaryDisplay = juce::Desktop::getInstance().getDisplays().getPrimaryDisplay())
     {
         const juce::Rectangle<int> display = primaryDisplay->userArea;
-        setTopLeft(display.getCentreX() - kWindowWidth / 2,
-                   display.getCentreY() - kWindowHeight / 2);
+        setBounds(display.getCentreX() - kWindowWidth / 2,
+                  display.getCentreY() - kWindowHeight / 2,
+                  kWindowWidth, kWindowHeight);
     }
 
     // Title
@@ -93,7 +93,6 @@ BakeProgressDialog::BakeProgressDialog(juce::String instrumentName,
     titleLabel_.setFont(HathorLookAndFeel::fontSemiBold(16.0f));
     titleLabel_.setColour(juce::Label::textColourId, palette.textPrimary);
     titleLabel_.setJustificationType(juce::Justification::centred);
-    titleLabel_.setBounds(0, 12, kWindowWidth, 24);
     addAndMakeVisible(titleLabel_);
 
     // Stage label
@@ -110,9 +109,7 @@ BakeProgressDialog::BakeProgressDialog(juce::String instrumentName,
 
     // Progress bar
     progressBar_.setBounds(8, kWindowHeight - 30, kWindowWidth - 16, kProgressBarHeight);
-    progressBar_.setColour(juce::ProgressBar::backgroundColourId, palette.surfaceLow);
-    progressBar_.setColour(juce::ProgressBar::fillColourId, palette.accent);
-    progressBar_.setPercentagePlacement(juce::ProgressBar::noPercentageDisplay);
+    // ProgressBar uses juce::ResizableCornerComponent for styling — set colours via LookAndFeel.
     addAndMakeVisible(progressBar_);
 
     // Close button — top-right corner.
@@ -120,7 +117,8 @@ BakeProgressDialog::BakeProgressDialog(juce::String instrumentName,
     closeButton_.setTooltip("Close");
     closeButton_.onClick = [this]() {
         setVisible(false);
-        toBehind();
+        if (juce::DialogWindow* dw = findParentComponentOfClass<juce::DialogWindow>())
+            dw->exitModalState(0);
     };
     closeButton_.setBounds(kWindowWidth - 24, 4, 16, 16);
     addAndMakeVisible(closeButton_);
@@ -164,7 +162,7 @@ void BakeProgressDialog::complete()
     isComplete_ = true;
     isFailed_ = false;
 
-    const auto& palette = HathorLookAndFeel::defaultPalette();
+    const auto& palette = HathorLookAndFeel::fromComponent(*this).getPalette();
     stageLabel_.setColour(juce::Label::textColourId, palette.accent);
 
     const juce::String targetStr =
@@ -192,7 +190,7 @@ void BakeProgressDialog::fail(const juce::String& errorMessage)
     isFailed_ = true;
     errorMessage_ = errorMessage;
 
-    const auto& palette = HathorLookAndFeel::defaultPalette();
+    const auto& palette = HathorLookAndFeel::fromComponent(*this).getPalette();
     stageLabel_.setColour(juce::Label::textColourId, palette.error);
 
     stageLabel_.setText("Failed: " + stageToString(currentStage_),
@@ -216,6 +214,8 @@ void BakeProgressDialog::timerCallback()
         {
             stopTimer();
             setVisible(false);
+            if (juce::DialogWindow* dw = findParentComponentOfClass<juce::DialogWindow>())
+                dw->exitModalState(0);
         }
         else
         {
@@ -230,7 +230,7 @@ void BakeProgressDialog::timerCallback()
 
 void BakeProgressDialog::paint(juce::Graphics& g)
 {
-    const auto& palette = HathorLookAndFeel::defaultPalette();
+    const auto& palette = HathorLookAndFeel::fromComponent(*this).getPalette();
 
     g.fillAll(palette.surfaceLow.withAlpha(0.95f));
 

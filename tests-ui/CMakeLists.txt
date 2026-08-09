@@ -36,10 +36,12 @@ add_executable(hathor-ui-tests
     test_mini_tokeniser.cpp
     test_chuck_tokeniser.cpp
     test_tree_builder.cpp
+    test_bake_to_song.cpp
     ${CMAKE_SOURCE_DIR}/ui/HathorFileParser.cpp
     ${CMAKE_SOURCE_DIR}/ui/ExplorerFileTypes.cpp
     ${CMAKE_SOURCE_DIR}/ui/TreeBuilder.cpp
     ${CMAKE_SOURCE_DIR}/ui/ChuckKeywords.cpp
+    ${CMAKE_SOURCE_DIR}/app/LiveJamSessionManager.cpp
 )
 
 target_compile_features(hathor-ui-tests PRIVATE cxx_std_20)

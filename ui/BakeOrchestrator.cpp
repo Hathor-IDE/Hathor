@@ -31,7 +31,13 @@ BakeOrchestrator::~BakeOrchestrator()
         renderHandle_->cancel();
         renderHandle_.reset();
     }
-    stopTimer();
+
+    // Dismiss the progress dialog if still visible.
+    if (dialog_ != nullptr)
+    {
+        dialog_->setVisible(false);
+        dialog_.reset();
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -136,7 +142,7 @@ void BakeOrchestrator::startBackgroundRender(const juce::String& ckSourceCode,
     dialog_ = std::make_unique<BakeProgressDialog>(instrumentNameStr, target, parent);
     dialog_->setStage(BakeProgressDialog::Stage::Preparing);
 
-    // Show the dialog as a non-modal floating window (B8-K6 §6).
+    // Show the progress dialog as a non-modal floating window (B8-K6 §6).
     dialog_->toFront(true);
     dialog_->setVisible(true);
     dialog_->setAlwaysOnTop(true);
@@ -176,7 +182,7 @@ void BakeOrchestrator::onRenderComplete(const hathor::RenderResult& result)
         {
             showFailure("Render",
                          "B8-K2 render failed: " +
-                         juce::String::fromStdString(result.errorMessage));
+                         juce::String(result.errorMessage));
             clearBaking(pendingTabId_);
             return;
         }
@@ -217,7 +223,7 @@ void BakeOrchestrator::registerSample(const hathor::RenderResult& /*renderResult
     if (wavPath.empty())
     {
         showFailure("File check", "Render produced no output path.");
-        clearBaking(renderResult.tabId);
+        clearBaking(pendingTabId_);
         return;
     }
 
@@ -226,7 +232,7 @@ void BakeOrchestrator::registerSample(const hathor::RenderResult& /*renderResult
     {
         showFailure("File check",
                      "Published WAV file not found on disk: " +
-                     juce::String::fromStdString(wavPath.string()));
+                     juce::String(wavPath.string()));
         clearBaking(pendingTabId_);
         return;
     }
@@ -234,7 +240,7 @@ void BakeOrchestrator::registerSample(const hathor::RenderResult& /*renderResult
     // B8-K4: Register the sample in SampleBank via AudioEngine.
     // AudioEngine::registerBakedAsset handles decoding + resampling + addEntry().
     // The instrument name is the stem of the WAV path.
-    const juce::String instrumentName = juce::File(juce::String::fromStdString(wavPath.string()))
+    const juce::String instrumentName = juce::File(juce::String(wavPath.string()))
         .getFileNameWithoutExtension();
 
     bool registered = audio_.registerBakedAsset(
@@ -258,9 +264,6 @@ void BakeOrchestrator::registerSample(const hathor::RenderResult& /*renderResult
     refreshExplorer();
 
     // All stages complete — finalise (B8-K6: success path).
-    const juce::String instrumentName = juce::File(
-        juce::String::fromStdString(result_.outputPath.string()))
-        .getFileNameWithoutExtension();
     finishBake(true, instrumentName);
     clearBaking(pendingTabId_);
 }
@@ -270,7 +273,7 @@ void BakeOrchestrator::refreshAutocomplete()
     // The autocomplete source reads from the .hathor_assets directory.
     // Signal the status sink so EditorArea can notify the autocomplete provider.
     const juce::String instrumentName = juce::File(
-        juce::String::fromStdString(result_.outputPath.string()))
+        juce::String(result_.outputPath.string()))
         .getFileNameWithoutExtension();
 
     if (statusSink_)

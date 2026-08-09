@@ -18,7 +18,7 @@ namespace hathor::ui {
 BakeTargetDialog::BakeTargetDialog(TargetSelectedCallback onSelected)
     : onSelected_(std::move(onSelected))
 {
-    const auto& palette = HathorLookAndFeel::fromComponent(*this).getPalette();
+    // Palette not needed here — paint() fetches it lazily.
 
     studioButton_.setButtonText("Studio");
     studioButton_.setTooltip("Permanent project asset — survives closing and reopening the project");
@@ -126,16 +126,14 @@ void BakeTargetDialog::buttonClicked(juce::Button* button)
     {
         if (onSelected_)
             onSelected_(selectedTarget_);
-        // The dialog is dismissed by the caller after the callback fires.
+        // The dialog window is dismissed by the caller's callback chain.
+        if (juce::DialogWindow* dw = findParentComponentOfClass<juce::DialogWindow>())
+            dw->exitModalState(/*result=*/1);
     }
     else if (button == &cancelButton_)
     {
-        // No callback — just cancel.
-        juce::MessageManager::callAsync([]() {
-            if (juce::ModalComponentManager* mcm =
-                    juce::ModalComponentManager::getInstance())
-                mcm->dismissAllDialogs(false);
-        });
+        if (juce::DialogWindow* dw = findParentComponentOfClass<juce::DialogWindow>())
+            dw->exitModalState(/*result=*/0);
     }
 }
 
@@ -146,21 +144,21 @@ void BakeTargetDialog::buttonClicked(juce::Button* button)
 bool showBakeTargetDialog(juce::Component* parent,
                           BakeTargetDialog::TargetSelectedCallback onSelected)
 {
-    auto dialogContent = std::make_unique<BakeTargetDialog>(std::move(onSelected));
-
     juce::DialogWindow::LaunchOptions opts;
-    opts.dialogTitle                     = "Bake to Song";
-    opts.content                         = dialogContent.release();
-    opts.dialogBackgroundColour         = juce::Colours::transparentBlack;
-    opts.escapeKey                        = juce::KeyPress(juce::KeyPress::escapeKey);
-    opts.useNativeTitleBar               = false;
-    opts.resizable                       = false;
-    opts.useDesktopCentre                = true;
+    opts.dialogTitle            = "Bake to Song";
+    opts.dialogBackgroundColour = HathorLookAndFeel::defaultPalette().surface;
+    opts.content.setOwned(new BakeTargetDialog(std::move(onSelected)));
+    opts.escapeKeyTriggersCloseButton = true;
+    opts.useNativeTitleBar    = false;
+    opts.resizable            = false;
+    opts.componentToCentreAround = parent;
 
-    if (parent)
-        opts.parentComponent = parent;
-
-    return juce::DialogWindow::showModalDialog(opts);
+#if JUCE_MODAL_LOOPS_PERMITTED
+    return opts.launchAsync() != nullptr;
+#else
+    juce::ignoreUnused(parent, onSelected);
+    return false;
+#endif
 }
 
 } // namespace hathor::ui

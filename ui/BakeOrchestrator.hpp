@@ -31,13 +31,14 @@
 #include "ChuckRenderWriter.hpp"
 
 #include <atomic>
+#include <filesystem>
 #include <functional>
 #include <memory>
 #include <mutex>
 #include <string>
 #include <unordered_set>
 
-class AudioEngine;
+#include "AudioEngine.hpp"
 
 namespace hathor::ui {
 
@@ -67,9 +68,7 @@ public:
     BakeOrchestrator(AudioEngine& audio, StatusCallback statusSink = nullptr);
     ~BakeOrchestrator() override;
 
-    // Non-copyable.
-    BakeOrchestrator(const BakeOrchestrator&) = delete;
-    BakeOrchestrator& operator=(const BakeOrchestrator&) = delete;
+    // Non-copyable. (copy deletion handled by JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR below)
 
     // -----------------------------------------------------------------------
     // Main entry point — called by EditorArea when "Bake to Song" fires.

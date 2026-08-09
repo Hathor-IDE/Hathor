@@ -46,6 +46,7 @@
 #include "HathorTab.hpp"
 #include "HathorLookAndFeel.hpp"
 #include "SettingsComponent.hpp"
+#include "BakeOrchestrator.hpp"
 
 namespace hathor::ui {
 
@@ -238,6 +239,19 @@ public:
      */
     void syncSlotButtonStates();
 
+    // -----------------------------------------------------------------------
+    // B8-K6: Bake to Song — triggered by Ctrl+Shift+B on an active .ck tab
+    // -----------------------------------------------------------------------
+    /**
+     * Initiate a "Bake to Song" operation on the currently active tab.
+     * Delegates to BakeOrchestrator which shows the target selection dialog
+     * (B8-K1) and drives the background render pipeline (B8-K2→K4, B8-K5).
+     *
+     * Only .ck tabs can be baked — mini-notation (.hathor) tabs show an
+     * error status message.
+     */
+    void bakeActiveTab();
+
 private:
     // -----------------------------------------------------------------------
     // Internal helpers
@@ -377,11 +391,15 @@ private:
     /// One key-listener per tab (parallel to tabs_); owns the listener objects.
     std::vector<std::unique_ptr<TabKeyListener>> keyListeners_;
 
-    // -----------------------------------------------------------------------
-    // References (not owned)
+    /// References (not owned)
     // -----------------------------------------------------------------------
     AudioEngine&                       audio_;
     hathor::control::ControlInterface& ci_;
+
+    // -----------------------------------------------------------------------
+    // B8-K6: Bake-to-Song orchestrator
+    // -----------------------------------------------------------------------
+    std::unique_ptr<BakeOrchestrator> bakeOrchestrator_;
 
     // Timer for clearing the status bar message
     juce::Timer* statusClearTimer_{ nullptr };

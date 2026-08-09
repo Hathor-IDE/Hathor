@@ -223,6 +223,11 @@ EditorArea::EditorArea(AudioEngine& audio,
     addAndMakeVisible(tabBar_);
     addAndMakeVisible(statusBar_);
 
+    // B8-K6: Create the Bake Orchestrator with a status callback.
+    bakeOrchestrator_ = std::make_unique<BakeOrchestrator>(
+        audio_,
+        [this](const juce::String& msg) { showStatus(msg); });
+
     // Status clear timer (heap, owned via raw ptr — stopped & deleted in destructor)
     statusClearTimer_ = new StatusClearTimer(statusBar_);
 }
@@ -758,6 +763,39 @@ void EditorArea::syncSlotButtonStates()
     }
 }
 
+// ---------------------------------------------------------------------------
+// B8-K6: Bake to Song
+// ---------------------------------------------------------------------------
+
+void EditorArea::bakeActiveTab()
+{
+    HathorTab* tab = activeTab();
+    if (tab == nullptr)
+    {
+        showStatus("No active tab to bake.");
+        return;
+    }
+
+    if (!tab->isChuckTab())
+    {
+        showStatus("Bake to Song only applies to ChucK (.ck) tabs.");
+        return;
+    }
+
+    const int slotIdx = tab->slotIndex();
+    const juce::String code = tab->document().getAllContent();
+
+    juce::String filePathStr;
+    if (const auto& fp = tab->filePath(); fp.has_value())
+        filePathStr = fp->getFullPathName();
+
+    bakeOrchestrator_->bakeFromTab(
+        filePathStr,
+        code,
+        static_cast<uint8_t>(slotIdx),
+        this);
+}
+
 void EditorArea::refreshTabBar()
 {
     int combinedActive = -1;
@@ -793,12 +831,24 @@ void EditorArea::installKeyListenerForTab(HathorTab& tab)
 
 bool EditorArea::handleKeyPress(const juce::KeyPress& key, HathorTab* tab)
 {
+    // -----------------------------------------------------------------
+    // B8-K6: Ctrl+Shift+B — Bake to Song
+    // -----------------------------------------------------------------
+    const bool isBKey = (key.getKeyCode() == 'b' || key.getKeyCode() == 'B');
+    const bool ctrlHeld = key.getModifiers().isCtrlDown();
+    const bool shiftHeld = key.getModifiers().isShiftDown();
+
+    if (isBKey && ctrlHeld && shiftHeld)
+    {
+        bakeActiveTab();
+        return true;
+    }
+
     const bool isEnter = (key.getKeyCode() == juce::KeyPress::returnKey);
 
     if (!isEnter)
         return false; // Req 23.6: only these two keystrokes trigger eval
 
-    const bool ctrlHeld = key.getModifiers().isCtrlDown();
     const bool altHeld  = key.getModifiers().isAltDown();
 
     // Only handle Ctrl+Enter or Ctrl+Alt+Enter.

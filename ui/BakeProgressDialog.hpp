@@ -105,10 +105,10 @@ private:
     // -----------------------------------------------------------------------
     // Data
     // -----------------------------------------------------------------------
+    double                   progressValue_{ 0.0 };
     juce::String             instrumentName_;
     hathor::AssetTarget      target_;
     Stage                    currentStage_{ Stage::Preparing };
-    double                   progress_{ 0.0 };
     juce::String             statusMessage_;
     juce::String             errorMessage_;
     bool                     isComplete_{ false };
@@ -116,11 +116,10 @@ private:
     std::atomic<int>         autoDismissCount_{ 0 };
 
     // Subcomponents
+    juce::ProgressBar        progressBar_;
     juce::Label              titleLabel_;
     juce::Label              stageLabel_;
     juce::Label              detailLabel_;
-    juce::ProgressBar        progressBar_;
-    double                   progressValue_;
     juce::TextButton         closeButton_;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(BakeProgressDialog)
