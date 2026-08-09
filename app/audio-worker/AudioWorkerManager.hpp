@@ -160,6 +160,52 @@ public:
     ResourceLimits getResourceLimits() const noexcept;
 
     // -----------------------------------------------------------------------
+    // B4-K3: Per-tab VM control API (non-RT-safe)
+    // -----------------------------------------------------------------------
+
+    /// Activate a VM for the given tab slot.  Idempotent — if the VM is
+    /// already active, returns success without effect.
+    /// @param tabId      Slot index [0, 16).
+    /// @param sampleRate Sample rate for the VM.
+    /// @param channels   Channel count.
+    /// @return VMResult with ok=true on success.
+    audio_worker::VMResult activateTabVM(uint8_t tabId, unsigned sampleRate = 44100, unsigned channels = 1);
+
+    /// Deactivate a VM: suspend (keep state) or destroy (full teardown).
+    /// @param tabId   Slot index.
+    /// @param suspend If true, pause the VM (resumable). If false, destroy it.
+    /// @return VMResult with ok=true on success.
+    audio_worker::VMResult deactivateTabVM(uint8_t tabId, bool suspend = true);
+
+    /// Resume a previously suspended VM.
+    /// @param tabId Slot index.
+    /// @return VMResult with ok=true on success.
+    audio_worker::VMResult resumeTabVM(uint8_t tabId);
+
+    /// Destroy a VM and release all resources for the given tab.
+    /// @param tabId Slot index.
+    /// @return VMResult with ok=true on success.
+    audio_worker::VMResult destroyTabVM(uint8_t tabId);
+
+    /// Compile ChucK code for a tab's VM (K0.5 serialized path).
+    /// @param tabId Slot index.
+    /// @param code  ChucK source code.
+    /// @return VMResult with ok=true on success.
+    audio_worker::VMResult compileTabVM(uint8_t tabId, const std::string& code);
+
+    /// Query the state of a tab's VM.
+    /// @param tabId Slot index.
+    /// @return VMResult with state info in the message field.
+    audio_worker::VMResult queryTabVM(uint8_t tabId) const;
+
+    /// List all VMs and their states.
+    std::string listTabVMs() const;
+
+    /// Set the resource ceiling policy at runtime.
+    /// @param maxConcurrentLiveVMs Maximum number of active VMs.
+    void setMaxConcurrentLiveVMs(int maxVms);
+
+    // -----------------------------------------------------------------------
     // RT-safe audio consumption — called from the JUCE audio thread ONLY
     // -----------------------------------------------------------------------
 

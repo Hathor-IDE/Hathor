@@ -30,10 +30,43 @@ AudioEngine::AudioEngine(const SampleBank& bank)
 
 AudioEngine::~AudioEngine()
 {
+    // Shut down the worker process before releasing resources.
+    shutdownWorker();
     // Shut down the device before releasing resources.
     deviceManager_.removeAudioCallback(this);
     deviceManager_.closeAudioDevice();
     closeCapture();
+}
+
+// ---------------------------------------------------------------------------
+// B4-K3: Worker process management
+// ---------------------------------------------------------------------------
+
+std::string AudioEngine::startWorker(const std::string& workerPath)
+{
+    if (workerPath.empty())
+        return "worker path is empty";
+
+    workerMgr_ = std::make_unique<hathor::AudioWorkerManager>();
+    if (!workerMgr_->start(workerPath))
+        return "failed to start worker: " + workerMgr_->getLastError();
+
+    // Configure resource policy.
+    hathor::AudioWorkerManager::ResourceLimits limits;
+    limits.maxVms = hathor::audio_worker::kNumTabs;
+    limits.maxThreads = 32;
+    limits.maxVmMemoryMb = 256;
+    workerMgr_->setResourceLimits(limits);
+
+    return "";
+}
+
+void AudioEngine::shutdownWorker() noexcept
+{
+    if (workerMgr_) {
+        workerMgr_->shutdown();
+        workerMgr_.reset();
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -173,6 +206,12 @@ void AudioEngine::slotPlay(int slotIdx) noexcept
     if (!state)
         return;
     state->running.store(true, std::memory_order_release);
+
+    // B4-K3: Activate the per-tab ChucK VM in the worker process.
+    if (workerMgr_) {
+        workerMgr_->activateTabVM(static_cast<uint8_t>(slotIdx),
+                                   sampleRate_.load(std::memory_order_acquire));
+    }
 }
 
 void AudioEngine::slotStop(int slotIdx) noexcept
@@ -183,6 +222,11 @@ void AudioEngine::slotStop(int slotIdx) noexcept
     state->running.store(false, std::memory_order_release);
     // Silence any voices currently playing from this slot (A3).
     voicePool_.silenceSlot(static_cast<int8_t>(slotIdx));
+
+    // B4-K3: Suspend the per-tab ChucK VM (keeps state for fast resume).
+    if (workerMgr_) {
+        workerMgr_->deactivateTabVM(static_cast<uint8_t>(slotIdx), /*suspend=*/true);
+    }
 }
 
 bool AudioEngine::isSlotRunning(int slotIdx) const noexcept

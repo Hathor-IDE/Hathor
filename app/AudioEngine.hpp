@@ -23,6 +23,7 @@
 #include "SlotState.hpp"
 #include "VoicePool.hpp"
 #include "VisualizerFrame.hpp"
+#include "audio-worker/AudioWorkerManager.hpp"
 
 // ---------------------------------------------------------------------------
 // SlotState — see app/SlotState.hpp
@@ -83,6 +84,20 @@ public:
     [[nodiscard]] std::string initialise();
 
     // ------------------------------------------------------------------
+    // B4-K3: Worker process management
+    // ------------------------------------------------------------------
+
+    /// Set the path to the hathor-audio-worker executable and start the
+    /// worker process.  Must be called before slotPlay() to enable per-tab
+    /// VM activation.  Safe to call from the main thread only.
+    /// Returns an error string on failure (empty = success).
+    [[nodiscard]] std::string startWorker(const std::string& workerPath);
+
+    /// Shut down the worker process (if running).  Called automatically
+    /// from the destructor.
+    void shutdownWorker() noexcept;
+
+    // ------------------------------------------------------------------
     // Transport (Req 14.1–14.5)
     // ------------------------------------------------------------------
 
@@ -102,10 +117,13 @@ public:
     /// Returns true if the transport is currently running.
     bool isRunning() const noexcept override;
 
-    // --- Per-slot play/stop (A3) ---
+     // --- Per-slot play/stop (A3) ---
     // These manipulate the per-slot running bit on SlotState, independent of
     // the global transport.  slotStop() also silences voices currently being
     // driven by that slot.
+    //
+    // B4-K3: slotPlay() also activates the per-tab ChucK VM (if a worker is
+    // running).  slotStop() suspends the VM (keeps state for fast resume).
     void slotPlay(int slotIdx) noexcept override;
     void slotStop(int slotIdx) noexcept override;
     bool isSlotRunning(int slotIdx) const noexcept override;
@@ -237,4 +255,13 @@ private:
     // No locking needed: lifecycle is strictly main-thread-controlled.
     std::unique_ptr<juce::AudioFormatWriter> captureWriter_;
     std::atomic<bool>                        captureOpen_{false};
+
+    // ------------------------------------------------------------------
+    // B4-K3: Per-tab ChucK VM worker (out-of-process)
+    // ------------------------------------------------------------------
+    // Manages the hathor-audio-worker companion process and per-tab VM
+    // lifecycle. nullptr when no worker is configured (e.g. in tests
+    // without a worker path). slotPlay/slotStop delegate VM activation
+    // to this manager.
+    std::unique_ptr<hathor::AudioWorkerManager> workerMgr_;
 };

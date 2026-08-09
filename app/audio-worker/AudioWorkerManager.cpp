@@ -15,8 +15,9 @@
  */
 
 #include "AudioWorkerManager.hpp"
-
 #include <atomic>
+
+#include <algorithm>
 #include <cerrno>
 #include <chrono>
 #include <cstring>
@@ -50,11 +51,13 @@ namespace {
 using hathor::audio_worker::kBlockSize;
 using hathor::audio_worker::kControlName;
 using hathor::audio_worker::kMagic;
+using hathor::audio_worker::kNumTabs;
 using hathor::audio_worker::kRingCapacity;
 using hathor::audio_worker::kRingMask;
 using hathor::audio_worker::kShmName;
 using hathor::audio_worker::kShmSize;
 using hathor::audio_worker::SharedAudioTransport;
+using hathor::audio_worker::VMResult;
 
 // ---------------------------------------------------------------------------
 // Heartbeat staleness check.
@@ -504,9 +507,21 @@ std::string AudioWorkerManager::sendControlCommand(std::string_view cmd, int tim
     std::strncpy(addr.sun_path, impl_->controlSocketPath_.c_str(),
                  sizeof(addr.sun_path) - 1);
 
-    if (::connect(cfd, reinterpret_cast<struct sockaddr*>(&addr), sizeof(addr)) != 0) {
-        ::close(cfd);
-        return "";
+    // Retry connect for up to 500ms — the worker may not have called
+    // listen() yet when waitForWorkerStart returned (workerAlive is set
+    // before the control-plane socket is bound).
+    auto connectDeadline = std::chrono::steady_clock::now()
+        + std::chrono::milliseconds(std::min(timeoutMs, 500));
+    while (::connect(cfd, reinterpret_cast<struct sockaddr*>(&addr), sizeof(addr)) != 0) {
+        if (errno != ECONNREFUSED && errno != ENOENT) {
+            ::close(cfd);
+            return "";
+        }
+        if (std::chrono::steady_clock::now() >= connectDeadline) {
+            ::close(cfd);
+            return "";
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
 
     const std::string request = std::string(cmd) + "\n";
@@ -547,8 +562,86 @@ std::string AudioWorkerManager::sendControlCommand(std::string_view cmd, int tim
 }
 
 // -----------------------------------------------------------------------
-// Transport invalidation
+// B4-K3: Per-tab VM control API
 // -----------------------------------------------------------------------
+
+VMResult AudioWorkerManager::activateTabVM(uint8_t tabId, unsigned sampleRate, unsigned channels)
+{
+    if (tabId >= kNumTabs)
+        return {false, 1, "tab id out of range"};
+    std::string resp = sendControlCommand(
+        "vm_activate " + std::to_string(tabId) + " " + std::to_string(sampleRate) + " " + std::to_string(channels),
+        5000);
+    if (resp.rfind("ok", 0) == 0)
+        return {true, 0, resp};
+    return {false, 2, resp};
+}
+
+VMResult AudioWorkerManager::deactivateTabVM(uint8_t tabId, bool suspend)
+{
+    if (tabId >= kNumTabs)
+        return {false, 1, "tab id out of range"};
+    std::string subCmd = suspend ? "suspend" : "destroy";
+    std::string resp = sendControlCommand(
+        "vm_deactivate " + std::to_string(tabId) + " " + subCmd, 5000);
+    if (resp.rfind("ok", 0) == 0)
+        return {true, 0, resp};
+    return {false, 2, resp};
+}
+
+VMResult AudioWorkerManager::resumeTabVM(uint8_t tabId)
+{
+    if (tabId >= kNumTabs)
+        return {false, 1, "tab id out of range"};
+    std::string resp = sendControlCommand("vm_resume " + std::to_string(tabId), 5000);
+    if (resp.rfind("ok", 0) == 0)
+        return {true, 0, resp};
+    return {false, 2, resp};
+}
+
+VMResult AudioWorkerManager::destroyTabVM(uint8_t tabId)
+{
+    if (tabId >= kNumTabs)
+        return {false, 1, "tab id out of range"};
+    std::string resp = sendControlCommand("vm_destroy " + std::to_string(tabId), 5000);
+    if (resp.rfind("ok", 0) == 0)
+        return {true, 0, resp};
+    return {false, 2, resp};
+}
+
+VMResult AudioWorkerManager::compileTabVM(uint8_t tabId, const std::string& code)
+{
+    if (tabId >= kNumTabs)
+        return {false, 1, "tab id out of range"};
+    std::string resp = sendControlCommand(
+        "ck_compile " + std::to_string(tabId) + " 0 0 " + code, 5000);
+    if (resp.rfind("ok", 0) == 0)
+        return {true, 0, resp};
+    return {false, 2, resp};
+}
+
+VMResult AudioWorkerManager::queryTabVM(uint8_t tabId) const
+{
+    if (tabId >= audio_worker::kNumTabs)
+        return {false, 1, "tab id out of range"};
+    std::string resp = sendControlCommand("vm_query " + std::to_string(tabId), 5000);
+    if (resp.rfind("ok", 0) == 0)
+        return {true, 0, resp};
+    return {false, 2, resp};
+}
+
+std::string AudioWorkerManager::listTabVMs() const
+{
+    return sendControlCommand("vm_list", 5000);
+}
+
+void AudioWorkerManager::setMaxConcurrentLiveVMs(int maxVms)
+{
+    // Send a policy update via the control plane.
+    // Build a minimal JSON policy string.
+    std::string json = "\"{\\\"maxConcurrentLiveVMs\\\":" + std::to_string(maxVms) + "}\"";
+    sendControlCommand("policy " + json, 5000);
+}
 
 void AudioWorkerManager::invalidateTransport() noexcept
 {

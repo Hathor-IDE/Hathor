@@ -87,6 +87,7 @@ target_link_libraries(hathor-ui
     PRIVATE
         hathor-engine
         hathor-control
+        hathor-audio-worker-lib
         hathor_font_data
         juce::juce_gui_basics
         juce::juce_gui_extra

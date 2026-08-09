@@ -59,6 +59,7 @@ target_link_libraries(hathor
     PRIVATE
         hathor-engine
         hathor-control
+        hathor-audio-worker-lib
         juce::juce_audio_basics
         juce::juce_audio_devices
         juce::juce_audio_formats
