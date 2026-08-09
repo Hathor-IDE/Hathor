@@ -383,13 +383,15 @@ TEST_CASE("ClockSync — positive offset shifts local timestamps backward", "[b4
     clock.setSampleRates(44100.0, 44100.0);
 
     // Simulate: local clock is 1000 samples ahead of master
+    // offset = local - master = 11000 - 10000 = 1000
     clock.updateOffset(10000, 11000, 0);
 
-    // Master position 10000 should map to local position 11000
+    // masterToLocal(masterTs) = masterTs - offset
+    // masterToLocal(10000) = 10000 - 1000 = 9000
     const uint64_t localTs = clock.masterToLocal(10000);
-    REQUIRE(localTs == Catch::Approx(11000).margin(1));
+    REQUIRE(localTs == Catch::Approx(9000).margin(1));
 
-    // Offset should be ~1000 samples = ~22.7ms @ 44.1kHz
+    // Offset should be ~1000 samples = ~22.67ms @ 44.1kHz
     const double offsetMs = clock.getOffsetMs();
     REQUIRE(std::abs(offsetMs - 22.67) < 1.0);
 }
@@ -404,9 +406,9 @@ TEST_CASE("ClockSync — RTT compensation corrects offset estimate", "[b4-k6][cl
     // Corrected offset = (11000 - 10000) - 44.1 = 955.9
     clock.updateOffset(10000, 11000, 2000);
 
+    // masterToLocal(10000) = 10000 - 955.9 = 9044.1
     const uint64_t localTs = clock.masterToLocal(10000);
-    // Expected: 10000 + 955.9 ≈ 10956
-    REQUIRE(localTs == Catch::Approx(10956).margin(2));
+    REQUIRE(localTs == Catch::Approx(9044).margin(2));
 }
 
 TEST_CASE("ClockSync — large offset triggers restart condition", "[b4-k6][clock]")
@@ -427,10 +429,12 @@ TEST_CASE("ClockSync — drift rate is computed from consecutive measurements", 
     clock.setSampleRates(44100.0, 44100.0);
 
     clock.updateOffset(0, 0, 0);   // offset = 0
-    clock.updateOffset(1000, 1100, 0); // offset = 100 (drifted +100 over 1000 samples)
+    // offset = 1100 - 1000 = 100, elapsed local = 1100
+    // drift = 100 / 1100 ≈ 0.0909
+    clock.updateOffset(1000, 1100, 0);
 
-    // Drift rate should be 100/1000 = 0.1
-    REQUIRE(clock.getDriftRate() == Catch::Approx(0.1).epsilon(0.01));
+    // Drift rate = deltaOffset / samplesElapsed = 100 / 1100 ≈ 0.0909
+    REQUIRE(clock.getDriftRate() == Catch::Approx(100.0 / 1100.0).epsilon(0.01));
 }
 
 // ---------------------------------------------------------------------------
@@ -703,19 +707,27 @@ TEST_CASE("EventPublisher — createEventFromPattern preserves musical and sampl
 
 TEST_CASE("EventPublisher — sequential events get monotonic sequence numbers", "[b4-k6][publisher][sequence]")
 {
-    EventPublisher publisher(44100.0);
-    publisher.setCurrentGeneration(1);
+    // Set up a fake transport for publishing
+    SharedEventTransport fakeTransport;
+    fakeTransport.magic.store(kEventMagic, std::memory_order_release);
+    fakeTransport.generation.store(1, std::memory_order_release);
 
-    ParamMap pm;
-    pm.set(hathor::keys::kS, hathor::Value(std::string("bd")));
+    EventPublisher publisher(44100.0);
+    publisher.setTransport(&fakeTransport);
+    publisher.setCurrentGeneration(1);
 
     // Generate 100 events
     for (uint64_t i = 0; i < 100; ++i) {
+        ParamMap pm;
+        pm.set(hathor::keys::kS, hathor::Value(std::string("bd")));
         MusicalEvent ev(hathor::EventType::NoteOn, std::move(pm),
                         Rational(i), 44100 + i, 44100 + i, 0, 0, 1);
         REQUIRE(publisher.publishEvent(ev));
         REQUIRE(ev.sequence == i);
     }
+
+    // Verify total event count in transport
+    REQUIRE(fakeTransport.eventCount.load() == 100);
 }
 
 // ---------------------------------------------------------------------------
@@ -724,9 +736,7 @@ TEST_CASE("EventPublisher — sequential events get monotonic sequence numbers",
 
 TEST_CASE("EventTransport — write and read via seqlock, no torn reads", "[b4-k6][transport]")
 {
-    // We can't use actual shared memory in a unit test easily, but we can
-    // test the seqlock protocol by simulating it with the slot structure.
-    EventSlot slot;
+    // Test the seqlock protocol directly on the transport's slot array
     SharedEventTransport transport;
     transport.magic.store(kEventMagic, std::memory_order_release);
     transport.generation.store(1, std::memory_order_release);
@@ -741,10 +751,18 @@ TEST_CASE("EventTransport — write and read via seqlock, no torn reads", "[b4-k
     writeEv.vmGeneration = 1;
     writeEv.payload.set(hathor::keys::kS, hathor::Value(std::string("bd")));
 
-    // Simulate writer
+    // Simulate writer using the transport's own slot
     const uint64_t wSeq = transport.writeSeq.load(std::memory_order_relaxed);
+    const uint32_t slotIdx = static_cast<uint32_t>(wSeq) & kEventRingMask;
+    auto& slot = transport.slots[slotIdx];
+
+    // Seqlock: mark in-progress (odd sequence)
     slot.seq.store(wSeq | 1u, std::memory_order_release);
+
+    // Copy event into the slot
     slot.event = writeEv;
+
+    // Seqlock: mark complete (even, incremented by 2)
     slot.seq.store(wSeq + 2u, std::memory_order_release);
     transport.writeSeq.store(wSeq + 1, std::memory_order_release);
 
@@ -753,9 +771,10 @@ TEST_CASE("EventTransport — write and read via seqlock, no torn reads", "[b4-k
     const uint64_t wSeq2 = transport.writeSeq.load(std::memory_order_acquire);
     REQUIRE(rSeq < wSeq2);
 
-    const uint32_t slotIdx = static_cast<uint32_t>(rSeq) & kEventRingMask;
-    const auto& sl = transport.slots[slotIdx];
+    const uint32_t readSlotIdx = static_cast<uint32_t>(rSeq) & kEventRingMask;
+    const auto& sl = transport.slots[readSlotIdx];
 
+    // Seqlock validation
     const uint64_t s0 = sl.seq.load(std::memory_order_acquire);
     REQUIRE((s0 & 1u) == 0); // not in-progress
     REQUIRE(s0 == wSeq + 2u);

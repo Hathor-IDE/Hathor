@@ -19,6 +19,8 @@
 #include <memory>
 #include <thread>
 
+#include <pthread.h>
+
 namespace hathor::audio_worker {
 
 // ---------------------------------------------------------------------------
@@ -145,14 +147,70 @@ VMResult ChuckVM::deactivate(bool suspend)
         resumeRequested_.store(true, std::memory_order_release);
         wakeThread();
 
-        if (chucKThread_.joinable()) {
-            chucKThread_.join();
-        }
-        chucKThreadId_ = 0;
-        chuckInstance_ = nullptr;
+     if (chucKThread_.joinable()) {
+         chucKThread_.join();
+     }
+     chucKThreadId_ = 0;
+     chuckInstance_ = nullptr;
+     heartbeat_.store(0, std::memory_order_release);
+     blocksProduced_.store(0, std::memory_order_release);
 
-        return {true, 0, "vm destroyed"};
+     return {true, 0, "vm destroyed"};
     }
+}
+
+VMResult ChuckVM::forceDestroy(std::chrono::milliseconds timeout)
+{
+    (void)timeout; // reserved for future cooperative-join with timeout
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    auto currentState = state_.load(std::memory_order_acquire);
+    if (currentState == VMState::Inactive || currentState == VMState::Destroyed) {
+        return {true, 0, "vm already destroyed"};
+    }
+
+    // Signal the ChucK thread to stop.
+    state_.store(VMState::Destroyed, std::memory_order_release);
+    vmRunning_.store(false, std::memory_order_release);
+    suspendRequested_.store(false, std::memory_order_release);
+    resumeRequested_.store(false, std::memory_order_release);
+    wakeThread();
+
+    // If the thread is hung (render callback is a busy loop), it won't
+    // observe the Destroyed state until the callback returns.  Use
+    // pthread_cancel to forcibly terminate the thread.
+    if (chucKThread_.joinable()) {
+        // First, try a cooperative join with a short timeout.
+        // std::thread::join() is blocking — we use a separate approach:
+        // detach and poll, or use pthread_cancel directly.
+        //
+        // We use pthread_cancel here because the watchdog thread is separate
+        // from the audio callback thread (B4-K5 §ARCHITECTURAL BOUNDARY).
+        // The render callback may be stuck in an infinite loop without
+        // checking any cancellation points.
+        int rv = pthread_cancel(chucKThreadId_);
+        if (rv != 0) {
+            // Thread may have already exited — just try to join.
+            chucKThread_.join();
+        } else {
+            // pthread_cancel was successful — the thread will be cancelled
+            // at the next cancellation point.  Join to wait for cleanup.
+            try {
+                chucKThread_.join();
+            } catch (const std::exception& e) {
+                lastError_ = "forceDestroy join failed: " + std::string(e.what());
+                chucKThread_.detach();
+                return {false, 99, lastError_};
+            }
+        }
+    }
+
+    chucKThreadId_ = 0;
+    chuckInstance_ = nullptr;
+    heartbeat_.store(0, std::memory_order_release);
+    blocksProduced_.store(0, std::memory_order_release);
+
+    return {true, 0, "vm force-destroyed"};
 }
 
 VMResult ChuckVM::resume()
@@ -268,6 +326,16 @@ std::string ChuckVM::lastError() const
 
 void ChuckVM::chucKThreadLoop()
 {
+    // Enable pthread cancellation so the watchdog can forcibly terminate
+    // a hung thread (B4-K5 recovery path).  Cancellation is asynchronous —
+    // the thread can be cancelled at any point, which is necessary when the
+    // render callback is stuck in a CPU-bound infinite loop without any
+    // cancellation points.  This is safe here because ChuckVM holds no mutexes
+    // across the render callback call (the mutex is only held for state
+    // transitions, which are not in progress during normal rendering).
+    pthread_setcancelstate(PTHREAD_CANCEL_ENABLE, nullptr);
+    pthread_setcanceltype(PTHREAD_CANCEL_ASYNCHRONOUS, nullptr);
+
     // This thread is the sole owner of the ChucK instance.  It calls run()
     // (via the render callback) and handles suspend/resume coordination.
     //

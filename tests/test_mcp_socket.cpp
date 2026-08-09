@@ -116,6 +116,23 @@ public:
         return nullptr;
     }
 
+    bool hasWorker() const noexcept override { return false; }
+    bool ckEval(int slotIdx, const std::string& code) noexcept override
+    {
+        (void)slotIdx; (void)code;
+        return false;
+    }
+    bool stopCkTab(int slotIdx) noexcept override
+    {
+        (void)slotIdx;
+        return false;
+    }
+    std::string queryCkTab(int slotIdx) const override
+    {
+        (void)slotIdx;
+        return {};
+    }
+
 private:
     double bpm_ = 120.0;
     bool running_ = false;

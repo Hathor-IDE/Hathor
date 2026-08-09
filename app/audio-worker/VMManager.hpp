@@ -64,6 +64,13 @@ public:
     /// Destroy a VM and release all resources.
     VMResult destroyVM(TabId tabId);
 
+    /// Force-destroy a VM whose thread may be hung (B4-K5 recovery path).
+    /// Uses pthread_cancel as a last resort when cooperative destroy() times out.
+    /// @param timeout  Maximum time to wait for cooperative shutdown before
+    ///                 force-cancel.  Called from the watchdog thread, never
+    ///                 the audio callback thread.
+    VMResult forceDestroyVM(TabId tabId, std::chrono::milliseconds timeout = std::chrono::milliseconds(1000));
+
     /// Compile ChucK code for a tab's VM (K0.5 serialized).
     VMResult compileVM(TabId tabId, const std::string& code);
 

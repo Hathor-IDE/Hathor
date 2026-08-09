@@ -86,10 +86,10 @@ public:
      * Uses the seqlock protocol to publish the event atomically into the
      * shared-memory ring. Returns false if the ring is full (backpressure).
      *
-     * @param event  the event to publish (timestamps already set)
+     * @param event  the event to publish (timestamps already set; sequence will be assigned)
      * @return true if published, false if dropped (ring full or transport invalid)
      */
-    bool publishEvent(const MusicalEvent& event) {
+    bool publishEvent(MusicalEvent& event) {
         if (!m_publishEnabled.load(std::memory_order_acquire))
             return false;
 
@@ -109,6 +109,9 @@ public:
             // Transport doesn't match current generation — worker was restarted
             return false;
         }
+
+        // Assign a monotonic sequence number for deterministic ordering
+        event.sequence = m_sequenceCounter.fetch_add(1, std::memory_order_relaxed);
 
         // Check if the ring is full (producer-side check).
         // We use the same drop-oldest policy as SpscSampleRing: if full,

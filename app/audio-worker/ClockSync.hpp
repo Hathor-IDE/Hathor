@@ -45,7 +45,8 @@ public:
         , m_localSampleRate(44100.0)
         , m_measuredOffsetSamples(0.0)
         , m_driftRate(0.0)
-        , m_lastOffsetMeasurement(0)
+        , m_initialized(false)
+        , m_lastLocalSample(0)
         , m_driftToleranceMs(driftToleranceMs)
         , m_maxOffsetMs(maxOffsetMs)
         , m_lastRecoveryTarget(0)
@@ -62,9 +63,10 @@ public:
         const double rttSamples = (static_cast<double>(roundTripMicros) / 1e6) * m_masterSampleRate * 0.5;
         double newOffset = static_cast<double>(localSampleTs) - static_cast<double>(masterSampleTs) - rttSamples;
 
-        if (m_lastOffsetMeasurement == 0) {
+        if (!m_initialized) {
             m_measuredOffsetSamples.store(newOffset, std::memory_order_release);
             m_driftRate.store(0.0, std::memory_order_release);
+            m_initialized = true;
         } else {
             const uint64_t samplesElapsed = localSampleTs - m_lastLocalSample;
             if (samplesElapsed > 0) {
@@ -76,7 +78,6 @@ public:
             }
         }
 
-        m_lastOffsetMeasurement = localSampleTs;
         m_lastLocalSample = localSampleTs;
 
         const double offsetMs = (newOffset / m_masterSampleRate) * 1000.0;
@@ -123,7 +124,7 @@ private:
 
     alignas(64) std::atomic<double> m_measuredOffsetSamples;
     alignas(64) std::atomic<double> m_driftRate;
-    alignas(64) std::atomic<uint64_t> m_lastOffsetMeasurement;
+    bool m_initialized;
     uint64_t m_lastLocalSample = 0;
 
     double m_driftToleranceMs;

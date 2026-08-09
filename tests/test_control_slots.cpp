@@ -73,6 +73,11 @@ public:
         return nullptr;
     }
 
+    bool hasWorker() const noexcept override { return false; }
+    bool ckEval(int, const std::string&) noexcept override { return false; }
+    bool stopCkTab(int) noexcept override { return false; }
+    std::string queryCkTab(int) const override { return {}; }
+
     static constexpr int kNumSlots = 16;
     std::string names_[kNumSlots];
     std::shared_ptr<SlotState> states_[kNumSlots];

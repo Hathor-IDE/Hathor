@@ -149,6 +149,30 @@ VMResult VMManager::destroyVM(TabId tabId)
     return {true, 0, "vm destroyed for tab " + std::to_string(tabId)};
 }
 
+VMResult VMManager::forceDestroyVM(TabId tabId, std::chrono::milliseconds timeout)
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    auto it = vms_.find(tabId);
+    if (it == vms_.end()) {
+        return {true, 0, "no VM for tab " + std::to_string(tabId)};
+    }
+
+    if (it->second) {
+        VMResult result = it->second->forceDestroy(timeout);
+        if (!result.ok) {
+            return result;
+        }
+    }
+
+    vms_.erase(it);
+    lruList_.erase(std::remove(lruList_.begin(), lruList_.end(), tabId), lruList_.end());
+    lastActiveTs_.erase(tabId);
+    lastPauseTs_.erase(tabId);
+
+    return {true, 0, "vm force-destroyed for tab " + std::to_string(tabId)};
+}
+
 VMResult VMManager::compileVM(TabId tabId, const std::string& code)
 {
     // K0.5: serialize compilation per VM.  The mutex ensures only one

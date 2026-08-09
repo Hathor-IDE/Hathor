@@ -165,7 +165,6 @@ void VmWatchdog::watchdogLoop()
 
 bool VmWatchdog::checkVM(TabId tabId, const std::chrono::steady_clock::time_point& now)
 {
-    std::unique_ptr<WatchdogEntry> entry;
     uint64_t currentHeartbeat = 0;
     uint64_t trackedGen = 0;
 
@@ -175,10 +174,7 @@ bool VmWatchdog::checkVM(TabId tabId, const std::chrono::steady_clock::time_poin
         if (it == entries_.end() || !it->second)
             return false;  // VM not monitored (may have been unregistered).
 
-        entry = it->second->tabId ? std::make_unique<WatchdogEntry>(tabId) : nullptr;
-        // We don't need to copy the entry — we can read it in-place under the lock.
-        std::unique_ptr<WatchdogEntry>& e = it->second;
-        trackedGen = e->trackedGeneration.load(std::memory_order_acquire);
+        trackedGen = it->second->trackedGeneration.load(std::memory_order_acquire);
     }
 
     // -----------------------------------------------------------------------
@@ -364,9 +360,13 @@ bool VmWatchdog::recoverVM(TabId tabId)
     // The VM is already marked Failed above.  Now tear down and recreate.
     // -----------------------------------------------------------------------
 
-    // Step 1: Tear down the old VM (this joins the ChucK thread — may block,
-    //         but we're on the watchdog thread, NOT the JUCE audio thread).
-    vmManager_->destroyVM(tabId);
+    // Step 1: Force tear down the old VM.  We use forceDestroyVM() because
+    //         the render callback may be stuck in an infinite loop (the exact
+    //         hang condition we detected).  forceDestroyVM uses pthread_cancel
+    //         as a last resort.  This is on the watchdog thread, NOT the JUCE
+    //         audio thread.
+    //         (PROGRAM.md B4-K5 §RECOVERY: tear down → terminate thread)
+    vmManager_->forceDestroyVM(tabId);
 
     // Step 2: Invalidate the old generation — the VmLifecycle entry is
     //         already marked Destroyed by vmDestroy, which increments the

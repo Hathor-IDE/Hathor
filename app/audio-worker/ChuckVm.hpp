@@ -37,6 +37,8 @@
 #include <thread>
 #include <vector>
 
+#include <pthread.h>
+
 #include "audio_ipc.h"
 
 namespace hathor::audio_worker {
@@ -106,6 +108,11 @@ public:
     /// Fully destroy the VM and release all resources.  The ChuckVM object
     /// is then reusable via activate().
     VMResult destroy();
+
+    /// Force-destroy a VM whose ChucK thread is hung (B4-K5 recovery path).
+    /// Uses pthread_cancel as a last resort when cooperative destroy() times out.
+    /// This is called by the watchdog thread, never the audio callback thread.
+    VMResult forceDestroy(std::chrono::milliseconds timeout = std::chrono::milliseconds(1000));
 
     // -----------------------------------------------------------------------
     // Compile (K0.5 serialized — only from the VM's own thread context)
