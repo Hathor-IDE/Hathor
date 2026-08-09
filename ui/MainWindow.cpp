@@ -80,39 +80,38 @@ MainWindow::MainWindow(AudioEngine& audio,
     // Task 3.9: Create real SliderPanel with ControlInterface for dispatching.
     sliderPanel_ = std::make_unique<hathor::ui::SliderPanel>(ci_);
 
-    // -----------------------------------------------------------------------
-    // Create AcpAgentSession and wire it to ChatSidebar (Req 32.1, 32.3)
-    // -----------------------------------------------------------------------
-    agentSession_ = std::make_unique<hathor::ui::AcpAgentSession>();
+     // -----------------------------------------------------------------------
+     // Create and wire chat sidebar (B6: multi-thread tabs, C2: per-thread reconnect)
+     // -----------------------------------------------------------------------
+     chatSidebar_     = std::make_unique<hathor::ui::ChatSidebar>(audio_, ci_);
 
-    // -----------------------------------------------------------------------
-    // Wire MCP/control commands received on the Unix socket to ControlInterface
-    // (Phase 2.5 H0).  The handler is invoked on the socket accept-loop worker
-    // thread; dispatchWithCallback() routes each command through the normal
-    // command handlers and returns the JSON result via the response sink, which
-    // forwards it back over the socket.
-    // -----------------------------------------------------------------------
-    agentSession_->setMcpCommandHandler(
-        [this](std::string commandLine, std::function<void(std::string)> respond)
-        {
-            ci_.dispatchWithCallback(
-                commandLine,
-                [respond = std::move(respond)](nlohmann::json result)
-                {
-                    respond(result.dump());
-                });
-        });
+     // Determine the project directory (cwd at launch time).
+     const std::string projectDir =
+         juce::File::getCurrentWorkingDirectory().getFullPathName().toStdString();
 
-    // Determine the project directory (cwd at launch time).
-    const std::string projectDir =
-        juce::File::getCurrentWorkingDirectory().getFullPathName().toStdString();
+     // Store MCP path for thread creation and Settings updates (A2).
+     hathorMcpPath_ = hathorMcpPath;
 
-    // Wire all callbacks before start() — setSession() registers the handlers.
-    chatSidebar_->setSession(*agentSession_, agentExePath, projectDir, hathorMcpPath);
+     // Wire MCP/control commands received on the Unix socket to ControlInterface
+     // (Phase 2.5 H0).  The handler is invoked on the socket accept-loop worker
+     // thread; dispatchWithCallback() routes each command through the normal
+     // command handlers and returns the JSON result via the response sink, which
+     // forwards it back over the socket.
+     // This handler is installed on every chat thread's session (B6).
+     chatSidebar_->setMcpCommandHandler(
+         [this](std::string commandLine, std::function<void(std::string)> respond)
+         {
+             ci_.dispatchWithCallback(
+                 commandLine,
+                 [respond = std::move(respond)](nlohmann::json result)
+                 {
+                     respond(result.dump());
+                 });
+         });
 
-    // Start the session if a path was provided (Req 32.1).
-    if (!agentExePath.empty())
-        agentSession_->start(agentExePath, projectDir, hathorMcpPath);
+     // Start the first chat thread if a path was provided (Req 32.1, B6).
+     if (!agentExePath.empty())
+         chatSidebar_->addThread(agentExePath, projectDir, hathorMcpPath);
 
     // -----------------------------------------------------------------------
     // Wire ActivityRibbon panel toggles (H1: Explorer)
@@ -138,39 +137,26 @@ MainWindow::MainWindow(AudioEngine& audio,
                      auto* settings = editorArea_->openSettingsTab(&appProperties_);
                      if (settings != nullptr)
                      {
-                         settings->onSettingsApplied = [this]()
-                         {
-                             // Restart the agent session with the persisted path (A2).
-                             const auto* props = appProperties_.getUserSettings();
-                             if (props == nullptr)
-                                 return;
+                          settings->onSettingsApplied = [this]()
+                          {
+                              // Restart the agent session with the persisted path (A2).
+                              const auto* props = appProperties_.getUserSettings();
+                              if (props == nullptr)
+                                  return;
 
-                             const std::string newAgentPath =
-                                 props->getValue("settings.agentExePath").toStdString();
+                              const std::string newAgentPath =
+                                  props->getValue("settings.agentExePath").toStdString();
 
-                             if (newAgentPath != agentExePath_)
-                             {
-                                 agentExePath_ = newAgentPath;
-                                 if (!agentExePath_.empty())
-                                 {
-                                     agentSession_->stop();
-                                     const std::string projectDir =
-                                         juce::File::getCurrentWorkingDirectory()
-                                             .getFullPathName().toStdString();
-                                     const std::string hathorMcpPath =
-                                         juce::File::getSpecialLocation(
-                                             juce::File::currentExecutableFile)
-                                             .getSiblingFile(
-#if JUCE_WINDOWS
-                                                 "hathor-mcp.exe")
-#else
-                                                 "hathor-mcp")
-#endif
-                                             .getFullPathName().toStdString();
-                                     agentSession_->start(agentExePath_, projectDir, hathorMcpPath);
-                                 }
-                             }
-                         };
+                              if (newAgentPath != agentExePath_)
+                              {
+                                  agentExePath_ = newAgentPath;
+                                  const std::string projectDir =
+                                      juce::File::getCurrentWorkingDirectory()
+                                          .getFullPathName().toStdString();
+                                  chatSidebar_->restartAllThreads(
+                                      agentExePath_, projectDir, hathorMcpPath_);
+                              }
+                          };
                      }
                  }
              }
@@ -288,13 +274,12 @@ MainWindow::MainWindow(AudioEngine& audio,
 
 MainWindow::~MainWindow()
 {
-    // Stop the agent session before destroying components it references (Req 32.8).
-    if (agentSession_)
-        agentSession_->stop();
-
     // Stop the timer before destroying components it references.
     if (uiTimer_)
         uiTimer_->stopTimer();
+
+    // chatSidebar_ (which owns all AcpAgentSession instances) is destroyed
+    // after MainWindow's other members. Its destructor stops all sessions.
 
     // Remove look-and-feel reference before it is destroyed.
     setLookAndFeel(nullptr);

@@ -17,7 +17,8 @@
  *   │  [Tab bar: Thread 1 | Thread 2] │  ← one tab button per thread
  *   ├─────────────────────────────────┤
  *   │                                 │
- *   │  Active ChatThread viewport:    │
+ *   │  Active ChatThread:             │
+ *   │  ├─ [Status label]             │  ← error/info
  *   │  ├─ [Reconnect banner]          │  ← per-thread, C2
  *   │  ├─ [Permission prompt]         │  ← per-thread
  *   │  ├─ MessageHistoryView          │  ← per-thread bubbles
@@ -57,8 +58,6 @@
 #include "AcpAgentSession.hpp"
 #include "SliderPanel.hpp"
 #include "ChatThread.hpp"
-#include "MessageHistoryView.hpp"
-#include "PermissionPromptComponent.hpp"
 
 namespace hathor::ui {
 
@@ -75,7 +74,6 @@ namespace hathor::ui {
  *   1. Construct (MainWindow constructor)
  *   2. Call addThread() to create a new chat thread tab
  *   3. Call setActiveThread() to switch between threads
- *   4. Each ChatThread::setSession() wires the session before start()
  *
  * Disconnect / reconnect (C2):
  *   - Each ChatThread independently tracks its own connection state.
@@ -131,6 +129,35 @@ public:
      */
     ChatThread* activeThread() const noexcept;
 
+    /**
+     * Access a thread by index. Returns nullptr if out of range.
+     */
+    ChatThread* threadAt(int index) const noexcept
+    {
+        if (index < 0 || index >= static_cast<int>(threads_.size()))
+            return nullptr;
+        return threads_[index];
+    }
+
+    /**
+     * Install the MCP command handler on all existing and future sessions.
+     * Called by MainWindow to wire hathor-mcp socket commands to ControlInterface.
+     *
+     * @param handler  Invoked on the socket accept-loop worker thread for each
+     *                 MCP command line, with a respond callback.
+     */
+    void setMcpCommandHandler(AcpAgentSession::McpCommandHandlerFn handler);
+
+    /**
+     * Restart all chat threads with a new agent executable path (A2).
+     * Stops all sessions, then starts a new session for each thread with
+     * the updated path. If agentExePath is empty, sessions are stopped
+     * without restarting.
+     */
+    void restartAllThreads(const std::string& agentExePath,
+                           const std::string& projectDir,
+                           const std::string& hathorMcpPath);
+
     // -----------------------------------------------------------------------
     // SliderPanel access (for UITimer bidirectional sync)
     // -----------------------------------------------------------------------
@@ -183,6 +210,9 @@ private:
 
     /** Flag to suppress tab button callbacks during programmatic updates. */
     bool updatingTabs_ = false;
+
+    /** MCP command handler installed on each session (H0). */
+    AcpAgentSession::McpCommandHandlerFn mcpCommandHandler_;
 
     // SliderPanel (shared across all threads — BPM/gain are global)
     std::unique_ptr<SliderPanel> sliderPanel_;

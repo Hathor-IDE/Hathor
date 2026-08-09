@@ -239,13 +239,19 @@ void HathorTab::HighlightOverlay::paint(juce::Graphics& g)
 void HathorTab::HighlightOverlay::setHighlight(
     const juce::Rectangle<int>& bounds) noexcept
 {
-    const auto repaintRect =
-        highlightBounds_.toFloat().toCcwStandalone()
-            .toNearestInt().expanded(2).toFloat();
+    // Repaint the old highlight region before changing it.
+    if (active_)
+    {
+        const auto oldRect = highlightBounds_.toFloat().expanded(2);
+        repaint(oldRect.toNearestInt());
+    }
+
     highlightBounds_ = bounds;
     active_ = true;
-    // Repaint both old and new regions.
-    repaint();
+
+    // Repaint the new region.
+    const auto newRect = highlightBounds_.toFloat().expanded(2);
+    repaint(newRect.toNearestInt());
 }
 
 void HathorTab::HighlightOverlay::clearHighlight() noexcept

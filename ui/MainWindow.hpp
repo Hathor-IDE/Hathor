@@ -152,13 +152,11 @@ private:
     /// Passed to UITimer for bidirectional BPM/gain sync (Req 26.4, 26.9).
     std::unique_ptr<hathor::ui::SliderPanel>       sliderPanel_;
 
-    /// ACP agent session — created in the constructor and wired to ChatSidebar.
-    /// Owned by MainWindow; stopped in the destructor before child destruction.
-    /// Requirements: 32.1, 32.3
-    std::unique_ptr<hathor::ui::AcpAgentSession>   agentSession_;
-
-    /// Agent executable path — set at startup, can be updated via Settings (A2).
+    /// ACP agent session config — used to start chat threads (B6).
+    /// The agentExePath_ can be updated via Settings (A2).
+    /// The hathorMcpPath_ is resolved at startup and reused for all threads.
     std::string                                    agentExePath_;
+    std::string                                    hathorMcpPath_;
 
     // -----------------------------------------------------------------------
     // Engine references

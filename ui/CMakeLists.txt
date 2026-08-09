@@ -51,7 +51,9 @@ target_sources(hathor-ui
         SliderPanel.cpp           # task 3.9
         AcpAgentSession.cpp           # task 4.2–4.5
         PermissionPromptComponent.cpp # task 4.4
-        ChatSidebar.cpp               # task 5.1
+        ChatSidebar.cpp               # task 5.1 — B6 multi-thread + C2 reconnect
+        ChatThread.cpp                # B6: per-thread session + connection state
+        MessageHistoryView.cpp        # extracted from ChatSidebar (B6)
          SettingsComponent.cpp         # A2
          WindowAppearanceController.mm  # B5
          BakeTargetDialog.cpp          # B8-K6

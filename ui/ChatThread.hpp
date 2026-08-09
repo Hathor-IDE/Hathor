@@ -27,34 +27,20 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <nlohmann/json.hpp>
 
-#include "../app/AudioEngine.hpp"
-#include "../control/ControlInterface.hpp"
 #include "AcpAgentSession.hpp"
 #include "MessageHistoryView.hpp"
 #include "PermissionPromptComponent.hpp"
 #include "HathorLookAndFeel.hpp"
+#include "ThreadConnState.hpp"
 
 namespace hathor::ui {
-
-/**
- * Thread-scoped connection state for a single ChatThread.
- *
- * This is the per-thread enum that replaces the global `bool disconnected_`
- * from the original ChatSidebar (C2 §7).
- */
-enum class ThreadConnState
-{
-    Connected,      ///< Agent subprocess running and session ready
-    Disconnected,   ///< Agent subprocess exited; reconnect available
-    Reconnecting,   ///< restart() in progress (non-blocking, async)
-};
 
 /**
  * ChatThread
  *
  * Each instance owns:
  *   - Its own AcpAgentSession (one subprocess per tab, decision #3)
- *   - Its own MessageHistoryView (independent conversation history per thread)
+ *   - Its own MessageHistoryContainer (independent conversation history per thread)
  *   - Its own connection state (Connected / Disconnected / Reconnecting)
  *   - Its own reconnect banner (shown only when this thread is disconnected)
  *
@@ -71,12 +57,7 @@ class ChatThread : public juce::Component,
                    public juce::TextEditor::Listener
 {
 public:
-    /**
-     * @param audio      AudioEngine reference (passed to SliderPanel).
-     * @param ci         ControlInterface for slider dispatches.
-     */
-    ChatThread(AudioEngine& audio,
-               hathor::control::ControlInterface& ci);
+    ChatThread();
 
     ~ChatThread() override;
 
@@ -104,10 +85,6 @@ public:
     // Tab identity
     // -----------------------------------------------------------------------
 
-    /**
-     * Set the display title for this thread tab.
-     * Defaults to "Thread 1", "Thread 2", etc.
-     */
     void setTabTitle(const juce::String& title) { tabTitle_ = title; }
     const juce::String& tabTitle() const noexcept { return tabTitle_; }
 
@@ -115,13 +92,20 @@ public:
     // Connection state (thread-scoped — C2 §7)
     // -----------------------------------------------------------------------
 
-    ThreadConnState connState() const noexcept { return connState_; }
+    /**
+     * Returns the current connection state for this thread (C2 §7).
+     * Each thread has its own independent state.
+     */
+    ThreadConnState connState() const noexcept { return connState_.state; }
 
     /**
      * Returns the error message if the last restart attempt failed (C2 §6).
      * Empty string when there is no error.
      */
-    const juce::String& lastRestartError() const noexcept { return lastRestartError_; }
+    juce::String lastRestartError() const
+    {
+        return juce::String(connState_.lastError);
+    }
 
     // -----------------------------------------------------------------------
     // Reconnect action (C2 §4, §5, §6, §11)
@@ -135,8 +119,7 @@ public:
      * 3. Invokes the existing restart() path on this thread's AcpAgentSession.
      * 4. Prevents duplicate restarts while Reconnecting (C2 §4.4).
      *
-     * Does NOT block the JUCE message thread — restart() spawns a background
-     * sender thread; callbacks fire asynchronously (C2 §4.7).
+     * Does NOT block the JUCE message thread (C2 §4.7).
      */
     void reconnect();
 
@@ -146,15 +129,25 @@ public:
      */
     bool isReconnecting() const noexcept
     {
-        return connState_ == ThreadConnState::Reconnecting;
+        return connState_.isReconnecting();
     }
 
     // -----------------------------------------------------------------------
     // Active session access
     // -----------------------------------------------------------------------
 
-    /** Returns the session pointer, or nullptr if not wired. */
     AcpAgentSession* session() const noexcept { return session_; }
+
+    // -----------------------------------------------------------------------
+    // Visible area for content (below reconnect/permission banners)
+    // -----------------------------------------------------------------------
+
+    /**
+     * Returns the bounds within this thread's component where the message
+     * history viewport should be placed. Called by ChatSidebar::resized()
+     * to constrain the active thread's layout.
+     */
+    int contentTopY() const;
 
     // -----------------------------------------------------------------------
     // juce::Component overrides
@@ -174,22 +167,11 @@ public:
     // Session callback handlers — all called on JUCE message thread
     // -----------------------------------------------------------------------
 
-    /** Called when the agent subprocess exits unexpectedly (reader EOF). */
     void onDisconnected();
-
-    /** Called on start failure or fatal error (C2 §6). */
     void onError(const std::string& reason);
-
-    /** Called when the session is ready (restart succeeded). */
     void onReady();
-
-    /** Called for each streaming text chunk from the agent. */
     void onAgentMessageChunk(const std::string& text);
-
-    /** Called for tool_call / tool_call_update notifications. */
     void onToolCallUpdate(nlohmann::json update);
-
-    /** Called for permission requests. */
     void onPermissionRequest(int requestId, nlohmann::json options);
 
     // -----------------------------------------------------------------------
@@ -201,7 +183,7 @@ public:
     static constexpr int kPermissionH  = 120;
 
 private:
-    friend class ChatSidebar;  // MainWindow/ChatSidebar create and own sessions
+    friend class ChatSidebar;
 
     // -----------------------------------------------------------------------
     // Internal helpers
@@ -216,7 +198,7 @@ private:
     // Members
     // -----------------------------------------------------------------------
 
-    /** The session for this thread (not owned). Set by setSession(). */
+    /** The session for this thread (not owned — owned by ChatSidebar). */
     AcpAgentSession* session_ = nullptr;
 
     /** Stored for restart() calls. */
@@ -228,13 +210,11 @@ private:
     juce::String tabTitle_;
 
     // --- Thread-scoped connection state (C2 §7) ---
-    // This is per-thread, NOT global. Each ChatThread has its own state.
-    ThreadConnState connState_ = ThreadConnState::Connected;
+    // This is per-thread, NOT global. Each ChatThread has its own state
+    // machine instance. A reconnect on one thread does NOT affect others.
+    ThreadConnStateMachine connState_;
 
-    /** Error from the last failed restart attempt (C2 §6). */
-    juce::String lastRestartError_;
-
-    // Reconnect banner — shown only when this thread is disconnected.
+    // Reconnect banner — shown only when this thread is disconnected (C2 §2).
     juce::TextButton reconnectBanner_;
 
     // Status label — thread-scoped.

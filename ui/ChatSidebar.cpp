@@ -14,7 +14,7 @@
  * Audio independence (Req 32.9):
  *   - This file includes no AudioEngine state access beyond construction.
  *   - SliderPanel holds the only ControlInterface reference (for bpm/gain dispatch).
- *   - AcpAgentSession teardown is completely independent of AudioEngine state.
+ *   - AcpAgentSession teardown does not touch AudioEngine state.
  *
  * Requirements: 25.1, 25.2, 25.3, 25.5, 25.6, 26.1, 32.1, 32.3, 32.5,
  *               32.6, 32.8, 32.9, B6, C2
@@ -33,18 +33,45 @@ namespace hathor::ui {
 // ChatSidebar — Construction / destruction
 // ===========================================================================
 
-ChatSidebar::ChatSidebar(AudioEngine& audio,
+ChatSidebar::ChatSidebar(AudioEngine& /*audio*/,
                          hathor::control::ControlInterface& ci)
 {
-    addAndMakeVisible(tabBarArea_);
+    const auto& palette = HathorLookAndFeel::fromComponent(*this).getPalette();
 
     // -----------------------------------------------------------------------
-    // Tab scroll buttons (hidden when no overflow)
+    // Tab bar area (B6)
     // -----------------------------------------------------------------------
-    scrollLeftBtn_.setButtonText("<");
-    scrollRightBtn_.setButtonText(">");
+    addAndMakeVisible(tabBarArea_);
+    tabBarArea_.setTopLeftPosition(juce::Point<int>());
+
+    // -----------------------------------------------------------------------
+    // Tab scroll buttons (shown when tabs overflow horizontally)
+    // -----------------------------------------------------------------------
+    scrollLeftBtn_.setButtonText("\xe2\x86\x90");   // ←
+    scrollRightBtn_.setButtonText("\xe2\x86\x92");  // →
+    scrollLeftBtn_.setColour(juce::TextButton::buttonColourId, palette.surfaceHigh);
+    scrollLeftBtn_.setColour(juce::TextButton::textColourOffId, palette.textPrimary);
+    scrollRightBtn_.setColour(juce::TextButton::buttonColourId, palette.surfaceHigh);
+    scrollRightBtn_.setColour(juce::TextButton::textColourOffId, palette.textPrimary);
     scrollLeftBtn_.setVisible(false);
     scrollRightBtn_.setVisible(false);
+    scrollLeftBtn_.onClick = [this]()
+    {
+        tabScrollOffset_ = std::max(0, tabScrollOffset_ - 120);
+        updateTabButtons();
+        resized();
+    };
+    scrollRightBtn_.onClick = [this]()
+    {
+        constexpr int kTabBtnW = 120;
+        constexpr int kScrollBtnW = 24;
+        const int totalW = static_cast<int>(tabButtons_.size()) * kTabBtnW;
+        const int visibleW = getWidth() - kScrollBtnW * 2 - 4;
+        tabScrollOffset_ = std::min(tabScrollOffset_ + 120,
+                                    std::max(0, totalW - visibleW));
+        updateTabButtons();
+        resized();
+    };
     tabBarArea_.addAndMakeVisible(scrollLeftBtn_);
     tabBarArea_.addAndMakeVisible(scrollRightBtn_);
 
@@ -57,7 +84,7 @@ ChatSidebar::ChatSidebar(AudioEngine& audio,
 
 ChatSidebar::~ChatSidebar()
 {
-    // Stop all sessions before destroying components.
+    // Stop all sessions before destroying components (C2 §11 — clean teardown).
     for (auto* session : sessions_)
     {
         session->stop();
@@ -73,22 +100,27 @@ int ChatSidebar::addThread(const std::string& agentExePath,
                            const std::string& mcpPath)
 {
     // Create a new AcpAgentSession for this thread (B6: one subprocess per tab).
+    // Owned by ChatSidebar via OwnedArray.
     auto* session = new AcpAgentSession();
+
+    // Wire MCP handler if one has been installed.
+    if (mcpCommandHandler_)
+        session->setMcpCommandHandler(mcpCommandHandler_);
+
     sessions_.add(session);
 
-    // Create a new ChatThread UI component for this session.
-    auto* thread = new ChatThread(*static_cast<AudioEngine*>(nullptr),
-                                  sliderPanel_->ci());
-    // Note: ChatThread takes AudioEngine& and ControlInterface&.
-    // We can't pass the real AudioEngine here without storing it — let me fix this.
-    // Actually, we need to store AudioEngine & ci in ChatSidebar.
-    // Let me reconsider...
-
+    // Create a new ChatThread UI component.
+    // Each thread has its own message history, input, reconnect banner, and
+    // connection state — completely independent of other threads (C2 §7).
+    auto* thread = new ChatThread();
     threads_.add(thread);
     addChildComponent(thread);
 
-    // Wire the session to the thread.
+    // Wire the session to this thread.
     thread->setSession(*session, agentExePath, projectDir, mcpPath);
+
+    // Set a default tab title.
+    thread->setTabTitle(juce::String("Thread ") + juce::String(threads_.size()));
 
     // Start the session.
     session->start(agentExePath, projectDir, mcpPath);
@@ -96,10 +128,59 @@ int ChatSidebar::addThread(const std::string& agentExePath,
     // Build/update tab buttons.
     buildTabButtons();
 
-    // Switch to the new thread.
+    // Switch to the new thread immediately.
     setActiveThread(static_cast<int>(threads_.size()) - 1);
 
     return static_cast<int>(threads_.size()) - 1;
+}
+
+void ChatSidebar::setMcpCommandHandler(AcpAgentSession::McpCommandHandlerFn handler)
+{
+    // Store for future threads.
+    mcpCommandHandler_ = handler;
+
+    // Install on all existing sessions.
+    for (auto* session : sessions_)
+    {
+        if (session)
+            session->setMcpCommandHandler(handler);
+    }
+}
+
+void ChatSidebar::restartAllThreads(const std::string& agentExePath,
+                                    const std::string& projectDir,
+                                    const std::string& hathorMcpPath)
+{
+    // Stop all sessions (C2 §11 — clean teardown, no lingering callbacks).
+    for (auto* session : sessions_)
+    {
+        if (session)
+            session->stop();
+    }
+
+    if (agentExePath.empty())
+    {
+        // No agent configured — mark all threads as disconnected.
+        for (auto* thread : threads_)
+        {
+            if (thread)
+                thread->onDisconnected();
+        }
+        return;
+    }
+
+    // Restart each session with the new path.
+    for (int i = 0; i < static_cast<int>(threads_.size()); ++i)
+    {
+        auto* session = sessions_[i];
+        auto* thread  = threads_[i];
+        if (session && thread)
+        {
+            // Wire callbacks on the existing thread.
+            thread->setSession(*session, agentExePath, projectDir, hathorMcpPath);
+            session->start(agentExePath, projectDir, hathorMcpPath);
+        }
+    }
 }
 
 void ChatSidebar::setActiveThread(int threadIndex)
@@ -108,7 +189,8 @@ void ChatSidebar::setActiveThread(int threadIndex)
         return;
 
     // Hide the old active thread.
-    if (activeThreadIndex_ >= 0 && activeThreadIndex_ < static_cast<int>(threads_.size()))
+    if (activeThreadIndex_ >= 0 &&
+        activeThreadIndex_ < static_cast<int>(threads_.size()))
     {
         if (auto* oldThread = threads_[activeThreadIndex_])
             oldThread->setVisible(false);
@@ -121,7 +203,7 @@ void ChatSidebar::setActiveThread(int threadIndex)
     {
         newThread->setVisible(true);
         newThread->toFront(true);
-        newThread->resized(); // refresh layout
+        newThread->resized();
     }
 
     updateTabButtons();
@@ -136,24 +218,24 @@ ChatThread* ChatSidebar::activeThread() const noexcept
 }
 
 // ---------------------------------------------------------------------------
-// Tab bar UI helpers
+// Tab bar UI helpers (B6)
 // ---------------------------------------------------------------------------
 
 void ChatSidebar::buildTabButtons()
 {
     // Clear existing tab buttons.
     for (auto* btn : tabButtons_)
-    {
-        delete btn;
-    }
+        tabBarArea_.removeChildComponent(btn);
     tabButtons_.clear();
 
+    // Create a tab button for each thread.
     for (int i = 0; i < static_cast<int>(threads_.size()); ++i)
     {
         auto* btn = new juce::TextButton();
-        btn->setButtonText(threads_[i]->tabTitle().isEmpty()
+        const juce::String title = threads_[i]->tabTitle();
+        btn->setButtonText(title.isEmpty()
                                ? juce::String("Thread ") + juce::String(i + 1)
-                               : threads_[i]->tabTitle());
+                               : title);
         btn->setRadioGroupId(1);
 
         // Capture the index by value (i is stable here).
@@ -174,16 +256,16 @@ void ChatSidebar::buildTabButtons()
 
 void ChatSidebar::updateTabButtons()
 {
-    // Update button visibility.
-    for (int i = 0; i < static_cast<int>(tabButtons_.size()); ++i)
+    // Layout all tab buttons at their natural width.
+    constexpr int kTabBtnW = 120;
+    int x = tabScrollOffset_;
+    int idx = 0;
+    for (auto* btn : tabButtons_)
     {
-        tabButtons_[i]->setVisible(true);
-        tabButtons_[i]->setClicked(true, juce::dontSendNotification);
-    }
-
-    if (activeThreadIndex_ >= 0 && activeThreadIndex_ < static_cast<int>(tabButtons_.size()))
-    {
-        tabButtons_[activeThreadIndex_]->setClicked(true, juce::dontSendNotification);
+        btn->setBounds(x, 2, kTabBtnW, kTabAreaH - 6);
+        btn->setToggleState(activeThreadIndex_ == idx, juce::dontSendNotification);
+        x += kTabBtnW;
+        ++idx;
     }
 }
 
@@ -194,10 +276,10 @@ void ChatSidebar::onTabClicked(int index)
     setActiveThread(index);
 }
 
-void ChatSidebar::closeTab(int index)
+void ChatSidebar::closeTab(int /*index*/)
 {
-    // Not implemented for v1 — tabs are not closable yet.
-    // Required by C2 §8: switching away does NOT erase state.
+    // Not implemented for v1 — tabs are not closable yet (C2 §8: switching
+    // away does NOT erase state; closing is a separate feature).
 }
 
 // ---------------------------------------------------------------------------
@@ -212,31 +294,47 @@ void ChatSidebar::resized()
     tabBarArea_.setBounds(b.removeFromTop(kTabAreaH));
 
     // Layout tab buttons within the tab bar area.
+    // Simple horizontal layout — scroll buttons shown if overflow.
+    constexpr int kTabBtnW = 120;
+    constexpr int kScrollBtnW = 24;
+
     auto tabArea = tabBarArea_.getLocalBounds().reduced(2, 2);
-    constexpr int kTabBtnW = 100;
     int x = tabScrollOffset_;
+    int idx = 0;
     for (auto* btn : tabButtons_)
     {
-        btn->setBounds(x, tabArea.getY(), kTabBtnW, tabArea.getHeight());
+        btn->setBounds(x, tabArea.getY(), kTabBtnW, tabArea.getHeight() - 2);
+        btn->setToggleState(activeThreadIndex_ == idx, juce::dontSendNotification);
         x += kTabBtnW;
+        ++idx;
     }
 
-    // Position scroll buttons.
-    if (tabButtons_.size() > 0)
+    // Scroll buttons — shown if total tab width exceeds viewport.
+    const int totalTabWidth = static_cast<int>(tabButtons_.size()) * kTabBtnW;
+    const bool showScroll = totalTabWidth > tabArea.getWidth();
+    scrollLeftBtn_.setVisible(showScroll && tabScrollOffset_ > 0);
+    scrollRightBtn_.setVisible(showScroll &&
+                               (tabScrollOffset_ + tabArea.getWidth() < totalTabWidth));
+
+    if (showScroll)
     {
-        scrollLeftBtn_.setBounds(tabArea.removeFromLeft(24));
-        scrollRightBtn_.setBounds(tabArea.removeFromRight(24));
+        scrollLeftBtn_.setBounds(tabArea.getX(), tabArea.getY(),
+                                 kScrollBtnW, tabArea.getHeight() - 2);
+        scrollRightBtn_.setBounds(tabArea.getRight() - kScrollBtnW,
+                                  tabArea.getY(), kScrollBtnW, tabArea.getHeight() - 2);
     }
 
     // Position all thread components — only the active one is visible.
+    // The content area is below the tab bar, above the slider panel.
+    auto contentBounds = b;
+    contentBounds.removeFromBottom(kSliderH);  // reserve space for slider
+
     for (int i = 0; i < static_cast<int>(threads_.size()); ++i)
     {
         if (auto* t = threads_[i])
         {
-            // All threads get the same bounds; only the active one is visible.
-            // The visible region below the tab bar and above the slider panel.
-            auto contentBounds = b;
             t->setBounds(contentBounds);
+            t->setVisible(i == activeThreadIndex_);
             t->resized();
         }
     }
@@ -257,6 +355,7 @@ void ChatSidebar::paint(juce::Graphics& g)
     g.drawVerticalLine(0, 0.0f, static_cast<float>(getHeight()));
 
     // Tab bar separator.
+    g.setColour(palette.surfaceHighest);
     g.drawHorizontalLine(kTabAreaH, 0.0f, static_cast<float>(getWidth()));
 
     // Separator above slider panel.

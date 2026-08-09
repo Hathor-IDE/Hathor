@@ -782,13 +782,13 @@ void EditorArea::updateNowPlayingHighlight(
         std::size_t sourceOffset;
         bool valid;
     };
-    SlotLatest latest[hathor::AudioEngine::kNumSlots] = {};
-    for (int i = 0; i < hathor::AudioEngine::kNumSlots; ++i)
+    SlotLatest latest[AudioEngine::kNumSlots] = {};
+    for (int i = 0; i < AudioEngine::kNumSlots; ++i)
         latest[i] = { static_cast<int8_t>(i), 0, false };
 
     for (const auto& ev : events)
     {
-        if (ev.slotId < 0 || ev.slotId >= static_cast<int8_t>(hathor::AudioEngine::kNumSlots))
+        if (ev.slotId < 0 || ev.slotId >= static_cast<int8_t>(AudioEngine::kNumSlots))
             continue;
 
         // Only consider events with a non-zero sourceOffset (0 means no position).
@@ -804,7 +804,7 @@ void EditorArea::updateNowPlayingHighlight(
     // -----------------------------------------------------------------------
     // Step 2: Route each slot's latest offset to the corresponding tab.
     // -----------------------------------------------------------------------
-    for (int i = 0; i < hathor::AudioEngine::kNumSlots; ++i)
+     for (int i = 0; i < AudioEngine::kNumSlots; ++i)
     {
         if (!latest[i].valid)
         {
