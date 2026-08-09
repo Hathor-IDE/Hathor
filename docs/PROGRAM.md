@@ -864,8 +864,26 @@ code is as simple as ``d1 $ s "acid_bass"``.
 - Register the resulting asset with the project's SampleBank and expose it to the `.hathor`
   editor/autocomplete, so finished song code is literally ``d1 $ s "acid_bass"``. The `s` sample
   resolves to the ordinary project audio asset — no live VM required.
+- **Implementation:**
+  - `SampleBank::addEntry(name, index, data, channels, rate, path)` — registers a baked WAV
+    as `name=<stem>, index=0` in the existing SampleBank.  Thread-safe via a registration
+    mutex; `find()` remains lock-free for the audio thread.
+  - `SampleBank::listNames()` — returns sorted unique sample names for editor autocomplete
+    and the `list-samples` control command.
+  - `SampleBank::reloadStudioAssets(dir, formats, rate)` — on restart, scans
+    `<project>/.hathor_assets/chuck_instruments/` for flat `.wav` files and registers
+    them, preserving baked instruments across application restarts.
+  - `AudioEngine::startBakeRender()` wraps the B8-K2 completion callback: on success,
+    it derives the sample name from the output path stem and calls
+    `registerBakedAsset()` → `SampleBank::addEntry()`, making the instrument
+    immediately playable via `s "name"` without re-baking.
+  - `ControlInterface` adds a `list-samples` command returning all registered
+    sample names as JSON.
+  - LiveJam assets follow B8-K1 session lifetime (temp dir cleaned at shutdown);
+    Studio assets persist in `.hathor_assets/` and are never removed by cleanup.
 - **Acceptance:** the baked sample is selectable in the SampleBank and resolves from `.hathor`
-  notation with no ChucK runtime.
+  notation with no ChucK runtime.  `list-samples` returns the baked instrument name.  Restart
+  preserves Studio-baked instruments.
 
 ### B8-K5 — `.hathor_assets` in the file tree
 - The recursive `FileTreeDataModel` (from A4) treats `.hathor_assets` as a **managed** project

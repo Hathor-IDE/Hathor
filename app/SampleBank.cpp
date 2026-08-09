@@ -263,27 +263,9 @@ void SampleBank::load(const std::filesystem::path& root,
 }
 
 // ---------------------------------------------------------------------------
-// B8-K4: Dynamic asset registration
+// B8-K4: Dynamic asset registration — addEntry() and listNames() are now
+// inline in the header (JUCE-free).  Only reloadStudioAssets() requires JUCE.
 // ---------------------------------------------------------------------------
-
-void SampleBank::addEntry(std::string             name,
-                           int64_t                 index,
-                           std::vector<float>      data,
-                           int                     numChannels,
-                           double                  sampleRate,
-                           std::string             sourcePath)
-{
-    std::lock_guard<std::mutex> lock(registrationMutex_);
-    SampleEntry entry;
-    entry.name        = std::move(name);
-    entry.index       = index;
-    entry.data        = std::move(data);
-    entry.numChannels = numChannels;
-    entry.sampleRate  = sampleRate;
-    entry.sourcePath  = std::move(sourcePath);
-    entries_.push_back(std::move(entry));
-    ++loaded_;
-}
 
 void SampleBank::reloadStudioAssets(const std::filesystem::path&     dir,
                                      juce::AudioFormatManager&        formats,
@@ -350,25 +332,4 @@ void SampleBank::reloadStudioAssets(const std::filesystem::path&     dir,
                  numChannels, sampleRate,
                  entry.path().string());
     }
-}
-
-std::vector<std::string> SampleBank::listNames() const noexcept
-{
-    std::vector<std::string> names;
-    for (const auto& e : entries_)
-    {
-        bool seen = false;
-        for (const auto& n : names)
-        {
-            if (n == e.name)
-            {
-                seen = true;
-                break;
-            }
-        }
-        if (!seen)
-            names.push_back(e.name);
-    }
-    std::sort(names.begin(), names.end());
-    return names;
 }

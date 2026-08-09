@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include <algorithm>
 #include <filesystem>
 #include <string>
 #include <string_view>
@@ -98,14 +99,14 @@ public:
     /// <root>/<name>/<index> directory convention.
     ///
     /// Baked WAVs are flat files: <dir>/<name>.wav.  This method creates a
-    /// SampleEntry with name = <stem>, index = 0, and copies the pre-decoded
-    /// PCM data into the bank.  The caller must have already decoded and
+    /// SampleEntry with name = <stem>, index = 0, and stores the pre-decoded
+    /// PCM data in the bank.  The caller must have already decoded and
     /// resampled the WAV to match the engine's sample rate.
     ///
     /// Thread safety: acquires a mutex — must NOT be called from the audio
     /// thread.  Called from the main/worker thread after a bake completes
     /// (B8-K2 completion callback).  find() remains lock-free during
-    /// registration due to the copy-on-write swap pattern.
+    /// registration.
     ///
     /// @param name        Sample name (e.g. "acid_bass") — must match the
     ///                    identifier used in mini-notation `s "..."`.
@@ -120,7 +121,44 @@ public:
                   std::vector<float>      data,
                   int                     numChannels,
                   double                  sampleRate,
-                  std::string             sourcePath = {});
+                  std::string             sourcePath = {})
+    {
+        std::lock_guard<std::mutex> lock(registrationMutex_);
+        entries_.push_back(SampleEntry{
+            .name        = std::move(name),
+            .index       = index,
+            .data        = std::move(data),
+            .numChannels = numChannels,
+            .sampleRate  = sampleRate,
+            .sourcePath  = std::move(sourcePath),
+        });
+        ++loaded_;
+    }
+
+    /// Return the set of unique sample names currently registered in the bank.
+    ///
+    /// Used by the UI autocomplete list (B8-K4 §6) and the `list-samples`
+    /// control command.  Returns names sorted alphabetically.
+    std::vector<std::string> listNames() const noexcept
+    {
+        std::vector<std::string> names;
+        for (const auto& e : entries_)
+        {
+            bool seen = false;
+            for (const auto& n : names)
+            {
+                if (n == e.name)
+                {
+                    seen = true;
+                    break;
+                }
+            }
+            if (!seen)
+                names.push_back(e.name);
+        }
+        std::sort(names.begin(), names.end());
+        return names;
+    }
 
     /// Reload all Studio-persisted baked WAV assets from a directory.
     ///
@@ -142,12 +180,6 @@ public:
                             juce::AudioFormatManager&        formats,
                             double                           sampleRate,
                             bool                             skipRegistered = true);
-
-    /// Return the set of unique sample names currently registered in the bank.
-    ///
-    /// Used by the UI autocomplete list (B8-K4 §6) and the `list-samples`
-    /// control command.  Returns names sorted alphabetically.
-    std::vector<std::string> listNames() const noexcept;
 
     /// Test-only: inject a SampleEntry directly into the bank without
     /// requiring JUCE or a filesystem load.  This method is used exclusively

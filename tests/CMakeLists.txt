@@ -531,7 +531,7 @@ catch_discover_tests(hathor-b8-k3-vm-shutdown-tests DISCOVERY_MODE PRE_TEST)
 # ---------------------------------------------------------------------------
 add_executable(hathor-b8-k4-sample-registration-tests
     test_b8_k4_sample_registration.cpp
-    ${CMAKE_SOURCE_DIR}/app/SampleBank.cpp
+    ${CMAKE_SOURCE_DIR}/app/LiveJamSessionManager.cpp
 )
 
 target_compile_features(hathor-b8-k4-sample-registration-tests PRIVATE cxx_std_20)
