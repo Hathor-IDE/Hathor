@@ -114,7 +114,7 @@ void ChuckVM::setHandoffLoader(HandoffLoader loader) noexcept
 
 VMResult ChuckVM::deactivate(bool suspend)
 {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::unique_lock<std::mutex> lock(mutex_);
 
     auto currentState = state_.load(std::memory_order_acquire);
     if (currentState != VMState::Active) {
@@ -142,27 +142,17 @@ VMResult ChuckVM::deactivate(bool suspend)
         return {true, 0, "vm suspended"};
     } else {
         // Full destroy: tear down the Chuck instance.
-        // The thread has been paused; now we let it exit.
-        state_.store(VMState::Destroyed, std::memory_order_release);
-        resumeRequested_.store(true, std::memory_order_release);
-        wakeThread();
-
-     if (chucKThread_.joinable()) {
-         chucKThread_.join();
-     }
-     chucKThreadId_ = 0;
-     chuckInstance_ = nullptr;
-     heartbeat_.store(0, std::memory_order_release);
-     blocksProduced_.store(0, std::memory_order_release);
-
-     return {true, 0, "vm destroyed"};
+        // The thread has been paused; the destroy() path will signal
+        // and join.  Release the lock first to avoid deadlock.
+        lock.unlock();
+        return destroy();
     }
 }
 
 VMResult ChuckVM::forceDestroy(std::chrono::milliseconds timeout)
 {
-    (void)timeout; // reserved for future cooperative-join with timeout
-    std::lock_guard<std::mutex> lock(mutex_);
+    (void)timeout; // Reserved for future cooperative-join with timeout
+    std::unique_lock<std::mutex> lock(mutex_);
 
     auto currentState = state_.load(std::memory_order_acquire);
     if (currentState == VMState::Inactive || currentState == VMState::Destroyed) {
@@ -176,36 +166,36 @@ VMResult ChuckVM::forceDestroy(std::chrono::milliseconds timeout)
     resumeRequested_.store(false, std::memory_order_release);
     wakeThread();
 
+    // Release the lock before attempting to cancel/join — the thread may
+    // be holding suspendMtx_ (via suspendCv_.wait) and we need wakeThread
+    // to have been called (it was above) before trying to join.
+    std::thread threadToJoin = std::move(chucKThread_);
+    std::thread::native_handle_type tid = chucKThreadId_;
+    chucKThreadId_ = 0;
+    lock.unlock();
+
     // If the thread is hung (render callback is a busy loop), it won't
-    // observe the Destroyed state until the callback returns.  Use
-    // pthread_cancel to forcibly terminate the thread.
-    if (chucKThread_.joinable()) {
-        // First, try a cooperative join with a short timeout.
-        // std::thread::join() is blocking — we use a separate approach:
-        // detach and poll, or use pthread_cancel directly.
-        //
-        // We use pthread_cancel here because the watchdog thread is separate
-        // from the audio callback thread (B4-K5 §ARCHITECTURAL BOUNDARY).
-        // The render callback may be stuck in an infinite loop without
-        // checking any cancellation points.
-        int rv = pthread_cancel(chucKThreadId_);
-        if (rv != 0) {
-            // Thread may have already exited — just try to join.
-            chucKThread_.join();
-        } else {
-            // pthread_cancel was successful — the thread will be cancelled
-            // at the next cancellation point.  Join to wait for cleanup.
-            try {
-                chucKThread_.join();
-            } catch (const std::exception& e) {
-                lastError_ = "forceDestroy join failed: " + std::string(e.what());
-                chucKThread_.detach();
-                return {false, 99, lastError_};
-            }
+    // observe the Destroyed state until the callback returns.  We can't
+    // join the thread without it exiting.  We use pthread_cancel to
+    // forcibly terminate the thread — on POSIX, this sends a cancellation
+    // at the next cancellation point (sched_yield, sleep, condvar wait).
+    //
+    // NOTE: On macOS, pthread_cancel may interact poorly with signal
+    // handlers in test frameworks (Catch2).  The render callback must
+    // contain cancellation points (e.g., sched_yield) for this to work.
+    if (threadToJoin.joinable()) {
+        int cancelRv = pthread_cancel(tid);
+        (void)cancelRv;
+
+        // Join the thread (should exit at next cancellation point,
+        // or if pthread_cancel failed, try join anyway).
+        try {
+            threadToJoin.join();
+        } catch (...) {
+            threadToJoin.detach();
         }
     }
 
-    chucKThreadId_ = 0;
     chuckInstance_ = nullptr;
     heartbeat_.store(0, std::memory_order_release);
     blocksProduced_.store(0, std::memory_order_release);

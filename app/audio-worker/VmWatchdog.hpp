@@ -100,6 +100,7 @@ struct WatchdogEntry {
 
     void reset() {
         lastHeartbeat.store(0, std::memory_order_release);
+        trackedGeneration.store(0, std::memory_order_release);
         lastProgress = std::chrono::steady_clock::now();
         restartCount.store(0, std::memory_order_release);
         lastRestartNs.store(0, std::memory_order_release);

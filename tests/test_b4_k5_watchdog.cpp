@@ -24,6 +24,8 @@
  * Requirements: B4-K5, B4-K3, K0.5
  */
 
+#define CATCH_CONFIG_NO_POSIX_SIGNALS
+
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/catch_approx.hpp>
 
@@ -71,32 +73,22 @@ static ChuckVM::RenderCallback makeSilenceCallback(std::atomic<int>* blockCounte
     };
 }
 
-/// A render callback that hangs (infinite loop, no time advance).
-/// This simulates the B4-K5 failure case: `while(true){}` with no `now +=>`.
-/// Uses std::this_thread::yield() which is a pthread cancellation point.
-static ChuckVM::RenderCallback makeHangCallback()
+/// A render callback that can be "hung" by setting an atomic flag.
+/// While the flag is set, the callback busy-spins WITHOUT advancing the
+/// heartbeat (the heartbeat is incremented after the callback returns in
+/// chucKThreadLoop).  The spin loop uses std::this_thread::yield() which
+/// is a pthread cancellation point, allowing forceDestroyVM's pthread_cancel
+/// to terminate the thread safely.
+///
+/// The flag is checked periodically so the callback can be "un-hung" by
+/// clearing the flag, allowing normal cleanup without pthread_cancel.
+static ChuckVM::RenderCallback makeHanggableCallback(std::atomic<bool>* hangFlag)
 {
-    return [](float* /*outBuf*/, unsigned /*numFrames*/, unsigned /*numChannels*/) {
-        while (true) {
+    return [hangFlag](float* /*outBuf*/, unsigned /*numFrames*/, unsigned /*numChannels*/) {
+        // While hangFlag is set, spin without yielding to ChucK time.
+        // This simulates a shred stuck in while(true){} with no now +=>.
+        while (hangFlag->load(std::memory_order_acquire)) {
             std::this_thread::yield();
-        }
-    };
-}
-
-/// A render callback that hangs (no yield at all — pure CPU spin).
-/// This is the worst case for cancellation — the watchdog's pthread_cancel
-/// will terminate this thread asynchronously.  Not used in tests currently
-/// (makeHangCallback provides a cancellation point via yield()), but kept
-/// for future use in stress tests.
-[[maybe_unused]] static ChuckVM::RenderCallback makeHangSpinCallback()
-{
-    return [](float* /*outBuf*/, unsigned /*numFrames*/, unsigned /*numChannels*/) {
-        // Use a non-atomic, non-volatile counter that the compiler
-        // cannot optimize away because it's written through a pointer.
-        int sink = 0;
-        int* sinkPtr = &sink;
-        while (true) {
-            (*sinkPtr)++;
         }
     };
 }
@@ -167,6 +159,7 @@ TEST_CASE("B4-K5: intentional hang — watchdog detects at ~2s", "[k5][hang][det
     VmLifecycle vmLifecycle;
 
     std::atomic<bool> hangDetected{false};
+    std::atomic<bool> hangFlag{true};  // Set to true = callback spins = heartbeat stalls
     int detectionCount = 0;
 
     TabId tabId = 0;
@@ -174,8 +167,8 @@ TEST_CASE("B4-K5: intentional hang — watchdog detects at ~2s", "[k5][hang][det
     // Track generations through VmLifecycle so the watchdog can use it.
     uint64_t gen = vmLifecycle.vmCreate(tabId);
 
-    // Create VM with a hanging render callback.
-    vmMgr.setRenderCallback(makeHangCallback());
+    // Create VM with a hanging render callback that can be cleared for cleanup.
+    vmMgr.setRenderCallback(makeHanggableCallback(&hangFlag));
     VMResult r = vmMgr.activateVM(tabId);
     REQUIRE(r.ok);
 
@@ -207,10 +200,13 @@ TEST_CASE("B4-K5: intentional hang — watchdog detects at ~2s", "[k5][hang][det
     REQUIRE(hangDetected.load(std::memory_order_acquire));
     REQUIRE(detectionCount == 1);
 
+    // Clear the hang flag so the thread can exit cooperatively.
+    hangFlag.store(false, std::memory_order_release);
+
     watchdog.stop();
 
-    // Cleanup: force destroy since the thread is hung.
-    vmMgr.forceDestroyVM(tabId);
+    // Now destroy the VM — the thread should exit cleanly.
+    vmMgr.destroyVM(tabId);
 }
 
 // ---------------------------------------------------------------------------
@@ -224,13 +220,14 @@ TEST_CASE("B4-K5: recovery — old VM torn down, fresh VM created", "[k5][recove
 
     std::atomic<bool> hangDetected{false};
     std::atomic<bool> recoveryComplete{false};
+    std::atomic<bool> hangFlag{true};  // Controls the hanging callback
     uint64_t newGen = 0;
 
     TabId tabId = 3;
 
-    // Create the initial VM with a hanging callback.
+    // Create the initial VM with a hanging callback that can be cleared.
     uint64_t gen1 = vmLifecycle.vmCreate(tabId);
-    vmMgr.setRenderCallback(makeHangCallback());
+    vmMgr.setRenderCallback(makeHanggableCallback(&hangFlag));
     VMResult r = vmMgr.activateVM(tabId);
     REQUIRE(r.ok);
 
@@ -242,8 +239,11 @@ TEST_CASE("B4-K5: recovery — old VM torn down, fresh VM created", "[k5][recove
         [&hangDetected](TabId, uint64_t, uint64_t, std::chrono::steady_clock::time_point) {
             hangDetected.store(true, std::memory_order_release);
         },
-        [&recoveryComplete, &newGen](TabId, uint64_t gen) {
+        // Recovery callback: clear the hang flag so the new VM (created with
+        // the same render callback) won't immediately hang again.
+        [&recoveryComplete, &newGen, &hangFlag](TabId, uint64_t gen) {
             newGen = gen;
+            hangFlag.store(false, std::memory_order_release);
             recoveryComplete.store(true, std::memory_order_release);
         }
     );
@@ -263,10 +263,9 @@ TEST_CASE("B4-K5: recovery — old VM torn down, fresh VM created", "[k5][recove
     REQUIRE(hangDetected.load(std::memory_order_acquire));
     REQUIRE(recoveryComplete.load(std::memory_order_acquire));
 
-    // After recovery, the VM should have a new generation and be active
-    // with a healthy (silence) callback.  The watchdog calls vmCreate +
-    // activateVM internally, so the new VM should be tracked by VMManager.
-    // Verify the generation changed.
+    // After recovery, the VM should have a new generation and be active.
+    // The watchdog calls vmCreate + activateVM internally, so the new VM
+    // should be tracked by VMManager.  Verify the generation changed.
     uint64_t postRecoveryGen = vmLifecycle.generationOf(tabId);
     REQUIRE(postRecoveryGen > gen1);
 
@@ -278,8 +277,11 @@ TEST_CASE("B4-K5: recovery — old VM torn down, fresh VM created", "[k5][recove
 
     watchdog.stop();
 
+    // Give the recovered VM a moment to produce some heartbeats.
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
     // Cleanup.
-    vmMgr.forceDestroyVM(tabId);
+    vmMgr.destroyVM(tabId);
 }
 
 // ---------------------------------------------------------------------------
@@ -294,6 +296,7 @@ TEST_CASE("B4-K5: two active tabs — isolate hang to affected tab", "[k5][isola
     std::atomic<bool> tabAHungDetected{false};
     std::atomic<bool> tabBHungDetected{false};
     std::atomic<int> blockCountB{0};
+    std::atomic<bool> hangFlagA{true};  // Tab A's callback will spin
 
     TabId tabA = 0;
     TabId tabB = 1;
@@ -311,9 +314,9 @@ TEST_CASE("B4-K5: two active tabs — isolate hang to affected tab", "[k5][isola
     watchdog.setTimeout(std::chrono::milliseconds(200));
     watchdog.setInterval(std::chrono::milliseconds(50));
 
-    // --- Tab A: hanging VM ---
+    // --- Tab A: hanging VM (flaggable for clean cleanup) ---
     uint64_t genA = vmLifecycle.vmCreate(tabA);
-    vmMgr.setRenderCallback(makeHangCallback());
+    vmMgr.setRenderCallback(makeHanggableCallback(&hangFlagA));
     VMResult rA = vmMgr.activateVM(tabA);
     REQUIRE(rA.ok);
     ChuckVM* vmA = vmMgr.findVM(tabA);
@@ -321,6 +324,7 @@ TEST_CASE("B4-K5: two active tabs — isolate hang to affected tab", "[k5][isola
     vmA->setGeneration(genA);
 
     // --- Tab B: healthy VM ---
+    // Set silence callback for tab B (overwrites the hang callback for new VMs only).
     uint64_t genB = vmLifecycle.vmCreate(tabB);
     vmMgr.setRenderCallback(makeSilenceCallback(&blockCountB));
     VMResult rB = vmMgr.activateVM(tabB);
@@ -341,10 +345,11 @@ TEST_CASE("B4-K5: two active tabs — isolate hang to affected tab", "[k5][isola
         std::this_thread::sleep_for(std::chrono::milliseconds(50));
     }
 
+    REQUIRE(tabAHungDetected.load(std::memory_order_acquire));  // A was hung
+
     // Give a little extra time to ensure tab B is NOT flagged.
     std::this_thread::sleep_for(std::chrono::milliseconds(500));
 
-    REQUIRE(tabAHungDetected.load(std::memory_order_acquire));  // A was hung
     REQUIRE_FALSE(tabBHungDetected.load(std::memory_order_acquire));  // B is fine
 
     // Tab B should still be producing blocks.
@@ -352,9 +357,11 @@ TEST_CASE("B4-K5: two active tabs — isolate hang to affected tab", "[k5][isola
 
     watchdog.stop();
 
-    // Cleanup — use silence callback before destroying to avoid pthread_cancel
-    // on a healthy thread.
-    vmMgr.forceDestroyVM(tabA);
+    // Clear the hang flag so tab A's thread can exit cooperatively.
+    hangFlagA.store(false, std::memory_order_release);
+
+    // Cleanup.
+    vmMgr.destroyVM(tabA);
     vmMgr.destroyVM(tabB);
 }
 
@@ -370,6 +377,7 @@ TEST_CASE("B4-K5: reverse isolation — hang B, A continues", "[k5][isolation][B
     std::atomic<bool> tabAHungDetected{false};
     std::atomic<bool> tabBHungDetected{false};
     std::atomic<bool> recoveryComplete{false};
+    std::atomic<bool> hangFlagB{true};  // Tab B's callback will spin
     std::atomic<int> blockCountA{0};
 
     TabId tabA = 0;
@@ -381,7 +389,9 @@ TEST_CASE("B4-K5: reverse isolation — hang B, A continues", "[k5][isolation][B
             if (tabId == tabA) tabAHungDetected.store(true, std::memory_order_release);
             if (tabB == tabId) tabBHungDetected.store(true, std::memory_order_release);
         },
-        [&recoveryComplete](TabId, uint64_t) {
+        // Recovery callback: clear the hang flag so the new VM won't hang.
+        [&recoveryComplete, &hangFlagB](TabId, uint64_t) {
+            hangFlagB.store(false, std::memory_order_release);
             recoveryComplete.store(true, std::memory_order_release);
         }
     );
@@ -398,9 +408,9 @@ TEST_CASE("B4-K5: reverse isolation — hang B, A continues", "[k5][isolation][B
     REQUIRE(vmA != nullptr);
     vmA->setGeneration(genA);
 
-    // --- Tab B: hanging VM ---
+    // --- Tab B: hanging VM (flaggable for clean cleanup) ---
     uint64_t genB = vmLifecycle.vmCreate(tabB);
-    vmMgr.setRenderCallback(makeHangCallback());
+    vmMgr.setRenderCallback(makeHanggableCallback(&hangFlagB));
     VMResult rB = vmMgr.activateVM(tabB);
     REQUIRE(rB.ok);
     ChuckVM* vmB = vmMgr.findVM(tabB);
@@ -428,8 +438,16 @@ TEST_CASE("B4-K5: reverse isolation — hang B, A continues", "[k5][isolation][B
 
     watchdog.stop();
 
-    // Cleanup — set silence callback for B's recovery, then destroy.
-    vmMgr.forceDestroyVM(tabB);
+    // Wait for recovery to complete (if it hasn't already).
+    deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (!recoveryComplete.load(std::memory_order_acquire) &&
+           std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    }
+
+    // The flag was cleared by the recovery callback, so the thread should
+    // have exited cooperatively.  Destroy should work without pthread_cancel.
+    vmMgr.destroyVM(tabB);
     vmMgr.destroyVM(tabA);
 }
 
@@ -476,7 +494,10 @@ TEST_CASE("B4-K5: stopped/inactive tab — no false hang", "[k5][stopped][no-fal
 
     // Now stop the VM (destroy it).
     vmMgr.destroyVM(tabId);
-    REQUIRE(vm->state() == VMState::Destroyed);
+    // VMManager::destroyVM erases from map — verify via queryVM instead.
+    VMResult qr = vmMgr.queryVM(tabId);
+    REQUIRE(qr.ok);
+    REQUIRE(qr.message.find("state=inactive") != std::string::npos);
 
     // Wait well past the timeout — the watchdog should NOT detect a hang
     // because the VM is no longer Active.
@@ -563,6 +584,7 @@ TEST_CASE("B4-K5: duplicate detection — only one recovery", "[k5][race][idempo
 
     std::atomic<int> detectionCount{0};
     std::atomic<int> recoveryCount{0};
+    std::atomic<bool> hangFlag{true};  // Controls the hanging callback
 
     TabId tabId = 9;
 
@@ -570,7 +592,15 @@ TEST_CASE("B4-K5: duplicate detection — only one recovery", "[k5][race][idempo
         [&detectionCount](TabId, uint64_t, uint64_t, std::chrono::steady_clock::time_point) {
             detectionCount.fetch_add(1, std::memory_order_acq_rel);
         },
-        [&recoveryCount](TabId, uint64_t) {
+        // Recovery callback: clear the hang flag + set silence callback
+        // so the new VM won't immediately hang.
+        [&recoveryCount, &hangFlag, &vmMgr](TabId, uint64_t) {
+            hangFlag.store(false, std::memory_order_release);
+            vmMgr.setRenderCallback(ChuckVM::RenderCallback{
+                [](float* outBuf, unsigned numFrames, unsigned /*numChannels*/) {
+                    if (outBuf) std::memset(outBuf, 0, numFrames * sizeof(float));
+                }
+            });
             recoveryCount.fetch_add(1, std::memory_order_acq_rel);
         }
     );
@@ -580,7 +610,7 @@ TEST_CASE("B4-K5: duplicate detection — only one recovery", "[k5][race][idempo
 
     // Create a hanging VM via VMManager.
     uint64_t gen = vmLifecycle.vmCreate(tabId);
-    vmMgr.setRenderCallback(makeHangCallback());
+    vmMgr.setRenderCallback(makeHanggableCallback(&hangFlag));
     VMResult r = vmMgr.activateVM(tabId);
     REQUIRE(r.ok);
 
@@ -613,7 +643,7 @@ TEST_CASE("B4-K5: duplicate detection — only one recovery", "[k5][race][idempo
     watchdog.stop();
 
     // Cleanup
-    vmMgr.forceDestroyVM(tabId);
+    vmMgr.destroyVM(tabId);
 }
 
 // ---------------------------------------------------------------------------

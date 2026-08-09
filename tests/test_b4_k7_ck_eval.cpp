@@ -196,8 +196,10 @@ TEST_CASE("B4-K7: unbalanced brackets rejected", "[k7][compile][brackets]")
 
     auto result = mgr.evaluateCkTab(tab, kUnbalancedCk);
     REQUIRE_FALSE(result.ok);
-    REQUIRE(result.message.find("unbalanced") != std::string::npos ||
-            result.message.find("expected") != std::string::npos);
+    const bool hasUnbalanced =
+        result.message.find("unbalanced") != std::string::npos ||
+        result.message.find("expected") != std::string::npos;
+    REQUIRE(hasUnbalanced);
 
     mgr.shutdown();
 }
@@ -230,8 +232,9 @@ TEST_CASE("B4-K7: failed compile does NOT destroy running VM", "[k7][compile][no
     auto queryResult = mgr.queryTabVM(tab);
     REQUIRE(queryResult.ok);
     // The VM state should still be active.
-    REQUIRE(queryResult.message.find("active") != std::string::npos ||
-            queryResult.message.find("ok") != std::string::npos);
+    const bool stillActive =
+        queryResult.message.find("active") != std::string::npos;
+    REQUIRE(stillActive);
 
     mgr.shutdown();
 }
@@ -263,9 +266,11 @@ TEST_CASE("B4-K7: ck_stop destroys VM and clears handoff", "[k7][stop]")
     // Query after stop — VM should be destroyed/inactive.
     auto queryResult = mgr.queryTabVM(tab);
     REQUIRE(queryResult.ok);
-    REQUIRE(queryResult.message.find("destroyed") != std::string::npos ||
-            queryResult.message.find("inactive") != std::string::npos ||
-            queryResult.message.find("no_vm") != std::string::npos);
+    const bool isDestroyed =
+        queryResult.message.find("destroyed") != std::string::npos ||
+        queryResult.message.find("inactive") != std::string::npos ||
+        queryResult.message.find("no_vm") != std::string::npos;
+    REQUIRE(isDestroyed);
 
     mgr.shutdown();
 }
@@ -289,9 +294,11 @@ TEST_CASE("B4-K7: ck_genv returns valid generation after activation", "[k7][genv
     // Query generation.
     auto queryResult = mgr.queryTabVM(tab);
     REQUIRE(queryResult.ok);
-    // The response should contain gen= and version=.
-    REQUIRE(queryResult.message.find("gen=") != std::string::npos ||
-            queryResult.message.find("active") != std::string::npos);
+    // The response should contain gen= or active state.
+    const bool hasGenResponse =
+        queryResult.message.find("gen=") != std::string::npos ||
+        queryResult.message.find("active") != std::string::npos;
+    REQUIRE(hasGenResponse);
 
     mgr.shutdown();
 }
