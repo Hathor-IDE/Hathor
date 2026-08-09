@@ -77,6 +77,10 @@ public:
     /// List all VMs and their states.
     std::string listVMs() const;
 
+    /// Get the generation of a tab's VM (for watchdog stale-runtime protection).
+    /// Returns 0 if no VM exists for the tab.
+    uint64_t getVMGeneration(TabId tabId) const;
+
     /// Count VMs in a given state.
     int countState(VMState state) const;
 
@@ -98,6 +102,11 @@ public:
 
     /// Set the render callback used by all new VMs.
     void setRenderCallback(ChuckVM::RenderCallback cb);
+
+    /// B4-K7: Set the handoff loader callback used by all new VMs.
+    /// The render thread calls this to consume compiled shreds from the
+    /// atomic handoff slot (lock-free).
+    void setHandoffLoader(ChuckVM::HandoffLoader loader) noexcept;
 
     // -----------------------------------------------------------------------
     // Watchdog integration (B4-K5)

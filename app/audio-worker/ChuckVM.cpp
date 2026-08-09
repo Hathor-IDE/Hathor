@@ -101,6 +101,15 @@ VMResult ChuckVM::activate(unsigned sampleRate, unsigned channels)
     return {true, 0, "vm activated"};
 }
 
+// ---------------------------------------------------------------------------
+// B4-K7: Handoff loader registration
+// ---------------------------------------------------------------------------
+
+void ChuckVM::setHandoffLoader(HandoffLoader loader) noexcept
+{
+    handoffLoader_ = std::move(loader);
+}
+
 VMResult ChuckVM::deactivate(bool suspend)
 {
     std::lock_guard<std::mutex> lock(mutex_);
@@ -305,6 +314,31 @@ void ChuckVM::chucKThreadLoop()
 
         // Render one audio block via the callback.
         renderCb_(renderBuf, kRenderBlockSize, channels_);
+
+        // -----------------------------------------------------------------
+        // B4-K7: Consume any handoff shred that the compile dispatcher
+        // published for this tab.  This is the compile→load→execute path:
+        // the dispatcher compiled the code and published a CompiledShred
+        // via std::atomic_store_explicit; here we load it via the
+        // injected HandoffLoader callback (lock-free atomic load).
+        // The actual shred execution is simulated (placeholder tone above);
+        // when libchuck is linked, loadShred() will spork the shred here.
+        // -----------------------------------------------------------------
+        if (handoffLoader_)
+        {
+            auto shred = handoffLoader_();
+            if (shred && shred->ok)
+            {
+                loadedShredId_.store(static_cast<int>(shred->loadedShredId),
+                                     std::memory_order_release);
+                loadedSourceHash_.store(shred->sourceHash, std::memory_order_release);
+            }
+            else if (shred && !shred->ok)
+            {
+                lastErrorMsg_.store(shred->error, std::memory_order_release);
+                lastErrorLine_.store(shred->errorLine, std::memory_order_release);
+            }
+        }
 
         // Increment heartbeat (for B4-K5 watchdog).
         // Per B4-K5 §HEARTBEAT: use relaxed atomic — the heartbeat is a

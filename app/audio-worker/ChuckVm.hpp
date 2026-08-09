@@ -160,6 +160,29 @@ public:
     /// Last error message (if state == Error).
     std::string lastError() const;
 
+    // -----------------------------------------------------------------------
+    // B4-K7: Loaded shred state accessors (for query / test introspection)
+    // -----------------------------------------------------------------------
+
+    /// ID of the currently loaded shred (-1 if none loaded).
+    /// Read by queryVM() to report status.  Relaxed ordering — best-effort.
+    int loadedShredId() const noexcept {
+        return loadedShredId_.load(std::memory_order_relaxed);
+    }
+
+    /// Hash of the currently loaded source (0 if none).
+    std::size_t loadedSourceHash() const noexcept {
+        return loadedSourceHash_.load(std::memory_order_relaxed);
+    }
+
+    /// Last compile error message from a handoff (empty if none).
+    /// Reads from the render thread's local error string under a lock
+    /// (matches the existing lastError_ locking discipline).
+    std::string lastCompileError() const {
+        std::lock_guard<std::mutex> lock(errorMtx_);
+        return lastErrorMsg_;
+    }
+
     /// Whether the VM is currently active (running on its thread).
     bool isActive() const noexcept {
         return state_.load(std::memory_order_acquire) == VMState::Active;
@@ -255,6 +278,21 @@ private:
 
     /// Block size for rendering.
     static constexpr unsigned kRenderBlockSize = 64;
+
+    // -----------------------------------------------------------------------
+    // B4-K7: Handoff loader for compiled shred consumption
+    // -----------------------------------------------------------------------
+    /// Called on the ChucK thread to load any pending handoff shred.
+    /// Set via setHandoffLoader() during activation.  May be null (no handoff).
+    HandoffLoader handoffLoader_;
+
+    // -----------------------------------------------------------------------
+    // B4-K7: Loaded shred state (updated by render thread on handoff)
+    // -----------------------------------------------------------------------
+    std::atomic<int>       loadedShredId_{-1};
+    std::atomic<std::size_t> loadedSourceHash_{0};
+    std::atomic<int>       lastErrorLine_{0};
+    std::string            lastErrorMsg_;
 
     // NOTE: The actual ChucK* instance is not stored here — this is a
     // forward-compatible design.  When B4-K4 adds libchuck integration,

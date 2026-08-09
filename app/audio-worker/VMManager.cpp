@@ -223,6 +223,19 @@ std::string VMManager::listVMs() const
 }
 
 // ---------------------------------------------------------------------------
+// Generation accessor (B4-K5 stale-runtime protection)
+// ---------------------------------------------------------------------------
+
+uint64_t VMManager::getVMGeneration(TabId tabId) const
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto it = vms_.find(tabId);
+    if (it == vms_.end() || !it->second)
+        return 0;
+    return it->second->generation();
+}
+
+// ---------------------------------------------------------------------------
 // Counting helpers
 // ---------------------------------------------------------------------------
 

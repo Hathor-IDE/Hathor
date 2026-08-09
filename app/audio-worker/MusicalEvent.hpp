@@ -75,8 +75,9 @@ struct MusicalEvent {
     EventType  type;           ///< event type (enum, not string — allocation-free)
     ParamMap   payload;       ///< event payload (reuses engine's ParamMap — SSO keys)
     Rational   musicalTs;     ///< musical timestamp (cycles from master clock)
-    uint64_t   sampleTs;      ///< audio sample-frame timestamp (absolute, at sampleRate)
-    uint64_t   sequence;      ///< monotonic sequence number for deterministic ordering
+    uint64_t   sampleTs;      ///< audio sample-frame timestamp (master/absolute, at sampleRate)
+    uint64_t   localExecTs;   ///< worker-local sample position for execution (precomputed, RT-safe)
+    uint64_t   sequence;      ///< monotonic per-producer sequence number (deterministic ordering)
     uint8_t    targetTabId;   ///< intended ChucK VM (TabId, matches SlotState)
     uint64_t   vmGeneration;  ///< VM generation this event targets (stale guard)
 
@@ -86,6 +87,7 @@ struct MusicalEvent {
         : type(EventType::NoteOn)
         , musicalTs(0)
         , sampleTs(0)
+        , localExecTs(0)
         , sequence(0)
         , targetTabId(0)
         , vmGeneration(0)
@@ -96,6 +98,7 @@ struct MusicalEvent {
                  ParamMap  && p,
                  Rational    musTs,
                  uint64_t    sampTs,
+                 uint64_t    locTs,
                  uint64_t    seq,
                  uint8_t     tabId = 0,
                  uint64_t    gen   = 0)
@@ -103,17 +106,18 @@ struct MusicalEvent {
         , payload(std::move(p))
         , musicalTs(musTs)
         , sampleTs(sampTs)
+        , localExecTs(locTs)
         , sequence(seq)
         , targetTabId(tabId)
         , vmGeneration(gen)
     {}
 
-    // Compare by sample timestamp for ordering. Used by the event scheduler's
-    // sort key. Equal timestamps are further ordered by sequence number.
+    // Compare by LOCAL execution timestamp for ordering. Used by the event
+    // scheduler's sort key. Equal timestamps are further ordered by sequence.
     bool operator<(const MusicalEvent& other) const noexcept
     {
-        if (sampleTs != other.sampleTs)
-            return sampleTs < other.sampleTs;
+        if (localExecTs != other.localExecTs)
+            return localExecTs < other.localExecTs;
         return sequence < other.sequence;
     }
 };

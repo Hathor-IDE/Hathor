@@ -376,7 +376,14 @@ static void controlPlaneThread() {
                                                   numFrames, numChannels, genForCb);
                         });
 
-                     auto result = gVmManager.activateVM(static_cast<TabId>(tabId),
+                    // B4-K7: Wire the handoff loader so ChuckVM's render thread
+                    // can consume compiled shreds from VmLifecycle::loadHandoff().
+                    gVmManager.setHandoffLoader(
+                        [tabId]() {
+                            return gVmLifecycle.loadHandoff(static_cast<TabId>(tabId));
+                        });
+
+                    auto result = gVmManager.activateVM(static_cast<TabId>(tabId),
                                                           sampleRate, channels);
                      if (result.ok) {
                          // B4-K5: register the VM with the watchdog.
@@ -413,6 +420,12 @@ static void controlPlaneThread() {
                         (float* outBuf, unsigned numFrames, unsigned numChannels) {
                             perTabRenderCallback(static_cast<TabId>(tabId), outBuf,
                                                   numFrames, numChannels, genForCb);
+                        });
+
+                    // B4-K7: Wire the handoff loader for compiled shred consumption.
+                    gVmManager.setHandoffLoader(
+                        [tabId]() {
+                            return gVmLifecycle.loadHandoff(static_cast<TabId>(tabId));
                         });
 
                     auto result = gVmManager.activateVM(static_cast<TabId>(tabId));
@@ -472,19 +485,19 @@ static void controlPlaneThread() {
                 if (tabId < 0 || tabId >= kNumTabs) {
                     resp = "err vm_resume: tab id out of range\n";
                 } else {
-                     auto result = gVmManager.resumeVM(static_cast<TabId>(tabId));
-                     if (result.ok) {
-                         // B4-K5: re-register with the watchdog and reset the
-                         // heartbeat baseline so the resumed VM doesn't get
-                         // immediately classified as hung (its heartbeat was
-                         // unchanged while suspended).
-                         if (gWatchdog) {
-                             uint64_t gen = gVmLifecycle.generationOf(static_cast<TabId>(tabId));
-                             gWatchdog->registerVM(static_cast<TabId>(tabId), gen);
-                             gWatchdog->resetHeartbeat(static_cast<TabId>(tabId));
-                         }
-                         resp = "ok vm_resumed tab=" + std::to_string(tabId)
-                              + " state=active\n";
+                    auto result = gVmManager.resumeVM(static_cast<TabId>(tabId));
+                    if (result.ok) {
+                        // B4-K5: re-register with the watchdog and reset the
+                        // heartbeat baseline so the resumed VM doesn't get
+                        // immediately classified as hung (its heartbeat was
+                        // unchanged while suspended).
+                        if (gWatchdog) {
+                            uint64_t gen = gVmLifecycle.generationOf(static_cast<TabId>(tabId));
+                            gWatchdog->registerVM(static_cast<TabId>(tabId), gen);
+                            gWatchdog->resetHeartbeat(static_cast<TabId>(tabId));
+                        }
+                        resp = "ok vm_resumed tab=" + std::to_string(tabId)
+                             + " state=active\n";
                     } else {
                         resp = "err vm_resume_failed tab=" + std::to_string(tabId)
                              + " " + result.message + "\n";
@@ -493,6 +506,67 @@ static void controlPlaneThread() {
             } catch (...) {
                 resp = "err invalid vm_resume arguments\n";
             }
+        }
+        // -----------------------------------------------------------------
+        // B4-K5: Per-VM hang detection status and watchdog control
+        // -----------------------------------------------------------------
+        else if (cmd.rfind("vm_hang_status", 0) == 0) {
+            // Query the watchdog's hang event log for a specific tab or all tabs.
+            std::string rest = cmd.substr(14);
+            trimSpaces(rest);
+
+            if (rest.empty() || rest == "all") {
+                // Return all recent hang events.
+                std::lock_guard<std::mutex> lock(gHangEventsMtx);
+                std::string events;
+                for (const auto& e : gHangEvents) {
+                    char buf[256];
+                    std::snprintf(buf, sizeof(buf),
+                        "tab=%u old_gen=%llu hb=%llu new_gen=%llu recovered=%d ",
+                        static_cast<unsigned>(e.tabId),
+                        static_cast<unsigned long long>(e.oldGeneration),
+                        static_cast<unsigned long long>(e.heartbeatValue),
+                        static_cast<unsigned long long>(e.newGeneration),
+                        e.recovered ? 1 : 0);
+                    events += buf;
+                }
+                resp = "ok vm_hang_status events=" + std::to_string(gHangEvents.size())
+                     + " " + events + "\n";
+            } else {
+                // Query a specific tab.
+                int tabId = -1;
+                try {
+                    tabId = std::stoi(rest);
+                } catch (...) {
+                    resp = "err invalid vm_hang_status arguments\n";
+                    ::write(connFd, resp.c_str(), resp.size());
+                    ::close(connFd);
+                    continue;
+                }
+                std::lock_guard<std::mutex> lock(gLastHangMtx);
+                auto it = gLastHangPerTab.find(static_cast<TabId>(tabId));
+                if (it != gLastHangPerTab.end()) {
+                    const auto& e = it->second;
+                    resp = "ok vm_hang_status tab=" + std::to_string(tabId)
+                         + " old_gen=" + std::to_string(e.oldGeneration)
+                         + " hb=" + std::to_string(e.heartbeatValue)
+                         + " new_gen=" + std::to_string(e.newGeneration)
+                         + " recovered=" + (e.recovered ? "1" : "0")
+                         + " restarts=" + std::to_string(
+                             gWatchdog ? gWatchdog->monitoredCount() : 0)
+                         + "\n";
+                } else {
+                    resp = "ok vm_hang_status tab=" + std::to_string(tabId)
+                         + " no_hang_events\n";
+                }
+            }
+        }
+        else if (cmd.rfind("watchdog_status", 0) == 0) {
+            resp = "ok watchdog monitored=" + std::to_string(
+                gWatchdog ? gWatchdog->monitoredCount() : 0)
+                 + " total_detections=" + std::to_string(
+                     gWatchdog ? gWatchdog->totalHangDetections() : 0)
+                 + "\n";
         }
         else if (cmd.rfind("vm_destroy", 0) == 0) {
             std::string rest = cmd.substr(10);
@@ -692,6 +766,61 @@ int main(int argc, char* argv[]) {
             return gVmLifecycle.lookupForCompile(tabId, vmGeneration);
         });
 
+    // B4-K5: create and start the per-VM watchdog.
+    // The watchdog callbacks record hang events for UI notification via the
+    // control plane (vm_hang_status command).
+    gWatchdog = std::make_unique<VmWatchdog>(
+        &gVmManager,
+        &gVmLifecycle,
+        // onHangDetected callback — records the event and fires a one-shot
+        // notification to any control-plane client waiting for it.
+        [](TabId tabId, uint64_t oldGen, uint64_t beat, std::chrono::steady_clock::time_point when) {
+            HangEvent evt{};
+            evt.tabId = tabId;
+            evt.oldGeneration = oldGen;
+            evt.heartbeatValue = beat;
+            evt.detectionTime = when;
+            evt.newGeneration = 0;
+            evt.recovered = false;
+
+            {
+                std::lock_guard<std::mutex> lock(gHangEventsMtx);
+                gHangEvents.push_back(evt);
+            }
+            {
+                std::lock_guard<std::mutex> lock(gLastHangMtx);
+                gLastHangPerTab[tabId] = evt;
+            }
+
+            std::fprintf(stderr,
+                         "[watchdog] hang notification: tab=%u old_gen=%llu hb=%llu\n",
+                         static_cast<unsigned>(tabId),
+                         static_cast<unsigned long long>(oldGen),
+                         static_cast<unsigned long long>(beat));
+        },
+        // onRecoveryComplete callback — records the new generation.
+        [](TabId tabId, uint64_t newGen) {
+            std::lock_guard<std::mutex> lock(gLastHangMtx);
+            auto it = gLastHangPerTab.find(tabId);
+            if (it != gLastHangPerTab.end()) {
+                it->second.newGeneration = newGen;
+                it->second.recovered = true;
+            }
+
+            std::lock_guard<std::mutex> lock2(gHangEventsMtx);
+            if (!gHangEvents.empty()) {
+                gHangEvents.back().newGeneration = newGen;
+                gHangEvents.back().recovered = true;
+            }
+
+            std::fprintf(stderr,
+                         "[watchdog] recovery complete: tab=%u new_gen=%llu\n",
+                         static_cast<unsigned>(tabId),
+                         static_cast<unsigned long long>(newGen));
+        }
+    );
+    gWatchdog->start();
+
     // Start the control-plane listener thread.
     std::thread ctrlThread(controlPlaneThread);
 
@@ -700,6 +829,12 @@ int main(int argc, char* argv[]) {
 
     // Signal shutdown.
     gRunning.store(false, std::memory_order_release);
+
+    // B4-K5: stop the watchdog before tearing down VMs.
+    if (gWatchdog) {
+        gWatchdog->stop();
+        gWatchdog.reset();
+    }
 
     if (gCompiler) {
         gCompiler->shutdown();

@@ -17,6 +17,7 @@ add_library(hathor-audio-worker-lib STATIC
     ResourcePolicy.cpp
     VMManager.cpp
     VmLifecycle.cpp
+    VmWatchdog.cpp
 )
 
 target_include_directories(hathor-audio-worker-lib
