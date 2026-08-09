@@ -24,6 +24,7 @@
 #include "VoicePool.hpp"
 #include "VisualizerFrame.hpp"
 #include "audio-worker/AudioWorkerManager.hpp"
+#include "MasterEq.hpp"
 
 // ---------------------------------------------------------------------------
 // SlotState — see app/SlotState.hpp
