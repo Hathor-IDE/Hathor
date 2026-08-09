@@ -379,7 +379,40 @@ target_compile_definitions(hathor-b4-k8-hard-gate-tests PRIVATE
 include(Catch)
 catch_discover_tests(hathor-b4-k8-hard-gate-tests DISCOVERY_MODE PRE_TEST)
 
- # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# hathor-b7-k4-verification — B7-K4 behavioral verification of per-sound
+# filtering and master EQ hot-swap.
+#
+# This is a standalone verification program (not a Catch2 test) that:
+#   1. Produces multiple simultaneous voices with different cutoff/resonance
+#   2. Verifies per-voice filtering is independent (not global)
+#   3. Hot-swaps all 4 EQ presets while audio plays
+#   4. Checks for clicks/pops at every transition
+#   5. Verifies allocation-free audio path
+#   6. Verifies signal-chain ordering (per-voice → mix → ChucK → EQ → gain)
+#   7. Writes WAV files for manual/ear verification
+#
+# JUCE-free: VoicePool.cpp, SampleBank.hpp, BiquadFilter.hpp, MasterEq.hpp
+# have no JUCE dependency.
+# ---------------------------------------------------------------------------
+add_executable(hathor-b7-k4-verification
+    test_b7_k4_verification.cpp
+    ${CMAKE_SOURCE_DIR}/app/VoicePool.cpp
+)
+
+target_compile_features(hathor-b7-k4-verification PRIVATE cxx_std_20)
+target_compile_options(hathor-b7-k4-verification PRIVATE -Wall -Wextra -Werror)
+
+target_include_directories(hathor-b7-k4-verification PRIVATE
+    ${CMAKE_SOURCE_DIR}/app
+    ${CMAKE_SOURCE_DIR}/engine/include
+)
+
+target_link_libraries(hathor-b7-k4-verification PRIVATE
+    hathor-engine
+)
+
+# ---------------------------------------------------------------------------
 # Integration tests (require the full hathor binary; skipped if app is off)
 # ---------------------------------------------------------------------------
 add_subdirectory(integration)
