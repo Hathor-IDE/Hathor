@@ -554,6 +554,7 @@ TEST_CASE("AI-2: inspect_project with active slot reflects it in active_slots",
     // No mutations should have occurred from the AI-2 read call itself.
     // (findOrAddSlot in setup is a test action, not an AI-2 operation.)
     const auto mutationsBeforeRead = audio.mutations.size();
+    RespCapture cap;
     runCmd(ci, "inspect_project", cap);
 
     REQUIRE(cap.got);
@@ -572,6 +573,7 @@ TEST_CASE("AI-2: inspect_project with active slot reflects it in active_slots",
 
     // AI-2 read call must not have added any mutations
     REQUIRE(audio.mutations.size() == mutationsBeforeRead);
+}
 
 TEST_CASE("AI-2: inspect_project no mutation when called multiple times",
           "[ai2][readonly][inspect_project][mutation_audit]")
@@ -1252,6 +1254,7 @@ TEST_CASE("AI-2: list_chuck_instruments does not create/modify assets",
 
     // No mutations from the AI-2 read call itself (setup mutations are pre-existing)
     const auto mutationsBeforeRead = audio.mutations.size();
+    RespCapture cap;
     runCmd(ci, "list_chuck_instruments " + proj.root.string(), cap);
 
     REQUIRE(cap.got);
@@ -1274,8 +1277,8 @@ TEST_CASE("AI-2: list_chuck_instruments does not create/modify assets",
         std::filesystem::last_write_time(wavPath)).time_since_epoch().count();
     REQUIRE(wavTimeAfter == wavTimeBefore);
 
-    // No engine mutations
-    REQUIRE(audio.mutations.empty());
+    // No engine mutations from the AI-2 read call itself
+    REQUIRE(audio.mutations.size() == mutationsBeforeRead);
 }
 
 TEST_CASE("AI-2: get_diagnostics does not compile or execute ChucK",

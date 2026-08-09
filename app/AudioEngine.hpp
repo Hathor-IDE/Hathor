@@ -286,6 +286,36 @@ public:
     std::vector<std::string> listSamples() const override;
 
     // ------------------------------------------------------------------
+    // AI-2: Read-only introspection (overrides on AudioEngineFacade)
+    // ------------------------------------------------------------------
+
+    /// Read-only slot inventory.  Source of truth: slots_[] + slotNames_[].
+    std::vector<SlotInfo> listSlots() const noexcept override;
+
+    /// Read-only status of a single slot.
+    SlotInfo getSlotInfo(int slotIndex) const noexcept override;
+
+    /// Read-only ChucK VM status for a tab (B4-K3).
+    VmStatus getVmStatus(int slotIndex) const noexcept override;
+
+    /// Read-only audio transport/engine state snapshot.
+    AudioStatus getAudioStatus() const noexcept override;
+
+    /// Read-only per-slot playback status.
+    std::vector<SlotPlayback> listSlotPlayback() const noexcept override;
+
+    /// Read-only ChucK instrument inventory (B8-K1/K2/K3/K4).
+    std::vector<InstrumentInfo> listChuckInstruments(
+        const std::filesystem::path& projectDir) const noexcept override;
+
+    /// Resolve the Studio instruments directory for a project.
+    std::filesystem::path studioInstrumentsDir(
+        const std::filesystem::path& projectDir) const noexcept override;
+
+    /// The project directory last used for render-path resolution.
+    std::filesystem::path currentProjectDir() const noexcept override;
+
+    // ------------------------------------------------------------------
     // AI-2: Read-only introspection helpers
     // ------------------------------------------------------------------
 

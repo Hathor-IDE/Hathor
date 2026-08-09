@@ -1110,7 +1110,7 @@ AudioEngineFacade::AudioStatus AudioEngine::getAudioStatus() const noexcept
     s.bpm        = bpm_.load(std::memory_order_relaxed);
     s.sampleRate = sampleRate_.load(std::memory_order_relaxed);
     s.masterGain = masterGain_.load(std::memory_order_relaxed);
-    s.eqPreset   = hathor::toString(getMasterEqPreset());
+    s.eqPreset   = hathor::presetName(getMasterEqPreset());
     s.sampleClock = sampleClock_.load(std::memory_order_relaxed);
     s.deviceOpen = (s.sampleRate > 0);  // sample rate set when device opens
     s.activeRenders = activeRenderCount();
