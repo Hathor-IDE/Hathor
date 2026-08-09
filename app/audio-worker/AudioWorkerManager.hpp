@@ -201,6 +201,11 @@ public:
     /// List all VMs and their states.
     std::string listTabVMs() const;
 
+    /// B4-K5: Query the worker's watchdog hang detection status for a specific
+    /// tab, or all tabs.  Returns a JSON-like string with hang event info.
+    /// @param tabId  Tab slot index, or -1 for all recent events.
+    std::string queryHangStatus(int tabId) const;
+
     /// Set the resource ceiling policy at runtime.
     /// @param maxConcurrentLiveVMs Maximum number of active VMs.
     void setMaxConcurrentLiveVMs(int maxVms);

@@ -635,6 +635,21 @@ std::string AudioWorkerManager::listTabVMs() const
     return sendControlCommand("vm_list", 5000);
 }
 
+// ---------------------------------------------------------------------------
+// B4-K5: Per-VM hang detection status (UI notification support)
+// ---------------------------------------------------------------------------
+
+std::string AudioWorkerManager::queryHangStatus(int tabId) const
+{
+    std::string cmd;
+    if (tabId < 0) {
+        cmd = "vm_hang_status all";
+    } else {
+        cmd = "vm_hang_status " + std::to_string(tabId);
+    }
+    return sendControlCommand(cmd, 5000);
+}
+
 void AudioWorkerManager::setMaxConcurrentLiveVMs(int maxVms)
 {
     // Send a policy update via the control plane.

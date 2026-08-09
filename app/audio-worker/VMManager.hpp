@@ -161,6 +161,9 @@ private:
     /// Render callback for new VMs.
     ChuckVM::RenderCallback renderCallback_;
 
+    /// B4-K7: Handoff loader for new VMs (consumes compiled shreds).
+    ChuckVM::HandoffLoader handoffLoader_;
+
     /// Monotonic clock source for timestamps.
     static std::chrono::milliseconds nowMs() {
         return std::chrono::duration_cast<std::chrono::milliseconds>(

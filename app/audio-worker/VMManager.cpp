@@ -184,21 +184,29 @@ VMResult VMManager::queryVM(TabId tabId) const
     uint64_t blocks = vm->blocksProduced();
     uint64_t beat = vm->heartbeat();
     std::size_t mem = vm->memoryUsage();
+    int loadedShred = vm->loadedShredId();
+    std::size_t loadedHash = vm->loadedSourceHash();
+    uint64_t gen = vm->generation();
 
     return {true, 0, "tab=" + std::to_string(tabId)
-          + " state=" + [&state]{
-              switch (state) {
-                  case VMState::Inactive:   return "inactive";
-                  case VMState::Active:     return "active";
-                  case VMState::Suspended:  return "suspended";
-                  case VMState::Destroyed:  return "destroyed";
-                  case VMState::Error:      return "error";
-              }
-              return "unknown";
-          }()
-          + " blocks=" + std::to_string(blocks)
-          + " heartbeat=" + std::to_string(beat)
-          + " memory=" + std::to_string(mem)};
+        + " state=" + [&state]{
+            switch (state) {
+                case VMState::Inactive:   return "inactive";
+                case VMState::Active:     return "active";
+                case VMState::Suspended:  return "suspended";
+                case VMState::Destroyed:  return "destroyed";
+                case VMState::Error:      return "error";
+                case VMState::Failed:     return "failed";
+                case VMState::Recreating: return "recreating";
+            }
+            return "unknown";
+        }()
+        + " blocks=" + std::to_string(blocks)
+        + " heartbeat=" + std::to_string(beat)
+        + " memory=" + std::to_string(mem)
+        + " shred_id=" + std::to_string(loadedShred)
+        + " source_hash=" + std::to_string(loadedHash)
+        + " gen=" + std::to_string(gen)};
 }
 
 std::string VMManager::listVMs() const
@@ -288,7 +296,17 @@ void VMManager::setPolicy(const ResourcePolicy& policy)
 void VMManager::setRenderCallback(ChuckVM::RenderCallback cb)
 {
     std::lock_guard<std::mutex> lock(mutex_);
-    renderCallback_ = cb;
+    renderCallback_ = std::move(cb);
+}
+
+// ---------------------------------------------------------------------------
+// B4-K7: Handoff loader registration
+// ---------------------------------------------------------------------------
+
+void VMManager::setHandoffLoader(ChuckVM::HandoffLoader loader) noexcept
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    handoffLoader_ = std::move(loader);
 }
 
 // ---------------------------------------------------------------------------
@@ -354,6 +372,11 @@ ChuckVM* VMManager::getOrCreateVM(TabId tabId)
             [](float* outBuf, unsigned numFrames, unsigned /*numChannels*/) {
                 std::memset(outBuf, 0, numFrames * sizeof(float));
             });
+    }
+
+    // B4-K7: Install the handoff loader if one has been registered.
+    if (handoffLoader_) {
+        vms_[tabId]->setHandoffLoader(handoffLoader_);
     }
 
     return vms_[tabId].get();

@@ -662,6 +662,35 @@ static void controlPlaneThread() {
                 resp = "err invalid ck_compile arguments\n";
             }
         }
+        else if (cmd.rfind("ck_stop", 0) == 0) {
+            // B4-K7: Stop a .ck tab — deactivate (suspend) the per-tab VM
+            // and remove any pending handoff shred.  This is the .ck stop
+            // path invoked by the Play/Stop button on a .ck tab.
+            std::string rest = cmd.substr(7);
+            trimSpaces(rest);
+            try {
+                int tabId = std::stoi(rest);
+                if (tabId < 0 || tabId >= kNumTabs) {
+                    resp = "err ck_stop: tab id out of range [0," + std::to_string(kNumTabs) + ")\n";
+                } else {
+                    // Unregister from watchdog if present.
+                    if (gWatchdog) {
+                        gWatchdog->unregisterVM(static_cast<TabId>(tabId));
+                    }
+                    // Destroy the VM (full teardown — shred is discarded).
+                    gVmLifecycle.vmDestroy(static_cast<TabId>(tabId));
+                    auto result = gVmManager.destroyVM(static_cast<TabId>(tabId));
+                    if (result.ok) {
+                        resp = "ok ck_stopped tab=" + std::to_string(tabId) + "\n";
+                    } else {
+                        resp = "err ck_stop_failed tab=" + std::to_string(tabId)
+                             + " " + result.message + "\n";
+                    }
+                }
+            } catch (...) {
+                resp = "err invalid ck_stop arguments\n";
+            }
+        }
         else if (cmd.rfind("policy", 0) == 0) {
             std::string rest = cmd.substr(6);
             trimSpaces(rest);
