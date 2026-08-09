@@ -729,6 +729,59 @@ static void controlPlaneThread() {
                 resp = "err policy_parse_failed\n";
             }
         }
+        // -----------------------------------------------------------------
+        // B4-K8: Test-mode commands (for hard gate tests only — NOT for
+        // production use; these intentionally exercise safety boundaries).
+        // -----------------------------------------------------------------
+        else if (cmd == "test_crash_worker") {
+            // Deliberately crash the worker process (SIGSEGV) to test that
+            // the main process detects the native crash, does not crash itself,
+            // and can recover via restart.
+            ::raise(SIGSEGV);
+            resp = "err test_crash_worker: should not reach here\n";
+        }
+        else if (cmd == "test_hang_worker") {
+            // Make the entire worker spin indefinitely without advancing
+            // the heartbeat. Simulates a worker-wide hang (not just one VM).
+            // The main process should detect heartbeat staleness and restart.
+            // We spin on a non-SIGTERM-catchable loop.
+            while (true) {
+                ::pause();
+                // Even if woken by a signal, keep spinning.
+            }
+            resp = "err test_hang_worker: should not reach here\n";
+        }
+        else if (cmd.rfind("test_hang_vm", 0) == 0) {
+            // Inject a hung shred into a specific VM's render callback.
+            // This simulates a ChucK shred running while(true){} with no
+            // now =>. The VM's render thread spins, stalling its heartbeat.
+            // The per-VM watchdog (B4-K5) should detect and recover.
+            std::string rest = cmd.substr(13);
+            trimSpaces(rest);
+            try {
+                int tabId = std::stoi(rest);
+                if (tabId < 0 || tabId >= kNumTabs) {
+                    resp = "err test_hang_vm: tab id out of range\n";
+                } else {
+                    gVmManager.forceSetHangingCallback(static_cast<TabId>(tabId));
+                    resp = "ok test_hang_vm tab=" + std::to_string(tabId) + "\n";
+                }
+            } catch (...) {
+                resp = "err test_hang_vm: invalid arguments\n";
+            }
+        }
+        else if (cmd.rfind("test_clear_hang_vm", 0) == 0) {
+            // Clear the hang on a specific VM, allowing cooperative join.
+            std::string rest = cmd.substr(19);
+            trimSpaces(rest);
+            try {
+                int tabId = std::stoi(rest);
+                gVmManager.clearHangingCallback(static_cast<TabId>(tabId));
+                resp = "ok test_clear_hang_vm tab=" + std::to_string(tabId) + "\n";
+            } catch (...) {
+                resp = "err test_clear_hang_vm: invalid arguments\n";
+            }
+        }
         else {
             resp = "err unknown command\n";
         }

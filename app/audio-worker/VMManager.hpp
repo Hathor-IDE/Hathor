@@ -128,6 +128,16 @@ public:
     /// Returns nullptr if no VM exists for the tab.
     ChuckVM* findVM(TabId tabId) const;
 
+    /// B4-K8: Test-mode — replace a VM's render callback with a hanging
+    /// callback that spins without advancing the heartbeat. This simulates
+    /// a hung ChucK shred (while(true){} with no now =>). The watchdog
+    /// should detect the stall and recover.
+    void forceSetHangingCallback(TabId tabId);
+
+    /// B4-K8: Test-mode — restore the normal render callback on a VM,
+    /// allowing its thread to resume cooperative behavior (for clean cleanup).
+    void clearHangingCallback(TabId tabId);
+
 private:
     /// Count active VMs assuming mutex_ is already held.
     int countActiveLocked() const;

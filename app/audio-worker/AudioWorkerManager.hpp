@@ -42,6 +42,8 @@
 #include <string>
 #include <string_view>
 
+#include <sys/types.h>
+
 namespace hathor {
 
 /**
@@ -271,6 +273,15 @@ public:
 
     /// Check if the current transport generation is still valid.
     bool isTransportValid(uint64_t expectedGen) const noexcept;
+
+    /// @return The worker process PID (for testing — SIGKILL injection in K8 tests).
+    /// Returns -1 if no worker is running.
+    pid_t getWorkerPid() const noexcept;
+
+    /// Set the heartbeat timeout for worker liveness detection (Decision #24).
+    /// Called from the main process to configure how quickly worker death
+    /// (not per-VM hang) is detected. Default is 500ms.
+    void setHeartbeatTimeoutMs(int timeoutMs) noexcept;
 
 private:
     // -----------------------------------------------------------------------

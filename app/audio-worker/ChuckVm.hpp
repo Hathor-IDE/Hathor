@@ -216,6 +216,19 @@ public:
         generation_.store(gen, std::memory_order_release);
     }
 
+    // -----------------------------------------------------------------------
+    // B4-K8: Test-mode — simulate a hung shred (while(true){} with no now =>).
+    // These methods replace the render callback with a spinning callback
+    // that does NOT advance the heartbeat, triggering the B4-K5 watchdog.
+    // -----------------------------------------------------------------------
+
+    /// Replace the render callback with a hanging callback.
+    void setTestHangCallback() noexcept;
+
+    /// Restore the normal render callback (silence) so the VM thread can
+    /// exit cooperatively for cleanup.
+    void clearTestHangCallback() noexcept;
+
 private:
     // -----------------------------------------------------------------------
     // Internal: ChucK thread entry point
@@ -311,6 +324,10 @@ private:
     /// While B4-K3 is active, this remains null and the render callback
     /// is expected to produce silence or a placeholder tone.
     void* chuckInstance_{nullptr};
+
+    /// B4-K8 test-mode: hang flag for simulating a hung shred.
+    /// When active, the render callback spins without advancing heartbeat.
+    std::atomic<bool> testHangFlag_{false};
 };
 
 } // namespace hathor::audio_worker

@@ -393,6 +393,27 @@ void ChuckVM::chucKThreadLoop()
             resumeRequested_.store(false, std::memory_order_release);
         }
 
+        // Check if the thread is being stopped (destroy/force-destroy).
+        if (state_.load(std::memory_order_acquire) == VMState::Destroyed)
+            return;
+
+        // B4-K8 test-mode: if testHangFlag_ is set, spin without advancing
+        // the heartbeat.  This simulates a hung ChucK shred (while(true){}
+        // with no now =>).  The render callback itself is NOT called, so
+        // heartbeat/blocksProduced stay stalled.  The watchdog (B4-K5) will
+        // detect the stall and trigger recovery via forceDestroyVM.
+        if (testHangFlag_.load(std::memory_order_acquire)) {
+            // Spin — this is a cancellation point (yield), so the watchdog's
+            // pthread_cancel can terminate this thread if cooperative cleanup
+            // fails.  We deliberately do NOT increment heartbeat here.
+            while (testHangFlag_.load(std::memory_order_acquire)) {
+                if (state_.load(std::memory_order_acquire) == VMState::Destroyed)
+                    return;
+                std::this_thread::yield();  // cancellation point
+            }
+            // Fall through to normal rendering after hang cleared.
+        }
+
         // Render one audio block via the callback.
         renderCb_(renderBuf, kRenderBlockSize, channels_);
 
@@ -454,6 +475,20 @@ void ChuckVM::wakeThread()
     // variables atomically.
     std::lock_guard<std::mutex> lk(suspendMtx_);
     suspendCv_.notify_one();
+}
+
+// ---------------------------------------------------------------------------
+// B4-K8: Test-mode — simulate a hung shred
+// ---------------------------------------------------------------------------
+
+void ChuckVM::setTestHangCallback() noexcept
+{
+    testHangFlag_.store(true, std::memory_order_release);
+}
+
+void ChuckVM::clearTestHangCallback() noexcept
+{
+    testHangFlag_.store(false, std::memory_order_release);
 }
 
 } // namespace hathor::audio_worker

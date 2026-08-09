@@ -259,9 +259,6 @@ catch_discover_tests(hathor-vm-lifecycle-tests DISCOVERY_MODE PRE_TEST)
 
 # ---------------------------------------------------------------------------
 # hathor-b4-k7-ck-eval-tests — B4-K7 .ck tab evaluation (Ctrl+Enter path)
-#
-# Tests the full ck_genv → ck_compile → ck_stop command path through the
-# real worker process.  JUCE-free: links Catch2 + AudioWorkerManager only.
 # ---------------------------------------------------------------------------
 add_executable(hathor-b4-k7-ck-eval-tests
     test_b4_k7_ck_eval.cpp
@@ -288,6 +285,39 @@ target_compile_definitions(hathor-b4-k7-ck-eval-tests PRIVATE
 
 include(Catch)
 catch_discover_tests(hathor-b4-k7-ck-eval-tests DISCOVERY_MODE PRE_TEST)
+
+# ---------------------------------------------------------------------------
+# hathor-b4-k8-hard-gate-tests — B4-K8 hard gate (DoD §6.2)
+#
+# Tests that a hung/crashing .ck file or killed worker never hangs or crashes
+# the main process.  Covers all 3 failure classes: hung shred, native crash,
+# shared-memory recovery mid-write.  Spawns the real hathor-audio-worker binary.
+# ---------------------------------------------------------------------------
+add_executable(hathor-b4-k8-hard-gate-tests
+    test_b4_k8_hard_gate.cpp
+)
+
+target_compile_features(hathor-b4-k8-hard-gate-tests PRIVATE cxx_std_20)
+target_compile_options(hathor-b4-k8-hard-gate-tests PRIVATE -Wall -Wextra -Werror)
+
+target_include_directories(hathor-b4-k8-hard-gate-tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/app/audio-worker
+    ${CMAKE_SOURCE_DIR}/app
+    ${CMAKE_SOURCE_DIR}/engine/include
+)
+
+target_link_libraries(hathor-b4-k8-hard-gate-tests PRIVATE
+    hathor-audio-worker-lib
+    Catch2::Catch2WithMain
+)
+
+target_compile_definitions(hathor-b4-k8-hard-gate-tests PRIVATE
+    CMAKE_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+    CMAKE_BINARY_DIR="${CMAKE_BINARY_DIR}"
+)
+
+include(Catch)
+catch_discover_tests(hathor-b4-k8-hard-gate-tests DISCOVERY_MODE PRE_TEST)
 
 # ---------------------------------------------------------------------------
 # Integration tests (require the full hathor binary; skipped if app is off)

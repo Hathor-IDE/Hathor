@@ -376,6 +376,28 @@ ChuckVM* VMManager::findVM(TabId tabId) const
 }
 
 // ---------------------------------------------------------------------------
+// B4-K8: Test-mode — inject a hanging render callback into a specific VM
+// ---------------------------------------------------------------------------
+
+void VMManager::forceSetHangingCallback(TabId tabId)
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto it = vms_.find(tabId);
+    if (it != vms_.end() && it->second) {
+        it->second->setTestHangCallback();
+    }
+}
+
+void VMManager::clearHangingCallback(TabId tabId)
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto it = vms_.find(tabId);
+    if (it != vms_.end() && it->second) {
+        it->second->clearTestHangCallback();
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------
 

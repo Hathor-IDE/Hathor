@@ -763,6 +763,17 @@ bool AudioWorkerManager::isTransportValid(uint64_t expectedGen) const noexcept
     return true;
 }
 
+pid_t AudioWorkerManager::getWorkerPid() const noexcept
+{
+    return impl_->workerPid_;
+}
+
+void AudioWorkerManager::setHeartbeatTimeoutMs(int timeoutMs) noexcept
+{
+    if (timeoutMs > 0)
+        impl_->resourceLimits_.heartbeatTimeoutMs = timeoutMs;
+}
+
 // ---------------------------------------------------------------------------
 // Internal: process management
 // ---------------------------------------------------------------------------
