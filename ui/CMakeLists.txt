@@ -52,8 +52,11 @@ target_sources(hathor-ui
         AcpAgentSession.cpp           # task 4.2–4.5
         PermissionPromptComponent.cpp # task 4.4
         ChatSidebar.cpp               # task 5.1
-        SettingsComponent.cpp         # A2
-        WindowAppearanceController.mm  # B5
+         SettingsComponent.cpp         # A2
+         WindowAppearanceController.mm  # B5
+         BakeTargetDialog.cpp          # B8-K6
+         BakeProgressDialog.cpp        # B8-K6
+         BakeOrchestrator.cpp          # B8-K6
          # App-layer sources (AudioEngine, SampleBank, VoicePool live in app/,
          # not in a linkable static lib — include them directly here)
           ${CMAKE_SOURCE_DIR}/app/AudioEngine.cpp
