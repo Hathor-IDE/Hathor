@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 /**
- * WindowAppearanceController.cpp — platform-isolated implementation for
+ * WindowAppearanceController.mm — platform-isolated implementation for
  * window opacity, background blur, and Acrylic effects.
  *
  * Requirements: B5 (Window Opacity + Background Blur)
@@ -30,6 +30,17 @@
 
 namespace hathor::ui {
 
+// Concrete impl typedef for this platform
+#if JUCE_MAC
+class MacPlatformImpl;
+#elif JUCE_WINDOWS
+class WindowsPlatformImpl;
+#elif JUCE_LINUX
+class LinuxPlatformImpl;
+#else
+class FallbackPlatformImpl;
+#endif
+
 // ===========================================================================
 // PlatformImpl implementations (platform-specific)
 // ===========================================================================
@@ -39,14 +50,10 @@ namespace hathor::ui {
 // macOS: full-window alpha + NSVisualEffectView blur
 // ---------------------------------------------------------------------------
 
-/**
- * macOS implementation: full-window alpha via TopLevelWindow::setAlpha(),
- * NSVisualEffectView for background blur radius.
- */
-class WindowAppearanceController::MacPlatformImpl : public PlatformImpl
+class MacPlatformImpl : public WindowAppearanceController::PlatformImplBase
 {
 public:
-    explicit MacPlatformImpl(juce::TopLevelWindow& window) : PlatformImpl(window) {}
+    explicit MacPlatformImpl(juce::TopLevelWindow& w) : window_(w) {}
 
     PlatformCapabilities detectCaps() const override
     {
@@ -91,47 +98,50 @@ public:
     }
 
 private:
+    juce::TopLevelWindow& window_;
+
     /**
      * Install an NSVisualEffectView as the window's content view's background
-     * to produce a true background blur (blurs desktop/pixels behind the window,
-     * NOT a filter over Hathor's own UI).
+     * to produce a true background blur (blurs desktop/pixels behind the
+     * window, NOT a filter over Hathor's own UI).
      *
-     * The blur radius maps to NSVisualEffectView's material + blending properties:
+     * The blur radius maps to NSVisualEffectView's material + properties:
      *   radius 0   → remove the effect view (solid background)
-     *   radius >0  → NSVisualEffectMaterialHUDWindow with blendingOpacity
-     *                 proportional to the radius
+     *   radius >0  → NSVisualEffectMaterialHUDWindow provides backdrop blur
+     *                 with the material chosen reflecting blur strength
      */
     static void applyMacOSVisualEffect(juce::TopLevelWindow& window, int radius)
     {
-        // On macOS, getWindowHandle() returns the NSView* for the window
         NSView* contentView = static_cast<NSView*>(window.getWindowHandle());
         if (contentView == nil)
             return;
 
         if (radius <= 0)
         {
-            // Remove any existing NSVisualEffectView subviews
             removeVisualEffectViews(contentView);
             return;
         }
 
-        // Remove any existing effect views first
         removeVisualEffectViews(contentView);
 
-        // Create NSVisualEffectView for background blur
         NSVisualEffectView* effectView =
             [[NSVisualEffectView alloc] initWithFrame:[contentView bounds]];
-        effectView.material = NSVisualEffectMaterialHUDWindow;
         effectView.blendingMode = NSVisualEffectBlendingModeBehindWindow;
-
-        // Map 1-100 radius to 0.1-1.0 blending opacity
-        CGFloat blendOpacity =
-            static_cast<CGFloat>(juce::jlimit(1, 100, radius)) / 100.0f;
-        effectView.blendingOpacity = blendOpacity;
         effectView.state = NSVisualEffectStateActive;
         effectView.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
 
-        // Insert at the bottom of the view hierarchy so it's behind all content
+        // Map radius (0-100) to material variants with different blur strengths:
+        //   - HUDWindow: moderate blur (HUD panels)
+        //   - Menu: lighter blur (menus)
+        //   - Titlebar: subtle blur (title bars)
+        // Higher radius → stronger material → more pronounced blur.
+        if (radius >= 70)
+            effectView.material = NSVisualEffectMaterialHUDWindow;
+        else if (radius >= 40)
+            effectView.material = NSVisualEffectMaterialMenu;
+        else
+            effectView.material = NSVisualEffectMaterialTitlebar;
+
         [contentView addSubview:effectView positioned:NSWindowBelow relativeTo:nil];
         [effectView release];
     }
@@ -141,7 +151,6 @@ private:
         if (contentView == nil)
             return;
 
-        // Remove any existing NSVisualEffectView subviews
         for (NSUInteger i = [contentView subviews].count; i > 0; --i)
         {
             NSView* subview = [contentView subviews][i - 1];
@@ -159,15 +168,10 @@ private:
 // Windows: layered window transparency + Acrylic via DWM
 // ---------------------------------------------------------------------------
 
-/**
- * Windows implementation: full-window alpha via WS_EX_LAYERED (JUCE sets this
- * when setAlpha() is called on a TopLevelWindow). Acrylic via
- * SetWindowCompositionAttribute.
- */
-class WindowAppearanceController::WindowsPlatformImpl : public PlatformImpl
+class WindowsPlatformImpl : public WindowAppearanceController::PlatformImplBase
 {
 public:
-    explicit WindowsPlatformImpl(juce::TopLevelWindow& window) : PlatformImpl(window) {}
+    explicit WindowsPlatformImpl(juce::TopLevelWindow& w) : window_(w) {}
 
     PlatformCapabilities detectCaps() const override
     {
@@ -179,8 +183,6 @@ public:
 
     void setWindowOpacity(float alpha) override
     {
-        // JUCE's TopLevelWindow::setAlpha() internally uses UpdateLayeredWindow
-        // (which requires WS_EX_LAYERED). This is the reliable path on Windows.
         window_.setAlpha(alpha);
         window_.setOpaque(false);
     }
@@ -214,6 +216,8 @@ public:
     }
 
 private:
+    juce::TopLevelWindow& window_;
+
     /**
      * Enable/disable the Acrylic blur effect on the window.
      *
@@ -233,17 +237,14 @@ private:
 
         HWND hwnd = static_cast<HWND>(native);
 
-        // ACCENT_POLICY struct — matches the Windows SDK definition
         struct AccentPolicy
         {
-            int AccentState;   // ACCENT_ENABLE_*
+            int AccentState;
             int AccentFlags;
-            int GradientColor; // 0xAABBGGRR (0 = transparent)
+            int GradientColor;
             int AnimationId;
         };
 
-        // SetWindowCompositionAttribute is not in the default SDK headers
-        // but is available on Windows 10+. Load it dynamically.
         using SetWindowCompositionAttributeFunc =
             BOOL (WINAPI*)(HWND, AccentPolicy*, SIZE_T);
 
@@ -262,7 +263,7 @@ private:
             {
                 policy.AccentState   = 3;     // ACCENT_ENABLE_ACRYLIC_BLUR
                 policy.AccentFlags   = 0;
-                policy.GradientColor = 0;     // fully transparent
+                policy.GradientColor = 0;
                 policy.AnimationId    = 0;
             }
             else
@@ -287,15 +288,11 @@ private:
 // Linux: feature-detect compositor; degrade to opaque if unavailable
 // ---------------------------------------------------------------------------
 
-/**
- * Linux implementation: feature-detects compositor support.
- * If no compositor is running, degrades to opaque (100%).
- */
-class WindowAppearanceController::LinuxPlatformImpl : public PlatformImpl
+class LinuxPlatformImpl : public WindowAppearanceController::PlatformImplBase
 {
 public:
-    explicit LinuxPlatformImpl(juce::TopLevelWindow& window)
-        : PlatformImpl(window), lastCaps_{}
+    explicit LinuxPlatformImpl(juce::TopLevelWindow& w)
+        : window_(w), lastCaps_{}
     {}
 
     PlatformCapabilities detectCaps() const override
@@ -303,7 +300,7 @@ public:
         PlatformCapabilities caps;
         caps.transparencySupported = detectCompositor();
         caps.blurSupported          = caps.transparencySupported && supportsBlurProtocol();
-        lastCaps_ = caps;  // cache for use by setWindowOpacity/setWindowOpaque
+        lastCaps_ = caps;
         return caps;
     }
 
@@ -311,13 +308,11 @@ public:
     {
         if (lastCaps_.transparencySupported)
         {
-            // setAlpha() on X11 with a compositor applies via _NET_WM_WINDOW_OPACITY
             window_.setAlpha(alpha);
             window_.setOpaque(false);
         }
         else
         {
-            // Fall back to fully opaque
             window_.setAlpha(1.0f);
             window_.setOpaque(true);
         }
@@ -336,15 +331,9 @@ public:
         }
     }
 
-    void setWindowBlur(int /*radius*/) override
-    {
-        // Linux blur is feature-detected. If unsupported, no-op.
-    }
+    void setWindowBlur(int /*radius*/) override {}
 
-    void setAcrylicEnabled(bool /*enabled*/) override
-    {
-        // Acrylic is a Windows concept; no-op on Linux.
-    }
+    void setAcrylicEnabled(bool /*enabled*/) override {}
 
     juce::String getUnsupportedReason() const override
     {
@@ -364,42 +353,8 @@ public:
     }
 
 private:
+    juce::TopLevelWindow& window_;
     mutable PlatformCapabilities lastCaps_{};
-
-    /**
-     * Detect whether a compositing manager is running.
-     *
-     * Checks:
-     *   1. XDG_SESSION_TYPE=wayland → always composited
-     *   2. X11: check _NET_WM_CM_S0 selection via xprop
-     *   3. Fall back to checking for common compositor processes
-     */
-    static bool detectCompositor()
-    {
-        // 1. Wayland always has a compositor
-        const char* sessionType = std::getenv("XDG_SESSION_TYPE");
-        if (sessionType != nullptr &&
-            juce::String(sessionType).containsIgnoreCase("wayland"))
-            return true;
-
-        // 2. Check _NET_WM_CM_S0 selection (standard X11 compositor detection)
-        if (isX11CompositorRunning())
-            return true;
-
-        // 3. Fall back: check for common compositor processes
-        const char* compositors[] = {
-            "picom", "compton", "xcompmgr", "mutter", "kwin_x11", "kwin_wayland",
-            nullptr
-        };
-
-        for (int i = 0; compositors[i] != nullptr; ++i)
-        {
-            if (checkProcessRunning(compositors[i]))
-                return true;
-        }
-
-        return false;
-    }
 
     static bool checkProcessRunning(const char* name)
     {
@@ -431,9 +386,32 @@ private:
         return found;
     }
 
+    static bool detectCompositor()
+    {
+        const char* sessionType = std::getenv("XDG_SESSION_TYPE");
+        if (sessionType != nullptr &&
+            juce::String(sessionType).containsIgnoreCase("wayland"))
+            return true;
+
+        if (isX11CompositorRunning())
+            return true;
+
+        const char* compositors[] = {
+            "picom", "compton", "xcompmgr", "mutter", "kwin_x11", "kwin_wayland",
+            nullptr
+        };
+
+        for (int i = 0; compositors[i] != nullptr; ++i)
+        {
+            if (checkProcessRunning(compositors[i]))
+                return true;
+        }
+
+        return false;
+    }
+
     static bool supportsBlurProtocol()
     {
-        // Check for compositors known to support blur-back
         const char* blurCompositors[] = {
             "picom", "kwin_x11", "kwin_wayland",
             nullptr
@@ -450,15 +428,11 @@ private:
 };
 #endif  // JUCE_LINUX
 
-// ===========================================================================
-// Fallback implementation (unknown platform)
-// ===========================================================================
-
 #if !JUCE_MAC && !JUCE_WINDOWS && !JUCE_LINUX
-class WindowAppearanceController::FallbackPlatformImpl : public PlatformImpl
+class FallbackPlatformImpl : public WindowAppearanceController::PlatformImplBase
 {
 public:
-    explicit FallbackPlatformImpl(juce::TopLevelWindow& window) : PlatformImpl(window) {}
+    explicit FallbackPlatformImpl(juce::TopLevelWindow& w) : window_(w) {}
 
     PlatformCapabilities detectCaps() const override
     {
@@ -483,6 +457,9 @@ public:
     {
         return "Window transparency is not supported on this platform.";
     }
+
+private:
+    juce::TopLevelWindow& window_;
 };
 #endif
 
@@ -527,17 +504,14 @@ void WindowAppearanceController::apply(const WindowAppearanceState& state)
 {
     if (!cachedCaps_.transparencySupported)
     {
-        // No transparency support: force opaque
         restoreOpaque();
         return;
     }
 
-    // Apply opacity
     const float alpha = juce::jlimit(0.01f, 1.0f, state.opacityPercent / 100.0f);
     if (impl_)
         impl_->setWindowOpacity(alpha);
 
-    // Apply blur/Acrylic — only meaningful when opacity < 100%
     if (state.opacityPercent < 100.0f && impl_ != nullptr)
     {
 #if JUCE_MAC

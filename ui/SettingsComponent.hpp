@@ -11,7 +11,7 @@
  * Ribbon Settings/Profile button.
  *
  * Sections:
- *   1. Appearance — theme picker (5 themes from A1); opacity slider (B5).
+ *   1. Appearance — theme picker (5 themes from A1); opacity slider + blur/acrylic (B5).
  *   2. Agent / ACP — agent executable path; hathor-mcp path (read-only inferred).
  *   3. Petdex — browse/select a mascot (D1–D4); opt-in only, no default.
  *   4. ChucK placeholder — inert until B4 ships.
@@ -20,7 +20,7 @@
  * Apply/Reset/Close semantics (PROGRAM.md §A2):
  *   - Two-state model: _committed (source of truth from ApplicationProperties)
  *     and _pending (current UI control values).
- *   - Apply: commits _pending to _committed, applies immediately (theme/opacity),
+ *   - Apply: commits _pending to _committed, applies immediately (theme/opacity/blur),
  *     persists via ApplicationProperties. Clears pending-changes indicator.
  *   - Reset: reverts _pending to _committed (discard edits, NOT factory defaults).
  *   - Close-without-Apply: discards _pending (same as Reset); _committed persists.
@@ -35,23 +35,10 @@
 #include <string>
 
 #include "HathorLookAndFeel.hpp"
+#include "WindowAppearanceController.hpp"
 
 namespace hathor::ui {
 
-/**
- * SettingsComponent
- *
- * A scrollable settings panel with Appearance, Agent/ACP, Petdex, and
- * placeholder (ChucK / EQ) sections. Exposes Apply / Reset / Close buttons.
- *
- * The two-state model:
- *   - On construction, _committed values are loaded from ApplicationProperties.
- *   - _pending values are initialised from _committed.
- *   - UI controls edit _pending.
- *   - Apply() writes _pending → _committed + live state + persistent storage.
- *   - Reset() writes _committed → _pending (reverts the edit buffer).
- *   - Closing without Apply() discards _pending (== Reset, no Apply persists).
- */
 class SettingsComponent : public juce::Component,
                            public juce::Slider::Listener,
                           public juce::Button::Listener,
@@ -69,13 +56,8 @@ public:
 
     ~SettingsComponent() override;
 
-    // Non-copyable / non-movable (owns JUCE child components).
     SettingsComponent(SettingsComponent&&)                 = delete;
     SettingsComponent& operator=(SettingsComponent&&)      = delete;
-
-    // -----------------------------------------------------------------------
-    // Public API consumed by EditorArea / MainWindow
-    // -----------------------------------------------------------------------
 
     /**
      * Returns true if the pending (edit-buffer) values differ from committed values.
@@ -84,22 +66,28 @@ public:
     bool hasPendingChanges() const noexcept { return pendingChanges_; }
 
     /**
-      * Discard pending edits (revert _pending to _committed, like Reset).
-      * Called when the Settings tab is closed without Apply (A2).
-      */
+       Discard pending edits (revert _pending to _committed, like Reset).
+       Called when the Settings tab is closed without Apply (A2).
+     */
     void resetToCommitted();
 
     /**
-      * Callback invoked after Apply commits the edit buffer to live state.
-      * MainWindow can use this to restart the agent session with the new
-      * agent executable path.
-      */
+       Callback invoked after Apply commits the edit buffer to live state.
+       MainWindow can use this to restart the agent session with the new
+       agent executable path.
+     */
     std::function<void()> onSettingsApplied;
 
     /**
-     * Return the display label for the tab bar.
-     */
+       Return the display label for the tab bar.
+    */
     juce::String tabLabel() const noexcept { return "Settings"; }
+
+    /** Set the WindowAppearanceController used for live preview of opacity/blur. */
+    void setAppearanceController(WindowAppearanceController* controller) noexcept
+    {
+        appearanceController_ = controller;
+    }
 
     // -----------------------------------------------------------------------
     // juce::Component overrides
@@ -124,8 +112,6 @@ public:
     // ComboBox::Listener
     // -----------------------------------------------------------------------
 
-    /** Return the human-readable name for a theme (for Settings list).
-     */
     void comboBoxChanged(juce::ComboBox* comboBox) override;
 
     // -----------------------------------------------------------------------
@@ -142,9 +128,11 @@ private:
     struct SettingsModel
     {
         ThemeId   theme          = ThemeId::Dark;
-        float     opacityPercent = 70.0f;   // B5: 70% default on mac/win, 100% on Linux in Apply
+        float     opacityPercent = 70.0f;   // B5: 70% default on mac/win, 100% on Linux
+        int       macosBlurRadius = 30;     // macOS only: blur radius 0–100
+        bool      windowsAcrylic  = false;  // Windows only: Acrylic on/off
         std::string agentExePath;
-        std::string petSelection;           // empty = no mascot selected
+        std::string petSelection;
     };
 
     // -----------------------------------------------------------------------
@@ -158,14 +146,25 @@ private:
     // Child components
     // -----------------------------------------------------------------------
 
-    // Appearance section
-    juce::ComboBox   themeCombo_;
+    // Appearance — Window subsection (B5)
     juce::Slider     opacitySlider_;
     juce::Label      opacityValueLabel_;
+    juce::Label*     opacityWarningLabel_ = nullptr;  // Linux: "unavailable" message
+
+    // macOS blur slider (under opacity, disabled when opacity == 100%)
+    juce::Slider     blurSlider_;
+    juce::Label      blurValueLabel_;
+
+    // Windows Acrylic toggle (replaces blur slider on Windows)
+    juce::TextButton acrylicButton_;
+    juce::Label      acrylicLabel_;
+
+    // Appearance — Theme subsection
+    juce::ComboBox   themeCombo_;
 
     // Agent / ACP section
     juce::TextEditor agentPathEditor_;
-    juce::Label      agentPathLabel_;
+    juce::Label*     agentPathLabel_ = nullptr;
     juce::Label      mcpPathLabel_;
 
     // Petdex section
@@ -185,14 +184,15 @@ private:
     // -----------------------------------------------------------------------
 
     juce::ApplicationProperties* appProperties_;
+    WindowAppearanceController* appearanceController_ = nullptr;
 
     // -----------------------------------------------------------------------
     // State
     // -----------------------------------------------------------------------
 
     bool pendingChanges_ = false;
-
-    bool opacitySupported_ = true;  ///< false on Linux (B5 platform matrix)
+    bool opacitySupported_ = true;   ///< false on Linux without compositor (B5)
+    bool blurSupported_    = true;   ///< false on Linux without blur protocol
 
     // -----------------------------------------------------------------------
     // Internal helpers
@@ -204,8 +204,11 @@ private:
     /** Persist settings to ApplicationProperties. */
     void saveSettings(const SettingsModel& model) const;
 
-    /** Build the Appearance section UI. */
+    /** Build the Appearance section UI (theme + window subsection). */
     void buildAppearanceSection();
+
+    /** Build the Window subsection within Appearance (opacity + blur/acrylic). */
+    void buildWindowSubsection(int& y);
 
     /** Build the Agent / ACP section UI. */
     void buildAgentSection(const std::string& hathorMcpPath);
@@ -222,21 +225,23 @@ private:
     /** Build the Apply/Reset buttons. */
     void buildActionButtons();
 
+    /** Populate the pet selection combo box with known mascots. */
+    void populatePetList();
+
     /** Refresh pendingChanges_ flag and update button states. */
     void updateDirtyFlag();
 
     /** Apply a theme change at runtime (A1 integration). */
     void applyTheme(ThemeId theme);
 
-    /** Apply opacity at runtime (B5). */
-    void applyOpacity(float percent);
+    /** Apply opacity + blur/acylic to the live window (delegates to controller or direct setAlpha). */
+    void applyWindowAppearance(const SettingsModel& model);
 
-    /** Populate the pet selection combo box with known mascots. */
-    void populatePetList();
+    /** Update the enabled/disabled state of blur controls based on opacity. */
+    void updateBlurControlState();
 
     /** Layout constants */
     static constexpr int kLabelWidth   = 120;
-    static constexpr int kSectionGap   = 24;
     static constexpr int kControlHeight = 24;
     static constexpr int kButtonHeight  = 28;
     static constexpr int kButtonWidth   = 80;

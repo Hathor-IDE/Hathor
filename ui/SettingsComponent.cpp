@@ -23,15 +23,27 @@ SettingsComponent::SettingsComponent(juce::ApplicationProperties* props)
     setInterceptsMouseClicks(true, true);
 
     // Determine platform opacity support (B5).
+    // On Linux, transparency requires a running compositor — feature-detect.
+    // On macOS/Windows, transparency is always supported.
 #if JUCE_LINUX
-    opacitySupported_ = false;
+    opacitySupported_ = false;  // will be updated by controller if available
+    blurSupported_    = false;
 #else
     opacitySupported_ = true;
+    blurSupported_    = true;
 #endif
 
     // Load committed (source-of-truth) settings from properties.
     committed_ = loadSettings();
-    pending_    = committed_;
+    pending_   = committed_;
+
+    // If we have an appearance controller, check actual capabilities.
+    if (appearanceController_ != nullptr)
+    {
+        const auto caps = appearanceController_->detectCapabilities();
+        opacitySupported_ = caps.transparencySupported;
+        blurSupported_    = caps.blurSupported;
+    }
 
     // Build the scrollable content panel.
     contentPanel_ = std::make_unique<juce::Component>();
@@ -79,40 +91,45 @@ SettingsComponent::loadSettings() const
 
     if (appProperties_ == nullptr)
     {
-        m.theme          = ThemeId::Dark;
-        m.opacityPercent = opacitySupported_ ? 70.0f : 100.0f;
-        m.agentExePath   = "";
-        m.petSelection   = "";
+        m.theme           = ThemeId::Dark;
+        m.opacityPercent  = opacitySupported_ ? 70.0f : 100.0f;
+        m.macosBlurRadius = 30;
+        m.windowsAcrylic  = false;
+        m.agentExePath    = "";
+        m.petSelection    = "";
         return m;
     }
 
     const auto* props = appProperties_->getUserSettings();
     if (props == nullptr)
     {
-        m.theme          = ThemeId::Dark;
-        m.opacityPercent = opacitySupported_ ? 70.0f : 100.0f;
-        m.agentExePath   = std::getenv("HATHOR_AGENT")
+        m.theme           = ThemeId::Dark;
+        m.opacityPercent  = opacitySupported_ ? 70.0f : 100.0f;
+        m.macosBlurRadius = 30;
+        m.windowsAcrylic  = false;
+        m.agentExePath    = std::getenv("HATHOR_AGENT")
                               ? std::string(std::getenv("HATHOR_AGENT"))
                               : "";
-        m.petSelection   = "";
+        m.petSelection    = "";
         return m;
     }
 
     const int themeIdx = props->getIntValue("settings.theme",
-                                             static_cast<int>(ThemeId::Dark));
+                                            static_cast<int>(ThemeId::Dark));
 
-    // Clamp to the valid ThemeId range so a stale/unknown persisted value
-    // (e.g. from a future version that added a 6th theme, or a corrupt prefs
-    // file) falls back safely to Dark rather than producing UB via a raw
-    // static_cast (B3 persistence-safety requirement).
     static constexpr int kMinTheme = static_cast<int>(ThemeId::Dark);
     static constexpr int kMaxTheme = static_cast<int>(ThemeId::Light);
     const int clampedTheme = juce::jlimit(kMinTheme, kMaxTheme, themeIdx);
     m.theme = static_cast<ThemeId>(clampedTheme);
 
+    // B5: opacity defaults — 70% on mac/win, 100% on Linux
     m.opacityPercent = props->getValue("settings.opacity",
                                        juce::String(opacitySupported_ ? 70.0f : 100.0f))
-                            .getFloatValue();
+                          .getFloatValue();
+
+    // B5: blur/acrylic persistence
+    m.macosBlurRadius = props->getIntValue("settings.macosBlurRadius", 30);
+    m.windowsAcrylic  = props->getBoolValue("settings.windowsAcrylic", false);
 
     m.agentExePath = props->getValue("settings.agentExePath").toStdString();
     m.petSelection = props->getValue("settings.petSelection").toStdString();
@@ -131,6 +148,8 @@ void SettingsComponent::saveSettings(const SettingsModel& model) const
 
     props->setValue("settings.theme",          static_cast<int>(model.theme));
     props->setValue("settings.opacity",        juce::String(model.opacityPercent));
+    props->setValue("settings.macosBlurRadius", model.macosBlurRadius);
+    props->setValue("settings.windowsAcrylic",  model.windowsAcrylic);
     props->setValue("settings.agentExePath",   juce::String(model.agentExePath));
     props->setValue("settings.petSelection",   juce::String(model.petSelection));
 
@@ -187,6 +206,30 @@ void SettingsComponent::buildAppearanceSection()
 
     y += kControlHeight + 12;
 
+    // --- Window subsection header ---
+    auto* windowHeader = new juce::Label();
+    windowHeader->setText("Window", juce::dontSendNotification);
+    windowHeader->setFont(HathorLookAndFeel::fontSemiBold(HathorLookAndFeel::Typography::headlineMd));
+    windowHeader->setColour(juce::Label::textColourId, palette.textPrimary);
+    windowHeader->setJustificationType(juce::Justification::centredLeft);
+    windowHeader->setBounds(0, y, contentW, kControlHeight);
+    contentPanel_->addAndMakeVisible(windowHeader);
+
+    y += kControlHeight + 8;
+
+    // Build the opacity + blur/acrylic controls
+    buildWindowSubsection(y);
+
+    contentPanel_->setBounds(0, 0, contentW, y + 16);
+}
+
+void SettingsComponent::buildWindowSubsection(int& y)
+{
+    const auto& palette = HathorLookAndFeel::fromComponent(*this).getPalette();
+    const int labelW   = kLabelWidth;
+    const int controlX = labelW + 8;
+    const int controlW = 300;
+
     // --- Opacity slider ---
     auto* opacityLabel = new juce::Label();
     opacityLabel->setText("Opacity:", juce::dontSendNotification);
@@ -198,7 +241,8 @@ void SettingsComponent::buildAppearanceSection()
 
     opacitySlider_.setBounds(controlX, y, controlW, kControlHeight);
     opacitySlider_.setSliderStyle(juce::Slider::LinearHorizontal);
-    opacitySlider_.setRange(20.0, 100.0, 1.0);
+    // B5: range is 1–100 (was 20–100)
+    opacitySlider_.setRange(1.0, 100.0, 1.0);
     opacitySlider_.setValue(pending_.opacityPercent, juce::dontSendNotification);
     opacitySlider_.addListener(this);
     contentPanel_->addAndMakeVisible(opacitySlider_);
@@ -214,12 +258,98 @@ void SettingsComponent::buildAppearanceSection()
     if (!opacitySupported_)
     {
         opacitySlider_.setEnabled(false);
-        opacityValueLabel_.setText("100% (Linux: unsupported)", juce::dontSendNotification);
+        opacityValueLabel_.setText("100% (unsupported)", juce::dontSendNotification);
     }
 
     y += kControlHeight + 12;
 
-    contentPanel_->setBounds(0, 0, contentW, y + 16);
+    // --- Platform-specific blur/Acrylic control ---
+    // On macOS: blur slider (radius 0–100)
+    // On Windows: Acrylic toggle (on/off)
+    // On Linux: show warning message if unsupported
+
+    if (!opacitySupported_)
+    {
+        // Linux without compositor — show warning, no blur control
+        opacityWarningLabel_ = new juce::Label();
+        opacityWarningLabel_->setText("Background transparency and blur are unavailable "
+                                      "on this Linux environment (no compositor detected).",
+                                      juce::dontSendNotification);
+        opacityWarningLabel_->setFont(HathorLookAndFeel::fontRegular(HathorLookAndFeel::Typography::bodySm));
+        opacityWarningLabel_->setColour(juce::Label::textColourId, palette.textMuted);
+        opacityWarningLabel_->setJustificationType(juce::Justification::centredLeft);
+        opacityWarningLabel_->setBounds(0, y, 600, kControlHeight * 2);
+        opacityWarningLabel_->setInterceptsMouseClicks(false, false);
+        contentPanel_->addAndMakeVisible(opacityWarningLabel_);
+
+        y += kControlHeight * 2 + 8;
+    }
+    else
+    {
+        // macOS: blur slider
+        // Windows: Acrylic toggle
+#if JUCE_MAC
+        // --- Blur slider ---
+        auto* blurLabel = new juce::Label();
+        blurLabel->setText("Blur:", juce::dontSendNotification);
+        blurLabel->setFont(HathorLookAndFeel::fontMedium(HathorLookAndFeel::Typography::bodySm));
+        blurLabel->setColour(juce::Label::textColourId, palette.textSecondary);
+        blurLabel->setJustificationType(juce::Justification::centredRight);
+        blurLabel->setBounds(0, y, labelW, kControlHeight);
+        contentPanel_->addAndMakeVisible(blurLabel);
+
+        blurSlider_.setBounds(controlX, y, controlW, kControlHeight);
+        blurSlider_.setSliderStyle(juce::Slider::LinearHorizontal);
+        blurSlider_.setRange(0.0, 100.0, 1.0);
+        blurSlider_.setValue(pending_.macosBlurRadius, juce::dontSendNotification);
+        blurSlider_.addListener(this);
+        contentPanel_->addAndMakeVisible(blurSlider_);
+
+        blurValueLabel_.setBounds(controlX + controlW + 8, y, 48, kControlHeight);
+        blurValueLabel_.setFont(HathorLookAndFeel::fontRegular(HathorLookAndFeel::Typography::bodySm));
+        blurValueLabel_.setColour(juce::Label::textColourId, palette.textSecondary);
+        blurValueLabel_.setJustificationType(juce::Justification::centredLeft);
+        blurValueLabel_.setText(juce::String(pending_.macosBlurRadius),
+                                 juce::dontSendNotification);
+        contentPanel_->addAndMakeVisible(blurValueLabel_);
+
+        y += kControlHeight + 12;
+#elif JUCE_WINDOWS
+        // --- Acrylic toggle ---
+        acrylicButton_.setButtonText("Acrylic background");
+        acrylicButton_.setClickingTogglesButton(true);
+        acrylicButton_.setToggleButtonAction(true);
+        acrylicButton_.setBounds(controlX, y, controlW, kControlHeight);
+        acrylicButton_.setButtonText(juce::String(pending_.windowsAcrylic ? "ON" : "OFF"));
+        acrylicButton_.addListener(this);
+        contentPanel_->addAndMakeVisible(acrylicButton_);
+
+        acrylicLabel_.setBounds(0, y, labelW, kControlHeight);
+        acrylicLabel_.setText("Acrylic:", juce::dontSendNotification);
+        acrylicLabel_.setFont(HathorLookAndFeel::fontMedium(HathorLookAndFeel::Typography::bodySm));
+        acrylicLabel_.setColour(juce::Label::textColourId, palette.textSecondary);
+        acrylicLabel_.setJustificationType(juce::Justification::centredRight);
+        contentPanel_->addAndMakeVisible(acrylicLabel_);
+
+        y += kControlHeight + 12;
+#else
+        // Linux with transparency support — show a simple message
+        auto* blurInfo = new juce::Label();
+        blurInfo->setText("Background blur requires a compositor with blur support.",
+                          juce::dontSendNotification);
+        blurInfo->setFont(HathorLookAndFeel::fontRegular(HathorLookAndFeel::Typography::bodySm));
+        blurInfo->setColour(juce::Label::textColourId, palette.textMuted);
+        blurInfo->setJustificationType(juce::Justification::centredLeft);
+        blurInfo->setBounds(0, y, 600, kControlHeight);
+        blurInfo->setInterceptsMouseClicks(false, false);
+        contentPanel_->addAndMakeVisible(blurInfo);
+
+        y += kControlHeight + 8;
+#endif
+    }
+
+    // Update initial blur control state
+    updateBlurControlState();
 }
 
 void SettingsComponent::buildAgentSection(const std::string& hathorMcpPath)
@@ -244,12 +374,13 @@ void SettingsComponent::buildAgentSection(const std::string& hathorMcpPath)
     y += kControlHeight + 8;
 
     // --- Agent executable path ---
-    agentPathLabel_.setBounds(0, y, labelW, kControlHeight);
-    agentPathLabel_.setText("Agent exe:", juce::dontSendNotification);
-    agentPathLabel_.setFont(HathorLookAndFeel::fontMedium(HathorLookAndFeel::Typography::bodySm));
-    agentPathLabel_.setColour(juce::Label::textColourId, palette.textSecondary);
-    agentPathLabel_.setJustificationType(juce::Justification::centredRight);
-    contentPanel_->addAndMakeVisible(agentPathLabel_);
+    agentPathLabel_ = new juce::Label();
+    agentPathLabel_->setText("Agent exe:", juce::dontSendNotification);
+    agentPathLabel_->setBounds(0, y, labelW, kControlHeight);
+    agentPathLabel_->setFont(HathorLookAndFeel::fontMedium(HathorLookAndFeel::Typography::bodySm));
+    agentPathLabel_->setColour(juce::Label::textColourId, palette.textSecondary);
+    agentPathLabel_->setJustificationType(juce::Justification::centredRight);
+    contentPanel_->addAndMakeVisible(*agentPathLabel_);
 
     agentPathEditor_.setBounds(controlX, y, controlW, kControlHeight);
     agentPathEditor_.setText(juce::String(pending_.agentExePath), juce::dontSendNotification);
@@ -316,7 +447,6 @@ void SettingsComponent::buildPetdexSection()
 
     populatePetList();
 
-    // Set from pending (empty = no selection → "(none)" hint)
     if (!pending_.petSelection.empty())
     {
         for (int i = 1; i <= petCombo_.getNumItems(); ++i)
@@ -403,7 +533,6 @@ void SettingsComponent::buildEqPlaceholder()
 
 void SettingsComponent::buildActionButtons()
 {
-    // Buttons are laid out in resized(). Only added as children here.
     applyButton_.setButtonText("Apply");
     applyButton_.addListener(this);
     applyButton_.setEnabled(false);
@@ -418,11 +547,6 @@ void SettingsComponent::populatePetList()
 {
     petCombo_.clear();
     petCombo_.addItem("(none)", 1);
-
-    // Placeholder for future mascot discovery (D1-D4):
-    //   petCombo_.addItem("Strudel Fox", 2);
-    //   petCombo_.addItem("Hathor Cat",  3);
-    // Actual mascot assets and licensing data arrive in D1-D4.
 
     if (pending_.petSelection.empty())
         petCombo_.setText("(none)", juce::dontSendNotification);
@@ -446,12 +570,10 @@ void SettingsComponent::resized()
 
     scrollView_->setBounds(b.removeFromTop(b.getHeight() - buttonBarHeight));
 
-    // Sync content panel width to the viewport.
     contentPanel_->setTopLeftPosition(0, 0);
     contentPanel_->setSize(juce::jmax(400, b.getWidth()),
                            contentPanel_->getHeight());
 
-    // Buttons pinned to bottom-right of the full bounds (below scroll view).
     const int bx = b.getWidth() - kButtonWidth * 2 - kButtonGap;
     applyButton_.setBounds(bx, b.getHeight() - kButtonHeight,
                            kButtonWidth, kButtonHeight);
@@ -474,6 +596,34 @@ void SettingsComponent::sliderValueChanged(juce::Slider* slider)
         opacityValueLabel_.setText(juce::String(val, 0) + "%",
                                    juce::dontSendNotification);
 
+        // B5: When opacity is 100%, blur has no visible effect — disable blur controls
+        updateBlurControlState();
+
+        // Live preview: apply opacity immediately through the controller
+        // (the edit buffer is NOT committed until Apply is pressed)
+        if (appearanceController_ != nullptr)
+            appearanceController_->applyOpacity(val);
+
+        updateDirtyFlag();
+    }
+    else if (slider == &blurSlider_)
+    {
+        const int val = static_cast<int>(slider->getValue());
+        pending_.macosBlurRadius = val;
+
+        blurValueLabel_.setText(juce::String(val),
+                                juce::dontSendNotification);
+
+        // Live preview: apply blur immediately through the controller
+        if (appearanceController_ != nullptr)
+        {
+            WindowAppearanceState state;
+            state.opacityPercent  = pending_.opacityPercent;
+            state.macosBlurRadius = pending_.macosBlurRadius;
+            state.windowsAcrylic  = pending_.windowsAcrylic;
+            appearanceController_->applyBlur(state);
+        }
+
         updateDirtyFlag();
     }
 }
@@ -489,7 +639,7 @@ void SettingsComponent::buttonClicked(juce::Button* button)
         committed_ = pending_;
         saveSettings(committed_);
         applyTheme(committed_.theme);
-        applyOpacity(committed_.opacityPercent);
+        applyWindowAppearance(committed_);
         pendingChanges_ = false;
         applyButton_.setEnabled(false);
         resetButton_.setEnabled(false);
@@ -502,6 +652,24 @@ void SettingsComponent::buttonClicked(juce::Button* button)
     else if (button == &resetButton_)
     {
         resetToCommitted();
+    }
+    else if (button == &acrylicButton_)
+    {
+        // Toggle Acrylic state (B5)
+        pending_.windowsAcrylic = !pending_.windowsAcrylic;
+        acrylicButton_.setButtonText(pending_.windowsAcrylic ? "ON" : "OFF");
+
+        // Live preview: apply Acrylic through the controller
+        if (appearanceController_ != nullptr && pending_.opacityPercent < 100.0f)
+        {
+            WindowAppearanceState state;
+            state.opacityPercent  = pending_.opacityPercent;
+            state.windowsAcrylic  = pending_.windowsAcrylic;
+            state.macosBlurRadius = pending_.macosBlurRadius;
+            appearanceController_->applyBlur(state);
+        }
+
+        updateDirtyFlag();
     }
 }
 
@@ -550,10 +718,12 @@ void SettingsComponent::textEditorTextChanged(juce::TextEditor& editor)
 
 void SettingsComponent::updateDirtyFlag()
 {
-    pendingChanges_ = (pending_.theme != committed_.theme)
-                   || (pending_.opacityPercent != committed_.opacityPercent)
-                   || (pending_.agentExePath != committed_.agentExePath)
-                   || (pending_.petSelection != committed_.petSelection);
+    pendingChanges_ = (pending_.theme           != committed_.theme)
+                   || (pending_.opacityPercent  != committed_.opacityPercent)
+                   || (pending_.macosBlurRadius != committed_.macosBlurRadius)
+                   || (pending_.windowsAcrylic  != committed_.windowsAcrylic)
+                   || (pending_.agentExePath    != committed_.agentExePath)
+                   || (pending_.petSelection    != committed_.petSelection);
 
     applyButton_.setEnabled(pendingChanges_);
     resetButton_.setEnabled(pendingChanges_);
@@ -563,32 +733,61 @@ void SettingsComponent::applyTheme(ThemeId theme)
 {
     const Palette newPalette = paletteForTheme(theme);
 
-    // Resolve the HathorLookAndFeel instance installed on the window hierarchy
-    // (MainWindow calls setLookAndFeel(&lookAndFeel_)) and swap its palette.
-    // setPalette() calls sendLookAndFeelChange() on all live components, so
-    // every themed zone re-paints with the new palette immediately (B3).
     HathorLookAndFeel& lookAndFeel = HathorLookAndFeel::fromComponent(*this);
     lookAndFeel.setPalette(newPalette);
 }
 
-void SettingsComponent::applyOpacity(float percent)
+void SettingsComponent::applyWindowAppearance(const SettingsModel& model)
 {
-    if (!opacitySupported_)
-        return;
+    // B5: Apply opacity + blur/Acrylic to the live window.
+    // Uses the WindowAppearanceController if available, otherwise falls back
+    // to direct setAlpha on the MainWindow.
 
-    for (int i = 0; i < juce::Desktop::getInstance().getNumComponents(); ++i)
+    if (appearanceController_ != nullptr)
     {
-        if (auto* w = dynamic_cast<juce::TopLevelWindow*>(
-                juce::Desktop::getInstance().getComponent(i)))
+        WindowAppearanceState state;
+        state.opacityPercent   = model.opacityPercent;
+        state.macosBlurRadius  = model.macosBlurRadius;
+        state.windowsAcrylic   = model.windowsAcrylic;
+        appearanceController_->apply(state);
+    }
+    else
+    {
+        // Fallback: direct opacity (no blur/acrylic without controller)
+        if (opacitySupported_)
         {
-            // MainWindow's component name is "Hathor" (set in DocumentWindow ctor).
-            if (w->getName() == "Hathor")
+            for (int i = 0; i < juce::Desktop::getInstance().getNumComponents(); ++i)
             {
-                w->setAlpha(percent / 100.0f);
-                return;
+                if (auto* w = dynamic_cast<juce::TopLevelWindow*>(
+                        juce::Desktop::getInstance().getComponent(i)))
+                {
+                    if (w->getName() == "Hathor")
+                    {
+                        w->setAlpha(model.opacityPercent / 100.0f);
+                        w->setOpaque(false);
+                        return;
+                    }
+                }
             }
         }
     }
+}
+
+void SettingsComponent::updateBlurControlState()
+{
+    // B5: When opacity is 100%, blur has no visible effect — disable blur controls
+    // but do NOT destroy the stored preference value.
+    const bool blurActive = pending_.opacityPercent < 100.0f;
+
+#if JUCE_MAC
+    blurSlider_.setEnabled(blurActive);
+    blurValueLabel_.setEnabled(blurActive);
+#elif JUCE_WINDOWS
+    acrylicButton_.setEnabled(blurActive);
+    acrylicLabel_.setEnabled(blurActive);
+#endif
+
+    // Linux: opacitySupported_ is already false, so no blur controls to update
 }
 
 void SettingsComponent::resetToCommitted()
@@ -597,10 +796,21 @@ void SettingsComponent::resetToCommitted()
 
     themeCombo_.setSelectedId(static_cast<int>(pending_.theme) + 1,
                               juce::dontSendNotification);
+
     opacitySlider_.setValue(pending_.opacityPercent,
-                              juce::dontSendNotification);
+                            juce::dontSendNotification);
     opacityValueLabel_.setText(juce::String(pending_.opacityPercent, 0) + "%",
                                juce::dontSendNotification);
+
+#if JUCE_MAC
+    blurSlider_.setValue(pending_.macosBlurRadius,
+                         juce::dontSendNotification);
+    blurValueLabel_.setText(juce::String(pending_.macosBlurRadius),
+                            juce::dontSendNotification);
+#elif JUCE_WINDOWS
+    acrylicButton_.setButtonText(pending_.windowsAcrylic ? "ON" : "OFF");
+#endif
+
     agentPathEditor_.setText(juce::String(pending_.agentExePath),
                              juce::dontSendNotification);
 
@@ -620,6 +830,18 @@ void SettingsComponent::resetToCommitted()
         petCombo_.setText("(none)", juce::dontSendNotification);
     }
 
+    // Restore live preview to the committed state
+    applyWindowAppearance(committed_);
+    if (appearanceController_ != nullptr && committed_.opacityPercent < 100.0f)
+    {
+        WindowAppearanceState state;
+        state.opacityPercent  = committed_.opacityPercent;
+        state.macosBlurRadius = committed_.macosBlurRadius;
+        state.windowsAcrylic  = committed_.windowsAcrylic;
+        appearanceController_->applyBlur(state);
+    }
+
+    updateBlurControlState();
     updateDirtyFlag();
 }
 

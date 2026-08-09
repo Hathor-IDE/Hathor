@@ -17,7 +17,6 @@
 
 #include <juce_gui_basics/juce_gui_basics.h>
 
-#include <functional>
 #include <memory>
 #include <string>
 
@@ -54,38 +53,32 @@ struct WindowAppearanceState
  *
  * Owns the platform-specific implementation for applying window opacity,
  * background blur, and Acrylic effects to the MainWindow. All platform
- * branching is confined to the .cpp and the nested PlatformImpl types.
+ * branching is confined to the .mm/.cpp file, so the Settings UI and
+ * MainWindow never need to branch on platform macros.
  *
  * The controller is constructed once (in MainWindow) and lives for the
  * lifetime of the application. SettingsComponent queries its capabilities
- * and calls apply() / reset() to change window appearance.
+ * and calls apply() / applyOpacity() / applyBlur() to change window
+ * appearance.
  */
 class WindowAppearanceController
 {
 public:
-    /**
-     * Construct the controller.
-     * @param window  The TopLevelWindow to control (MainWindow is a DocumentWindow
-     *                which is a TopLevelWindow).
-     */
     explicit WindowAppearanceController(juce::TopLevelWindow& window);
     ~WindowAppearanceController();
 
-    // Non-copyable / non-movable
     WindowAppearanceController(WindowAppearanceController&&) = delete;
     WindowAppearanceController& operator=(WindowAppearanceController&&) = delete;
 
     /**
      * Detect what the current platform environment actually supports.
-     * Called at startup and cached; re-detectable for testing.
+     * Called at construction; re-callable for testing.
      */
     PlatformCapabilities detectCapabilities() const;
 
     /**
      * Apply a full appearance state to the live window.
      * This commits opacity + blur/Acrylic immediately (no restart needed).
-     *
-     * @param state  The desired appearance state (from persisted or pending settings).
      */
     void apply(const WindowAppearanceState& state);
 
@@ -107,15 +100,10 @@ public:
      */
     void restoreOpaque();
 
-    /**
-     * Returns true if the current platform supports window transparency.
-     * Convenience accessor for the cached capability.
-     */
+    /** Returns true if the current platform supports window transparency. */
     bool transparencySupported() const noexcept { return cachedCaps_.transparencySupported; }
 
-    /**
-     * Returns true if the current platform supports native background blur.
-     */
+    /** Returns true if the current platform supports native background blur. */
     bool blurSupported() const noexcept { return cachedCaps_.blurSupported; }
 
     /**
@@ -131,40 +119,29 @@ public:
      */
     juce::String unsupportedReason() const;
 
-private:
+    /** Access the window being controlled (used by SettingsComponent for live preview). */
+    juce::TopLevelWindow& getWindow() const noexcept { return window_; }
+
     // -----------------------------------------------------------------------
-    // Platform implementation interface
+    // Platform implementation interface (public so .mm can inherit)
     // -----------------------------------------------------------------------
 
-    /**
-     * PlatformImpl — abstract interface for platform-specific window
-     * appearance operations. Concrete implementations are defined in the
-     * .cpp file as nested types, one per platform.
-     */
-    class PlatformImpl
+    class PlatformImplBase
     {
     public:
-        explicit PlatformImpl(juce::TopLevelWindow& window) : window_(window) {}
-        virtual ~PlatformImpl() = default;
-
+        virtual ~PlatformImplBase() = default;
         virtual PlatformCapabilities detectCaps() const = 0;
         virtual void setWindowOpacity(float alpha) = 0;
         virtual void setWindowOpaque(bool opaque) = 0;
         virtual void setWindowBlur(int radius) = 0;
         virtual void setAcrylicEnabled(bool enabled) = 0;
         virtual juce::String getUnsupportedReason() const = 0;
-
-    protected:
-        juce::TopLevelWindow& window_;
     };
 
-    // -----------------------------------------------------------------------
-    // Members
-    // -----------------------------------------------------------------------
-
+private:
     juce::TopLevelWindow& window_;
-    std::unique_ptr<PlatformImpl> impl_;
-    PlatformCapabilities cachedCaps_;
+    std::unique_ptr<PlatformImplBase> impl_;
+    mutable PlatformCapabilities cachedCaps_;
 };
 
 } // namespace hathor::ui
