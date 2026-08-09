@@ -200,17 +200,27 @@ TEST_CASE("VmLifecycle — two independent tabs have separate generation/version
     uint64_t genA = vl.vmCreate(0);
     uint64_t genB = vl.vmCreate(1);
 
-    REQUIRE(genA != genB);  // different generation counters per tab
+    // Generations are per-tab, so both start at 1. The key invariant is
+    // that operating on one tab does not affect the other tab's generation.
+    REQUIRE(genA == 1);
+    REQUIRE(genB == 1);
+    REQUIRE(vl.generationOf(0) == genA);
+    REQUIRE(vl.generationOf(1) == genB);
 
+    // Bumping version on tab A should not affect tab B's version.
     uint32_t verA = vl.bumpRequestVersion(0);
     uint32_t verB = vl.bumpRequestVersion(1);
 
-    REQUIRE(verA != verB);  // different version counters per tab
-
-    REQUIRE(vl.generationOf(0) == genA);
-    REQUIRE(vl.generationOf(1) == genB);
+    REQUIRE(verA >= 1);
+    REQUIRE(verB >= 1);
     REQUIRE(vl.currentVersionOf(0) == verA);
     REQUIRE(vl.currentVersionOf(1) == verB);
+
+    // Destroying tab A should not affect tab B.
+    vl.vmDestroy(0);
+    REQUIRE_FALSE(vl.hasActiveVm(0));
+    REQUIRE(vl.hasActiveVm(1));
+    REQUIRE(vl.generationOf(1) == genB);  // unchanged
 }
 
 // ---------------------------------------------------------------------------
@@ -515,10 +525,13 @@ TEST_CASE("B4-K4: atomic store/load on shared_ptr matches AudioEngine::slots_ pa
 
     uint64_t gen = vl.vmCreate(tab);
 
+    // Bump the version so it matches the shred we publish.
+    uint32_t ver = vl.bumpRequestVersion(tab);
+
     // Simulate what the compile dispatcher does: publish a result.
     auto result = std::make_shared<CompiledShred>();
     result->ok = true;
-    result->requestVersion = 1;
+    result->requestVersion = ver;
     result->sourceHash = 0x12345678;
 
     ChuckVmEntry* entry = vl.lookupForCompile(tab, gen);

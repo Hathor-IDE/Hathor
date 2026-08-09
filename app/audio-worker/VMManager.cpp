@@ -43,7 +43,7 @@ VMResult VMManager::activateVM(TabId tabId, unsigned sampleRate, unsigned channe
     std::lock_guard<std::mutex> lock(mutex_);
 
     // Enforce the resource ceiling before creating a new VM.
-    int activeCount = countActive();
+    int activeCount = countActiveLocked();
     if (!policy_.canActivate(activeCount)) {
         // Ceiling reached — apply configured behavior.
         if (!handleCeilingEviction()) {
@@ -56,7 +56,7 @@ VMResult VMManager::activateVM(TabId tabId, unsigned sampleRate, unsigned channe
         }
 
         // Re-check after eviction attempt.
-        activeCount = countActive();
+        activeCount = countActiveLocked();
         if (!policy_.canActivate(activeCount)) {
             if (policy_.ceilingBehavior == CeilingBehavior::RejectWithError) {
                 return {false, 429, "resource ceiling reached after eviction attempt"};
@@ -222,9 +222,12 @@ std::string VMManager::listVMs() const
          + " destroyed=" + std::to_string(destroyed);
 }
 
-int VMManager::countState(VMState state) const
+// ---------------------------------------------------------------------------
+// Counting helpers
+// ---------------------------------------------------------------------------
+
+int VMManager::countStateLocked(VMState state) const
 {
-    std::lock_guard<std::mutex> lock(mutex_);
     int count = 0;
     for (const auto& [tabId, vm] : vms_) {
         if (vm && vm->state() == state) {
@@ -234,15 +237,27 @@ int VMManager::countState(VMState state) const
     return count;
 }
 
+int VMManager::countState(VMState state) const
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    return countStateLocked(state);
+}
+
+int VMManager::countActiveLocked() const
+{
+    return countStateLocked(VMState::Active);
+}
+
 int VMManager::countActive() const
 {
-    return countState(VMState::Active);
+    std::lock_guard<std::mutex> lock(mutex_);
+    return countActiveLocked();
 }
 
 bool VMManager::canActivateMore() const
 {
     std::lock_guard<std::mutex> lock(mutex_);
-    return policy_.canActivate(countActive());
+    return policy_.canActivate(countActiveLocked());
 }
 
 ResourcePolicy VMManager::getPolicy() const noexcept

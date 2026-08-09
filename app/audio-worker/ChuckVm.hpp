@@ -148,10 +148,10 @@ public:
         return state_.load(std::memory_order_acquire) == VMState::Suspended;
     }
 
-    /// Whether the VM has been destroyed or is in an error state.
+    /// Whether the VM has been destroyed, is in an error state, or is inactive.
     bool isTerminated() const noexcept {
         auto s = state_.load(std::memory_order_acquire);
-        return s == VMState::Destroyed || s == VMState::Error;
+        return s == VMState::Inactive || s == VMState::Destroyed || s == VMState::Error;
     }
 
 private:

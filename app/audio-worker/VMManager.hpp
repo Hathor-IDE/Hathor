@@ -108,6 +108,13 @@ public:
     int checkHeartbeats(std::chrono::milliseconds timeout);
 
 private:
+    /// Count active VMs assuming mutex_ is already held.
+    int countActiveLocked() const;
+
+    /// Count VMs in a given state assuming mutex_ is already held.
+    int countStateLocked(VMState state) const;
+
+private:
     /// Look up or create a ChuckVM for the given tab.
     ChuckVM* getOrCreateVM(TabId tabId);
 

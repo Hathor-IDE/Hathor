@@ -157,7 +157,7 @@ VMResult ChuckVM::resume()
     // Resume the thread.  The Chuck instance is still alive.
     vmRunning_.store(true, std::memory_order_release);
     suspendRequested_.store(false, std::memory_order_release);
-    resumeRequested_.store(false, std::memory_order_release);
+    resumeRequested_.store(true, std::memory_order_release);
 
     // If the thread was joined (destroy path), we need to restart it.
     // In the suspend path, the thread is just paused, not joined.
