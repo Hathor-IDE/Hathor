@@ -143,7 +143,7 @@ if(CHUCK_AVAILABLE)
         ${CHUCK_CORE_DIR}/util_thread.cpp
         ${CHUCK_CORE_DIR}/util_opsc.cpp
         ${CHUCK_CORE_DIR}/util_serial.cpp
-        ${CHUCK_CORE_DIR}/util_hid.cpp
+        # NOTE: util_hid.cpp excluded — requires SDL (hidio_sdl.h)
         ${CHUCK_CORE_DIR}/uana_xform.cpp
         ${CHUCK_CORE_DIR}/uana_extract.cpp
     )
@@ -165,6 +165,19 @@ if(CHUCK_AVAILABLE)
 
     target_compile_features(libchuck PUBLIC cxx_std_14)
     target_compile_definitions(libchuck PUBLIC HAVE_CONFIG_H)
+
+    # HID and MIDI support: libchuck references HID/MIDI APIs that require
+    # SDL and RtMidi. We define __DISABLE_HID__ to skip HID class init,
+    # __DISABLE_MIDI__ to skip MIDI, and __DISABLE_SERIAL__ to skip SerialIO.
+    # __ALTER_HID__ is also needed to skip the HidInManager::cleanup() call in
+    # chuck.cpp (chuck.cpp uses __ALTER_HID__, not __DISABLE_HID__, for that call).
+    target_compile_definitions(libchuck PUBLIC
+        __DISABLE_HID__
+        __DISABLE_MIDI__
+        __DISABLE_SHELL__
+        __DISABLE_SERIAL__
+        __ALTER_HID__
+    )
 
     # libchuck has pre-existing warnings (deprecated-copy, etc.) from older C++
     # standards. Disable -Werror for libchuck sources and suppress those

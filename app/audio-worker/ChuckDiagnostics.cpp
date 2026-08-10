@@ -27,6 +27,7 @@
 #include <cstdint>
 #include <mutex>
 #include <regex>
+#include <sstream>
 #include <string>
 #include <string_view>
 #include <tuple>
@@ -80,26 +81,53 @@ static ChuckDiagnostic parseLibchuckErrors(const std::string& errorStr,
     // libchuck's g_lasterror contains the accumulated error output. The
     // format from EM_error() is typically:
     //   [filename]:line:col: message
-    // or for code literals (no filename):
-    //   [chuck]:line:col: message
-    // Multiple errors are separated by "\n".
+    // or for code literals (no filename, using a pseudo-filename):
+    //   [compiled.code]:line:col: message
+    // Multiple errors may be present, one per line. We parse the first
+    // error line that matches.
+    // Use ECMAScript regex (default) — POSIX extended regex (std::regex::extended)
+    // does not support (?:...) non-capturing groups or \s.
     //
-    // We use a regex to extract structured components from the first error.
+    // libchuck error format from EM_error:
+    //   <filename>:line:col: message
+    // where <filename> can be:
+    //   [compiled.code]
+    //   test.ck
+    //   [chuck]
+    // (angle brackets for code compiled with a literal filename, square brackets
+    // for pseudo-filenames, or bare filenames)
     static const std::regex lineColRe(
-        R"((\[[\w.]+\]|\[[\w.]+\.ck\]|[\[chuck]|[\w.]+):(\d+)(?::(\d+))?:?\s*(.*))",
-        std::regex::extended
+        R"((.+):(\d+):(\d+):\s*(.+))"
     );
 
+    // First, extract the first non-empty error line from the accumulated output.
+    // libchuck accumulates errors separated by newlines in g_lasterror.
+    std::string firstLine;
+    {
+        std::istringstream iss(errorStr);
+        std::string line;
+        while (std::getline(iss, line)) {
+            // Skip empty/blank lines
+            line.erase(0, line.find_first_not_of(" \t"));
+            if (!line.empty()) {
+                firstLine = line;
+                break;
+            }
+        }
+    }
+
+    if (firstLine.empty()) {
+        return {true, 0, 0, {}};
+    }
+
     std::smatch match;
-    if (std::regex_match(errorStr, match, lineColRe) && match.size() >= 5) {
+    if (std::regex_match(firstLine, match, lineColRe) && match.size() >= 5) {
         int line = 0, col = 0;
         try { line = std::stoi(match[2].str()); } catch (...) { line = 0; }
         if (!match[3].str().empty()) {
             try { col = std::stoi(match[3].str()); } catch (...) { col = 0; }
         }
         std::string msg = match[4].str();
-        // If msg is empty, fall back to the full error string
-        if (msg.empty()) msg = errorStr;
         return {false, line, col, std::move(msg)};
     }
 
