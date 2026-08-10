@@ -11,6 +11,7 @@ add_executable(hathor-engine-tests
     test_prettyprinter.cpp
     test_strudel_differential.cpp
     test_event_metadata.cpp
+    test_language_metadata.cpp
     golden/FixtureLoader.cpp
 )
 
@@ -32,6 +33,7 @@ target_include_directories(hathor-engine-tests PRIVATE
 # can locate reference/strudel-golden/ regardless of working-directory.
 target_compile_definitions(hathor-engine-tests PRIVATE
     GOLDEN_FIXTURE_DIR="${CMAKE_SOURCE_DIR}/reference/strudel-golden"
+    LANGUAGE_METADATA_DIR="${CMAKE_SOURCE_DIR}/reference/language-metadata"
 )
 
 # Ensure -Wall -Wextra -Werror applies to the golden test sources too.

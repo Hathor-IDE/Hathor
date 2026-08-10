@@ -1,0 +1,925 @@
+{
+  "schemaVersion": 1,
+  "hathorEngineCompat": "0.1.0",
+  "strudelMiniNotationCompat": "1.2.6",
+  "chuckLibVersion": "3.8.3",
+  "chuckIntegrationSurface": "B4-K3",
+  "functions": [
+    {
+      "name": "s",
+      "signature": "s(pattern: string)",
+      "description": "Play a sample pattern. Alias for sound().",
+      "category": "pattern",
+      "supported": true,
+      "example": "s(\"bd hh sd\")"
+    },
+    {
+      "name": "sound",
+      "signature": "sound(pattern: string)",
+      "description": "Play a sample pattern by name. This is the primary entry point for sample-based sequences.",
+      "category": "pattern",
+      "supported": true,
+      "example": "sound(\"bd hh sd hh\")"
+    },
+    {
+      "name": "note",
+      "signature": "note(pattern: string)",
+      "description": "Play pitched notes. Notes are specified as note names with octaves (e.g. 'c3').",
+      "category": "pattern",
+      "supported": false,
+      "example": "note(\"c3 e3 g3\")"
+    },
+    {
+      "name": "n",
+      "signature": "n(pattern: string)",
+      "description": "Play notes by number. Use with .scale() for musical notes.",
+      "category": "pattern",
+      "supported": false,
+      "example": "n(\"0 2 4\")"
+    },
+    {
+      "name": "fast",
+      "signature": "fast(multiplier: number)",
+      "description": "Speed up pattern by multiplier (e.g. 2 = twice as fast).",
+      "category": "pattern",
+      "supported": true,
+      "example": "s(\"bd\").fast(2)"
+    },
+    {
+      "name": "slow",
+      "signature": "slow(divisor: number)",
+      "description": "Slow down pattern by divisor (e.g. 2 = half speed).",
+      "category": "pattern",
+      "supported": true,
+      "example": "s(\"bd\").slow(2)"
+    },
+    {
+      "name": "stack",
+      "signature": "stack(...patterns: Pattern[])",
+      "description": "Play multiple patterns simultaneously.",
+      "category": "pattern",
+      "supported": true,
+      "example": "stack(s(\"bd\"), s(\"sn\"))"
+    },
+    {
+      "name": "cat",
+      "signature": "cat(...patterns: Pattern[])",
+      "description": "Concatenate patterns, playing one after another.",
+      "category": "pattern",
+      "supported": false,
+      "example": "cat(s(\"bd\"), s(\"sn\"))"
+    },
+    {
+      "name": "seq",
+      "signature": "seq(...values: any[])",
+      "description": "Sequence values over time.",
+      "category": "pattern",
+      "supported": false,
+      "example": "seq(\"bd\", \"sn\", \"hh\")"
+    },
+    {
+      "name": "fastcat",
+      "signature": "fastcat(...patterns: Pattern[])",
+      "description": "Fast concatenation of patterns (space-separated in mini-notation).",
+      "category": "pattern",
+      "supported": true,
+      "example": "s(\"bd sn hh cp\")"
+    },
+    {
+      "name": "slowcat",
+      "signature": "slowcat(...patterns: Pattern[])",
+      "description": "Slow concatenation of patterns (angle-bracket syntax in mini-notation).",
+      "category": "pattern",
+      "supported": true,
+      "example": "s(\"<bd sn hh\")"
+    },
+    {
+      "name": "rev",
+      "signature": "rev()",
+      "description": "Reverse the pattern within each cycle.",
+      "category": "pattern",
+      "supported": false,
+      "example": "s(\"bd sn hh cp\").rev()"
+    },
+    {
+      "name": "every",
+      "signature": "every(cycle: number, func: Function)",
+      "description": "Apply function every N cycles.",
+      "category": "pattern",
+      "supported": false,
+      "example": "s(\"bd sn\").every(3, rev)"
+    },
+    {
+      "name": "sometimes",
+      "signature": "sometimes(func: Function)",
+      "description": "Apply function randomly 50% of the time.",
+      "category": "effect",
+      "supported": false,
+      "example": "s(\"hh*8\").sometimes(fast(2))"
+    },
+    {
+      "name": "gain",
+      "signature": "gain(value: number | Pattern)",
+      "description": "Set volume. Values from 0 to 1.",
+      "category": "effect",
+      "supported": true,
+      "example": "s(\"bd\").gain(0.5)"
+    },
+    {
+      "name": "pan",
+      "signature": "pan(value: number | Pattern)",
+      "description": "Stereo pan. 0 = left, 0.5 = center, 1 = right.",
+      "category": "effect",
+      "supported": true,
+      "example": "s(\"bd\").pan(\"0 0.25 0.5 0.75\")"
+    },
+    {
+      "name": "speed",
+      "signature": "speed(value: number | Pattern)",
+      "description": "Playback speed of sample. 1 = normal, 0.5 = half speed.",
+      "category": "effect",
+      "supported": true,
+      "example": "s(\"bd\").speed(1.5)"
+    },
+    {
+      "name": "cut",
+      "signature": "cut(group: number | Pattern)",
+      "description": "Stops a playing sample when another sample with the same cut group is triggered.",
+      "category": "effect",
+      "supported": true,
+      "example": "s(\"[oh hh]*4\").cut(1)"
+    },
+    {
+      "name": "begin",
+      "signature": "begin(amount: number | Pattern)",
+      "description": "Start offset in sample (0 to 1). Skips the beginning.",
+      "category": "effect",
+      "supported": true,
+      "example": "s(\"bd\").begin(0.25)"
+    },
+    {
+      "name": "end",
+      "signature": "end(amount: number | Pattern)",
+      "description": "End offset in sample (0 to 1). Cuts off the end.",
+      "category": "effect",
+      "supported": true,
+      "example": "s(\"bd\").end(0.75)"
+    },
+    {
+      "name": "cutoff",
+      "signature": "cutoff(frequency: number | Pattern)",
+      "description": "Per-voice low-pass filter cutoff frequency in Hz.",
+      "category": "effect",
+      "supported": true,
+      "example": "s(\"bd\").cutoff(20000)"
+    },
+    {
+      "name": "room",
+      "signature": "room(size: number | Pattern)",
+      "description": "Add reverb. Size from 0 to 1.",
+      "category": "effect",
+      "supported": false,
+      "example": "s(\"bd\").room(0.5)"
+    },
+    {
+      "name": "delay",
+      "signature": "delay(level: number | Pattern)",
+      "description": "Add delay. Level between 0 and 1.",
+      "category": "effect",
+      "supported": false,
+      "example": "s(\"bd\").delay(0.25)"
+    },
+    {
+      "name": "orbit",
+      "signature": "orbit(n: number | Pattern)",
+      "description": "Sends the pattern to a different audio orbit for dedicated effects.",
+      "category": "control",
+      "supported": false,
+      "example": "s(\"bd\").orbit(2)"
+    }
+  ],
+  "samples": [
+    {
+      "name": "bd",
+      "description": "Bass drum / kick drum",
+      "category": "drum"
+    },
+    {
+      "name": "sn",
+      "description": "Snare drum",
+      "category": "drum"
+    },
+    {
+      "name": "hh",
+      "description": "Closed hi-hat",
+      "category": "drum"
+    },
+    {
+      "name": "cp",
+      "description": "Clap",
+      "category": "drum"
+    },
+    {
+      "name": "ht",
+      "description": "High tom",
+      "category": "drum"
+    },
+    {
+      "name": "mt",
+      "description": "Mid tom",
+      "category": "drum"
+    },
+    {
+      "name": "lt",
+      "description": "Low tom",
+      "category": "drum"
+    },
+    {
+      "name": "cr",
+      "description": "Crash cymbal",
+      "category": "drum"
+    },
+    {
+      "name": "rd",
+      "description": "Ride cymbal",
+      "category": "drum"
+    },
+    {
+      "name": "oh",
+      "description": "Open hi-hat",
+      "category": "drum"
+    },
+    {
+      "name": "sh",
+      "description": "Shaker",
+      "category": "drum"
+    },
+    {
+      "name": "cb",
+      "description": "Cowbell",
+      "category": "drum"
+    },
+    {
+      "name": "sine",
+      "description": "Sine wave oscillator",
+      "category": "synth"
+    },
+    {
+      "name": "sawtooth",
+      "description": "Sawtooth wave oscillator",
+      "category": "synth"
+    },
+    {
+      "name": "square",
+      "description": "Square wave oscillator",
+      "category": "synth"
+    },
+    {
+      "name": "triangle",
+      "description": "Triangle wave oscillator",
+      "category": "synth"
+    },
+    {
+      "name": "white",
+      "description": "White noise",
+      "category": "noise"
+    },
+    {
+      "name": "pink",
+      "description": "Pink noise",
+      "category": "noise"
+    },
+    {
+      "name": "brown",
+      "description": "Brown noise",
+      "category": "noise"
+    },
+    {
+      "name": "piano",
+      "description": "Piano sample",
+      "category": "gm"
+    },
+    {
+      "name": "bass",
+      "description": "Bass samples",
+      "category": "gm"
+    },
+    {
+      "name": "pluck",
+      "description": "Plucked string sounds",
+      "category": "gm"
+    },
+    {
+      "name": "pad",
+      "description": "Pad/synth pad sounds",
+      "category": "gm"
+    },
+    {
+      "name": "string",
+      "description": "String ensemble sounds",
+      "category": "gm"
+    },
+    {
+      "name": "flute",
+      "description": "Flute samples",
+      "category": "gm"
+    },
+    {
+      "name": "metal",
+      "description": "Metallic percussion sounds",
+      "category": "drum"
+    }
+  ],
+  "operators": [
+    {
+      "name": "*",
+      "description": "Multiply/speed up - plays the pattern faster. *2 plays twice as fast (twice per cycle).",
+      "example": "s(\"bd*4\")"
+    },
+    {
+      "name": "/",
+      "description": "Divide/slow down - stretches the pattern over multiple cycles. /2 plays over 2 cycles.",
+      "example": "s(\"bd sn\")/2"
+    },
+    {
+      "name": "!",
+      "description": "Replicate - repeats the event without speeding up (unlike *).",
+      "example": "s(\"bd!3 sn\")"
+    },
+    {
+      "name": "~",
+      "description": "Rest/silence - produces no sound for that step.",
+      "example": "s(\"bd ~ sn ~\")"
+    },
+    {
+      "name": ",",
+      "description": "Parallel/polyphony - plays multiple patterns simultaneously (stack).",
+      "example": "s(\"bd, sn, hh\")"
+    },
+    {
+      "name": "|",
+      "description": "Random choice - randomly selects between alternatives each cycle.",
+      "example": "s(\"bd|sn|hh\")"
+    }
+  ],
+  "grammar": [
+    {
+      "name": "atom",
+      "syntax": "any non-special character sequence",
+      "description": "A leaf token: \"bd\", \"sn\", \"~\", etc. The simplest pattern element.",
+      "example": "bd",
+      "supported": true
+    },
+    {
+      "name": "sequence",
+      "syntax": "space-separated elements",
+      "description": "Space-separated elements form a fast sequential pattern (fastcat).",
+      "example": "bd sn hh cp",
+      "supported": true
+    },
+    {
+      "name": "bracket_sequence",
+      "syntax": "[a b c]",
+      "description": "Square brackets group events into a subsequence that shares a time slot.",
+      "example": "[bd sn] hh",
+      "supported": true
+    },
+    {
+      "name": "stack",
+      "syntax": "comma-separated elements",
+      "description": "Comma-separated elements play simultaneously (stack).",
+      "example": "bd, sn, hh",
+      "supported": true
+    },
+    {
+      "name": "slow_sequence",
+      "syntax": "<a b c>",
+      "description": "Angle brackets create a polymeter/slowcat — one element per cycle.",
+      "example": "<bd sn hh>",
+      "supported": true
+    },
+    {
+      "name": "fast",
+      "syntax": "child*N",
+      "description": "Speed up by factor N. child*N lowers to fast(N, child).",
+      "example": "bd*4",
+      "supported": true
+    },
+    {
+      "name": "slow",
+      "syntax": "child/N",
+      "description": "Slow down by factor N. child/N lowers to slow(N, child).",
+      "example": "bd/2",
+      "supported": true
+    },
+    {
+      "name": "replicate",
+      "syntax": "child!N",
+      "description": "Repeat child N times without speeding up. child!N lowers to fastcat of N copies.",
+      "example": "bd!3 sn",
+      "supported": true
+    },
+    {
+      "name": "euclid",
+      "syntax": "child(pulses,steps[,rotation])",
+      "description": "Euclidean rhythm with pulses onsets over steps total steps, optionally rotated.",
+      "example": "bd(3,8)",
+      "supported": true
+    },
+    {
+      "name": "sample_selector",
+      "syntax": "name:index",
+      "description": "Select a specific sample variation by index within a folder.",
+      "example": "bd:3",
+      "supported": true
+    }
+  ],
+  "params": [
+    {
+      "key": "s",
+      "valueType": "string",
+      "description": "Sample folder name (e.g. \"bd\", \"sn\", \"hh\"). This is the value emitted by the mini-notation parser for each atom.",
+      "supported": true
+    },
+    {
+      "key": "n",
+      "valueType": "int",
+      "description": "Sample index within the folder (0-based). Default 0.",
+      "supported": true
+    },
+    {
+      "key": "gain",
+      "valueType": "double",
+      "description": "Output gain multiplier. 1.0 = unity gain.",
+      "supported": true
+    },
+    {
+      "key": "speed",
+      "valueType": "double",
+      "description": "Playback speed multiplier. 1.0 = normal speed.",
+      "supported": true
+    },
+    {
+      "key": "pan",
+      "valueType": "double",
+      "description": "Stereo pan position. -1.0 = hard left, 0.0 = center, 1.0 = hard right.",
+      "supported": true
+    },
+    {
+      "key": "begin",
+      "valueType": "double",
+      "description": "Start offset within the sample, in seconds.",
+      "supported": true
+    },
+    {
+      "key": "end",
+      "valueType": "double",
+      "description": "End offset within the sample, in seconds. 0.0 means play to end.",
+      "supported": true
+    },
+    {
+      "key": "cut",
+      "valueType": "int",
+      "description": "Cut group identifier. Voices sharing a cut group mute each other.",
+      "supported": true
+    },
+    {
+      "key": "cutoff",
+      "valueType": "double",
+      "description": "Per-voice biquad low-pass cutoff frequency in Hz.",
+      "supported": true
+    },
+    {
+      "key": "resonance",
+      "valueType": "double",
+      "description": "Per-voice biquad low-pass resonance / Q factor.",
+      "supported": true
+    }
+  ],
+  "chuckApi": [
+    {
+      "name": "SinOsc",
+      "kind": "ugen",
+      "signature": "SinOsc osc => dac",
+      "description": "Sine wave oscillator unit generator.",
+      "supported": true,
+      "example": "SinOsc osc => dac;"
+    },
+    {
+      "name": "SawOsc",
+      "kind": "ugen",
+      "signature": "SawOsc osc => dac",
+      "description": "Sawtooth wave oscillator unit generator.",
+      "supported": true,
+      "example": "SawOsc osc => dac;"
+    },
+    {
+      "name": "SqrOsc",
+      "kind": "ugen",
+      "signature": "SqrOsc osc => dac",
+      "description": "Square wave oscillator unit generator.",
+      "supported": true,
+      "example": "SqrOsc osc => dac;"
+    },
+    {
+      "name": "TriOsc",
+      "kind": "ugen",
+      "signature": "TriOsc osc => dac",
+      "description": "Triangle wave oscillator unit generator.",
+      "supported": true,
+      "example": "TriOsc osc => dac;"
+    },
+    {
+      "name": "PulseOsc",
+      "kind": "ugen",
+      "signature": "PulseOsc osc => dac",
+      "description": "Pulse wave oscillator unit generator.",
+      "supported": true,
+      "example": "PulseOsc osc => dac;"
+    },
+    {
+      "name": "Phasor",
+      "kind": "ugen",
+      "signature": "Phasor p => blackhole",
+      "description": "Phasor unit generator, outputs a ramp from 0 to 1.",
+      "supported": true,
+      "example": "Phasor p => blackhole;"
+    },
+    {
+      "name": "Noise",
+      "kind": "ugen",
+      "signature": "Noise n => dac",
+      "description": "White noise generator unit generator.",
+      "supported": true,
+      "example": "Noise n => dac;"
+    },
+    {
+      "name": "Impulse",
+      "kind": "ugen",
+      "signature": "Impulse imp => dac",
+      "description": "Impulse generator unit generator.",
+      "supported": true,
+      "example": "Impulse imp => dac;"
+    },
+    {
+      "name": "Step",
+      "kind": "ugen",
+      "signature": "Step s => dac",
+      "description": "Step function unit generator.",
+      "supported": true,
+      "example": "Step s => dac;"
+    },
+    {
+      "name": "Gain",
+      "kind": "ugen",
+      "signature": "Gain g => dac",
+      "description": "Gain control unit generator.",
+      "supported": true,
+      "example": "SinOsc osc => Gain g => dac;"
+    },
+    {
+      "name": "SndBuf",
+      "kind": "ugen",
+      "signature": "SndBuf buf => dac",
+      "description": "Sound buffer reader unit generator.",
+      "supported": true,
+      "example": "SndBuf buf => dac;"
+    },
+    {
+      "name": "ADSR",
+      "kind": "ugen",
+      "signature": "ADSR env => Gain g",
+      "description": "ADSR (Attack-Decay-Sustain-Release) envelope unit generator.",
+      "supported": true,
+      "example": "ADSR env => dac;"
+    },
+    {
+      "name": "Envelope",
+      "kind": "ugen",
+      "signature": "Envelope env => dac",
+      "description": "Simple envelope unit generator.",
+      "supported": true,
+      "example": "Envelope env => dac;"
+    },
+    {
+      "name": "Pan2",
+      "kind": "ugen",
+      "signature": "Pan2 pan => dac",
+      "description": "Stereo panner unit generator.",
+      "supported": true,
+      "example": "SinOsc osc => Pan2 pan => dac;"
+    },
+    {
+      "name": "LPF",
+      "kind": "ugen",
+      "signature": "LPF filt => dac",
+      "description": "Low-pass filter unit generator.",
+      "supported": true,
+      "example": "SinOsc osc => LPF filt => dac;"
+    },
+    {
+      "name": "HPF",
+      "kind": "ugen",
+      "signature": "HPF filt => dac",
+      "description": "High-pass filter unit generator.",
+      "supported": true,
+      "example": "Noise n => HPF filt => dac;"
+    },
+    {
+      "name": "BPF",
+      "kind": "ugen",
+      "signature": "BPF filt => dac",
+      "description": "Band-pass filter unit generator.",
+      "supported": true,
+      "example": "Noise n => BPF filt => dac;"
+    },
+    {
+      "name": "FullRect",
+      "kind": "ugen",
+      "signature": "FullRect rect => dac",
+      "description": "Full-wave rectifier unit generator.",
+      "supported": true,
+      "example": "SinOsc osc => FullRect rect => dac;"
+    },
+    {
+      "name": "HalfRect",
+      "kind": "ugen",
+      "signature": "HalfRect rect => dac",
+      "description": "Half-wave rectifier unit generator.",
+      "supported": true,
+      "example": "SinOsc osc => HalfRect rect => dac;"
+    },
+    {
+      "name": "Delay",
+      "kind": "ugen",
+      "signature": "Delay dly => dac",
+      "description": "Delay unit generator.",
+      "supported": true,
+      "example": "SinOsc osc => Delay dly => dac;"
+    },
+    {
+      "name": "Echo",
+      "kind": "ugen",
+      "signature": "Echo echo => dac",
+      "description": "Echo unit generator.",
+      "supported": true,
+      "example": "SinOsc osc => Echo echo => dac;"
+    },
+    {
+      "name": "JCRev",
+      "kind": "ugen",
+      "signature": "JCRev rev => dac",
+      "description": "Chowning reverb unit generator.",
+      "supported": true,
+      "example": "SinOsc osc => JCRev rev => dac;"
+    },
+    {
+      "name": "NRev",
+      "kind": "ugen",
+      "signature": "NRev rev => dac",
+      "description": "Moorer-Nearmer reverb unit generator.",
+      "supported": true,
+      "example": "SinOsc osc => NRev rev => dac;"
+    },
+    {
+      "name": "Chorus",
+      "kind": "ugen",
+      "signature": "Chorus ch => dac",
+      "description": "Chorus unit generator.",
+      "supported": true,
+      "example": "SinOsc osc => Chorus ch => dac;"
+    },
+    {
+      "name": "Mix2",
+      "kind": "ugen",
+      "signature": "Mix2 mix => dac",
+      "description": "Stereo mixer unit generator.",
+      "supported": true,
+      "example": "SinOsc osc1 => Gain g1 => Mix2 mix; SinOsc osc2 => Gain g2 => mix;"
+    },
+    {
+      "name": "dac",
+      "kind": "constant",
+      "signature": "osc => dac",
+      "description": "The stereo audio output (digital-to-analog converter). The final destination in a ChucK audio graph.",
+      "supported": true,
+      "example": "SinOsc osc => dac;"
+    },
+    {
+      "name": "adc",
+      "kind": "constant",
+      "signature": "adc => dac",
+      "description": "The stereo audio input (analog-to-digital converter).",
+      "supported": true,
+      "example": "adc => Gain g => dac;"
+    },
+    {
+      "name": "blackhole",
+      "kind": "constant",
+      "signature": "=> blackhole",
+      "description": "A null audio input — discards audio output. Used for patterns that don't produce sound.",
+      "supported": true,
+      "example": "SinOsc osc => blackhole;"
+    },
+{
+      "name": "chout",
+      "kind": "constant",
+      "signature": "chout <= \"text\"",
+      "description": "ChucK stdout for text output.",
+      "supported": true,
+      "example": "chout <= \"hello\";"
+    },
+    {
+      "name": "me",
+      "kind": "constant",
+      "signature": "me",
+      "description": "Reference to the current shred.",
+      "supported": true,
+      "example": "spork ~ me;"
+    },
+    {
+      "name": "now",
+      "kind": "constant",
+      "signature": "now",
+      "description": "The current ChucK time.",
+      "supported": true,
+      "example": "1::second => now;"
+    },
+    {
+      "name": "dur",
+      "kind": "type",
+      "signature": "dur d",
+      "description": "Duration type in ChucK.",
+      "supported": true,
+      "example": "1::second => dur d;"
+    },
+    {
+      "name": "time",
+      "kind": "type",
+      "signature": "time t",
+      "description": "Time type in ChucK.",
+      "supported": true,
+      "example": "now => time t;"
+    },
+    {
+      "name": "void",
+      "kind": "type",
+      "signature": "void fun()",
+      "description": "Void type (no return value).",
+      "supported": true,
+      "example": "fun void hello() { <<< \"hello\" >>>; }"
+    },
+    {
+      "name": "float",
+      "kind": "type",
+      "signature": "float x",
+      "description": "Floating-point number type.",
+      "supported": true,
+      "example": "1.5 => float x;"
+    },
+    {
+      "name": "int",
+      "kind": "type",
+      "signature": "int x",
+      "description": "Integer type.",
+      "supported": true,
+      "example": "42 => int x;"
+    },
+    {
+      "name": "string",
+      "kind": "type",
+      "signature": "string s",
+      "description": "String type.",
+      "supported": true,
+      "example": "\"hello\" => string s;"
+    },
+    {
+      "name": "if",
+      "kind": "class",
+      "signature": "if (condition) { ... } else { ... }",
+      "description": "Conditional control-flow keyword.",
+      "supported": true,
+      "example": "if (x < 5) { ... } else { ... }"
+    },
+    {
+      "name": "for",
+      "kind": "class",
+      "signature": "for (init; condition; increment) { ... }",
+      "description": "Loop control-flow keyword.",
+      "supported": true,
+      "example": "for (0 => int i; i < 10; i++) { ... }"
+    },
+    {
+      "name": "while",
+      "kind": "class",
+      "signature": "while (condition) { ... }",
+      "description": "While loop control-flow keyword.",
+      "supported": true,
+      "example": "while (true) { ... }"
+    },
+    {
+      "name": "fun",
+      "kind": "class",
+      "signature": "fun type name(params) { ... }",
+      "description": "Function declaration keyword.",
+      "supported": true,
+      "example": "fun void hello() { <<< \"hello\" >>>; }"
+    },
+    {
+      "name": "spork",
+      "kind": "class",
+      "signature": "sporch ~ function()",
+      "description": "Concurrent shred creation keyword. Forks execution.",
+      "supported": true,
+      "example": "spork ~ myFunc();"
+    },
+    {
+      "name": "=>",
+      "kind": "class",
+      "signature": "value => target",
+      "description": "ChucK's sporking/assignment operator. Connects UGens and assigns values.",
+      "supported": true,
+      "example": "SinOsc osc => dac;"
+    },
+    {
+      "name": "Machine",
+      "kind": "library",
+      "signature": "Machine.add(file)",
+      "description": "Machine library — process/shred management.",
+      "supported": true,
+      "example": "Machine.add(\"mycode.ck\");"
+    },
+    {
+      "name": "Math",
+      "kind": "library",
+      "signature": "Math.sqrt(x)",
+      "description": "Math library — mathematical functions.",
+      "supported": true,
+      "example": "Math.sqrt(4) => float x;"
+    },
+    {
+      "name": "Std",
+      "kind": "library",
+      "signature": "Std.atof(s)",
+      "description": "Standard library — utility functions.",
+      "supported": true,
+      "example": "Std.atof(\"3.14\") => float x;"
+    },
+    {
+      "name": "Shred",
+      "kind": "library",
+      "signature": "Shred f2 => Shred s",
+      "description": "Shred library — shred reference type.",
+      "supported": true,
+      "example": "spork ~ => Shred s;"
+    },
+    {
+      "name": "RegEx",
+      "kind": "library",
+      "signature": "RegEx.match(pattern, string)",
+      "description": "Regular expression library.",
+      "supported": true,
+      "example": "RegEx.match(\"[a-z]+\", \"hello\");"
+    },
+    {
+      "name": "Object",
+      "kind": "library",
+      "signature": "Object o",
+      "description": "Base object class.",
+      "supported": true,
+      "example": "Object o;"
+    },
+    {
+      "name": "<<< >>>",
+      "kind": "debug",
+      "signature": "<<< expr >>>",
+      "description": "ChucK debug printing statements.",
+      "supported": true,
+      "example": "<<< \"hello world\" >>>;"
+    },
+    {
+      "name": "::",
+      "kind": "operator",
+      "signature": "number :: unit",
+      "description": "Duration unit operator (e.g. ::second, ::ms, ::samp, ::minute, ::hour, ::day, ::week).",
+      "supported": true,
+      "example": "1::second => now;"
+    },
+    {
+      "name": "::samp",
+      "kind": "operator",
+      "signature": "number ::samp",
+      "description": "Sample duration unit.",
+      "supported": true,
+      "example": "44100::samp => now;"
+    },
+    {
+      "name": "::ms",
+      "kind": "operator",
+      "signature": "number ::ms",
+      "description": "Millisecond duration unit.",
+      "supported": true,
+      "example": "500::ms => now;"
+    }
+  ]
+}

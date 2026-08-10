@@ -8,6 +8,7 @@ add_library(hathor-engine STATIC
     src/MiniParser.cpp
     src/PrettyPrinter.cpp
     src/PatternCompiler.cpp
+    src/LanguageMetadata.cpp
 )
 
 target_include_directories(hathor-engine
@@ -26,6 +27,7 @@ target_sources(hathor-engine
         include/hathor/Arc.hpp
         include/hathor/Combinators.hpp
         include/hathor/Event.hpp
+        include/hathor/LanguageMetadata.hpp
         include/hathor/MiniParser.hpp
         include/hathor/MiniTokeniser.hpp
         include/hathor/ParamMap.hpp
@@ -37,6 +39,8 @@ target_sources(hathor-engine
 )
 
 target_compile_features(hathor-engine PUBLIC cxx_std_20)
+
+target_link_libraries(hathor-engine PUBLIC nlohmann_json::nlohmann_json)
 
 # Warnings as errors for the engine target
 if(MSVC)
