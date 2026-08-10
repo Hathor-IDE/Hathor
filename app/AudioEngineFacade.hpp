@@ -118,6 +118,28 @@ public:
     /// @return Status string (empty if no worker or VM).
     virtual std::string queryCkTab(int slotIdx) const = 0;
 
+    /// Async ChucK compilation (AI-5).  Compiles .ck source on the B4-K4
+    /// dispatcher thread and notifies completion via callback.  Returns
+    /// immediately with a job ID for status polling.
+    /// @param slotIdx     Pattern slot index (maps to tab slot).
+    /// @param code        ChucK source code.
+    /// @param onComplete  Called on a background thread when compilation finishes.
+    /// @return A job ID for status polling.
+    virtual uint64_t startAsyncCkCompile(int slotIdx,
+                                         const std::string& code,
+                                         std::function<void(bool /*success*/,
+                                                            const std::string& /*response*/)> onComplete) = 0;
+
+    /// Query async job status (AI-5).
+    /// @param jobId  Job ID returned by startAsyncCkCompile().
+    /// @return JSON with {ok, job_id, status, result}.
+    virtual nlohmann::json queryCkJob(uint64_t jobId) const = 0;
+
+    /// Cancel an async ChucK compilation job (AI-5).
+    /// @param jobId  Job ID returned by startAsyncCkCompile().
+    /// @return true if cancellation was accepted, false if already complete.
+    virtual bool cancelCkJob(uint64_t jobId) = 0;
+
     // --- B8-K1: Bake-to-Song render target (Studio vs Live Jam) ---
     //
     // The bake pipeline receives the selected AssetTarget explicitly.

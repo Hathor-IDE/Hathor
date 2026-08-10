@@ -181,6 +181,30 @@ public:
         return {};
     }
 
+    // --- AI-5: Async ChucK compilation ---
+    uint64_t startAsyncCkCompile(int idx, const std::string& code,
+                                  std::function<void(bool, const std::string&)> onComplete) override {
+        log("startAsyncCkCompile", {{"idx", idx}, {"code_len", code.size()}});
+        (void)idx; (void)code;
+        uint64_t fakeJobId = nextJobId_++;
+        // Simulate synchronous completion for testing.
+        if (onComplete)
+            onComplete(true, "ok compiled");
+        return fakeJobId;
+    }
+    nlohmann::json queryCkJob(uint64_t jobId) const override {
+        (void)jobId;
+        return nlohmann::json{
+            {"ok", true},
+            {"job_id", jobId},
+            {"status", "succeeded"}
+        };
+    }
+    bool cancelCkJob(uint64_t jobId) override {
+        (void)jobId;
+        return true;
+    }
+
     // --- B8-K1 render target ---
     std::filesystem::path resolveRenderPath(hathor::AssetTarget,
                                              std::string_view,
@@ -326,6 +350,7 @@ public:
     std::string projectDir_ = "/test/project";
     bool workerAlive_ = false;
     uint64_t vmGeneration_ = 1;
+    uint64_t nextJobId_ = 1;
 
     struct VmStateInfo {
         bool non_empty_ = false;

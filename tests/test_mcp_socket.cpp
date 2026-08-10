@@ -133,6 +133,24 @@ public:
         return {};
     }
 
+    // AI-5 stubs
+    uint64_t startAsyncCkCompile(int slotIdx, const std::string& code,
+                                  std::function<void(bool, const std::string&)> onComplete) override
+    {
+        (void)slotIdx; (void)code;
+        if (onComplete) onComplete(false, "worker not running");
+        return 0;
+    }
+    nlohmann::json queryCkJob(uint64_t jobId) const override
+    {
+        return nlohmann::json{{"ok", false}, {"job_id", jobId}, {"status", "failed"}};
+    }
+    bool cancelCkJob(uint64_t jobId) override
+    {
+        (void)jobId;
+        return false;
+    }
+
     void setMasterEqPreset(hathor::EqPreset preset) noexcept override
     {
         (void)preset;

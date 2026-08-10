@@ -21,6 +21,9 @@
 
 #include <nlohmann/json.hpp>
 
+#include "ChuckSession.hpp"
+#include "ChuckSessionService.hpp"
+
 // Forward declarations — full headers are only needed in the .cpp.
 class AudioEngineFacade;
 class SampleBank;
@@ -151,6 +154,43 @@ public:
     /// route through it.
     ProjectReadFacade& readOnly() noexcept { return *readFacade_; }
 
+    // -----------------------------------------------------------------------
+    // AI-5: ChucK session lifecycle (read-only + non-destructive execution)
+    // -----------------------------------------------------------------------
+
+    /// Handle a create_chuck_session command (non-destructive execution).
+    /// Routes through ChuckSessionService → AudioWorkerManager → B4-K3.
+    /// Format: create_chuck_session <slotIdx> <source>
+    void handleCreateChuckSession(std::string_view rest);
+
+    /// Handle a get_chuck_session command (read-only).
+    /// Format: get_chuck_session <sessionId>
+    void handleGetChuckSession(std::string_view rest);
+
+    /// Handle a compile_chuck command (non-destructive execution, async).
+    /// Format: compile_chuck <sessionId> <source>
+    void handleCompileChuck(std::string_view rest);
+
+    /// Handle an audition_chuck command (non-destructive execution).
+    /// Format: audition_chuck <sessionId>
+    void handleAuditionChuck(std::string_view rest);
+
+    /// Handle a stop_chuck command (non-destructive execution).
+    /// Format: stop_chuck <sessionId>
+    void handleStopChuck(std::string_view rest);
+
+    /// Handle a get_chuck_job command (read-only).
+    /// Format: get_chuck_job <jobId>
+    void handleGetChuckJob(std::string_view rest);
+
+    /// Handle a cancel_chuck_job command (non-destructive execution).
+    /// Format: cancel_chuck_job <jobId>
+    void handleCancelChuckJob(std::string_view rest);
+
+    /// Dispatch an AI-5 ChucK session command.
+    /// Routes to the appropriate handle*Chuck* method.
+    void handleChuckSessionCommand(std::string_view cmd, std::string_view rest);
+
 private:
     // --- Command handlers ---------------------------------------------------
 
@@ -197,6 +237,10 @@ private:
 
     // AI-2: Read-only introspection service layer (canonical service contract).
     std::unique_ptr<ProjectReadFacade> readFacade_;
+
+    // AI-5: Canonical ChucK session service layer.
+    // Constructed when HATHOR_BUILD_APP and the worker is available.
+    std::unique_ptr<ChuckSessionService> chuckSessionService_;
 
     // WorkerThread is allocated on the heap to keep this header JUCE-free.
     // (WorkerThread.hpp only forward-declares AudioEngine, so it is safe.)

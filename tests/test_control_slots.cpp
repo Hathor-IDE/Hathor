@@ -78,6 +78,18 @@ public:
     bool stopCkTab(int) noexcept override { return false; }
     std::string queryCkTab(int) const override { return {}; }
 
+    // AI-5 stubs
+    uint64_t startAsyncCkCompile(int, const std::string&,
+                                  std::function<void(bool, const std::string&)>) override
+    {
+        return 0;
+    }
+    nlohmann::json queryCkJob(uint64_t jobId) const override
+    {
+        return nlohmann::json{{"ok", false}, {"job_id", jobId}, {"status", "failed"}};
+    }
+    bool cancelCkJob(uint64_t) override { return false; }
+
      void setMasterEqPreset(hathor::EqPreset) noexcept override {}
     hathor::EqPreset getMasterEqPreset() const noexcept override
     {

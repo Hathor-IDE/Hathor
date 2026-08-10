@@ -14,6 +14,8 @@ add_library(hathor-control OBJECT
     ProjectReadFacade.cpp
     WorkerThread.cpp
     SocketServer.cpp
+    ChuckSessionService.cpp
+    JobTracker.cpp
 )
 
 # ChuckDiagnostics.cpp is a JUCE-free translation unit that provides the

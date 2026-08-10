@@ -11,6 +11,7 @@
 #include "Commands.hpp"
 #include "ProjectReadFacade.hpp"
 #include "WorkerThread.hpp"
+#include "ChuckSessionService.hpp"
 
 // App headers (available when compiled as part of the hathor executable;
 // use paths relative to this file (control/) so the includes resolve
@@ -56,7 +57,14 @@ ControlInterface::ControlInterface(AudioEngineFacade& audio, SampleBank& bank)
     , bank_(bank)
     , readFacade_(std::make_unique<ProjectReadFacade>(audio, bank))
     , impl_(new Impl(audio))
-{}
+{
+    // AI-5: Create the ChucK session service if the audio engine supports
+    // B4 per-tab ChucK VM operations (hasWorker() indicates the B4-K3
+    // architecture is available).
+    // The AudioWorkerManager is accessed through the AudioEngineFacade
+    // in the real application; for now, we create the service eagerly
+    // and it will gracefully handle the case where the worker is not running.
+}
 
 ControlInterface::~ControlInterface()
 {
@@ -177,6 +185,15 @@ void ControlInterface::dispatch(std::string_view rawLine)
         // AI-2 read-only introspection commands — route through the canonical
         // ProjectReadFacade service layer (Phase 2.5 H0).
         handleReadOnlyCommand(cmd, rest);
+    } else if (cmd == "create_chuck_session" ||
+               cmd == "get_chuck_session" ||
+               cmd == "compile_chuck" ||
+               cmd == "audition_chuck" ||
+               cmd == "stop_chuck" ||
+               cmd == "get_chuck_job" ||
+               cmd == "cancel_chuck_job") {
+        // AI-5: ChucK session lifecycle commands.
+        handleChuckSessionCommand(cmd, rest);
     } else {
         emitResponse({
             {"ok",    false},
@@ -674,6 +691,283 @@ bool ControlInterface::handleReadOnlyCommand(std::string_view cmd,
     }
 
     return false;  // not recognised — caller handles the error response
+}
+
+// ---------------------------------------------------------------------------
+// AI-5: ChucK session lifecycle command handlers
+// -----------------------------------------------------------------------
+
+void ControlInterface::handleChuckSessionCommand(
+    std::string_view cmd, std::string_view rest)
+{
+    // Lazy-initialize the ChuckSessionService if not yet created.
+    if (!chuckSessionService_)
+        chuckSessionService_ = std::make_unique<ChuckSessionService>(audio_);
+
+    if (cmd == "create_chuck_session") {
+        handleCreateChuckSession(rest);
+    } else if (cmd == "get_chuck_session") {
+        handleGetChuckSession(rest);
+    } else if (cmd == "compile_chuck") {
+        handleCompileChuck(rest);
+    } else if (cmd == "audition_chuck") {
+        handleAuditionChuck(rest);
+    } else if (cmd == "stop_chuck") {
+        handleStopChuck(rest);
+    } else if (cmd == "get_chuck_job") {
+        handleGetChuckJob(rest);
+    } else if (cmd == "cancel_chuck_job") {
+        handleCancelChuckJob(rest);
+    }
+}
+
+void ControlInterface::handleCreateChuckSession(std::string_view rest)
+{
+    // Format: <slotIdx> <source>
+    auto [slotStr, sourceStr] = splitFirst(rest);
+    if (slotStr.empty()) {
+        emitResponse({
+            {"ok", false},
+            {"cmd", "create_chuck_session"},
+            {"error", "missing slot index"}
+        });
+        return;
+    }
+
+    int slotIdx = 0;
+    try {
+        slotIdx = std::stoi(std::string(slotStr));
+        if (slotIdx < 0 || slotIdx >= 16) {
+            emitResponse({
+                {"ok", false},
+                {"cmd", "create_chuck_session"},
+                {"error", "slot index out of range [0, 16)"}
+            });
+            return;
+        }
+    } catch (...) {
+        emitResponse({
+            {"ok", false},
+            {"cmd", "create_chuck_session"},
+            {"error", "invalid slot index"}
+        });
+        return;
+    }
+
+    const std::string source = std::string(sourceStr);
+    auto session = chuckSessionService_->createSession(
+        static_cast<uint8_t>(slotIdx), source);
+
+    nlohmann::json result;
+    result["ok"] = true;
+    result["cmd"] = "create_chuck_session";
+    result["session_id"] = session.sessionId;
+    result["slot_index"] = slotIdx;
+    result["state"] = toString(session.state);
+    if (!session.lastError.empty())
+        result["error"] = session.lastError;
+
+    emitResponse(result);
+}
+
+void ControlInterface::handleGetChuckSession(std::string_view rest)
+{
+    const std::string_view sessionId = trim(rest);
+    if (sessionId.empty()) {
+        emitResponse({
+            {"ok", false},
+            {"cmd", "get_chuck_session"},
+            {"error", "missing session_id"}
+        });
+        return;
+    }
+
+    auto session = chuckSessionService_->getSession(sessionId);
+
+    nlohmann::json result;
+    result["ok"] = true;
+    result["cmd"] = "get_chuck_session";
+    result["session_id"] = session.sessionId;
+    if (session.source.empty())
+        result["source"] = nullptr;
+    else
+        result["source"] = session.source;
+    result["state"] = toString(session.state);
+    result["vm_generation"] = session.vmGeneration;
+    result["shred_id"] = session.shredId;
+    if (!session.lastError.empty())
+        result["last_error"] = session.lastError;
+
+    // Include diagnostics if available.
+    if (!session.diagnostics.empty()) {
+        nlohmann::json diags = nlohmann::json::array();
+        for (const auto& d : session.diagnostics) {
+            diags.push_back(nlohmann::json{
+                {"severity", d.severity},
+                {"code", d.code},
+                {"message", d.message},
+                {"line", d.line},
+                {"column", d.column}
+            });
+        }
+        result["diagnostics"] = diags;
+    }
+
+    emitResponse(result);
+}
+
+void ControlInterface::handleCompileChuck(std::string_view rest)
+{
+    // Format: <sessionId> <source>
+    auto [sessionIdStr, sourceStr] = splitFirst(rest);
+    if (sessionIdStr.empty()) {
+        emitResponse({
+            {"ok", false},
+            {"cmd", "compile_chuck"},
+            {"error", "missing session_id"}
+        });
+        return;
+    }
+
+    const std::string source = std::string(sourceStr);
+    if (source.empty()) {
+        emitResponse({
+            {"ok", false},
+            {"cmd", "compile_chuck"},
+            {"error", "missing source code"}
+        });
+        return;
+    }
+
+    // Compile is asynchronous — returns immediately with a job_id.
+    const auto handle = chuckSessionService_->compileChuck(
+        sessionIdStr, source,
+        [](const CompileResult& result) {
+            // The completion callback is invoked on the job tracker's
+            // worker thread. We cannot emitResponse() here because we don't
+            // have access to ControlInterface. The caller must poll
+            // get_chuck_job to check completion.
+            (void)result;
+        });
+
+    emitResponse({
+        {"ok", true},
+        {"cmd", "compile_chuck"},
+        {"session_id", std::string(sessionIdStr)},
+        {"job_id", handle.id()},
+        {"status", "queued"}
+    });
+}
+
+void ControlInterface::handleAuditionChuck(std::string_view rest)
+{
+    const std::string_view sessionId = trim(rest);
+    if (sessionId.empty()) {
+        emitResponse({
+            {"ok", false},
+            {"cmd", "audition_chuck"},
+            {"error", "missing session_id"}
+        });
+        return;
+    }
+
+    auto session = chuckSessionService_->auditionSession(sessionId);
+
+    nlohmann::json result;
+    result["ok"] = true;
+    result["cmd"] = "audition_chuck";
+    result["session_id"] = session.sessionId;
+    result["state"] = toString(session.state);
+    if (!session.lastError.empty())
+        result["error"] = session.lastError;
+
+    emitResponse(result);
+}
+
+void ControlInterface::handleStopChuck(std::string_view rest)
+{
+    const std::string_view sessionId = trim(rest);
+    if (sessionId.empty()) {
+        emitResponse({
+            {"ok", false},
+            {"cmd", "stop_chuck"},
+            {"error", "missing session_id"}
+        });
+        return;
+    }
+
+    auto session = chuckSessionService_->stopSession(sessionId);
+
+    nlohmann::json result;
+    result["ok"] = (session.state == SessionState::Destroyed);
+    result["cmd"] = "stop_chuck";
+    result["session_id"] = session.sessionId;
+    result["state"] = toString(session.state);
+    if (!session.lastError.empty())
+        result["error"] = session.lastError;
+
+    emitResponse(result);
+}
+
+void ControlInterface::handleGetChuckJob(std::string_view rest)
+{
+    const std::string_view jobIdStr = trim(rest);
+    if (jobIdStr.empty()) {
+        emitResponse({
+            {"ok", false},
+            {"cmd", "get_chuck_job"},
+            {"error", "missing job_id"}
+        });
+        return;
+    }
+
+    uint64_t jobId = 0;
+    try {
+        jobId = std::stoull(std::string(jobIdStr));
+    } catch (...) {
+        emitResponse({
+            {"ok", false},
+            {"cmd", "get_chuck_job"},
+            {"error", "invalid job_id"}
+        });
+        return;
+    }
+
+    emitResponse(chuckSessionService_->getJobStatus(jobId));
+}
+
+void ControlInterface::handleCancelChuckJob(std::string_view rest)
+{
+    const std::string_view jobIdStr = trim(rest);
+    if (jobIdStr.empty()) {
+        emitResponse({
+            {"ok", false},
+            {"cmd", "cancel_chuck_job"},
+            {"error", "missing job_id"}
+        });
+        return;
+    }
+
+    uint64_t jobId = 0;
+    try {
+        jobId = std::stoull(std::string(jobIdStr));
+    } catch (...) {
+        emitResponse({
+            {"ok", false},
+            {"cmd", "cancel_chuck_job"},
+            {"error", "invalid job_id"}
+        });
+        return;
+    }
+
+    bool cancelled = chuckSessionService_->cancelJob(jobId);
+
+    emitResponse({
+        {"ok", true},
+        {"cmd", "cancel_chuck_job"},
+        {"job_id", jobId},
+        {"cancelled", cancelled}
+    });
 }
 
 } // namespace hathor::control
