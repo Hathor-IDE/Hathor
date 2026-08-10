@@ -180,10 +180,11 @@ private:
     /// Populated by onRenderComplete() on the message thread.
     hathor::RenderResult result_;
 
-    /// Pending bake context (set in bakeFromTab, consumed by startBackgroundRender).
-    juce::String pendingSourcePath_;
-    juce::String pendingSourceCode_;
-    uint8_t      pendingTabId_{ 0 };
+     /// Pending bake context (set in bakeFromTab, consumed by startBackgroundRender).
+     juce::String pendingSourcePath_;
+     juce::String pendingSourceCode_;
+     hathor::AssetTarget pendingTarget_{ hathor::AssetTarget::Studio };
+     uint8_t      pendingTabId_{ 0 };
 
     /// Project directory (cwd at launch).
     juce::String projectDir_;

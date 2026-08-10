@@ -10,6 +10,8 @@
 #include "BakeOrchestrator.hpp"
 #include "BakeTargetDialog.hpp"
 
+#include <fstream>
+
 namespace hathor::ui {
 
 // ---------------------------------------------------------------------------
@@ -61,8 +63,7 @@ bool BakeOrchestrator::bakeFromTab(const juce::String& ckSourcePath,
         activeBakes_.insert(tabId);
     }
 
-    // Store the source path for instrument name derivation after the
-    // target dialog is dismissed.
+    // Store the source path/code for persistence after the target dialog.
     pendingSourcePath_ = ckSourcePath;
     pendingSourceCode_ = ckSourceCode;
     pendingTabId_ = tabId;
@@ -101,6 +102,9 @@ void BakeOrchestrator::beginTargetSelection(const juce::String& /*ckSourcePath*/
     // The callback fires when the user clicks "Bake"; if they cancel,
     // onSelected is not called.
     showBakeTargetDialog(parent, [this, ckSourceCode, tabId](hathor::AssetTarget target) {
+        // Cache the selected target for downstream source persistence.
+        pendingTarget_ = target;
+
         // Validate source — must not be empty (B8-K6 §3).
         if (ckSourceCode.trim().isEmpty())
         {
@@ -237,12 +241,50 @@ void BakeOrchestrator::registerSample(const hathor::RenderResult& /*renderResult
         return;
     }
 
-    // B8-K4: Register the sample in SampleBank via AudioEngine.
-    // AudioEngine::registerBakedAsset handles decoding + resampling + addEntry().
-    // The instrument name is the stem of the WAV path.
+    // Derive the instrument name from the WAV path stem.
     const juce::String instrumentName = juce::File(juce::String(wavPath.string()))
         .getFileNameWithoutExtension();
 
+    // B8-K5 §4: Persist the .ck source alongside the .wav for Studio bakes.
+    // This must happen BEFORE sample registration so that if source persistence
+    // fails, we report the error rather than claiming full success.
+    if (pendingTarget_ == hathor::AssetTarget::Studio)
+    {
+        const auto instrDir = hathor::AssetPathResolver(
+            projectDir_.toStdString()).studioInstrumentsDir();
+
+        const auto ckPath = instrDir / (instrumentName.toStdString() + ".ck");
+
+        std::error_code ec;
+        std::filesystem::create_directories(instrDir, ec);
+        if (ec)
+        {
+            showFailure("Source persistence",
+                         "Failed to create instruments dir: " + juce::String(ec.message()));
+            clearBaking(pendingTabId_);
+            return;
+        }
+
+        std::ofstream ofs(ckPath);
+        if (!ofs)
+        {
+            showFailure("Source persistence",
+                         "Failed to open " + juce::String(ckPath.string()) + " for writing.");
+            clearBaking(pendingTabId_);
+            return;
+        }
+        ofs << pendingSourceCode_.toStdString();
+        if (!ofs)
+        {
+            showFailure("Source persistence",
+                         "Failed to write .ck source to " + juce::String(ckPath.string()));
+            clearBaking(pendingTabId_);
+            return;
+        }
+    }
+
+    // B8-K4: Register the sample in SampleBank via AudioEngine.
+    // AudioEngine::registerBakedAsset handles decoding + resampling + addEntry().
     bool registered = audio_.registerBakedAsset(
         instrumentName.toStdString(),
         wavPath);

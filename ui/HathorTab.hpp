@@ -19,6 +19,7 @@
 #include "MiniNotationTokeniser.hpp"
 #include "ChuckTokeniser.hpp"
 #include "HathorLookAndFeel.hpp"
+#include "HathorFileParser.hpp"
 
 #include <optional>
 #include <functional>
@@ -93,25 +94,32 @@ public:
     /// Set the file path (called after Save-As or when opening a file).
     void setFilePath(const juce::File& f);
 
-    /// Override the display label (usually taken from front-matter).
-    void setDisplayLabel(const std::string& label);
+     /// Override the display label (usually taken from front-matter).
+     void setDisplayLabel(const std::string& label);
 
-    /// Return the effective tab label:
-    ///   1. displayLabel_ if set
-    ///   2. filename stem if filePath_ is set
-    ///   3. "untitled-<slotIndex>"
-    juce::String tabLabel() const;
+     /// Return the effective tab label:
+     ///   1. displayLabel_ if set
+     ///   2. filename stem if filePath_ is set
+     ///   3. "untitled-<slotIndex>"
+     juce::String tabLabel() const;
 
-    /// Clear the unsaved-dot flag (called after a successful `set-pattern` eval).
-    void clearUnsavedDot();
+     /// Clear the unsaved-dot flag (called after a successful `set-pattern` eval).
+     void clearUnsavedDot();
 
-    /// Switch the syntax tokeniser based on file extension.
-    /// Called by setFilePath() and EditorArea when the file type is known.
-    /// Defaults to MiniNotationTokeniser for .hathor, ChuckTokeniser for .ck.
-    void setFileTypeFromPath(const juce::File& file);
+     /// Switch the syntax tokeniser based on file extension.
+     /// Called by setFilePath() and EditorArea when the file type is known.
+     /// Defaults to MiniNotationTokeniser for .hathor, ChuckTokeniser for .ck.
+     void setFileTypeFromPath(const juce::File& file);
 
-    /// Return true if this tab is currently using the ChucK tokeniser.
-    bool isChuckTab() const noexcept { return useChuckTokeniser_; }
+     /// Return true if this tab is currently using the ChucK tokeniser.
+     bool isChuckTab() const noexcept { return useChuckTokeniser_; }
+
+     /// Store parsed front-matter metadata from a .hathor file.
+     /// The editable document contains only the body, not the front matter.
+     void setFrontMatter(const FrontMatter& fm);
+
+     /// Retrieve the stored front-matter metadata for this tab.
+     const std::optional<FrontMatter>& frontMatter() const noexcept { return frontMatter_; }
 
     // -----------------------------------------------------------------------
     // B4-K7: Per-tab .ck eval state
@@ -238,6 +246,7 @@ private:
     int                        slotIndex_;
     std::optional<juce::File>  filePath_;
     std::optional<std::string> displayLabel_; ///< from front-matter `label`
+    std::optional<FrontMatter> frontMatter_;  ///< parsed front-matter metadata
     bool                       unsavedDot_{ false };
 
     // Per-slot Play/Stop button visual state (B1).

@@ -821,6 +821,11 @@ void AudioEngine::setLiveJamSessionDir(std::filesystem::path dir)
     }
 }
 
+void AudioEngine::setProjectDir(std::filesystem::path dir)
+{
+    resolver_.setProjectDir(std::move(dir));
+}
+
 void AudioEngine::cleanupLiveJamAssets()
 {
     // B8-K1 §8, §9: session-end cleanup.
@@ -1143,7 +1148,7 @@ std::vector<AudioEngineFacade::InstrumentInfo> AudioEngine::listChuckInstruments
 {
     std::vector<InstrumentInfo> result;
 
-    const auto instrDir = resolver_.studioInstrumentsDir();
+    const auto instrDir = AssetPathResolver(projectDir).studioInstrumentsDir();
     std::error_code ec;
     if (!std::filesystem::exists(instrDir, ec))
         return result;

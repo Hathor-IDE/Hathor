@@ -122,6 +122,16 @@ void HathorTab::setDisplayLabel(const std::string& label)
         displayLabel_ = label;
 }
 
+void HathorTab::setFrontMatter(const FrontMatter& fm)
+{
+    frontMatter_ = fm;
+    // Sync display label from front matter if present.
+    if (fm.label && !fm.label->empty())
+        displayLabel_ = *fm.label;
+    else
+        displayLabel_.reset();
+}
+
 juce::String HathorTab::tabLabel() const
 {
     // 1. Front-matter label (Req 22.2)

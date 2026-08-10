@@ -238,6 +238,10 @@ public:
     /// Required before resolveRenderPath(LiveJam, ...) will succeed.
     void setLiveJamSessionDir(std::filesystem::path dir) override;
 
+    /// Set the current project directory (the application's working directory).
+    /// Called once at startup so AssetPathResolver is initialised.
+    void setProjectDir(std::filesystem::path dir) override;
+
     /// Clean up all LiveJam assets for the current session (session end hook).
     /// Removes only LiveJam temp files — NEVER Studio assets.
     void cleanupLiveJamAssets() override;

@@ -148,6 +148,18 @@ public:
     /// Called once at session startup; required before resolveRenderPath(LiveJam, ...).
     virtual void setLiveJamSessionDir(std::filesystem::path dir) = 0;
 
+    /// Set the current project directory (the application's working directory).
+    /// Called once at application startup so that currentProjectDir(),
+    /// studioInstrumentsDir(), and listChuckInstruments() all resolve
+    /// against the correct project root.
+    /// This is the canonical initialization point for AssetPathResolver.
+    virtual void setProjectDir(std::filesystem::path dir) = 0;
+
+    /// Returns the current project directory.
+    /// Source of truth: AssetPathResolver::projectDir().
+    /// Guaranteed non-empty after setProjectDir() has been called.
+    virtual std::filesystem::path currentProjectDir() const noexcept = 0;
+
     /// Trigger cleanup of all LiveJam assets for the current session.
     /// Called from application shutdown (HathorApplication::shutdown).
     /// Removes only LiveJam temp files — NEVER Studio assets.
@@ -297,7 +309,8 @@ public:
     virtual std::filesystem::path studioInstrumentsDir(
         const std::filesystem::path& projectDir) const noexcept = 0;
 
-    /// The project directory last used for render-path resolution.
+    /// The project directory initialized at application startup.
     /// Source of truth: AssetPathResolver::projectDir().
-    virtual std::filesystem::path currentProjectDir() const noexcept = 0;
+    /// Guaranteed non-empty after setProjectDir() has been called.
+    /// (Replaces the earlier pure-virtual at line 314.)
 };

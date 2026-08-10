@@ -139,9 +139,18 @@ nlohmann::json ProjectReadFacade::inspectProject() const
     if (currentSongSlot >= 0)
         currentSong = "slot:" + slots[static_cast<std::size_t>(currentSongSlot)].slotName;
 
+    // Derive project name from the project directory filename.
+    // Falls back to "hathor-project" when no meaningful directory is available.
+    std::string projectName = "hathor-project";
+    if (const auto dir = audio_.currentProjectDir(); !dir.empty()) {
+        const auto stem = dir.filename().string();
+        if (!stem.empty() && stem != "." && stem != "/")
+            projectName = stem;
+    }
+
     return nlohmann::json{
         {"ok",                 true},
-        {"project_name",       "hathor-project"},
+        {"project_name",       projectName},
         {"project_dir",        projectDir},
         {"songs",              std::move(songs)},
         {"current_song",       currentSong.empty() ? nullptr : nlohmann::json(currentSong)},

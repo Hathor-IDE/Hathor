@@ -279,17 +279,27 @@ bool EditorArea::openFile(const juce::File& file)
         }
     }
 
-    // Parse the file to extract front-matter.
+    // Parse the file to extract front matter + body.
     const juce::String contents = file.loadFileAsString();
     const auto parseResult = parseHathorFile(contents.toStdString());
 
     std::optional<std::string> frontLabel;
     std::optional<std::string> frontSlot;
+    std::optional<FrontMatter> frontMatter;
+    juce::String bodyText = contents;  // default: full contents if parse fails or no front matter
 
     if (const auto* hf = std::get_if<HathorFile>(&parseResult))
     {
         frontLabel = hf->front.label;
         frontSlot  = hf->front.slot;
+        frontMatter = hf->front;
+        bodyText = juce::String(hf->body);
+    }
+    else if (const auto* err = std::get_if<ParseFileError>(&parseResult)) {
+        // Front matter is malformed — show a warning but still load the body
+        // (parser returns the full contents as body on malformed front matter).
+        showStatus("Warning: malformed front matter in " + file.getFileName()
+                   + " at line " + juce::String(err->line) + ": " + err->message);
     }
 
     // Determine slot index (Req 24.4)
@@ -324,9 +334,12 @@ bool EditorArea::openFile(const juce::File& file)
     tab->setFilePath(file);
     if (frontLabel.has_value())
         tab->setDisplayLabel(*frontLabel);
+    if (frontMatter.has_value())
+        tab->setFrontMatter(*frontMatter);
 
-    // Populate the code document with the file body / full contents.
-    tab->document().replaceAllContent(contents);
+    // Populate the code document with ONLY the mini-notation body.
+    // Front matter is stored separately on the tab, not in the editable document.
+    tab->document().replaceAllContent(bodyText);
 
     // File was just loaded — clear the unsaved dot (it would have been set
     // by replaceAllContent triggering the CodeDocument listener).
@@ -395,41 +408,68 @@ bool EditorArea::closeTab(int index)
             {
                 // result: 1=Save, 2=Discard, 3=Cancel (or 0 if dismissed)
                 if (result == 1)
-                {
-                    // Save — attempt to save the file, then close.
-                    HathorTab* t = tabs_[static_cast<std::size_t>(index)].get();
-                    if (t->filePath().has_value())
-                    {
-                        t->filePath()->replaceWithText(
-                            t->document().getAllContent());
-                    }
-                    else
-                    {
-                        // Save-As via native chooser — include both supported
-                        // file type filters (.hathor and .ck).
-                        auto chooser = std::make_shared<juce::FileChooser>(
-                            "Save Buffer As…",
-                            juce::File::getSpecialLocation(
-                                juce::File::userDocumentsDirectory),
-                            "*.hathor;*.ck");
+                 {
+                     // Save — attempt to save the file, then close.
+                     HathorTab* t = tabs_[static_cast<std::size_t>(index)].get();
+                     if (t->filePath().has_value())
+                     {
+                         const juce::File& f = *t->filePath();
+                         if (ChuckTokeniser::isChuckFile(f))
+                         {
+                             // .ck files: write raw content (no front matter).
+                             f.replaceWithText(t->document().getAllContent());
+                         }
+                         else
+                         {
+                             // .hathor files: serialize via serialiseHathorFile().
+                             HathorFile hf;
+                             if (t->frontMatter().has_value())
+                                 hf.front = *t->frontMatter();
+                             hf.body = t->document().getAllContent().toStdString();
+                             const std::string serialized = serialiseHathorFile(hf);
+                             f.replaceWithText(juce::String(serialized));
+                         }
+                     }
+                     else
+                     {
+                         // Save-As via native chooser — include both supported
+                         // file type filters (.hathor and .ck).
+                         auto chooser = std::make_shared<juce::FileChooser>(
+                             "Save Buffer As…",
+                             juce::File::getSpecialLocation(
+                                 juce::File::userDocumentsDirectory),
+                             "*.hathor;*.ck");
 
-                        chooser->launchAsync(
-                            juce::FileBrowserComponent::saveMode |
-                            juce::FileBrowserComponent::canSelectFiles,
-                            [this, index, chooser](const juce::FileChooser& fc)
-                            {
-                                const auto chosen = fc.getResult();
-                                if (chosen.getFullPathName().isNotEmpty())
-                                {
-                                    chosen.replaceWithText(
-                                        tabs_[static_cast<std::size_t>(index)]
-                                            ->document().getAllContent());
-                                }
-                                removeTabAt(index);
-                            });
-                        return; // async — removeTabAt called in chooser callback
-                    }
-                    removeTabAt(index);
+                         chooser->launchAsync(
+                             juce::FileBrowserComponent::saveMode |
+                             juce::FileBrowserComponent::canSelectFiles,
+                             [this, index, chooser](const juce::FileChooser& fc)
+                             {
+                                 const auto chosen = fc.getResult();
+                                 if (chosen.getFullPathName().isNotEmpty())
+                                 {
+                                     if (ChuckTokeniser::isChuckFile(chosen))
+                                     {
+                                         chosen.replaceWithText(
+                                             tabs_[static_cast<std::size_t>(index)]
+                                                 ->document().getAllContent());
+                                     }
+                                     else
+                                     {
+                                         HathorTab* t = tabs_[static_cast<std::size_t>(index)].get();
+                                         HathorFile hf;
+                                         if (t->frontMatter().has_value())
+                                             hf.front = *t->frontMatter();
+                                         hf.body = t->document().getAllContent().toStdString();
+                                         const std::string serialized = serialiseHathorFile(hf);
+                                         chosen.replaceWithText(juce::String(serialized));
+                                     }
+                                 }
+                                 removeTabAt(index);
+                             });
+                         return; // async — removeTabAt called in chooser callback
+                     }
+                     removeTabAt(index);
                 }
                 else if (result == 2)
                 {

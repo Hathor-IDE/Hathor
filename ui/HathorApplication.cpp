@@ -121,6 +121,11 @@ public:
         audio_ = std::make_unique<AudioEngine>(*bank_);
         audio_->setBpm(initialBpm);
 
+        // Initialize the AudioEngine's project directory from the application's
+        // working directory so that currentProjectDir(), studioInstrumentsDir(),
+        // and listChuckInstruments() all resolve against the correct project root.
+        audio_->setProjectDir(std::filesystem::current_path());
+
         const std::string initError = audio_->initialise();
         if (!initError.empty())
         {
