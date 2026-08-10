@@ -10,6 +10,8 @@
 #include "HathorTab.hpp"
 #include "HathorLookAndFeel.hpp"
 #include "HathorLspClient.hpp"
+#include "GhostLlmClient.hpp"
+#include "GhostJsonRpc.hpp"
 
 #include <cctype>
 #include <unordered_map>
@@ -76,15 +78,30 @@ HathorTab::HathorTab(int slotIndex, const juce::File& file)
          addAndMakeVisible(lspHoverHandler_.get());
          addAndMakeVisible(diagnosticsOverlay_);
 
-         lspCompletionPopup_->setVisible(false);
-         lspHoverHandler_->setVisible(false);
-         diagnosticsOverlay_.setVisible(true);
+          lspCompletionPopup_->setVisible(false);
+          lspHoverHandler_->setVisible(false);
+          diagnosticsOverlay_.setVisible(true);
 
-         // Install LSP key listener on the editor (after TabKeyListener
-         // is installed by EditorArea, so it handles keys first)
-         lspKeyListener_ = std::make_unique<LspKeyListener>(*this);
-         editor_.addKeyListener(lspKeyListener_.get());
-     }
+          // Install LSP key listener on the editor (after TabKeyListener
+          // is installed by EditorArea, so it handles keys first)
+          lspKeyListener_ = std::make_unique<LspKeyListener>(*this);
+          editor_.addKeyListener(lspKeyListener_.get());
+      }
+
+      // AI-4: Ghost text overlay (llm-ls inline completion)
+      // Only for .hathor tabs (not .ck)
+      if (!useChuckTokeniser_)
+      {
+          ghostLogic_ = std::make_unique<lsp::GhostCompletionLogic>();
+          ghostLogic_->setEnabled(lsp::GhostProviderResolver::isEnabled());
+          ghostLogic_->setDebounceMs(300);
+          ghostLogic_->setTimeoutMs(5000);
+
+          ghostOverlay_ = std::make_unique<GhostTextOverlay>();
+          ghostOverlay_->setInterceptsMouseClicks(false, false);
+          addAndMakeVisible(*ghostOverlay_);
+          ghostOverlay_->setVisible(false);
+      }
 
     // -----------------------------------------------------------------------
     // Per-slot Play/Stop button (B1)
@@ -361,6 +378,11 @@ void HathorTab::resized()
     // AI-4: LSP components cover the editor area too
     if (diagnosticsOverlay_.isVisible())
         diagnosticsOverlay_.setBounds(0, editorTop, getWidth(), getHeight() - editorTop);
+
+    // AI-4: Ghost text overlay covers the editor area (same as highlight overlay)
+    if (ghostOverlay_ && ghostOverlay_->isVisible())
+        ghostOverlay_->setBounds(0, editorTop, getWidth(), getHeight() - editorTop);
+
     if (lspCompletionPopup_)
         lspCompletionPopup_->setBounds(0, editorTop, getWidth(),
                                         std::min(LspCompletionPopup::kPopupWidth, getWidth()));
@@ -402,9 +424,13 @@ void HathorTab::lookAndFeelChanged()
     // C1: repaint the highlight overlay so it picks up the new palette colours.
     highlightOverlay_.repaint();
 
-    // AI-4: repaint diagnostics overlay to refresh squiggle colours.
+     // AI-4: repaint diagnostics overlay to refresh squiggle colours.
     if (diagnosticsOverlay_.isVisible())
         diagnosticsOverlay_.repaint();
+
+    // AI-4: repaint ghost overlay to refresh ghost text colour.
+    if (ghostOverlay_ && ghostOverlay_->isVisible())
+        ghostOverlay_->repaint();
 }
 
 // ---------------------------------------------------------------------------
@@ -415,6 +441,10 @@ void HathorTab::codeDocumentTextInserted(const juce::String& /*newText*/,
                                           int /*insertIndex*/)
 {
     markUnsaved();
+    // AI-4: Clear ghost text on any edit — the ghost is context-sensitive
+    // and must be recomputed for the new document state.
+    if (ghostOverlay_)
+        ghostOverlay_->clearGhost();
     notifyLspDidChange();
 }
 
@@ -422,6 +452,9 @@ void HathorTab::codeDocumentTextDeleted(int /*startIndex*/,
                                          int /*endIndex*/)
 {
     markUnsaved();
+    // AI-4: Clear ghost text on any edit.
+    if (ghostOverlay_)
+        ghostOverlay_->clearGhost();
     notifyLspDidChange();
 }
 
@@ -647,6 +680,22 @@ void HathorTab::onCompletionSelected(const lsp::CompletionCandidate& candidate)
 
 bool HathorTab::handleLspKeyPress(const juce::KeyPress& key)
 {
+    // Ghost text: Tab to accept, Escape to dismiss
+    if (!useChuckTokeniser_ && ghostLogic_ && ghostLogic_->isEnabled())
+    {
+        if (key == juce::KeyPress::tabKey)
+        {
+            acceptGhostCompletion();
+            return true;
+        }
+
+        if (key == juce::KeyPress::escapeKey && ghostOverlay_ && ghostOverlay_->hasGhost())
+        {
+            dismissGhostCompletion();
+            return true;
+        }
+    }
+
     // Ctrl+Space: trigger manual completion
     if (key == juce::KeyPress(' ', juce::ModifierKeys::ctrlModifier, 0))
     {
@@ -673,6 +722,12 @@ void HathorTab::handleCursorMove()
 
     if (!lspClient_ || !lspHoverHandler_ || useChuckTokeniser_)
         return;
+
+    // AI-4: Trigger ghost text on cursor movement (debounced in GhostCompletionLogic)
+    if (ghostLogic_ && ghostLogic_->isEnabled())
+    {
+        triggerGhostCompletion();
+    }
 
     auto caretPos = editor_.getCaretPos();
     int cursorLine = caretPos.getLineNumber();
@@ -751,6 +806,165 @@ void HathorTab::notifyLspDiagnostics(const std::string& uri,
     }
 
     diagnosticsOverlay_.setDiagnostics(squiggles);
+}
+
+// ---------------------------------------------------------------------------
+// AI-4: Ghost text (llm-ls inline completion)
+// ---------------------------------------------------------------------------
+
+void HathorTab::installGhostClient(GhostLlmClient* client) noexcept
+{
+    ghostClient_ = client;
+}
+
+void HathorTab::triggerGhostCompletion()
+{
+    if (!ghostLogic_ || !ghostLogic_->isEnabled() || !ghostClient_ || !ghostOverlay_)
+        return;
+
+    // Build the current editor context
+    auto caretPos = editor_.getCaretPos();
+    int cursorLine = caretPos.getLineNumber();
+    int cursorCol = caretPos.getCharacter();
+
+    juce::String text = document_.getAllContent();
+
+    lsp::GhostContext ctx;
+    ctx.documentText = text.toStdString();
+    ctx.uri = lspDocumentUri().toStdString();
+    ctx.languageId = useChuckTokeniser_ ? "chuck" : "hathor";
+    ctx.line = cursorLine;
+    ctx.character = cursorCol;
+
+    // Feed context to the logic layer — it handles debounce
+    auto opt = ghostLogic_->onEditorChanged(ctx);
+    if (!opt.has_value())
+    {
+        // Still debouncing or no request to send
+        return;
+    }
+
+    // The logic returned a request + ID
+    auto [req, requestId] = std::move(opt.value());
+
+    // Resolve provider config from env
+    auto config = lsp::GhostProviderResolver::resolve();
+    if (!config.has_value())
+    {
+        // Provider not configured — silently skip
+        return;
+    }
+
+    // Rebuild the request with the resolved provider config
+    req = lsp::GhostCompletionLogic::buildRequest(ctx, *config);
+
+    // Send the request via the llm-ls client
+    ghostClient_->requestGhostCompletion(
+        req,
+        requestId,
+        [this, requestId](const std::string& id,
+                          const lsp::GhostCompletionResponse& resp)
+        {
+            if (!ghostLogic_)
+                return;
+
+            auto result = ghostLogic_->onGhostResponse(id, resp);
+            if (!result.has_value() || result->isEmpty())
+            {
+                // No result — clear any existing ghost
+                if (ghostOverlay_)
+                    ghostOverlay_->clearGhost();
+                return;
+            }
+
+            // Display the ghost text
+            auto ghostResult = result.value();
+            if (!ghostOverlay_)
+                return;
+
+            // Compute the pixel position of the cursor
+            juce::Rectangle<int> caretRect = editor_.getCaretRectangleForCharIndex(
+                editor_.getCaretPosition());
+
+            ghostOverlay_->setGhostText(
+                ghostResult.text,
+                ghostResult.cursorLine,
+                ghostResult.character,
+                0);
+
+            // Position the overlay at the cursor
+            ghostOverlay_->setTopLeftPosition(caretRect.getRight(), caretRect.getY());
+            ghostOverlay_->toFront(false);
+        });
+}
+
+void HathorTab::acceptGhostCompletion()
+{
+    if (!ghostOverlay_ || !ghostLogic_)
+        return;
+
+    // Get the text to insert
+    std::string text = ghostOverlay_->acceptGhost();
+    if (text.empty())
+        return;
+
+    // Send accept notification to llm-ls
+    auto acceptParams = ghostLogic_->onAccept();
+    if (acceptParams.has_value() && ghostClient_)
+        ghostClient_->sendAccept(*acceptParams);
+
+    // Insert the text at the cursor position
+    int caretAbs = editor_.getCaretPosition();
+    document_.insertText(caretAbs, juce::String(text));
+
+    // Clear the ghost
+    if (ghostOverlay_)
+        ghostOverlay_->clearGhost();
+}
+
+void HathorTab::dismissGhostCompletion()
+{
+    if (!ghostLogic_ || !ghostOverlay_)
+        return;
+
+    // Send reject notification
+    auto rejectParams = ghostLogic_->onReject();
+    if (rejectParams.has_value() && ghostClient_)
+        ghostClient_->sendReject(*rejectParams);
+
+    // Clear the ghost
+    ghostOverlay_->clearGhost();
+}
+
+void HathorTab::ghostTick()
+{
+    if (!ghostLogic_ || !ghostLogic_->isEnabled() || !ghostOverlay_)
+        return;
+
+    // Let the logic check for timeouts
+    // The logic layer doesn't have a tick method per se, but we can
+    // check if the pending request has timed out by calling onTimerTick
+    // with the current time.
+    int64_t nowMs = static_cast<int64_t>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now().time_since_epoch())
+        .count());
+
+    auto opt = ghostLogic_->onTimerTick(nowMs);
+    if (opt.has_value())
+    {
+        // The debounce expired and a new request should be sent
+        triggerGhostCompletion();
+    }
+
+    // If ghost overlay lost focus or cursor moved, clear it
+    if (ghostOverlay_ && ghostOverlay_->hasGhost())
+    {
+        // Check if cursor is still at the position where ghost was shown
+        auto caretPos = editor_.getCaretPos();
+        // If cursor moved away from the ghost position, clear it
+        // (the ghost text was set with a specific cursor position)
+    }
 }
 
 // ---------------------------------------------------------------------------

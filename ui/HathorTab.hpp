@@ -24,6 +24,9 @@
 #include "LspCompletionPopup.hpp"
 #include "LspHoverHandler.hpp"
 #include "LspDiagnosticsDisplay.hpp"
+#include "GhostProtocol.hpp"
+#include "GhostTextOverlay.hpp"
+#include "GhostCompletionLogic.hpp"
 
 #include <optional>
 #include <functional>
@@ -242,8 +245,39 @@ public:
       void notifyLspDiagnostics(const std::string& uri,
                                  const std::vector<lsp::Diagnostic>& diagnostics);
 
-      /// Return the document URI for LSP messages (file:// URI or synthetic).
-      juce::String lspDocumentUri() const;
+       /// Return the document URI for LSP messages (file:// URI or synthetic).
+       juce::String lspDocumentUri() const;
+
+      // -----------------------------------------------------------------------
+      // AI-4: Ghost text (llm-ls inline completion)
+      // -----------------------------------------------------------------------
+      // Triggered on idle (debounced cursor movement on .hathor tabs).
+      // Accepts Tab/Double-click, dismisses on any edit or Escape.
+      // -----------------------------------------------------------------------
+
+      /// Install the GhostLlmClient (non-owning, may be null).
+      /// Called by EditorArea after creating the GhostLlmClient.
+      void installGhostClient(class GhostLlmClient* client) noexcept;
+
+      /// Trigger a ghost completion request at the current cursor position.
+      /// Called on idle / debounced cursor movement.
+      void triggerGhostCompletion();
+
+      /// Accept the currently displayed ghost text (Tab key).
+      void acceptGhostCompletion();
+
+      /// Dismiss the ghost text (Escape key or any edit).
+      void dismissGhostCompletion();
+
+      /// Check for ghost text timeout / tick — called by EditorArea's
+      /// UITimer. Returns true if a new request should be sent.
+      void ghostTick();
+
+      /// Handle a key press for ghost text features (Tab to accept, Escape
+      /// to dismiss, Ctrl+Shift+Space to force request).
+      /// Called by the LspKeyListener installed on the editor. Returns true
+      /// if the key was consumed by ghost logic.
+      bool handleGhostKeyPress(const juce::KeyPress& key);
 
     /// Callback fired by the LspHoverHandler when it's dismissed
     /// (used to clear hover state).
@@ -392,13 +426,23 @@ private:
      std::unique_ptr<LspHoverHandler>     lspHoverHandler_;
      std::unique_ptr<LspDiagnosticsDisplay> lspDiagnostics_;
 
-     // AI-4: Debounced hover timer
-     int                                   hoverPendingLine_{ -1 };
-     int                                   hoverPendingCol_{ -1 };
-     bool                                  hoverPending_{ false };
+      // AI-4: Debounced hover timer
+      int                                   hoverPendingLine_{ -1 };
+      int                                   hoverPendingCol_{ -1 };
+      bool                                  hoverPending_{ false };
 
-    juce::CodeDocument          document_;
-    juce::CodeEditorComponent   editor_;
+     // AI-4: Ghost text (llm-ls inline completion)
+     // -----------------------------------------------------------------------
+     // GhostLlmClient is non-owning (set by EditorArea, like lspClient_).
+     // GhostCompletionLogic is owned by this tab (JUCE-free, testable).
+     // GhostTextOverlay is a child component for rendering.
+     // -----------------------------------------------------------------------
+     class GhostLlmClient*                   ghostClient_{ nullptr };
+     std::unique_ptr<lsp::GhostCompletionLogic> ghostLogic_;
+     std::unique_ptr<GhostTextOverlay>          ghostOverlay_;
+
+     juce::CodeDocument          document_;
+     juce::CodeEditorComponent   editor_;
 
     // Per-slot Play/Stop button (B1). Renders as a small icon button in the
     // editor header. Visual state reflects SlotState::running, not an
