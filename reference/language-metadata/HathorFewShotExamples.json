@@ -1,0 +1,285 @@
+{
+  "versions": {
+    "schemaVersion": 1,
+    "hathorEngineCompat": "0.1.0",
+    "strudelMiniNotationCompat": "1.2.6",
+    "chuckLibVersion": "3.8.3",
+    "chuckIntegrationSurface": "B4-K3",
+    "createdAt": "2026-08-10T00:00:00Z"
+  },
+  "description": "Hathor explicit few-shot example corpus (AI-G4). Curated, version-gated examples for .hathor (Strudel mini-notation) and .ck (ChucK) completion. Each example is validated against the supported surface identified by validates_against. DO NOT add examples that use functions/APIs not marked supported:true in HathorLanguageMetadata.json.",
+  "examples": [
+    {
+      "language": "mininotation",
+      "surface_version": "1.2.6",
+      "context": "sample_expr",
+      "title": "Basic drum pattern (fastcat)",
+      "code": "d1 $ s \"bd sn hh cp\"",
+      "validates_against": "strudel:1.2.6,hathor_engine:0.1.0"
+    },
+    {
+      "language": "mininotation",
+      "surface_version": "1.2.6",
+      "context": "sample_expr",
+      "title": "Fast operator — 4x density",
+      "code": "d1 $ s \"bd*4\"",
+      "validates_against": "strudel:1.2.6,hathor_engine:0.1.0"
+    },
+    {
+      "language": "mininotation",
+      "surface_version": "1.2.6",
+      "context": "sample_expr",
+      "title": "Euclidean rhythm (3 pulses, 8 steps)",
+      "code": "d1 $ s \"bd(3,8)\"",
+      "validates_against": "strudel:1.2.6,hathor_engine:0.1.0"
+    },
+    {
+      "language": "mininotation",
+      "surface_version": "1.2.6",
+      "context": "sample_expr",
+      "title": "Replicate and rest",
+      "code": "d1 $ s \"bd!3 ~ cp\"",
+      "validates_against": "strudel:1.2.6,hathor_engine:0.1.0"
+    },
+    {
+      "language": "mininotation",
+      "surface_version": "1.2.6",
+      "context": "sample_expr",
+      "title": "Stack — polyphony via comma",
+      "code": "d1 $ s \"bd, sn, hh\"",
+      "validates_against": "strudel:1.2.6,hathor_engine:0.1.0"
+    },
+    {
+      "language": "mininotation",
+      "surface_version": "1.2.6",
+      "context": "sample_expr",
+      "title": "Slowcat — polymeter via angle brackets",
+      "code": "d1 $ s \"<bd sn hh cp>\"",
+      "validates_against": "strudel:1.2.6,hathor_engine:0.1.0"
+    },
+    {
+      "language": "mininotation",
+      "surface_version": "1.2.6",
+      "context": "sample_expr",
+      "title": "Bracket subsequence",
+      "code": "d1 $ s \"[bd sn] hh\"",
+      "validates_against": "strudel:1.2.6,hathor_engine:0.1.0"
+    },
+    {
+      "language": "mininotation",
+      "surface_version": "1.2.6",
+      "context": "sample_expr",
+      "title": "sound() alias for sample pattern",
+      "code": "d1 $ sound \"bd sd hh cp\"",
+      "validates_against": "strudel:1.2.6,hathor_engine:0.1.0"
+    },
+    {
+      "language": "mininotation",
+      "surface_version": "1.2.6",
+      "context": "sample_expr",
+      "title": "Sample index selector",
+      "code": "d1 $ s \"bd:0 sn:1 hh:2\"",
+      "validates_against": "strudel:1.2.6,hathor_engine:0.1.0"
+    },
+    {
+      "language": "mininotation",
+      "surface_version": "1.2.6",
+      "context": "transform",
+      "title": "Speed up pattern (fast)",
+      "code": "d1 $ fast 2 $ s \"bd sd\"",
+      "validates_against": "strudel:1.2.6,hathor_engine:0.1.0"
+    },
+    {
+      "language": "mininotation",
+      "surface_version": "1.2.6",
+      "context": "transform",
+      "title": "Slow down pattern (slow)",
+      "code": "d1 $ slow 2 $ s \"bd sd\"",
+      "validates_against": "strudel:1.2.6,hathor_engine:0.1.0"
+    },
+    {
+      "language": "mininotation",
+      "surface_version": "1.2.6",
+      "context": "transform",
+      "title": "Set gain",
+      "code": "d1 $ gain \"0.8\" $ s \"bd sn\"",
+      "validates_against": "strudel:1.2.6,hathor_engine:0.1.0"
+    },
+    {
+      "language": "mininotation",
+      "surface_version": "1.2.6",
+      "context": "transform",
+      "title": "Set filter cutoff",
+      "code": "d1 $ cutoff \"20000\" $ s \"bd sn\"",
+      "validates_against": "strudel:1.2.6,hathor_engine:0.1.0"
+    },
+    {
+      "language": "mininotation",
+      "surface_version": "1.2.6",
+      "context": "scale_expr",
+      "title": "Scale and degree pattern",
+      "code": "d2 $ scale \"|minor\" $ degree \"0 2 4\"",
+      "validates_against": "strudel:1.2.6,hathor_engine:0.1.0"
+    },
+    {
+      "language": "mininotation",
+      "surface_version": "1.2.6",
+      "context": "scale_expr",
+      "title": "Major scale",
+      "code": "d2 $ scale \"|major\"",
+      "validates_against": "strudel:1.2.6,hathor_engine:0.1.0"
+    },
+    {
+      "language": "mininotation",
+      "surface_version": "1.2.6",
+      "context": "rhythm",
+      "title": "Rest pattern",
+      "code": "d1 $ s \"bd ~ sn ~\"",
+      "validates_against": "strudel:1.2.6,hathor_engine:0.1.0"
+    },
+    {
+      "language": "mininotation",
+      "surface_version": "1.2.6",
+      "context": "rhythm",
+      "title": "Slow pattern (divide)",
+      "code": "d1 $ s \"bd/2\"",
+      "validates_against": "strudel:1.2.6,hathor_engine:0.1.0"
+    },
+    {
+      "language": "mininotation",
+      "surface_version": "1.2.6",
+      "context": "general",
+      "title": "Full idiom with effects chain",
+      "code": "d1 $ sound \"bd sd hh cp\" # gain \"0.8\" # pan \"0.5\"",
+      "validates_against": "strudel:1.2.6,hathor_engine:0.1.0"
+    },
+    {
+      "language": "mininotation",
+      "surface_version": "1.2.6",
+      "context": "general",
+      "title": "Pan modulation with speed",
+      "code": "d1 $ s \"hh*8\" # pan \"0 0.25 0.5 0.75\" # speed \"0.5\"",
+      "validates_against": "strudel:1.2.6,hathor_engine:0.1.0"
+    },
+    {
+      "language": "chuck",
+      "surface_version": "B4-K3",
+      "context": "routing",
+      "title": "Audio graph routing (osc => gain => dac)",
+      "code": "SinOsc osc => Gain g => dac; 440 => osc.freq;",
+      "validates_against": "chuck_surface:B4-K3,libchuck:3.8.3"
+    },
+    {
+      "language": "chuck",
+      "surface_version": "B4-K3",
+      "context": "routing",
+      "title": "Stereo pan routing",
+      "code": "SinOsc osc => Pan2 pan => dac; 0.5 => pan.pos;",
+      "validates_against": "chuck_surface:B4-K3,libchuck:3.8.3"
+    },
+    {
+      "language": "chuck",
+      "surface_version": "B4-K3",
+      "context": "routing",
+      "title": "Filter routing (noise through HPF)",
+      "code": "Noise n => HPF filt => dac; 1000 => filt.freq;",
+      "validates_against": "chuck_surface:B4-K3,libchuck:3.8.3"
+    },
+    {
+      "language": "chuck",
+      "surface_version": "B4-K3",
+      "context": "routing",
+      "title": "Send to blackhole (no audio out)",
+      "code": "Phasor p => blackhole;",
+      "validates_against": "chuck_surface:B4-K3,libchuck:3.8.3"
+    },
+    {
+      "language": "chuck",
+      "surface_version": "B4-K3",
+      "context": "routing",
+      "title": "Gain and pan chain",
+      "code": "SawOsc osc => Gain g => Pan2 pan => dac; 0.5 => g.gain; 0.5 => pan.pos;",
+      "validates_against": "chuck_surface:B4-K3,libchuck:3.8.3"
+    },
+    {
+      "language": "chuck",
+      "surface_version": "B4-K3",
+      "context": "ugen_decl",
+      "title": "Oscillator declaration and routing",
+      "code": "SinOsc osc; 440 => osc.freq; osc => dac;",
+      "validates_against": "chuck_surface:B4-K3,libchuck:3.8.3"
+    },
+    {
+      "language": "chuck",
+      "surface_version": "B4-K3",
+      "context": "ugen_decl",
+      "title": "Filter and envelope declaration",
+      "code": "LPF filt => dac; Envelope env => filt;",
+      "validates_against": "chuck_surface:B4-K3,libchuck:3.8.3"
+    },
+    {
+      "language": "chuck",
+      "surface_version": "B4-K3",
+      "context": "synth_section",
+      "title": "ADSR envelope synth voice",
+      "code": "SinOsc s => ADSR a => dac; 440 => s.freq; a.keyOn(); 100::ms => now; a.keyOff(); 100::ms => now;",
+      "validates_against": "chuck_surface:B4-K3,libchuck:3.8.3"
+    },
+    {
+      "language": "chuck",
+      "surface_version": "B4-K3",
+      "context": "synth_section",
+      "title": "Oscillator through filter and gain",
+      "code": "SinOsc osc => LPF filt => Gain g => dac;",
+      "validates_against": "chuck_surface:B4-K3,libchuck:3.8.3"
+    },
+    {
+      "language": "chuck",
+      "surface_version": "B4-K3",
+      "context": "synth_section",
+      "title": "Saw through reverb to DAC",
+      "code": "SawOsc osc => JCRev rev => Gain g => dac; 0.3 => g.gain;",
+      "validates_against": "chuck_surface:B4-K3,libchuck:3.8.3"
+    },
+    {
+      "language": "chuck",
+      "surface_version": "B4-K3",
+      "context": "timing",
+      "title": "Advance time by 1ms",
+      "code": "1::ms => now;",
+      "validates_against": "chuck_surface:B4-K3,libchuck:3.8.3"
+    },
+    {
+      "language": "chuck",
+      "surface_version": "B4-K3",
+      "context": "timing",
+      "title": "Advance time by 1 second",
+      "code": "1::second => now;",
+      "validates_against": "chuck_surface:B4-K3,libchuck:3.8.3"
+    },
+    {
+      "language": "chuck",
+      "surface_version": "B4-K3",
+      "context": "timing",
+      "title": "Advance by one sample",
+      "code": "44100::samp => now;",
+      "validates_against": "chuck_surface:B4-K3,libchuck:3.8.3"
+    },
+    {
+      "language": "chuck",
+      "surface_version": "B4-K3",
+      "context": "general",
+      "title": "Complete synth voice with pan",
+      "code": "SinOsc osc => Gain g => Pan2 pan => dac; 440 => osc.freq; 0.5 => pan.pos; 0.5 => g.gain;",
+      "validates_against": "chuck_surface:B4-K3,libchuck:3.8.3"
+    },
+    {
+      "language": "chuck",
+      "surface_version": "B4-K3",
+      "context": "general",
+      "title": "SndBuf sample playback",
+      "code": "SndBuf buf => dac; \"samples/bd/0.wav\" => buf.read;",
+      "validates_against": "chuck_surface:B4-K3,libchuck:3.8.3"
+    }
+  ]
+}

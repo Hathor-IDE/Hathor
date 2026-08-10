@@ -21,6 +21,7 @@
 #include "ProjectReadFacade.hpp"
 
 #include "hathor/LanguageMetadata.hpp"
+#include "hathor/FewShotCorpus.hpp"
 
 #include <algorithm>
 #include <cassert>
@@ -36,6 +37,7 @@ namespace hathor::control {
 
 using language::LanguageMetadata;
 using language::MetadataCompatibility;
+using language::FewShotCorpus;
 
 // ---------------------------------------------------------------------------
 // Internal helpers
@@ -110,85 +112,41 @@ std::string lineAt(std::string_view text, int lineIdx)
 }
 
 // ---------------------------------------------------------------------------
-// Bounded example catalogue — small, high-quality, version-attributed.
+// Bounded example catalogue — AI-G4 owned, external, version-attributed.
 //
-// Each example is tagged with the supported-surface version it is valid for.
-// Examples whose surface version does not match the currently loaded AI-3
-// metadata are *rejected* (stale-example rejection — AI-G3 requirement).
-// These are bounded "few-shot" references, not a language-definition list.
+// Examples are NOT hardcoded inline (see below for the rationale). They are
+// loaded from reference/language-metadata/HathorFewShotExamples.json via the
+// FewShotCorpus model (engine/include/hathor/FewShotCorpus.hpp) and injected
+// through setFewShotCorpus(). Each example is tagged with the supported-surface
+// version it is valid for; the corpus-as-a-whole is version-gated at load time
+// against the AI-3 constants, so stale examples can never reach the model.
+// AI-G3 selects only a small, relevant subset per request (assembleExamples).
+//
+// Surface identifiers — these are fallbacks used only when the AI-3 metadata or
+// the AI-G4 corpus is not loaded. They mirror the k* constants in
+// LanguageMetadata.hpp so the version gate never silently drifts.
 // ---------------------------------------------------------------------------
 
-struct Example {
-    std::string             language;       // "mininotation" | "chuck"
-    std::string             surfaceVersion; // matches AI-3 surface identifier
-    CursorContextKind       context;
-    std::string             title;
-    std::string             code;
-};
+/// Map an example context string (from the corpus JSON) back to a
+/// CursorContextKind. Returns CursorContextKind::General for unknown strings.
+CursorContextKind parseContextKind(std::string_view ctx)
+{
+    using K = CursorContextKind;
+    if (ctx == "sample_expr")     return K::SampleExpr;
+    if (ctx == "transform")       return K::Transform;
+    if (ctx == "scale_expr")      return K::ScaleExpr;
+    if (ctx == "rhythm")          return K::Rhythm;
+    if (ctx == "ugen_decl")       return K::UgenDecl;
+    if (ctx == "routing")         return K::Routing;
+    if (ctx == "timing")          return K::Timing;
+    if (ctx == "synth_section")   return K::SynthSection;
+    return K::General;
+}
 
 // Strudel mini-notation surface version (matches kStrudelMiniNotationCompat).
 const char* const kStrudelSurface = "1.2.6";
 // ChucK integration surface (matches kChuckIntegrationSurface).
 const char* const kChuckSurface   = "B4-K3";
-
-/// The canonical example catalogue. A few high-quality, validated examples per
-/// (language, cursor context). Version-tagged against the running surface.
-static const std::vector<Example> kExamples = {
-    // --- .hathor / mininotation ---
-    {"mininotation", kStrudelSurface, CursorContextKind::SampleExpr,
-     "Drum hit pattern",
-     "d1 $ s \"bd sd hh cp\""},
-    {"mininotation", kStrudelSurface, CursorContextKind::SampleExpr,
-     "Sample variation",
-     "d1 $ s \"bd*2 sd\""},
-    {"mininotation", kStrudelSurface, CursorContextKind::SampleExpr,
-     "Polymetric stack",
-     "d1 $ stack \"[bd,sn]*2\" \"[hh,cp]*4\""},
-    {"mininotation", kStrudelSurface, CursorContextKind::Transform,
-     "Speed up a pattern",
-     "d1 $ fast 2 $ s \"bd sd\""},
-    {"mininotation", kStrudelSurface, CursorContextKind::Transform,
-     "Conditional transform",
-     "d1 $ every 3 (fast 2) $ s \"bd sd hh cp\""},
-    {"mininotation", kStrudelSurface, CursorContextKind::Transform,
-     "Stutter",
-     "d1 $ stut 4 0.25 0 $ s \"bd\""},
-    {"mininotation", kStrudelSurface, CursorContextKind::Rhythm,
-     "Euclidean rhythm",
-     "d1 $ s \"bd(3,8)\""},
-    {"mininotation", kStrudelSurface, CursorContextKind::Rhythm,
-     "Silence & accent",
-     "d1 $ s \"bd!3 ~ cp\""},
-    {"mininotation", kStrudelSurface, CursorContextKind::ScaleExpr,
-     "Scale + degree",
-     "d2 $ scale \"|major\" $ degree \"0 2 4\""},
-    {"mininotation", kStrudelSurface, CursorContextKind::General,
-     "Full mini-notation idiom",
-     "d1 $ sound \"bd sd\" # gain \"0.8\" # pan \"0.5\""},
-
-    // --- .ck / ChucK ---
-    {"chuck", kChuckSurface, CursorContextKind::Routing,
-     "Audio graph routing",
-     "SinOsc osc => Gain g => dac; 440 => osc.freq;"},
-    {"chuck", kChuckSurface, CursorContextKind::Routing,
-     "Send to blackhole",
-     "Phasor p => blackhole;"},
-    {"chuck", kChuckSurface, CursorContextKind::UgenDecl,
-     "Oscillator declaration",
-     "SinOsc osc; 440 => osc.freq; osc => dac;"},
-    {"chuck", kChuckSurface, CursorContextKind::SynthSection,
-     "Envelope + filter",
-     "LPF filt => dac; Envelope env => filt; 100 => filt.freq;"},
-    {"chuck", kChuckSurface, CursorContextKind::Timing,
-     "Time advancement",
-     "now => 1::ms;"},
-    {"chuck", kChuckSurface, CursorContextKind::Routing,
-     "Gain + pan",
-     "SinOsc osc => Gain g => Pan2 pan => dac; 0.5 => pan.pos;"},
-    {"chuck", kChuckSurface, CursorContextKind::General,
-     "Simple synth voice",
-     "SinOsc s => ADSR a => dac; 440 => s.freq; a.keyOn(); 100::ms => now; a.keyOff(); 100::ms => now;"},
-};
 
 // ---------------------------------------------------------------------------
 // Bounded scale reference — version-attributed to the running Strudel surface.
@@ -298,12 +256,14 @@ CompletionContextProvider::CompletionContextProvider(
     EditorContextProvider*                          editorCtx,
     LspContextProvider*                             lspCtx,
     const LanguageMetadata*                         metadata,
-    const MetadataCompatibility*                    compat)
+    const MetadataCompatibility*                    compat,
+    const FewShotCorpus*                            corpus)
     : readFacade_(readFacade)
     , editorCtx_(editorCtx)
     , lspCtx_(lspCtx)
     , metadata_(metadata)
     , compat_(compat)
+    , corpus_(corpus)
 {
 }
 
@@ -1080,7 +1040,13 @@ nlohmann::json CompletionContextProvider::assembleInstruments(
 }
 
 // ---------------------------------------------------------------------------
-// assembleExamples — bounded, version-compatible, context-keyed
+// assembleExamples — bounded, version-compatible, context-keyed (AI-G4)
+//
+// Reads from the AI-G4 few-shot corpus (loaded externally and injected via
+// setFewShotCorpus). Selection is AI-G3's retrieval job: only a small,
+// relevant subset reaches the model. Version-gating at corpus-load time
+// (FewShotCorpus::compatible) already rejected stale examples; the per-example
+// surface_version check is a secondary safety net.
 // ---------------------------------------------------------------------------
 
 nlohmann::json CompletionContextProvider::assembleExamples(
@@ -1088,19 +1054,42 @@ nlohmann::json CompletionContextProvider::assembleExamples(
     const CursorContext& ctx) const
 {
     const auto& bounds = resolveBounds(req);
-    nlohmann::json examples = nlohmann::json::array();
+    nlohmann::json result;
+    result["examples"] = nlohmann::json::array();
+    result["count"]    = 0;
+    result["max"]      = bounds.maxExamples;
+    result["version_attributed"] = false;
 
-    const std::string language = req.language.empty()
-        ? (req.documentText.empty() ? std::string{} : std::string{})
-        : req.language;
-    // Resolve the effective language label used for example tagging.
+    // No corpus loaded → no few-shot examples (never fall back to hardcoded
+    // inline examples; the corpus is the single source of truth for AI-G4).
+    if (corpus_ == nullptr) {
+        result["available"] = false;
+        result["reason"] = "FewShotCorpus not loaded";
+        result["examples"] = nlohmann::json::array();
+        return result;
+    }
+
+    // Corpus-level version gate: if the AI-G4 corpus was rejected at load time
+    // (surface version mismatch with AI-3), emit zero examples.
+    if (!corpus_->compatible) {
+        result["available"] = false;
+        result["reason"] = "FewShotCorpus incompatible with running surface";
+        if (!corpus_->errors.empty())
+            result["errors"] = corpus_->errors;
+        return result;
+    }
+
+    result["available"] = true;
+    result["version_attributed"] = true;
+
+    // Resolve effective language label used for example tagging.
+    const std::string language = req.language;
     std::string effLang;
     if (language == "mininotation" || language == "hathor") effLang = "mininotation";
     else if (language == "chuck")                            effLang = "chuck";
-    else                                                     effLang = "mininotation";
+    else                                                    effLang = "mininotation";
 
-    // Version gate: only include examples whose surface version matches the
-    // currently loaded AI-3 metadata (stale-example rejection).
+    // Resolve the running surface version (from AI-3 metadata, with fallback).
     std::string surface;
     if (effLang == "chuck")
         surface = metadata_ ? metadata_->chuckIntegrationSurface : kChuckSurface;
@@ -1108,66 +1097,53 @@ nlohmann::json CompletionContextProvider::assembleExamples(
         surface = metadata_ ? metadata_->strudelMiniNotationCompat : kStrudelSurface;
 
     const CursorContextKind kind = ctx.kind;
-    std::vector<const Example*> matches;
-    // Exact-context matches first, then General as a fallback.
-    for (const auto& ex : kExamples)
-    {
+
+    // Pass 1: exact-context matches.
+    // Pass 2: General fallback (only if no exact matches found).
+    std::vector<const language::FewShotExample*> matches;
+    std::vector<const language::FewShotExample*> general;
+
+    for (const auto& ex : corpus_->examples) {
         if (ex.language != effLang) continue;
         if (ex.surfaceVersion != surface) continue;   // stale — reject
-        if (ex.context == kind)         matches.push_back(&ex);
-    }
-    std::vector<const Example*> general;
-    if (matches.empty())
-    {
-        for (const auto& ex : kExamples)
-        {
-            if (ex.language != effLang) continue;
-            if (ex.surfaceVersion != surface) continue;
-            if (ex.context == CursorContextKind::General) general.push_back(&ex);
-        }
-    }
-    else
-    {
-        for (const auto& ex : kExamples)
-        {
-            if (ex.language != effLang) continue;
-            if (ex.surfaceVersion != surface) continue;
-            if (ex.context == CursorContextKind::General) general.push_back(&ex);
-        }
+        const CursorContextKind exKind = parseContextKind(ex.context);
+        if (exKind == kind)          matches.push_back(&ex);
+        if (exKind == CursorContextKind::General) general.push_back(&ex);
     }
 
+    nlohmann::json examples = nlohmann::json::array();
     int emitted = 0;
-    for (const auto* ex : matches)
-    {
+    for (const auto* ex : matches) {
         if (emitted >= bounds.maxExamples) break;
         nlohmann::json e;
-        e["title"] = ex->title;
+        e["title"]  = ex->title;
         e["language"] = ex->language;
         e["surface_version"] = ex->surfaceVersion;
-        e["context"] = ctx.label;
+        e["context"] = ex->context;
         e["code"] = truncateStr(ex->code, 320);
+        if (!ex->validatesAgainst.empty())
+            e["validates_against"] = ex->validatesAgainst;
         examples.push_back(std::move(e));
         ++emitted;
     }
     // Fill remaining budget with general examples.
-    for (const auto* ex : general)
-    {
+    for (const auto* ex : general) {
         if (emitted >= bounds.maxExamples) break;
         nlohmann::json e;
-        e["title"] = ex->title;
+        e["title"]  = ex->title;
         e["language"] = ex->language;
         e["surface_version"] = ex->surfaceVersion;
-        e["context"] = "general";
+        e["context"] = ex->context;
         e["code"] = truncateStr(ex->code, 320);
+        if (!ex->validatesAgainst.empty())
+            e["validates_against"] = ex->validatesAgainst;
         examples.push_back(std::move(e));
         ++emitted;
     }
 
-    nlohmann::json result;
     result["examples"] = std::move(examples);
     result["count"] = emitted;
-    result["max"] = bounds.maxExamples;
-    result["version_attributed"] = true;
+    result["selected_context"] = ctx.label;
     return result;
 }
 

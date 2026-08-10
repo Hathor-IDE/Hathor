@@ -38,6 +38,22 @@
       "example": "n(\"0 2 4\")"
     },
     {
+      "name": "scale",
+      "signature": "scale(pattern: string)",
+      "description": "Set the scale for degree-based note patterns. Scale names are passed as pipe-delimited strings, e.g. \"|minor\".",
+      "category": "control",
+      "supported": true,
+      "example": "d2 $ scale \"|minor\" $ degree \"0 2 4\""
+    },
+    {
+      "name": "degree",
+      "signature": "degree(pattern: string)",
+      "description": "Play notes by scale degree, in conjunction with .scale(). Degrees are 0-based within the current scale.",
+      "category": "pattern",
+      "supported": true,
+      "example": "d2 $ degree \"0 2 4\""
+    },
+    {
       "name": "fast",
       "signature": "fast(multiplier: number)",
       "description": "Speed up pattern by multiplier (e.g. 2 = twice as fast).",

@@ -74,6 +74,7 @@ namespace hathor {
 namespace language {
 struct LanguageMetadata;
 struct MetadataCompatibility;
+struct FewShotCorpus;
 }
 }
 
@@ -223,10 +224,11 @@ struct CompletionContext {
 class CompletionContextProvider {
 public:
     CompletionContextProvider(ProjectReadFacade&                       readFacade,
-                              EditorContextProvider*                   editorCtx,
-                              LspContextProvider*                      lspCtx,
-                              const hathor::language::LanguageMetadata*    metadata,
-                              const hathor::language::MetadataCompatibility* compat);
+                               EditorContextProvider*                   editorCtx,
+                               LspContextProvider*                      lspCtx,
+                               const hathor::language::LanguageMetadata*    metadata,
+                               const hathor::language::MetadataCompatibility* compat,
+                               const hathor::language::FewShotCorpus*         corpus = nullptr);
 
     ~CompletionContextProvider() = default;
 
@@ -242,6 +244,9 @@ public:
     /// Update the LanguageMetadata pointer (e.g. after a hot-reload).
     void setMetadata(const hathor::language::LanguageMetadata* metadata,
                      const hathor::language::MetadataCompatibility* compat) noexcept;
+
+    /// Install/replace the AI-G4 few-shot example corpus (may be null).
+    void setFewShotCorpus(const hathor::language::FewShotCorpus* corpus) noexcept { corpus_ = corpus; }
 
     /// Set default bounds used when a request does not override them.
     void setBounds(ContextBounds bounds) noexcept { defaultBounds_ = bounds; }
@@ -335,6 +340,7 @@ private:
     LspContextProvider*                           lspCtx_;
     const hathor::language::LanguageMetadata*        metadata_;
     const hathor::language::MetadataCompatibility*     compat_;
+    const hathor::language::FewShotCorpus*             corpus_; /* AI-G4 */
     ContextBounds                                   defaultBounds_;
 };
 

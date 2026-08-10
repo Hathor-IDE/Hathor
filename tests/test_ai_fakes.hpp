@@ -19,6 +19,7 @@
 #include "LspContextProvider.hpp"
 
 #include "hathor/LanguageMetadata.hpp"
+#include "hathor/FewShotCorpus.hpp"
 
 #include <nlohmann/json.hpp>
 
@@ -307,4 +308,14 @@ inline hathor::language::LoadResult loadTestMetadata()
 {
     const std::string path = std::string(LANGUAGE_METADATA_DIR) + "/HathorLanguageMetadata.json";
     return hathor::language::loadAndValidate(path);
+}
+
+// ---------------------------------------------------------------------------
+// Few-shot corpus loading helper (AI-G4)
+// ---------------------------------------------------------------------------
+
+inline hathor::language::FewShotLoadResult loadTestFewShotCorpus()
+{
+    const std::string path = std::string(LANGUAGE_METADATA_DIR) + "/HathorFewShotExamples.json";
+    return hathor::language::loadFewShotCorpus(path);
 }

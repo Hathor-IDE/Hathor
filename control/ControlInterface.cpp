@@ -109,6 +109,13 @@ void ControlInterface::setLanguageMetadata(
         completionContext_->setMetadata(metadata, compat);
 }
 
+void ControlInterface::setFewShotCorpus(
+    const hathor::language::FewShotCorpus* corpus) noexcept
+{
+    if (completionContext_)
+        completionContext_->setFewShotCorpus(corpus);
+}
+
 ControlInterface::~ControlInterface()
 {
     delete impl_;

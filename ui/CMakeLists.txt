@@ -88,7 +88,8 @@ target_include_directories(hathor-ui
         ${CMAKE_CURRENT_SOURCE_DIR}
         ${CMAKE_SOURCE_DIR}/app
         ${CMAKE_SOURCE_DIR}/engine/include
-        ${CMAKE_SOURCE_DIR}/control
+        ${CMAKE_CURRENT_SOURCE_DIR}/../control
+        ${CMAKE_SOURCE_DIR}
 )
 
 target_compile_features(hathor-ui PRIVATE cxx_std_20)

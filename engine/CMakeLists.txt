@@ -9,6 +9,7 @@ add_library(hathor-engine STATIC
     src/PrettyPrinter.cpp
     src/PatternCompiler.cpp
     src/LanguageMetadata.cpp
+    src/FewShotCorpus.cpp
 )
 
 target_include_directories(hathor-engine
@@ -27,6 +28,7 @@ target_sources(hathor-engine
         include/hathor/Arc.hpp
         include/hathor/Combinators.hpp
         include/hathor/Event.hpp
+        include/hathor/FewShotCorpus.hpp
         include/hathor/LanguageMetadata.hpp
         include/hathor/MiniParser.hpp
         include/hathor/MiniTokeniser.hpp

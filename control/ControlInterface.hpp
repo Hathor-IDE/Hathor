@@ -190,6 +190,10 @@ public:
     void setLanguageMetadata(const hathor::language::LanguageMetadata* metadata,
                              const hathor::language::MetadataCompatibility* compat) noexcept;
 
+    /// Set the few-shot example corpus (AI-G4). The provider holds a non-owning
+    /// pointer; the caller (UI layer) owns the loaded corpus lifetime.
+    void setFewShotCorpus(const hathor::language::FewShotCorpus* corpus) noexcept;
+
     /// Assemble and emit the dynamic authoring context for the given request.
     /// Parses JSON arguments from the socket command line, builds a
     /// ContextRequest, and responds via the thread-local response sink.
