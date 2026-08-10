@@ -111,11 +111,20 @@ public:
     }
 
      hathor::RenderHandle startBakeRender(uint8_t,
-                                          std::string,
-                                          uint64_t,
-                                          unsigned,
-                                          const std::filesystem::path&,
-                                          hathor::ChuckRenderWriter::CompletionCallback) override
+                                           std::string,
+                                           uint64_t,
+                                           unsigned,
+                                           const std::filesystem::path&,
+                                           hathor::ChuckRenderWriter::CompletionCallback) override
+     {
+         return hathor::RenderHandle{};
+     }
+     hathor::RenderHandle startBakeRenderRaw(uint8_t,
+                                               std::string,
+                                               uint64_t,
+                                               unsigned,
+                                               const std::filesystem::path&,
+                                               hathor::ChuckRenderWriter::CompletionCallback) override
      {
          return hathor::RenderHandle{};
      }

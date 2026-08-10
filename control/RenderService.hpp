@@ -206,18 +206,10 @@ private:
     };
 
     /**
-     * Validate that an asset name is safe (no path traversal).
-     * Per AI-6 §3: REJECT unsafe names, do NOT sanitize-and-redirect.
-     */
-    static bool isAssetNameSafe(std::string_view name);
-
-    /**
      * Clean up the temp file associated with a completed/failed/cancelled
      * render job.
      */
     void cleanupTempFile(uint64_t jobId) noexcept;
-
-    /**
 
     /**
      * Emit an audit log entry for a commit operation.

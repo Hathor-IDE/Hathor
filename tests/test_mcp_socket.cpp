@@ -184,6 +184,15 @@ public:
     {
         return hathor::RenderHandle{};
     }
+    hathor::RenderHandle startBakeRenderRaw(uint8_t,
+                                              std::string,
+                                              uint64_t,
+                                              unsigned,
+                                              const std::filesystem::path&,
+                                              hathor::ChuckRenderWriter::CompletionCallback) override
+    {
+        return hathor::RenderHandle{};
+    }
     int  activeRenderCount() const noexcept override { return 0; }
     void shutdownRender() noexcept override {}
 
