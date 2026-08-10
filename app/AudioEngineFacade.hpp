@@ -21,6 +21,8 @@
 #include "AssetTarget.hpp"
 #include "ChuckRenderWriter.hpp"
 
+#include <nlohmann/json.hpp>
+
 #include <memory>
 #include <string>
 #include <string_view>

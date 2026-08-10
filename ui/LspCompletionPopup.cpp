@@ -27,7 +27,6 @@ LspCompletionPopup::LspCompletionPopup(SelectCallback onSelect,
     listBox_.setModel(this);
     listBox_.setRowHeight(kRowHeight);
     listBox_.setMultipleSelectionEnabled(false);
-    listBox_.setHeaderHeight(0);
     addAndMakeVisible(listBox_);
 
     setSize(kPopupWidth, kMaxVisibleRows * kRowHeight);
@@ -42,10 +41,7 @@ void LspCompletionPopup::paint(juce::Graphics& g)
 {
     const auto& palette = HathorLookAndFeel::fromComponent(*this).getPalette();
 
-    // Background
     g.fillAll(palette.surface);
-
-    // Border
     g.setColour(palette.accent.withAlpha(0.5f));
     g.drawRect(getLocalBounds(), 1);
 }
@@ -55,7 +51,7 @@ void LspCompletionPopup::resized()
     listBox_.setBounds(getLocalBounds());
 }
 
-bool LspCompletionPopup::keyDown(const juce::KeyPress& key)
+bool LspCompletionPopup::keyPressed(const juce::KeyPress& key)
 {
     if (displayedItems_.empty())
         return false;
@@ -82,17 +78,14 @@ bool LspCompletionPopup::keyDown(const juce::KeyPress& key)
         return true;
     }
 
-    // Let the user type to filter — the parent handler will call filterPrefix
     return false;
 }
 
 void LspCompletionPopup::mouseDown(const juce::MouseEvent& e)
 {
-    // Click on the popup background — keep it open
-    // Click selection is handled by the list box
-    if (!listBox_.getBounds().contains(e.position))
+    if (!listBox_.getBounds().contains(juce::Point<int>(static_cast<int>(e.position.x),
+                                                        static_cast<int>(e.position.y))))
     {
-        // Clicked outside the list box area
         if (onDismiss_)
             onDismiss_();
     }
@@ -125,17 +118,14 @@ void LspCompletionPopup::paintListBoxItem(int row, juce::Graphics& g,
     const auto& palette = HathorLookAndFeel::fromComponent(*this).getPalette();
 
     if (rowIsSelected)
-    {
         g.fillAll(palette.accent.withAlpha(0.2f));
-    }
 
-    // Left padding
     int x = 4;
     int y = (height - 12) / 2;
 
-    // Icon / kind indicator
     juce::String kindIcon;
-    juce::Colour kindColour = palette.codeText;\n\n";
+    juce::Colour kindColour = palette.codeText;
+
     switch (item.kind)
     {
         case lsp::CompletionItemKind::Function:
@@ -163,37 +153,49 @@ void LspCompletionPopup::paintListBoxItem(int row, juce::Graphics& g,
             break;
     }
 
-    // Draw kind icon
+    juce::FontOptions iconFontOpts;
+    iconFontOpts = iconFontOpts.withName(juce::Font::getDefaultMonospacedFontName());
+    iconFontOpts = iconFontOpts.withHeight(11.0f);
+    juce::Font iconFont(iconFontOpts);
+    g.setFont(iconFont);
+
     if (!kindIcon.isEmpty())
     {
         g.setColour(kindColour);
-        g.setFont(juce::Font(juce::Font::getDefaultMonospaceFontName(), 11.0f, juce::Font::plain));
         g.drawText(kindIcon, x, y, 16, height, juce::Justification::centredLeft);
         x += 18;
     }
 
-    // Label
     juce::Colour labelColour = rowIsSelected ? palette.textPrimary : palette.codeText;
     g.setColour(labelColour);
-    g.setFont(juce::Font(juce::Font::getDefaultMonospaceFontName(), 12.0f, juce::Font::plain));
-    g.drawText(item.label, x, y, width - x - 4, height, juce::Justification::centredLeft);
 
-    // Detail (right-aligned)
+    juce::FontOptions labelFontOpts;
+    labelFontOpts = labelFontOpts.withName(juce::Font::getDefaultMonospacedFontName());
+    labelFontOpts = labelFontOpts.withHeight(12.0f);
+    g.setFont(juce::Font(labelFontOpts));
+
+    juce::String labelStr(item.label);
+    g.drawText(labelStr, x, y, width - x - 4, height, juce::Justification::centredLeft);
+
     if (!item.detail.empty())
     {
         g.setColour(palette.textSecondary);
-        g.setFont(juce::Font(juce::Font::getDefaultMonospaceFontName(), 10.0f, juce::Font::plain));
+
+        juce::FontOptions detailFontOpts;
+        detailFontOpts = detailFontOpts.withName(juce::Font::getDefaultMonospacedFontName());
+        detailFontOpts = detailFontOpts.withHeight(10.0f);
+        juce::Font detailFont(detailFontOpts);
+        g.setFont(detailFont);
+
         juce::String detailStr(item.detail);
-        int detailWidth = juce::Font(juce::Font::getDefaultMonospaceFontName(), 10.0f, juce::Font::plain)
-                              .getStringWidth(detailStr);
+        juce::AttributedString detailAttr;
+        detailAttr.append(detailStr, detailFont, palette.textSecondary);
+        juce::TextLayout detailLayout;
+        detailLayout.createLayout(detailAttr, kPopupWidth);
+        int detailWidth = static_cast<int>(detailLayout.getWidth());
         g.drawText(detailStr, width - detailWidth - 4, y, detailWidth, height,
                    juce::Justification::centredRight);
     }
-}
-
-juce::Component* LspCompletionPopup::createSnapshot()
-{
-    return nullptr; // No per-row components
 }
 
 // ---------------------------------------------------------------------------
@@ -214,7 +216,6 @@ void LspCompletionPopup::addCandidates(const std::vector<lsp::CompletionCandidat
 {
     for (const auto& c : candidates)
     {
-        // Check for duplicates (by label)
         bool found = false;
         for (const auto& existing : allItems_)
         {
@@ -241,7 +242,6 @@ void LspCompletionPopup::filterPrefix(std::string_view prefix)
 
     if (displayedItems_.empty() && !allItems_.empty())
     {
-        // All filtered out — dismiss
         if (onDismiss_)
             onDismiss_();
         return;
@@ -304,8 +304,21 @@ const lsp::CompletionCandidate* LspCompletionPopup::selectedCandidate() const no
 }
 
 // ---------------------------------------------------------------------------
-// Internal
+// Internal helpers
 // ---------------------------------------------------------------------------
+
+void LspCompletionPopup::rebuildDisplay()
+{
+    displayedItems_.clear();
+
+    for (const auto& item : allItems_)
+    {
+        if (prefix_.empty() || matchesPrefix(item.label, prefix_))
+            displayedItems_.push_back(item);
+    }
+
+    listBox_.updateContent();
+}
 
 bool LspCompletionPopup::matchesPrefix(std::string_view label, std::string_view prefix) noexcept
 {
@@ -315,35 +328,19 @@ bool LspCompletionPopup::matchesPrefix(std::string_view label, std::string_view 
         return false;
     for (std::size_t i = 0; i < prefix.size(); ++i)
     {
-        char l = static_cast<char>(std::tolower(static_cast<unsigned char>(label[i])));
-        char p = static_cast<char>(std::tolower(static_cast<unsigned char>(prefix[i])));
-        if (l != p)
+        if (std::tolower(static_cast<unsigned char>(label[i]))
+            != std::tolower(static_cast<unsigned char>(prefix[i])))
             return false;
     }
     return true;
 }
 
-void LspCompletionPopup::rebuildDisplay()
-{
-    displayedItems_.clear();
-    for (const auto& item : allItems_)
-    {
-        if (matchesPrefix(item.label, prefix_))
-            displayedItems_.push_back(item);
-    }
-}
-
 void LspCompletionPopup::updateListBoxSize()
 {
-    int rows = static_cast<int>(displayedItems_.size());
-    int visibleRows = std::min(rows, kMaxVisibleRows);
-    if (visibleRows == 0)
-        visibleRows = 1; // show empty placeholder
-
-    int popupHeight = visibleRows * kRowHeight;
-    int popupWidth = kPopupWidth;
-    setSize(popupWidth, popupHeight);
-    listBox_.setBounds(getLocalBounds());
+    int rows = std::min(static_cast<int>(displayedItems_.size()), kMaxVisibleRows);
+    int height = rows * kRowHeight;
+    listBox_.setBounds(0, 0, kPopupWidth, height);
+    setSize(kPopupWidth, height);
 }
 
 } // namespace hathor::ui

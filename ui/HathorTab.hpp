@@ -247,7 +247,7 @@ public:
 
       /// Callback fired by the LspHoverHandler when it's dismissed
       /// (used to clear hover state).
-      std::function<void()> onStatusMessage;
+      std::function<void(const juce::String&)> onStatusMessage;
 
       // -----------------------------------------------------------------------
       // juce::Component overrides

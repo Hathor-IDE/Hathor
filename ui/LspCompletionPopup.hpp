@@ -58,7 +58,7 @@ public:
 
     void paint(juce::Graphics& g) override;
     void resized() override;
-    bool keyDown(const juce::KeyPress& key) override;
+    bool keyPressed(const juce::KeyPress& key) override;
     void mouseDown(const juce::MouseEvent& e) override;
     void mouseMove(const juce::MouseEvent& e) override;
     void mouseUp(const juce::MouseEvent& e) override;
@@ -69,8 +69,7 @@ public:
 
     int getNumRows() override;
     void paintListBoxItem(int row, juce::Graphics& g,
-                          int width, int height, bool rowIsSelected) override;
-    juce::Component* createSnapshot() override;
+                           int width, int height, bool rowIsSelected) override;
 
     // -----------------------------------------------------------------------
     // Public API — called by HathorTab / HathorLspClient

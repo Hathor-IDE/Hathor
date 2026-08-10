@@ -475,4 +475,20 @@ private:
      // Storage for a caller-provided LiveJam session directory (when
     // setLiveJamSessionDir is called with a non-empty path).
     std::filesystem::path liveJamSessionDirStorage_;
+
+    // AI-5: Async ChucK compilation stubs (not yet wired up)
+    uint64_t startAsyncCkCompile(int /*slotIdx*/,
+                                 const std::string& /*code*/,
+                                 std::function<void(bool, const std::string&)> /*onComplete*/) override
+    {
+        return 0;
+    }
+    nlohmann::json queryCkJob(uint64_t /*jobId*/) const override
+    {
+        return nlohmann::json::object();
+    }
+    bool cancelCkJob(uint64_t /*jobId*/) override
+    {
+        return false;
+    }
 };

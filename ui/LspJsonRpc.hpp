@@ -25,19 +25,13 @@
 #include "LspMessageFramer.hpp"
 
 #include <functional>
+#include <nlohmann/json.hpp>
 #include <optional>
 #include <string>
 #include <string_view>
 #include <unordered_map>
 #include <utility>
 #include <vector>
-
-// Forward-declare nlohmann json (no include here to avoid forcing it on
-// all consumers of LspProtocol.hpp)
-namespace nlohmann {
-template <typename, typename> class basic_json;
-using json = basic_json<>;
-}
 
 namespace hathor::lsp {
 

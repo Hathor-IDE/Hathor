@@ -13,10 +13,12 @@
 #include "LspCompletionLogic.hpp"
 #include "LspDiagnosticsDisplay.hpp"
 #include "LspProtocol.hpp"
+#include "hathor/LanguageMetadata.hpp"
 
 #include <string>
 
 using namespace hathor;
+using namespace hathor::ui;
 
 // ===========================================================================
 // Context analysis
@@ -232,8 +234,8 @@ TEST_CASE("metadataFallback adds sample definitions", "[lsp][completion]")
     language::MetadataCompatibility compat;
     compat.compatible = true;
 
-    // Context: completing a sample name matching "bd"
-    auto ctx = lsp::analyzeContext("# bd", 0, 4);
+    // Context: completing a sample name inside s("...") matching "bd"
+    auto ctx = lsp::analyzeContext("s(\"bd\")", 0, 4);
 
     auto candidates = lsp::metadataFallback(metadata, compat, ctx);
     bool hasBd = false;
@@ -297,35 +299,35 @@ TEST_CASE("mergeCompletion adds metadata items not in LSP", "[lsp][completion]")
         "fast", "fast(n)", "LSP doesn't know", "pattern", true, std::nullopt
     });
     metadata.functions.push_back({
-        "slow", "slow(n)", "Speed down", "pattern", true, std::nullopt
+        "faster", "faster(n)", "Even faster", "pattern", true, std::nullopt
     });
 
     language::MetadataCompatibility compat;
     compat.compatible = true;
 
-    auto ctx = lsp::analyzeContext("s", 0, 1);
+    auto ctx = lsp::analyzeContext("fa", 0, 2);
 
-    // LSP provides "slow" but not "fast"
+    // LSP provides "fast" but not "faster"
     std::vector<lsp::CompletionItem> lspItems;
     lsp::CompletionItem item;
-    item.label = "slow";
+    item.label = "fast";
     item.kind = lsp::CompletionItemKind::Function;
-    item.insertText = "slow";
+    item.insertText = "fast";
     lspItems.push_back(item);
 
     auto result = lsp::mergeCompletion(lspItems, &metadata, &compat, ctx);
 
-    // Should have both: "slow" (from LSP) and "fast" (from metadata)
+    // Should have both: "fast" (from LSP) and "faster" (from metadata)
     REQUIRE(result.items.size() == 2);
     bool hasFast = false;
-    bool hasSlow = false;
+    bool hasFaster = false;
     for (const auto& c : result.items)
     {
         if (c.label == "fast") hasFast = true;
-        if (c.label == "slow") hasSlow = true;
+        if (c.label == "faster") hasFaster = true;
     }
     REQUIRE(hasFast);
-    REQUIRE(hasSlow);
+    REQUIRE(hasFaster);
 }
 
 TEST_CASE("mergeCompletion works when LSP returns empty items", "[lsp][completion]")

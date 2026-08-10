@@ -23,31 +23,31 @@ using namespace hathor::lsp;
 // MessageFramer tests
 // ===========================================================================
 
-TEST_CASE("MessageFramer.frameWrite produces valid framed message", "[lsp][framing]")
+TEST_CASE("LspMessageFramer.frameWrite produces valid framed message", "[lsp][framing]")
 {
     std::string body = "{\"jsonrpc\":\"2.0\"}";
-    std::string framed = MessageFramer::frameWrite(body);
+    std::string framed = LspMessageFramer::frameWrite(body);
 
-    REQUIRE(framed.find("Content-Length: 14\r\n\r\n") != std::string::npos);
-    REQUIRE(framed.size() > body.size());
+    REQUIRE(framed.find("Content-Length: 17\r\n\r\n") != std::string::npos);
 }
 
-TEST_CASE("MessageFramer parses a complete message via feed + tryNextMessage", "[lsp][framing]")
+TEST_CASE("LspMessageFramer parses a complete message via feed + tryNextMessage", "[lsp][framing]")
 {
-    MessageFramer framer;
+    LspMessageFramer framer;
 
-    std::string framed = MessageFramer::frameWrite("{\"jsonrpc\":\"2.0\"}");
+    std::string body = "{\"jsonrpc\":\"2.0\"}";
+    std::string framed = LspMessageFramer::frameWrite(body);
     framer.feed(framed);
 
     auto msg = framer.tryNextMessage();
     REQUIRE(msg.has_value());
-    REQUIRE(msg->contentLength == 14);
-    REQUIRE(msg->body == "{\"jsonrpc\":\"2.0\"}");
+    REQUIRE(msg->contentLength == static_cast<int>(body.size()));
+    REQUIRE(msg->body == body);
 }
 
-TEST_CASE("MessageFramer returns nullopt for incomplete body", "[lsp][framing]")
+TEST_CASE("LspMessageFramer returns nullopt for incomplete body", "[lsp][framing]")
 {
-    MessageFramer framer;
+    LspMessageFramer framer;
 
     std::string partial = "Content-Length: 100\r\n\r\n{\"jsonrpc\":\"2.0\"";
     framer.feed(partial);
@@ -57,12 +57,12 @@ TEST_CASE("MessageFramer returns nullopt for incomplete body", "[lsp][framing]")
     REQUIRE(framer.hasBufferedData());
 }
 
-TEST_CASE("MessageFramer parses multiple messages pipelined", "[lsp][framing]")
+TEST_CASE("LspMessageFramer parses multiple messages pipelined", "[lsp][framing]")
 {
-    MessageFramer framer;
+    LspMessageFramer framer;
 
-    std::string msg1 = MessageFramer::frameWrite("{\"jsonrpc\":\"2.0\"}");
-    std::string msg2 = MessageFramer::frameWrite("{\"jsonrpc\":\"2.1\"}");
+    std::string msg1 = LspMessageFramer::frameWrite("{\"jsonrpc\":\"2.0\"}");
+    std::string msg2 = LspMessageFramer::frameWrite("{\"jsonrpc\":\"2.1\"}");
     framer.feed(msg1 + msg2);
 
     auto m1 = framer.tryNextMessage();
@@ -73,55 +73,55 @@ TEST_CASE("MessageFramer parses multiple messages pipelined", "[lsp][framing]")
     REQUIRE(m2.has_value());
     REQUIRE(m2->body == "{\"jsonrpc\":\"2.1\"}");
 
-    // Buffer should be empty now
     REQUIRE_FALSE(framer.hasBufferedData());
 }
 
-TEST_CASE("MessageFramer handles partial header", "[lsp][framing]")
+TEST_CASE("LspMessageFramer handles partial header", "[lsp][framing]")
 {
-    MessageFramer framer;
+    LspMessageFramer framer;
+    std::string body = "{\"jsonrpc\":\"2.0\"}";
+    std::string framed = LspMessageFramer::frameWrite(body);
 
-    // Feed just part of the header
-    framer.feed("Content-Length: 14\r");
+    // Feed the framed message in two chunks
+    framer.feed(framed.substr(0, 20));
     REQUIRE_FALSE(framer.tryNextMessage().has_value());
     REQUIRE(framer.hasBufferedData());
 
-    // Complete the header + body
-    framer.feed("\r\n\r\n{\"jsonrpc\":\"2.0\"}");
+    framer.feed(framed.substr(20));
 
     auto msg = framer.tryNextMessage();
     REQUIRE(msg.has_value());
-    REQUIRE(msg->body == "{\"jsonrpc\":\"2.0\"}");
+    REQUIRE(msg->body == body);
 }
 
 // ===========================================================================
 // LspJsonRpc serialization tests
 // ===========================================================================
 
+namespace {
+std::string extractJsonBody(const std::string& framed)
+{
+    auto headerEnd = framed.find("\r\n\r\n");
+    if (headerEnd == std::string::npos)
+        return {};
+    return framed.substr(headerEnd + 4);
+}
+}
+
 TEST_CASE("LspJsonRpc.serializeRequest produces framed JSON-RPC request", "[lsp][jsonrpc]")
 {
     LspJsonRpc rpc;
 
-    auto serialized = rpc.serializeRequest("textDocument/completion",
+    std::string serialized = rpc.serializeRequest("textDocument/completion",
         nlohmann::json::object({
             {"uri", "file:///test.hathor"},
             {"line", 0},
             {"character", 5}
         }));
 
-    // Should contain Content-Length header
     REQUIRE(serialized.find("Content-Length:") != std::string::npos);
 
-    // Parse the JSON body
-    auto framed = MessageFramer::frameWrite("");
-    (void)framed; // just verify we can call it
-
-    // Extract and parse body
-    auto headerEnd = serialized.find("\r\n\r\n");
-    REQUIRE(headerEnd != std::string::npos);
-    std::string body = serialized.substr(headerEnd + 4);
-
-    auto j = nlohmann::json::parse(body);
+    auto j = nlohmann::json::parse(extractJsonBody(serialized));
     REQUIRE(j["jsonrpc"] == "2.0");
     REQUIRE(j["method"] == "textDocument/completion");
     REQUIRE(j["params"]["uri"] == "file:///test.hathor");
@@ -132,18 +132,14 @@ TEST_CASE("LspJsonRpc.serializeRequest assigns incrementing IDs", "[lsp][jsonrpc
 {
     LspJsonRpc rpc;
 
-    auto s1 = rpc.serializeRequest("method1", nlohmann::json::object());
-    auto s2 = rpc.serializeRequest("method2", nlohmann::json::object());
+    std::string s1 = rpc.serializeRequest("method1", nlohmann::json::object());
+    std::string s2 = rpc.serializeRequest("method2", nlohmann::json::object());
 
-    auto extractId = [](std::string_view s) -> int {
-        auto headerEnd = s.find("\r\n\r\n");
-        std::string body = std::string(s.substr(headerEnd + 4));
-        auto j = nlohmann::json::parse(body);
-        return j["id"].get<int>();
-    };
+    auto j1 = nlohmann::json::parse(extractJsonBody(s1));
+    auto j2 = nlohmann::json::parse(extractJsonBody(s2));
 
-    int id1 = extractId(s1);
-    int id2 = extractId(s2);
+    int id1 = j1["id"].get<int>();
+    int id2 = j2["id"].get<int>();
     REQUIRE(id2 == id1 + 1);
 }
 
@@ -157,9 +153,7 @@ TEST_CASE("LspJsonRpc.serializeNotification omits id", "[lsp][jsonrpc]")
             {"text", "bd sn"}
         }));
 
-    auto headerEnd = serialized.find("\r\n\r\n");
-    std::string body = serialized.substr(headerEnd + 4);
-    auto j = nlohmann::json::parse(body);
+    auto j = nlohmann::json::parse(extractJsonBody(serialized));
 
     REQUIRE(j["jsonrpc"] == "2.0");
     REQUIRE(j["method"] == "textDocument/didOpen");
@@ -172,10 +166,7 @@ TEST_CASE("LspJsonRpc.serializeDidOpen creates didOpen notification", "[lsp][jso
     LspJsonRpc rpc;
     std::string framed = rpc.serializeDidOpen("file:///test.hathor", "hathor", 1, "bd sn");
 
-    auto headerEnd = framed.find("\r\n\r\n");
-    REQUIRE(headerEnd != std::string::npos);
-    std::string body = framed.substr(headerEnd + 4);
-    auto j = nlohmann::json::parse(body);
+    auto j = nlohmann::json::parse(extractJsonBody(framed));
 
     REQUIRE(j["method"] == "textDocument/didOpen");
     REQUIRE(j["params"]["textDocument"]["uri"] == "file:///test.hathor");
@@ -189,9 +180,7 @@ TEST_CASE("LspJsonRpc.serializeDidChange creates didChange notification", "[lsp]
     LspJsonRpc rpc;
     std::string framed = rpc.serializeDidChange("file:///test.hathor", 2, "bd sn hh");
 
-    auto headerEnd = framed.find("\r\n\r\n");
-    std::string body = framed.substr(headerEnd + 4);
-    auto j = nlohmann::json::parse(body);
+    auto j = nlohmann::json::parse(extractJsonBody(framed));
 
     REQUIRE(j["method"] == "textDocument/didChange");
     REQUIRE(j["params"]["textDocument"]["uri"] == "file:///test.hathor");
@@ -204,9 +193,7 @@ TEST_CASE("LspJsonRpc.serializeDidClose creates didClose notification", "[lsp][j
     LspJsonRpc rpc;
     std::string framed = rpc.serializeDidClose("file:///test.hathor");
 
-    auto headerEnd = framed.find("\r\n\r\n");
-    std::string body = framed.substr(headerEnd + 4);
-    auto j = nlohmann::json::parse(body);
+    auto j = nlohmann::json::parse(extractJsonBody(framed));
 
     REQUIRE(j["method"] == "textDocument/didClose");
     REQUIRE(j["params"]["textDocument"]["uri"] == "file:///test.hathor");
@@ -219,9 +206,7 @@ TEST_CASE("LspJsonRpc.serializeCompletion returns id and framed message", "[lsp]
 
     REQUIRE(id > 0);
 
-    auto headerEnd = framed.find("\r\n\r\n");
-    std::string body = framed.substr(headerEnd + 4);
-    auto j = nlohmann::json::parse(body);
+    auto j = nlohmann::json::parse(extractJsonBody(framed));
 
     REQUIRE(j["method"] == "textDocument/completion");
     REQUIRE(j["params"]["textDocument"]["uri"] == "file:///test.hathor");
@@ -236,9 +221,7 @@ TEST_CASE("LspJsonRpc.serializeHover returns id and framed message", "[lsp][json
 
     REQUIRE(id > 0);
 
-    auto headerEnd = framed.find("\r\n\r\n");
-    std::string body = framed.substr(headerEnd + 4);
-    auto j = nlohmann::json::parse(body);
+    auto j = nlohmann::json::parse(extractJsonBody(framed));
 
     REQUIRE(j["method"] == "textDocument/hover");
     REQUIRE(j["params"]["position"]["line"] == 3);
@@ -371,7 +354,7 @@ TEST_CASE("parseHover parses contents array", "[lsp][jsonrpc]")
     auto hover = LspJsonRpc::parseHover(j);
     REQUIRE(hover.has_value());
     REQUIRE(hover->contents.size() == 1);
-    REQUIRE(hover->contents[0].kind == "hathor");
+    REQUIRE(hover->contents[0].kind == "plaintext");
     REQUIRE(hover->contents[0].value.find("speed up") != std::string::npos);
     REQUIRE(hover->range.has_value());
 }

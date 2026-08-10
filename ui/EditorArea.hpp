@@ -39,6 +39,7 @@
 // App
 #include "../app/AudioEngine.hpp"
 #include "hathor/Event.hpp"
+#include "hathor/LanguageMetadata.hpp"
 
 // Control
 #include "../control/ControlInterface.hpp"

@@ -50,8 +50,8 @@ enum class CompletionItemKind : int {
 // LSP Position
 // ---------------------------------------------------------------------------
 struct Position {
-    int line;        ///< 0-based line number
-    int character;   ///< 0-based UTF-16 code unit offset
+    int line      = 0;        ///< 0-based line number
+    int character = 0;        ///< 0-based UTF-16 code unit offset
 
     bool operator==(const Position& other) const noexcept {
         return line == other.line && character == other.character;
@@ -64,6 +64,9 @@ struct Position {
 struct Range {
     Position start;
     Position end;
+
+    Range() = default;
+    Range(Position s, Position e) : start(s), end(e) {}
 };
 
 // ---------------------------------------------------------------------------
@@ -92,6 +95,8 @@ struct CompletionItem {
     std::optional<MarkupContent> documentation;
     std::optional<std::string>  insertText;
     std::optional<std::string>  sortText;
+
+    CompletionItem() = default;
 };
 
 // ---------------------------------------------------------------------------
@@ -163,7 +168,7 @@ struct Diagnostic {
 struct TextDocumentItem {
     std::string uri;
     std::string languageId;
-    int         version;
+    int         version = 0;
     std::string text;
 };
 
@@ -194,7 +199,7 @@ struct TextDocumentContentChangeEvent {
  */
 struct CompletionCandidate {
     std::string label;
-    CompletionItemKind kind;
+    CompletionItemKind kind = CompletionItemKind::Text;
     std::string detail;
     std::string documentation;
     std::string insertText;

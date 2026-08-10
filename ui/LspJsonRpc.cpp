@@ -260,6 +260,13 @@ CompletionList LspJsonRpc::parseCompletionList(const json& j)
     if (j.is_null())
         return list;
 
+    // Helper for optional string extraction
+    auto optString = [](const json& obj, const char* key) -> std::optional<std::string> {
+        if (obj.contains(key))
+            return obj[key].get<std::string>();
+        return std::nullopt;
+    };
+
     // Could be a raw array of CompletionItems or a CompletionList object
     if (j.is_array())
     {
@@ -269,11 +276,11 @@ CompletionList LspJsonRpc::parseCompletionList(const json& j)
             ci.label = item.value("label", "");
             if (item.contains("kind"))
                 ci.kind = kindFromJson(item["kind"].get<int>());
-            ci.detail = item.value("detail", std::optional<std::string>{});
+            ci.detail = optString(item, "detail");
             if (item.contains("documentation"))
                 ci.documentation = parseMarkupContent(item["documentation"]);
-            ci.insertText = item.value("insertText", std::optional<std::string>{});
-            ci.sortText = item.value("sortText", std::optional<std::string>{});
+            ci.insertText = optString(item, "insertText");
+            ci.sortText = optString(item, "sortText");
             list.items.push_back(std::move(ci));
         }
     }
@@ -288,11 +295,11 @@ CompletionList LspJsonRpc::parseCompletionList(const json& j)
                 ci.label = item.value("label", "");
                 if (item.contains("kind"))
                     ci.kind = kindFromJson(item["kind"].get<int>());
-                ci.detail = item.value("detail", std::optional<std::string>{});
+                ci.detail = optString(item, "detail");
                 if (item.contains("documentation"))
                     ci.documentation = parseMarkupContent(item["documentation"]);
-                ci.insertText = item.value("insertText", std::optional<std::string>{});
-                ci.sortText = item.value("sortText", std::optional<std::string>{});
+                ci.insertText = optString(item, "insertText");
+                ci.sortText = optString(item, "sortText");
                 list.items.push_back(std::move(ci));
             }
         }
@@ -414,8 +421,8 @@ std::pair<std::string, std::vector<Diagnostic>> LspJsonRpc::parseDiagnostics(con
                 diag.severity = static_cast<DiagnosticSeverity>(sev);
         }
         diag.message = d.value("message", "");
-        diag.source = d.value("source", std::optional<std::string>{});
-        diag.code = d.value("code", std::optional<std::string>{});
+        diag.source = d.contains("source") ? std::optional<std::string>(d["source"].get<std::string>()) : std::nullopt;
+        diag.code = d.contains("code") ? std::optional<std::string>(d["code"].get<std::string>()) : std::nullopt;
         diags.push_back(std::move(diag));
     }
 

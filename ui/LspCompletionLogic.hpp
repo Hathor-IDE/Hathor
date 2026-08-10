@@ -45,6 +45,8 @@ namespace language {
 // Forward-declare LanguageMetadata types (defined in ai-3)
 struct LanguageMetadata;
 struct MetadataCompatibility;
+struct MiniNotationFunction;
+struct SampleDefinition;
 }
 
 namespace lsp {

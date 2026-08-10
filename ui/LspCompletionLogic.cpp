@@ -12,10 +12,9 @@
  */
 
 #include "LspCompletionLogic.hpp"
-#include "LanguageMetadata.hpp"
+#include "hathor/LanguageMetadata.hpp"
 
 #include <cstdint>
-#include <sstream>
 
 namespace hathor {
 namespace language {
@@ -31,7 +30,7 @@ namespace lsp {
 // Context analysis
 // ---------------------------------------------------------------------------
 
-static std::string getLine(std::string_view text, int line)
+static std::string_view getLine(std::string_view text, int line)
 {
     int currentLine = 0;
     std::size_t start = 0;
@@ -51,7 +50,7 @@ static std::string getLine(std::string_view text, int line)
     std::size_t end = text.find('\n', start);
     if (end == std::string::npos)
         end = text.size();
-    return std::string(text.substr(start, end - start));
+    return text.substr(start, end - start);
 }
 
 static std::string_view::const_iterator findWordEnd(std::string_view line, std::size_t pos)
@@ -72,12 +71,15 @@ static std::string_view::const_iterator findWordStart(std::string_view line, std
     return it;
 }
 
+// Forward declare helper used in context analysis
+static std::string extractLastIdentifier(const std::string& text);
+
 ContextAnalysis analyzeContext(std::string_view documentText, int line, int character)
 {
     ContextAnalysis result;
     result.kind = CompletionContextKind::Code;
 
-    std::string currentLine = getLine(documentText, line);
+    std::string_view currentLine = getLine(documentText, line);
 
     if (character < 0 || static_cast<std::size_t>(character) > currentLine.size())
     {
@@ -133,35 +135,23 @@ ContextAnalysis analyzeContext(std::string_view documentText, int line, int char
     if (inString)
     {
         // Check if preceded by a function that expects a string argument
-        std::string beforeString = currentLine.substr(0, static_cast<std::size_t>(startIt - currentLine.begin()));
-        // Find the last identifier before the string
-        std::size_t lastIdEnd = beforeString.find_last_not_of(" \t");
-        if (lastIdEnd != std::string::npos)
-        {
-            std::size_t lastIdStart = beforeString.find_last_of(" \t()=,", lastIdEnd);
-            std::size_t idStart = (lastIdStart == std::string::npos) ? 0 : lastIdStart + 1;
-            std::string lastWord = beforeString.substr(idStart, lastIdEnd - idStart + 1);
+        std::string beforeString = std::string(currentLine.substr(0, static_cast<std::size_t>(startIt - currentLine.begin())));
+        std::string lastWord = extractLastIdentifier(beforeString);
 
-            if (lastWord == "s" || lastWord == "sound")
-            {
-                result.kind = CompletionContextKind::StringSample;
-                result.insideString = true;
-            }
-            else if (lastWord == "scale")
-            {
-                result.kind = CompletionContextKind::StringScale;
-                result.insideString = true;
-            }
-            else if (lastWord == "note" || lastWord == "n")
-            {
-                result.kind = CompletionContextKind::StringNote;
-                result.insideString = true;
-            }
-            else
-            {
-                result.kind = CompletionContextKind::Code;
-                result.insideString = true;
-            }
+        if (lastWord == "s" || lastWord == "sound")
+        {
+            result.kind = CompletionContextKind::StringSample;
+            result.insideString = true;
+        }
+        else if (lastWord == "scale")
+        {
+            result.kind = CompletionContextKind::StringScale;
+            result.insideString = true;
+        }
+        else if (lastWord == "note" || lastWord == "n")
+        {
+            result.kind = CompletionContextKind::StringNote;
+            result.insideString = true;
         }
         else
         {
@@ -173,7 +163,7 @@ ContextAnalysis analyzeContext(std::string_view documentText, int line, int char
     {
         result.kind = CompletionContextKind::FunctionArgs;
         // Find the enclosing function name
-        std::string before = currentLine.substr(0, pos);
+        std::string before = std::string(currentLine.substr(0, pos));
         std::size_t parenPos = before.rfind('(');
         if (parenPos != std::string::npos)
         {
@@ -211,6 +201,41 @@ ContextAnalysis analyzeContext(std::string_view documentText, int line, int char
     }
 
     return result;
+}
+
+// ---------------------------------------------------------------------------
+// Static helpers
+// ---------------------------------------------------------------------------
+
+static std::string extractLastIdentifier(const std::string& text)
+{
+    if (text.empty())
+        return "";
+
+    // Walk backwards past non-identifier characters (skip delimiters, quotes, etc.)
+    std::size_t i = text.size();
+    while (i > 0)
+    {
+        char c = text[i - 1];
+        if (std::isalnum(static_cast<unsigned char>(c)) || c == '_')
+            break;
+        --i;
+    }
+
+    // Collect identifier characters backwards
+    std::size_t start = i;
+    while (start > 0)
+    {
+        char c = text[start - 1];
+        if (!std::isalnum(static_cast<unsigned char>(c)) && c != '_')
+            break;
+        --start;
+    }
+
+    if (start == i)
+        return "";
+
+    return text.substr(start, i - start);
 }
 
 // ---------------------------------------------------------------------------
@@ -289,11 +314,6 @@ void sortCompletionItems(std::vector<CompletionItem>& items) noexcept
 // Metadata fallback (L1)
 // ---------------------------------------------------------------------------
 
-static bool isCompatible(const language::MetadataCompatibility* compat)
-{
-    return compat && compat->compatible;
-}
-
 std::vector<CompletionCandidate> metadataFallback(
     const language::LanguageMetadata& metadata,
     const language::MetadataCompatibility& compatibility,
@@ -370,7 +390,7 @@ std::vector<CompletionCandidate> metadataFallback(
     return candidates;
 }
 
-CompletionCandidate makeCandidate(const language::LanguageMetadata& metadata,
+CompletionCandidate makeCandidate(const language::LanguageMetadata& /*metadata*/,
                                   const language::MiniNotationFunction& fn)
 {
     CompletionCandidate c;
@@ -384,7 +404,7 @@ CompletionCandidate makeCandidate(const language::LanguageMetadata& metadata,
 }
 
 std::vector<CompletionCandidate> makeSampleCandidates(
-    const language::LanguageMetadata& metadata,
+    const language::LanguageMetadata& /*metadata*/,
     const language::SampleDefinition* sampleDef,
     std::string_view prefix)
 {
@@ -510,7 +530,7 @@ void enrichWithSignatureInfo(CompletionResult& result,
 
 void filterByProjectContext(CompletionResult& result,
                             const std::unordered_set<std::string>& projectSamples,
-                            const std::optional<std::string>& frontMatterSlot) noexcept
+                            const std::optional<std::string>& /*frontMatterSlot*/) noexcept
 {
     if (projectSamples.empty())
         return; // No project context — don't filter
@@ -584,25 +604,6 @@ std::optional<Hover> mergeHover(
 // Diagnostics merging
 // ---------------------------------------------------------------------------
 
-static std::string getLineText(std::string_view text, int lineNum)
-{
-    std::string line;
-    int currentLine = 0;
-    for (std::size_t i = 0; i < text.size(); ++i)
-    {
-        if (currentLine == lineNum)
-        {
-            // Copy until newline
-            for (; i < text.size() && text[i] != '\n'; ++i)
-                line += text[i];
-            break;
-        }
-        if (text[i] == '\n')
-            ++currentLine;
-    }
-    return line;
-}
-
 static std::string extractWords(std::string_view text)
 {
     std::string result;
@@ -629,60 +630,93 @@ std::vector<Diagnostic> mergeDiagnostics(
         return result;
 
     // Tokenize the document by lines
-    std::istringstream lines(documentText);
-    std::string line;
+    std::string docText(documentText);
+    std::size_t pos = 0;
     int lineNum = 0;
 
-    while (std::getline(lines, line))
+    while (pos <= docText.size())
     {
+        std::size_t nextPos = docText.find('\n', pos);
+        std::string line = (nextPos == std::string::npos)
+                               ? docText.substr(pos)
+                               : docText.substr(pos, nextPos - pos);
+
+        // Remove trailing \r if present
+        if (!line.empty() && line.back() == '\r')
+            line.pop_back();
+
+        // Advance pos for next iteration
+        pos = (nextPos == std::string::npos) ? docText.size() + 1 : nextPos + 1;
+
         // Skip front-matter
-        if (line == "[hathor]")
+        if (line == "[hathor]" && lineNum == 0)
         {
-            // Skip front-matter lines until blank line
-            while (std::getline(lines, line) && !line.empty())
-            {
-                ++lineNum;
-            }
             ++lineNum;
+            while (pos <= docText.size())
+            {
+                std::size_t nextPos2 = docText.find('\n', pos);
+                std::string fmLine = (nextPos2 == std::string::npos)
+                                         ? docText.substr(pos)
+                                         : docText.substr(pos, nextPos2 - pos);
+                if (!fmLine.empty() && fmLine.back() == '\r')
+                    fmLine.pop_back();
+                pos = (nextPos2 == std::string::npos) ? docText.size() + 1 : nextPos2 + 1;
+                ++lineNum;
+                if (fmLine.empty())
+                    break;
+            }
             continue;
         }
 
         // Extract words from the line for metadata checks
         std::string words = extractWords(line);
-        std::istringstream wordStream(words);
-        std::string word;
-
-        while (wordStream >> word)
+        // Manual word splitting (avoids <sstream> on older SDKs)
+        auto wordBegin = std::string::npos;
+        for (std::size_t i = 0; i <= words.size(); ++i)
         {
-            // Check for unsupported functions (warnings)
-            // Only check words that look like identifiers (not numbers)
-            if (word.empty() || std::isdigit(static_cast<unsigned char>(word[0])))
-                continue;
-
-            // Check if it's a function name followed by '('
-            // (This is a heuristic — the LSP already provides parse errors)
-
-            // Check for unsupported mini-notation functions
-            // We check if the word matches a function name that is marked
-            // as unsupported in metadata
-            const auto* fn = findFunction(*metadata, word);
-            if (fn && !fn->supported)
+            bool isSpace = (i == words.size()) || std::isspace(static_cast<unsigned char>(words[i]));
+            if (isSpace)
             {
-                // Find position of word in line
-                std::size_t pos = line.find(word);
-                if (pos != std::string::npos)
+                if (wordBegin != std::string::npos)
                 {
-                    Diagnostic d;
-                    d.range = {
-                        {lineNum, static_cast<int>(pos)},
-                        {lineNum, static_cast<int>(pos + word.size())}
-                    };
-                    d.severity = DiagnosticSeverity::Warning;
-                    d.source = "hathor-metadata";
-                    d.code = "UNSUPPORTED_FUNCTION";
-                    d.message = "Function '" + word + "' is listed in metadata but not yet supported by Hathor's engine: " + fn->description;
-                    result.push_back(d);
+                    std::string word = words.substr(wordBegin, i - wordBegin);
+                    // Check for unsupported functions (warnings)
+                    // Only check words that look like identifiers (not numbers)
+                    if (!word.empty() && !std::isdigit(static_cast<unsigned char>(word[0])))
+                    {
+                        // Check if it's a function name followed by '('
+                        // (This is a heuristic — the LSP already provides parse errors)
+
+                        // Check for unsupported mini-notation functions
+                        // We check if the word matches a function name that is marked
+                        // as unsupported in metadata
+                        const auto* fn = findFunction(*metadata, word);
+                        if (fn && !fn->supported)
+                        {
+                            // Find position of word in line
+                            std::size_t pos = line.find(word);
+                            if (pos != std::string::npos)
+                            {
+                                Diagnostic d;
+                                d.range = {
+                                    {lineNum, static_cast<int>(pos)},
+                                    {lineNum, static_cast<int>(pos + word.size())}
+                                };
+                                d.severity = DiagnosticSeverity::Warning;
+                                d.source = "hathor-metadata";
+                                d.code = "UNSUPPORTED_FUNCTION";
+                                d.message = "Function '" + word + "' is listed in metadata but not yet supported by Hathor's engine: " + fn->description;
+                                result.push_back(d);
+                            }
+                        }
+                    }
+                    wordBegin = std::string::npos;
                 }
+            }
+            else
+            {
+                if (wordBegin == std::string::npos)
+                    wordBegin = i;
             }
         }
         ++lineNum;

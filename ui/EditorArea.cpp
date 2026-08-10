@@ -10,7 +10,7 @@
 #include "EditorArea.hpp"
 #include "HathorFileParser.hpp"
 #include "HathorLspClient.hpp"
-#include "LanguageMetadata.hpp"
+#include "hathor/LanguageMetadata.hpp"
 #include "AudioEngine.hpp"
 
 #include <nlohmann/json.hpp>

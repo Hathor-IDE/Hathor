@@ -8,7 +8,6 @@
  */
 
 #include <catch2/catch_test_macros.hpp>
-#include <catch2/catch_approx.hpp>
 
 #include "LspProtocol.hpp"
 
@@ -25,14 +24,24 @@ TEST_CASE("Position defaults to 0/0", "[lsp][protocol]")
     REQUIRE(p.character == 0);
 }
 
-TEST_CASE("Position constructs with values", "[lsp][protocol]")
+TEST_CASE("Position constructs with values via aggregate init", "[lsp][protocol]")
 {
     Position p{5, 12};
     REQUIRE(p.line == 5);
     REQUIRE(p.character == 12);
 }
 
-TEST_CASE("Range defaults to 0/0-0/0", "[lsp][protocol]")
+TEST_CASE("Position equality operator", "[lsp][protocol]")
+{
+    Position a{1, 2};
+    Position b{1, 2};
+    Position c{1, 3};
+
+    REQUIRE(a == b);
+    REQUIRE_FALSE(a == c);
+}
+
+TEST_CASE("Range default constructs empty", "[lsp][protocol]")
 {
     Range r;
     REQUIRE(r.start.line == 0);
@@ -58,8 +67,8 @@ TEST_CASE("Diagnostic defaults", "[lsp][protocol]")
 {
     Diagnostic d;
     REQUIRE(!d.severity.has_value());
-    REQUIRE(d.source.empty());
-    REQUIRE(d.code.empty());
+    REQUIRE(d.source.has_value() == false);
+    REQUIRE(d.code.has_value() == false);
     REQUIRE(d.message.empty());
     REQUIRE(d.range.start.line == 0);
 }
@@ -74,8 +83,8 @@ TEST_CASE("Diagnostic with Error severity", "[lsp][protocol]")
     d.message = "Unexpected token";
 
     REQUIRE(d.severity.value() == DiagnosticSeverity::Error);
-    REQUIRE(d.source == "hathor-lsp");
-    REQUIRE(d.code == "PARSE_ERROR");
+    REQUIRE(d.source.value() == "hathor-lsp");
+    REQUIRE(d.code.value() == "PARSE_ERROR");
     REQUIRE(d.message == "Unexpected token");
     REQUIRE(d.range.start.line == 2);
     REQUIRE(d.range.end.character == 10);
@@ -83,10 +92,10 @@ TEST_CASE("Diagnostic with Error severity", "[lsp][protocol]")
 
 TEST_CASE("DiagnosticSeverity values", "[lsp][protocol]")
 {
-    REQUIRE(DiagnosticSeverity::Error == 1);
-    REQUIRE(DiagnosticSeverity::Warning == 2);
-    REQUIRE(DiagnosticSeverity::Information == 3);
-    REQUIRE(DiagnosticSeverity::Hint == 4);
+    REQUIRE(static_cast<int>(DiagnosticSeverity::Error) == 1);
+    REQUIRE(static_cast<int>(DiagnosticSeverity::Warning) == 2);
+    REQUIRE(static_cast<int>(DiagnosticSeverity::Info) == 3);
+    REQUIRE(static_cast<int>(DiagnosticSeverity::Hint) == 4);
 }
 
 // ===========================================================================
@@ -97,64 +106,68 @@ TEST_CASE("CompletionItem defaults", "[lsp][protocol]")
 {
     CompletionItem item;
     REQUIRE(item.label.empty());
-    REQUIRE(item.kind == CompletionItemKind::Unspecified);
-    REQUIRE(item.detail.empty());
-    REQUIRE(item.documentation.empty());
-    REQUIRE(item.insertText.empty());
-    REQUIRE(item.filterText.empty());
+    REQUIRE(!item.kind.has_value());
+    REQUIRE(!item.detail.has_value());
+    REQUIRE(!item.documentation.has_value());
+    REQUIRE(!item.insertText.has_value());
+    REQUIRE(!item.sortText.has_value());
 }
 
-TEST_CASE("CompletionItem constructs with fields", "[lsp][protocol]")
+TEST_CASE("CompletionItem with fields", "[lsp][protocol]")
 {
     CompletionItem item;
     item.label = "fast";
     item.kind = CompletionItemKind::Function;
     item.detail = "pattern operator";
-    item.documentation = "Speed up or slow down a pattern.";
+    item.documentation = MarkupContent{"markdown", "Speed up or slow down a pattern."};
     item.insertText = "fast(2)";
-    item.filterText = "fast";
+    item.sortText = "fast";
 
     REQUIRE(item.label == "fast");
-    REQUIRE(item.kind == CompletionItemKind::Function);
-    REQUIRE(item.detail == "pattern operator");
-    REQUIRE(item.documentation == "Speed up or slow down a pattern.");
-    REQUIRE(item.insertText == "fast(2)");
-    REQUIRE(item.filterText == "fast");
+    REQUIRE(item.kind.value() == CompletionItemKind::Function);
+    REQUIRE(item.detail.value() == "pattern operator");
+    REQUIRE(item.documentation.value().value == "Speed up or slow down a pattern.");
+    REQUIRE(item.insertText.value() == "fast(2)");
+    REQUIRE(item.sortText.value() == "fast");
 }
 
-TEST_CASE("CompletionCandidate is convertible from CompletionItem", "[lsp][protocol]")
+TEST_CASE("CompletionCandidate default constructs", "[lsp][protocol]")
 {
-    CompletionItem item;
-    item.label = "stack";
-    item.kind = CompletionItemKind::Function;
-    item.insertText = "stack(";
-    item.documentation = "Stack patterns.";
-
-    CompletionCandidate candidate(item);
-    REQUIRE(candidate.label == "stack");
-    REQUIRE(candidate.insertText == "stack(");
-    REQUIRE(candidate.kind == CompletionItemKind::Function);
-    REQUIRE(candidate.documentation == "Stack patterns.");
+    CompletionCandidate c;
+    REQUIRE(c.label.empty());
+    REQUIRE(c.kind == CompletionItemKind::Text);
+    REQUIRE(c.detail.empty());
+    REQUIRE(c.documentation.empty());
+    REQUIRE(c.insertText.empty());
+    REQUIRE(c.source.empty());
 }
 
-TEST_CASE("CompletionCandidate insertText defaults to label", "[lsp][protocol]")
+TEST_CASE("CompletionCandidate populated via field assignment", "[lsp][protocol]")
 {
-    CompletionItem item;
-    item.label = "bd";
-    item.kind = CompletionItemKind::Value;
+    CompletionCandidate c;
+    c.label = "stack";
+    c.kind = CompletionItemKind::Function;
+    c.detail = "pattern combiner";
+    c.documentation = "Stack patterns.";
+    c.insertText = "stack(";
+    c.source = "metadata";
 
-    CompletionCandidate candidate(item);
-    REQUIRE(candidate.insertText == "bd");
+    REQUIRE(c.label == "stack");
+    REQUIRE(c.kind == CompletionItemKind::Function);
+    REQUIRE(c.documentation == "Stack patterns.");
+    REQUIRE(c.source == "metadata");
 }
 
 TEST_CASE("CompletionItemKind values", "[lsp][protocol]")
 {
-    REQUIRE(CompletionItemKind::Unspecified == 0);
-    REQUIRE(CompletionItemKind::Text == 1);
-    REQUIRE(CompletionItemKind::Method == 2);
-    REQUIRE(CompletionItemKind::Function == 3);
-    REQUIRE(CompletionItemKind::Variable == 6);
-    REQUIRE(CompletionItemKind::Value == 21);
+    REQUIRE(static_cast<int>(CompletionItemKind::Text) == 1);
+    REQUIRE(static_cast<int>(CompletionItemKind::Method) == 2);
+    REQUIRE(static_cast<int>(CompletionItemKind::Function) == 3);
+    REQUIRE(static_cast<int>(CompletionItemKind::Variable) == 6);
+    REQUIRE(static_cast<int>(CompletionItemKind::Value) == 12);
+    REQUIRE(static_cast<int>(CompletionItemKind::Enum) == 13);
+    REQUIRE(static_cast<int>(CompletionItemKind::Keyword) == 14);
+    REQUIRE(static_cast<int>(CompletionItemKind::Snippet) == 15);
 }
 
 // ===========================================================================
@@ -173,10 +186,15 @@ TEST_CASE("CompletionResult holds items", "[lsp][protocol]")
     CompletionResult result;
     result.isIncomplete = true;
 
-    CompletionCandidate a("fast");
+    CompletionCandidate a;
+    a.label = "fast";
     a.kind = CompletionItemKind::Function;
-    CompletionCandidate b("slow");
+    a.source = "lsp";
+
+    CompletionCandidate b;
+    b.label = "slow";
     b.kind = CompletionItemKind::Function;
+    b.source = "lsp";
 
     result.items.push_back(std::move(a));
     result.items.push_back(std::move(b));
@@ -187,6 +205,13 @@ TEST_CASE("CompletionResult holds items", "[lsp][protocol]")
     REQUIRE(result.items[1].label == "slow");
 }
 
+TEST_CASE("CompletionList default constructs empty", "[lsp][protocol]")
+{
+    CompletionList list;
+    REQUIRE(list.isIncomplete == false);
+    REQUIRE(list.items.empty());
+}
+
 // ===========================================================================
 // Hover
 // ===========================================================================
@@ -195,16 +220,18 @@ TEST_CASE("Hover defaults to empty", "[lsp][protocol]")
 {
     Hover h;
     REQUIRE(h.contents.empty());
-    REQUIRE(h.range.has_value() == false);
+    REQUIRE(!h.range.has_value());
 }
 
-TEST_CASE("Hover with range", "[lsp][protocol]")
+TEST_CASE("Hover with range and contents", "[lsp][protocol]")
 {
     Hover h;
-    h.contents = "fast(multiplier: number) — speed up a pattern";
+    h.contents.push_back({"markdown", "fast(multiplier: number) — speed up a pattern"});
     h.range = Range{{0, 0}, {0, 10}};
 
-    REQUIRE(h.contents == "fast(multiplier: number) — speed up a pattern");
+    REQUIRE(h.contents.size() == 1);
+    REQUIRE(h.contents[0].kind == "markdown");
+    REQUIRE(h.contents[0].value.find("speed up") != std::string::npos);
     REQUIRE(h.range.has_value());
     REQUIRE(h.range->start.line == 0);
     REQUIRE(h.range->end.character == 10);
@@ -227,9 +254,11 @@ TEST_CASE("SignatureHelp with signatures", "[lsp][protocol]")
     SignatureHelp sh;
     sh.activeSignature = 0;
 
-    Signature sig;
+    SignatureInformation sig;
     sig.label = "fast(multiplier: number)";
-    sig.parameters.push_back({"multiplier", {0, 0}, {0, 10}});
+    ParameterInformation param;
+    param.label = "multiplier";
+    sig.parameters.push_back(std::move(param));
 
     sh.signatures.push_back(std::move(sig));
 
@@ -237,4 +266,76 @@ TEST_CASE("SignatureHelp with signatures", "[lsp][protocol]")
     REQUIRE(sh.signatures[0].label == "fast(multiplier: number)");
     REQUIRE(sh.signatures[0].parameters.size() == 1);
     REQUIRE(sh.signatures[0].parameters[0].label == "multiplier");
+}
+
+// ===========================================================================
+// MarkupContent
+// ===========================================================================
+
+TEST_CASE("MarkupContent default constructs empty", "[lsp][protocol]")
+{
+    MarkupContent mc;
+    REQUIRE(mc.kind.empty());
+    REQUIRE(mc.value.empty());
+}
+
+TEST_CASE("MarkupContent with values", "[lsp][protocol]")
+{
+    MarkupContent mc{"plaintext", "Hello world"};
+    REQUIRE(mc.kind == "plaintext");
+    REQUIRE(mc.value == "Hello world");
+}
+
+// ===========================================================================
+// TextDocumentItem
+// ===========================================================================
+
+TEST_CASE("TextDocumentItem default constructs empty", "[lsp][protocol]")
+{
+    TextDocumentItem td;
+    REQUIRE(td.uri.empty());
+    REQUIRE(td.languageId.empty());
+    REQUIRE(td.version == 0);
+    REQUIRE(td.text.empty());
+}
+
+TEST_CASE("TextDocumentItem with values", "[lsp][protocol]")
+{
+    TextDocumentItem td;
+    td.uri = "file:///test.hathor";
+    td.languageId = "hathor";
+    td.version = 1;
+    td.text = "bd sn";
+
+    REQUIRE(td.uri == "file:///test.hathor");
+    REQUIRE(td.languageId == "hathor");
+    REQUIRE(td.version == 1);
+    REQUIRE(td.text == "bd sn");
+}
+
+// ===========================================================================
+// CompletionContext
+// ===========================================================================
+
+TEST_CASE("CompletionContext default constructs", "[lsp][protocol]")
+{
+    CompletionContext ctx;
+    REQUIRE(ctx.kind == CompletionContextKind::Code);
+    REQUIRE(ctx.prefix.empty());
+    REQUIRE(ctx.fullText.empty());
+}
+
+TEST_CASE("CompletionContext with values", "[lsp][protocol]")
+{
+    CompletionContext ctx;
+    ctx.kind = CompletionContextKind::FunctionArgs;
+    ctx.prefix = "fast";
+    ctx.fullText = "fast(2)";
+    ctx.position = {0, 4};
+    ctx.uri = "file:///test.hathor";
+
+    REQUIRE(ctx.kind == CompletionContextKind::FunctionArgs);
+    REQUIRE(ctx.prefix == "fast");
+    REQUIRE(ctx.position.line == 0);
+    REQUIRE(ctx.position.character == 4);
 }

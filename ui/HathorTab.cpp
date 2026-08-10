@@ -64,8 +64,8 @@ HathorTab::HathorTab(int slotIndex, const juce::File& file)
      if (!useChuckTokeniser_)
      {
          lspCompletionPopup_ = std::make_unique<LspCompletionPopup>(
-             [this](const lsp::CompletionCandidate& c) { onCompletionSelected(c); },
-             [this]() { /* popup dismissed */ });
+              [this](const lsp::CompletionCandidate& c) { onCompletionSelected(c); },
+              []() { /* popup dismissed */ });
 
          lspHoverHandler_ = std::make_unique<LspHoverHandler>(
              [this]() { hoverPending_ = false; });
@@ -619,7 +619,7 @@ void HathorTab::onCompletionSelected(const lsp::CompletionCandidate& candidate)
             break;
     }
 
-    while (wordEnd < static_cast<int>(docText.size()))
+    while (wordEnd < static_cast<int>(docText.length()))
     {
         char c = docText[wordEnd];
         if (std::isalnum(static_cast<unsigned char>(c)) || c == '_')
