@@ -397,15 +397,17 @@ void HathorTab::lookAndFeelChanged()
 // ---------------------------------------------------------------------------
 
 void HathorTab::codeDocumentTextInserted(const juce::String& /*newText*/,
-                                         int /*insertIndex*/)
+                                          int /*insertIndex*/)
 {
     markUnsaved();
+    notifyLspDidChange();
 }
 
 void HathorTab::codeDocumentTextDeleted(int /*startIndex*/,
-                                        int /*endIndex*/)
+                                         int /*endIndex*/)
 {
     markUnsaved();
+    notifyLspDidChange();
 }
 
 // ---------------------------------------------------------------------------

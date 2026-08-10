@@ -46,3 +46,8 @@ Thumbs.db
 *.log
 build*/
 build*/
+
+# Node.js dependencies (strudel-lsp server)
+reference/strudel-lsp/node_modules/
+reference/strudel-lsp/package-lock.json
+

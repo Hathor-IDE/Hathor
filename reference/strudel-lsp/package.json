@@ -1,0 +1,26 @@
+{
+  "name": "strudel-lsp-server",
+  "version": "1.2.6",
+  "description": "Strudel mini-notation Language Server Protocol (LSP) server for Hathor. Provides completion, hover, and diagnostics for .hathor files using the real @strudel/mini parser.",
+  "main": "strudel-lsp-server.js",
+  "type": "module",
+  "bin": {
+    "strudel-lsp-server": "strudel-lsp-server.js"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "@strudel/mini": "1.2.6",
+    "@strudel/core": "1.2.6"
+  },
+  "keywords": [
+    "strudel",
+    "tidal",
+    "lsp",
+    "language-server",
+    "livescoding",
+    "music"
+  ],
+  "license": "AGPL-3.0-or-later"
+}
