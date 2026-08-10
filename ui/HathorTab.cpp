@@ -13,6 +13,7 @@
 #include "GhostLlmClient.hpp"
 #include "GhostJsonRpc.hpp"
 
+#include <chrono>
 #include <cctype>
 #include <unordered_map>
 
@@ -680,23 +681,35 @@ void HathorTab::onCompletionSelected(const lsp::CompletionCandidate& candidate)
 
 bool HathorTab::handleLspKeyPress(const juce::KeyPress& key)
 {
-    // Ghost text: Tab to accept, Escape to dismiss
+    // AI-4: Ghost text — Ctrl+Space forces a ghost completion request
+    // (overrides the normal debounce / idle trigger)
     if (!useChuckTokeniser_ && ghostLogic_ && ghostLogic_->isEnabled())
     {
-        if (key == juce::KeyPress::tabKey)
+        if (key == juce::KeyPress(' ', juce::ModifierKeys::ctrlModifier, 0))
         {
-            acceptGhostCompletion();
-            return true;
-        }
-
-        if (key == juce::KeyPress::escapeKey && ghostOverlay_ && ghostOverlay_->hasGhost())
-        {
-            dismissGhostCompletion();
+            // Force trigger — clear debounce and request immediately
+            ghostLogic_->cancelPendingRequest();
+            triggerGhostCompletion();
             return true;
         }
     }
 
-    // Ctrl+Space: trigger manual completion
+    // Tab to accept ghost — if ghost is visible, the caller will handle
+    // it. The CodeEditorComponent consumes Tab for indentation, so we
+    // can't intercept it here. Instead, acceptance happens via:
+    //   - EditorArea::acceptGhostOnActiveTab() (called by a keybinding)
+    //   - Typing text that matches the ghost prefix (auto-accepts)
+    if (!useChuckTokeniser_ && ghostLogic_ && ghostLogic_->isEnabled()
+        && ghostOverlay_ && ghostOverlay_->hasGhost())
+    {
+        if (key.getModifiers().isCtrlDown() && key.getKeyCode() == '.')
+        {
+            acceptGhostCompletion();
+            return true;
+        }
+    }
+
+    // Ctrl+Space: trigger manual LSP completion
     if (key == juce::KeyPress(' ', juce::ModifierKeys::ctrlModifier, 0))
     {
         requestLspCompletion();
@@ -819,7 +832,7 @@ void HathorTab::installGhostClient(GhostLlmClient* client) noexcept
 
 void HathorTab::triggerGhostCompletion()
 {
-    if (!ghostLogic_ || !ghostLogic_->isEnabled() || !ghostClient_ || !ghostOverlay_)
+    if (!ghostLogic_ || !ghostLogic_->isEnabled())
         return;
 
     // Build the current editor context
@@ -836,66 +849,13 @@ void HathorTab::triggerGhostCompletion()
     ctx.line = cursorLine;
     ctx.character = cursorCol;
 
-    // Feed context to the logic layer — it handles debounce
-    auto opt = ghostLogic_->onEditorChanged(ctx);
-    if (!opt.has_value())
-    {
-        // Still debouncing or no request to send
-        return;
-    }
+    // Feed context to the logic layer — it handles debounce and returns
+    // nullopt (the request is only sent when debounce expires via ghostTick).
+    ghostLogic_->onEditorChanged(ctx);
 
-    // The logic returned a request + ID
-    auto [req, requestId] = std::move(opt.value());
-
-    // Resolve provider config from env
-    auto config = lsp::GhostProviderResolver::resolve();
-    if (!config.has_value())
-    {
-        // Provider not configured — silently skip
-        return;
-    }
-
-    // Rebuild the request with the resolved provider config
-    req = lsp::GhostCompletionLogic::buildRequest(ctx, *config);
-
-    // Send the request via the llm-ls client
-    ghostClient_->requestGhostCompletion(
-        req,
-        requestId,
-        [this, requestId](const std::string& id,
-                          const lsp::GhostCompletionResponse& resp)
-        {
-            if (!ghostLogic_)
-                return;
-
-            auto result = ghostLogic_->onGhostResponse(id, resp);
-            if (!result.has_value() || result->isEmpty())
-            {
-                // No result — clear any existing ghost
-                if (ghostOverlay_)
-                    ghostOverlay_->clearGhost();
-                return;
-            }
-
-            // Display the ghost text
-            auto ghostResult = result.value();
-            if (!ghostOverlay_)
-                return;
-
-            // Compute the pixel position of the cursor
-            juce::Rectangle<int> caretRect = editor_.getCaretRectangleForCharIndex(
-                editor_.getCaretPosition());
-
-            ghostOverlay_->setGhostText(
-                ghostResult.text,
-                ghostResult.cursorLine,
-                ghostResult.character,
-                0);
-
-            // Position the overlay at the cursor
-            ghostOverlay_->setTopLeftPosition(caretRect.getRight(), caretRect.getY());
-            ghostOverlay_->toFront(false);
-        });
+    // Clear any existing ghost — a new request cycle has started
+    if (ghostOverlay_)
+        ghostOverlay_->clearGhost();
 }
 
 void HathorTab::acceptGhostCompletion()
@@ -916,10 +876,6 @@ void HathorTab::acceptGhostCompletion()
     // Insert the text at the cursor position
     int caretAbs = editor_.getCaretPosition();
     document_.insertText(caretAbs, juce::String(text));
-
-    // Clear the ghost
-    if (ghostOverlay_)
-        ghostOverlay_->clearGhost();
 }
 
 void HathorTab::dismissGhostCompletion()
@@ -938,33 +894,66 @@ void HathorTab::dismissGhostCompletion()
 
 void HathorTab::ghostTick()
 {
-    if (!ghostLogic_ || !ghostLogic_->isEnabled() || !ghostOverlay_)
+    if (!ghostLogic_ || !ghostLogic_->isEnabled() || !ghostClient_ || !ghostOverlay_)
         return;
 
-    // Let the logic check for timeouts
-    // The logic layer doesn't have a tick method per se, but we can
-    // check if the pending request has timed out by calling onTimerTick
-    // with the current time.
+    // Let the logic layer check debounce + timeout
     int64_t nowMs = static_cast<int64_t>(
         std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::steady_clock::now().time_since_epoch())
         .count());
 
     auto opt = ghostLogic_->onTimerTick(nowMs);
-    if (opt.has_value())
+    if (!opt.has_value())
+        return;
+
+    // The logic returned a request + ID — send it via the client
+    auto [req, requestId] = std::move(opt.value());
+
+    // Resolve provider config from env
+    auto config = lsp::GhostProviderResolver::resolve();
+    if (!config.has_value())
     {
-        // The debounce expired and a new request should be sent
-        triggerGhostCompletion();
+        ghostOverlay_->clearGhost();
+        return;
     }
 
-    // If ghost overlay lost focus or cursor moved, clear it
-    if (ghostOverlay_ && ghostOverlay_->hasGhost())
-    {
-        // Check if cursor is still at the position where ghost was shown
-        auto caretPos = editor_.getCaretPos();
-        // If cursor moved away from the ghost position, clear it
-        // (the ghost text was set with a specific cursor position)
-    }
+    // Rebuild the request with the resolved provider config
+    const auto& ctx = ghostLogic_->currentContext();
+    req = lsp::GhostCompletionLogic::buildRequest(ctx, *config);
+
+    // Send the request via the llm-ls client
+    ghostClient_->requestGhostCompletion(
+        req,
+        requestId,
+        [this, requestId](const std::string& id,
+                          const lsp::GhostCompletionResponse& resp)
+        {
+            if (!ghostLogic_ || !ghostOverlay_)
+                return;
+
+            auto result = ghostLogic_->onGhostResponse(id, resp);
+            if (!result.has_value() || result->isEmpty())
+            {
+                ghostOverlay_->clearGhost();
+                return;
+            }
+
+            // Display the ghost text at the cursor position from the result
+            auto ghostResult = result.value();
+
+            juce::Rectangle<int> caretRect = editor_.getCaretRectangleForCharIndex(
+                editor_.getCaretPosition());
+
+            ghostOverlay_->setGhostText(
+                ghostResult.text,
+                ghostResult.cursorLine,
+                ghostResult.character,
+                0);
+
+            ghostOverlay_->setTopLeftPosition(caretRect.getRight(), caretRect.getY());
+            ghostOverlay_->toFront(false);
+        });
 }
 
 // ---------------------------------------------------------------------------

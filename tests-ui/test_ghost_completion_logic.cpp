@@ -1,0 +1,1046 @@
+// Copyright (C) 2024 Hathor Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+/**
+ * test_ghost_completion_logic.cpp — unit tests for JUCE-free ghost-text logic.
+ *
+ * Tests cover:
+ *   - FIM context builder (prefix reversed, suffix forward)
+ *   - GhostCompletionLogic debounce, revision tracking, stale rejection,
+ *     timeout, accept/reject, request building
+ *   - GhostJsonRpc UUID generation and response parsing
+ *   - GhostProviderResolver backend parsing
+ *
+ * JUCE-free tests compiled into the hathor-ui-tests target (req 31.1).
+ */
+
+#include <catch2/catch_test_macros.hpp>
+
+#include "GhostCompletionLogic.hpp"
+#include "GhostJsonRpc.hpp"
+#include "GhostProtocol.hpp"
+#include "GhostProviderConfig.hpp"
+#include "LspMessageFramer.hpp"
+
+#include <nlohmann/json.hpp>
+
+#include <chrono>
+#include <cstdlib>
+#include <string>
+
+using namespace hathor::lsp;
+
+// ===========================================================================
+// FIM context builder
+// ===========================================================================
+
+TEST_CASE("buildFimContext builds prefix (reversed, line-by-line) and suffix (forward)", "[ghost][fim]")
+{
+    std::string doc = "line1\nline2\nline3";
+    auto fim = buildFimContext(doc, 2, 0);
+
+    // Prefix should contain reversed lines 0,1 and reversed current line prefix (empty)
+    // Line 0 "line1" reversed = "1enil", followed by '\n'
+    // Line 1 "line2" reversed = "2enil", followed by '\n'
+    // Current line "line3" prefix (0 chars before cursor) reversed = ""
+    REQUIRE(fim.prefix.find("1enil") != std::string::npos);
+    REQUIRE(fim.prefix.find("2enil") != std::string::npos);
+    REQUIRE(fim.suffix.find("line3") != std::string::npos);
+    REQUIRE(fim.middle.empty());
+}
+
+TEST_CASE("buildFimContext prefix includes partial current line reversed", "[ghost][fim]")
+{
+    std::string doc = "hello world";
+    auto fim = buildFimContext(doc, 0, 6);
+
+    // Prefix = "hello " reversed = " olleh"
+    REQUIRE(fim.prefix == " olleh");
+    // Suffix = "world"
+    REQUIRE(fim.suffix == "world");
+}
+
+TEST_CASE("buildFimContext clamps line out of range", "[ghost][fim]")
+{
+    std::string doc = "one line";
+    auto fim = buildFimContext(doc, 100, 0);
+
+    // Should clamp to line 0
+    REQUIRE(fim.prefix.empty());
+    REQUIRE(fim.suffix == "one line");
+}
+
+TEST_CASE("buildFimContext empty document", "[ghost][fim]")
+{
+    std::string doc = "";
+    auto fim = buildFimContext(doc, 0, 0);
+
+    REQUIRE(fim.prefix.empty());
+    REQUIRE(fim.suffix.empty());
+    REQUIRE(fim.middle.empty());
+}
+
+TEST_CASE("buildFimContext multi-line suffix includes subsequent lines", "[ghost][fim]")
+{
+    std::string doc = "first\nsecond\nthird";
+    auto fim = buildFimContext(doc, 1, 3);
+
+    // Prefix: line 0 "first" reversed = "tsrif\n"
+    REQUIRE(fim.prefix.find("tsrif") != std::string::npos);
+    // Suffix: "ond\nthird" (rest of line 1 after char 3 + line 2)
+    REQUIRE(fim.suffix.find("ond") != std::string::npos);
+    REQUIRE(fim.suffix.find("third") != std::string::npos);
+}
+
+// ===========================================================================
+// GhostCompletionLogic — debounce and state
+// ===========================================================================
+
+TEST_CASE("GhostCompletionLogic starts disabled", "[ghost][logic]")
+{
+    GhostCompletionLogic logic;
+
+    GhostContext ctx;
+    ctx.documentText = "bd sn";
+    ctx.languageId = "hathor";
+    ctx.uri = "file:///test.hathor";
+
+    auto result = logic.onEditorChanged(ctx);
+    REQUIRE_FALSE(result.has_value());
+}
+
+TEST_CASE("GhostCompletionLogic returns nullopt on editor change (debounce mode)", "[ghost][logic]")
+{
+    GhostCompletionLogic logic;
+    logic.setEnabled(true);
+    logic.setDebounceMs(300);
+
+    GhostContext ctx;
+    ctx.documentText = "bd";
+    ctx.languageId = "hathor";
+    ctx.uri = "file:///test.hathor";
+
+    auto result = logic.onEditorChanged(ctx);
+    REQUIRE_FALSE(result.has_value());
+
+    REQUIRE(logic.hasPendingRequest() == false);
+    REQUIRE(logic.currentRevision() == 1);
+}
+
+TEST_CASE("GhostCompletionLogic sends request after debounce expires", "[ghost][logic]")
+{
+    GhostCompletionLogic logic;
+    logic.setEnabled(true);
+    logic.setDebounceMs(300);
+
+    GhostContext ctx;
+    ctx.documentText = "bd";
+    ctx.languageId = "hathor";
+    ctx.uri = "file:///test.hathor";
+
+    logic.onEditorChanged(ctx);
+
+    // Not enough time has elapsed
+    int64_t t1 = 100;
+    auto r1 = logic.onTimerTick(t1);
+    REQUIRE_FALSE(r1.has_value());
+
+    // Debounce elapsed — should return a request
+    int64_t t2 = 500;
+    auto r2 = logic.onTimerTick(t2);
+    REQUIRE(r2.has_value());
+
+    auto [req, requestId] = r2.value();
+    REQUIRE(!requestId.empty());
+    REQUIRE(req.uri == "file:///test.hathor");
+    REQUIRE(req.languageId == "hathor");
+    REQUIRE(req.textDocument == "bd");
+    REQUIRE(req.fim.enabled == true);
+    REQUIRE(req.line == 0);
+    REQUIRE(req.character == 0);
+}
+
+TEST_CASE("GhostCompletionLogic rejects stale response (revision mismatch)", "[ghost][logic]")
+{
+    GhostCompletionLogic logic;
+    logic.setEnabled(true);
+    logic.setDebounceMs(100);
+    logic.setTimeoutMs(5000);
+
+    GhostContext ctx;
+    ctx.documentText = "bd";
+    ctx.uri = "file:///test.hathor";
+
+    // First request cycle
+    logic.onEditorChanged(ctx);
+    auto r1 = logic.onTimerTick(200);
+    REQUIRE(r1.has_value());
+    std::string requestId1 = r1.value().second;
+    REQUIRE(logic.hasPendingRequest());
+
+    // Editor changed during flight — revision increments, makes response stale
+    ctx.documentText = "bd sn";
+    logic.onEditorChanged(ctx);
+    REQUIRE(logic.hasPendingRequest()); // still pending
+
+    // Response for the old request arrives
+    GhostCompletionResponse staleResp;
+    staleResp.request_id = requestId1;
+    staleResp.completions = {{.generatedText = "bd sn hh cp"}};
+    auto result = logic.onGhostResponse(requestId1, staleResp);
+    REQUIRE_FALSE(result.has_value());
+    REQUIRE(logic.hasPendingRequest() == false);
+}
+
+TEST_CASE("GhostCompletionLogic accepts valid response", "[ghost][logic]")
+{
+    GhostCompletionLogic logic;
+    logic.setEnabled(true);
+    logic.setDebounceMs(100);
+    logic.setTimeoutMs(5000);
+
+    GhostContext ctx;
+    ctx.documentText = "bd";
+    ctx.uri = "file:///test.hathor";
+
+    logic.onEditorChanged(ctx);
+    auto r1 = logic.onTimerTick(200);
+    REQUIRE(r1.has_value());
+    std::string requestId = r1.value().second;
+
+    // Build a valid response immediately (no timeout)
+    GhostCompletionResponse resp;
+    resp.request_id = requestId;
+    resp.completions = {{.generatedText = "bd sn hh cp"}};
+
+    auto result = logic.onGhostResponse(requestId, resp);
+    REQUIRE(result.has_value());
+    REQUIRE(result->text == "bd sn hh cp");
+    REQUIRE(result->cursorLine == 0);
+    REQUIRE(result->character == 0);
+    REQUIRE(logic.hasActiveGhost());
+}
+
+TEST_CASE("GhostCompletionLogic rejects mismatched request ID", "[ghost][logic]")
+{
+    GhostCompletionLogic logic;
+    logic.setEnabled(true);
+    logic.setDebounceMs(100);
+    logic.setTimeoutMs(5000);
+
+    GhostContext ctx;
+    ctx.uri = "file:///test.hathor";
+    logic.onEditorChanged(ctx);
+    auto r1 = logic.onTimerTick(200);
+    REQUIRE(r1.has_value());
+    std::string correctId = r1.value().second;
+
+    // Response with wrong request ID
+    GhostCompletionResponse resp;
+    resp.request_id = "wrong-id";
+    resp.completions = {{.generatedText = "text"}};
+
+    auto result = logic.onGhostResponse(correctId, resp);
+    REQUIRE_FALSE(result.has_value());
+    REQUIRE(logic.hasPendingRequest());
+}
+
+TEST_CASE("GhostCompletionLogic timeout clears pending request", "[ghost][logic]")
+{
+    GhostCompletionLogic logic;
+    logic.setEnabled(true);
+    logic.setDebounceMs(0);
+    logic.setTimeoutMs(100);
+
+    GhostContext ctx;
+    ctx.uri = "file:///test.hathor";
+    logic.onEditorChanged(ctx);
+
+    // Request fires immediately (debounce=0)
+    auto r1 = logic.onTimerTick(0);
+    REQUIRE(r1.has_value());
+    REQUIRE(logic.hasPendingRequest());
+
+    // Wait for timeout
+    auto r2 = logic.onTimerTick(200);
+    REQUIRE_FALSE(r2.has_value());
+    REQUIRE_FALSE(logic.hasPendingRequest());
+}
+
+TEST_CASE("GhostCompletionLogic onAccept returns params and clears ghost", "[ghost][logic]")
+{
+    GhostCompletionLogic logic;
+    logic.setEnabled(true);
+    logic.setDebounceMs(0);
+
+    GhostContext ctx;
+    ctx.uri = "file:///test.hathor";
+    ctx.line = 0;
+    ctx.character = 2;
+    logic.onEditorChanged(ctx);
+
+    auto r = logic.onTimerTick(0);
+    REQUIRE(r.has_value());
+    std::string requestId = r.value().second;
+
+    GhostCompletionResponse resp;
+    resp.request_id = requestId;
+    resp.completions = {{.generatedText = " completion"}};
+
+    auto ghostResult = logic.onGhostResponse(requestId, resp);
+    REQUIRE(ghostResult.has_value());
+    REQUIRE(logic.hasActiveGhost());
+
+    auto acceptParams = logic.onAccept();
+    REQUIRE(acceptParams.has_value());
+    REQUIRE(acceptParams->requestId == requestId);
+    REQUIRE(acceptParams->uri == "file:///test.hathor");
+    REQUIRE(acceptParams->line == 0);
+    REQUIRE(acceptParams->character == 2);
+
+    REQUIRE_FALSE(logic.hasActiveGhost());
+}
+
+TEST_CASE("GhostCompletionLogic onReject returns params and clears ghost", "[ghost][logic]")
+{
+    GhostCompletionLogic logic;
+    logic.setEnabled(true);
+    logic.setDebounceMs(0);
+
+    GhostContext ctx;
+    ctx.uri = "file:///test.hathor";
+    ctx.line = 0;
+    ctx.character = 2;
+    logic.onEditorChanged(ctx);
+
+    auto r = logic.onTimerTick(0);
+    REQUIRE(r.has_value());
+    std::string requestId = r.value().second;
+
+    GhostCompletionResponse resp;
+    resp.request_id = requestId;
+    resp.completions = {{.generatedText = " foo"}};
+
+    auto ghostResult = logic.onGhostResponse(requestId, resp);
+    REQUIRE(ghostResult.has_value());
+    REQUIRE(logic.hasActiveGhost());
+
+    auto rejectParams = logic.onReject();
+    REQUIRE(rejectParams.has_value());
+    REQUIRE(rejectParams->requestId == requestId);
+    REQUIRE(rejectParams->uri == "file:///test.hathor");
+
+    REQUIRE_FALSE(logic.hasActiveGhost());
+}
+
+TEST_CASE("GhostCompletionLogic cancelPendingRequest clears state", "[ghost][logic]")
+{
+    GhostCompletionLogic logic;
+    logic.setEnabled(true);
+    logic.setDebounceMs(0);
+
+    GhostContext ctx;
+    ctx.uri = "file:///test.hathor";
+    logic.onEditorChanged(ctx);
+
+    auto r = logic.onTimerTick(0);
+    REQUIRE(r.has_value());
+    REQUIRE(logic.hasPendingRequest());
+
+    logic.cancelPendingRequest();
+    REQUIRE_FALSE(logic.hasPendingRequest());
+}
+
+TEST_CASE("GhostCompletionLogic onProviderFailure clears ghost", "[ghost][logic]")
+{
+    GhostCompletionLogic logic;
+    logic.setEnabled(true);
+    logic.setDebounceMs(0);
+
+    GhostContext ctx;
+    ctx.uri = "file:///test.hathor";
+    logic.onEditorChanged(ctx);
+
+    auto r = logic.onTimerTick(0);
+    REQUIRE(r.has_value());
+    std::string requestId = r.value().second;
+
+    GhostCompletionResponse resp;
+    resp.request_id = requestId;
+    resp.completions = {{.generatedText = "test"}};
+    logic.onGhostResponse(requestId, resp);
+    REQUIRE(logic.hasActiveGhost());
+
+    auto cleared = logic.onProviderFailure();
+    REQUIRE(cleared.has_value());
+    REQUIRE_FALSE(logic.hasActiveGhost());
+    REQUIRE_FALSE(logic.hasPendingRequest());
+}
+
+// ===========================================================================
+// GhostCompletionLogic — buildRequest
+// ===========================================================================
+
+TEST_CASE("GhostCompletionLogic.buildRequest populates FIM and backend", "[ghost][logic]")
+{
+    GhostContext ctx;
+    ctx.uri = "file:///test.hathor";
+    ctx.languageId = "hathor";
+    ctx.line = 2;
+    ctx.character = 3;
+    ctx.documentText = "first\nsecond\nthird";
+
+    GhostProviderConfig config;
+    config.backend = LlmBackend::HuggingFace;
+    config.url = "https://api-inference.huggingface.co";
+    config.model = "bigcode/starcoder";
+    config.apiToken = "test-token";
+    config.contextWindow = 4096;
+
+    GhostCompletionRequest req = GhostCompletionLogic::buildRequest(ctx, config);
+
+    REQUIRE(req.uri == "file:///test.hathor");
+    REQUIRE(req.languageId == "hathor");
+    REQUIRE(req.line == 2);
+    REQUIRE(req.character == 3);
+    REQUIRE(req.textDocument == "first\nsecond\nthird");
+    REQUIRE(req.fim.enabled == true);
+    REQUIRE(req.backend.backend == LlmBackend::HuggingFace);
+    REQUIRE(req.backend.url == "https://api-inference.huggingface.co");
+    REQUIRE(req.backend.model == "bigcode/starcoder");
+    REQUIRE(req.apiToken == "test-token");
+    REQUIRE(req.contextWindow == 4096);
+    REQUIRE(req.tokenizerConfig == "default");
+}
+
+TEST_CASE("GhostCompletionLogic.currentContext returns last edit context", "[ghost][logic]")
+{
+    GhostCompletionLogic logic;
+    logic.setEnabled(true);
+
+    GhostContext ctx;
+    ctx.uri = "file:///test.hathor";
+    ctx.documentText = "hello";
+    ctx.line = 1;
+    ctx.character = 3;
+
+    logic.onEditorChanged(ctx);
+
+    const auto& stored = logic.currentContext();
+    REQUIRE(stored.uri == "file:///test.hathor");
+    REQUIRE(stored.documentText == "hello");
+    REQUIRE(stored.line == 1);
+    REQUIRE(stored.character == 3);
+}
+
+// ===========================================================================
+// GhostJsonRpc — request ID generation
+// ===========================================================================
+
+TEST_CASE("GhostJsonRpc.generateRequestId produces UUID v4 strings", "[ghost][jsonrpc]")
+{
+    std::string id1 = GhostJsonRpc::generateRequestId();
+    std::string id2 = GhostJsonRpc::generateRequestId();
+
+    REQUIRE_FALSE(id1.empty());
+    REQUIRE_FALSE(id2.empty());
+    REQUIRE(id1 != id2);
+
+    // UUID v4 format: 8-4-4-4-12 hex chars with hyphens
+    REQUIRE(id1.length() == 36);
+    REQUIRE(id1[8] == '-');
+    REQUIRE(id1[13] == '-');
+    REQUIRE(id1[18] == '-');
+    REQUIRE(id1[23] == '-');
+
+    // Version nibble should be 4 (UUID v4)
+    REQUIRE(id1[14] == '4');
+}
+
+TEST_CASE("GhostJsonRpc.parseResponse extracts string ID", "[ghost][jsonrpc]")
+{
+    std::string jsonStr = R"({
+        "jsonrpc": "2.0",
+        "id": "abc-123-def",
+        "result": {"request_id": "abc-123-def", "completions": []}
+    })";
+
+    std::string id;
+    auto result = GhostJsonRpc::parseResponse(jsonStr, id);
+
+    REQUIRE(result.has_value());
+    REQUIRE(id == "abc-123-def");
+    REQUIRE(result->contains("request_id"));
+    REQUIRE(result->contains("completions"));
+}
+
+TEST_CASE("GhostJsonRpc.parseResponse extracts integer ID as string", "[ghost][jsonrpc]")
+{
+    std::string jsonStr = R"({
+        "jsonrpc": "2.0",
+        "id": 42,
+        "result": {"key": "value"}
+    })";
+
+    std::string id;
+    auto result = GhostJsonRpc::parseResponse(jsonStr, id);
+
+    REQUIRE(result.has_value());
+    REQUIRE(id == "42");
+}
+
+TEST_CASE("GhostJsonRpc.parseResponse returns nullopt for invalid JSON", "[ghost][jsonrpc]")
+{
+    std::string id;
+    auto result = GhostJsonRpc::parseResponse("not json", id);
+    REQUIRE_FALSE(result.has_value());
+}
+
+// ===========================================================================
+// GhostJsonRpc — initialize / notification serialization
+// ===========================================================================
+
+TEST_CASE("GhostJsonRpc.serializeInitialize produces framed LSP message", "[ghost][jsonrpc]")
+{
+    GhostJsonRpc rpc;
+    std::string msg = rpc.serializeInitialize();
+
+    REQUIRE(msg.find("Content-Length:") != std::string::npos);
+    REQUIRE(msg.find("initialize") != std::string::npos);
+    REQUIRE(msg.find("jsonrpc") != std::string::npos);
+}
+
+TEST_CASE("GhostJsonRpc.serializeInitialized produces notification", "[ghost][jsonrpc]")
+{
+    GhostJsonRpc rpc;
+    std::string msg = rpc.serializeInitialized();
+
+    auto headerEnd = msg.find("\r\n\r\n");
+    REQUIRE(headerEnd != std::string::npos);
+    auto body = msg.substr(headerEnd + 4);
+    auto j = nlohmann::json::parse(body);
+
+    REQUIRE(j["jsonrpc"] == "2.0");
+    REQUIRE(j["method"] == "initialized");
+    REQUIRE_FALSE(j.contains("id"));
+}
+
+TEST_CASE("GhostJsonRpc.serializeGhostCompletion returns request ID and framed message", "[ghost][jsonrpc]")
+{
+    GhostCompletionRequest req;
+    req.uri = "file:///test.hathor";
+    req.languageId = "hathor";
+    req.line = 0;
+    req.character = 5;
+    req.textDocument = "bd sn";
+    req.fim.enabled = true;
+    req.fim.prefix = "bd ";
+    req.fim.suffix = "";
+    req.fim.middle = "";
+    req.backend.model = "starcoder";
+    req.apiToken = "token123";
+
+    GhostJsonRpc rpc;
+    auto [requestId, framed] = rpc.serializeGhostCompletion(req);
+
+    REQUIRE_FALSE(requestId.empty());
+    REQUIRE(framed.find("Content-Length:") != std::string::npos);
+
+    auto headerEnd = framed.find("\r\n\r\n");
+    auto body = framed.substr(headerEnd + 4);
+    auto j = nlohmann::json::parse(body);
+
+    REQUIRE(j["jsonrpc"] == "2.0");
+    REQUIRE(j["id"] == requestId);
+    REQUIRE(j["method"] == "llm-ls/getCompletions");
+    REQUIRE(j["params"]["textDocument"]["uri"] == "file:///test.hathor");
+    REQUIRE(j["params"]["position"]["line"] == 0);
+    REQUIRE(j["params"]["fim"]["enabled"] == true);
+    REQUIRE(j["params"]["model"] == "starcoder");
+    REQUIRE(j["params"]["api_token"] == "token123");
+}
+
+TEST_CASE("GhostJsonRpc.serializeAcceptCompletion produces notification", "[ghost][jsonrpc]")
+{
+    AcceptCompletionParams params;
+    params.requestId = "req-123";
+    params.uri = "file:///test.hathor";
+    params.line = 1;
+    params.character = 5;
+
+    GhostJsonRpc rpc;
+    std::string framed = rpc.serializeAcceptCompletion(params);
+
+    auto headerEnd = framed.find("\r\n\r\n");
+    auto body = framed.substr(headerEnd + 4);
+    auto j = nlohmann::json::parse(body);
+
+    REQUIRE(j["jsonrpc"] == "2.0");
+    REQUIRE(j["method"] == "llm-ls/acceptCompletion");
+    REQUIRE(j["params"]["request_id"] == "req-123");
+    REQUIRE(j["params"]["uri"] == "file:///test.hathor");
+    REQUIRE(j["params"]["line"] == 1);
+    REQUIRE(j["params"]["character"] == 5);
+}
+
+TEST_CASE("GhostJsonRpc.serializeRejectCompletion produces notification", "[ghost][jsonrpc]")
+{
+    RejectCompletionParams params;
+    params.requestId = "req-456";
+    params.uri = "file:///test.hathor";
+
+    GhostJsonRpc rpc;
+    std::string framed = rpc.serializeRejectCompletion(params);
+
+    auto headerEnd = framed.find("\r\n\r\n");
+    auto body = framed.substr(headerEnd + 4);
+    auto j = nlohmann::json::parse(body);
+
+    REQUIRE(j["jsonrpc"] == "2.0");
+    REQUIRE(j["method"] == "llm-ls/rejectCompletion");
+    REQUIRE(j["params"]["request_id"] == "req-456");
+    REQUIRE(j["params"]["uri"] == "file:///test.hathor");
+}
+
+TEST_CASE("GhostJsonRpc.serializeDidOpen / DidChange / DidClose", "[ghost][jsonrpc]")
+{
+    GhostJsonRpc rpc;
+
+    auto [ver, framedOpen] = rpc.serializeDidOpen("file:///test.hathor", "hathor", 1, "bd sn");
+    REQUIRE(ver == 1);
+
+    auto headerEnd = framedOpen.find("\r\n\r\n");
+    auto body = framedOpen.substr(headerEnd + 4);
+    auto j = nlohmann::json::parse(body);
+    REQUIRE(j["method"] == "textDocument/didOpen");
+    REQUIRE(j["params"]["textDocument"]["uri"] == "file:///test.hathor");
+    REQUIRE(j["params"]["textDocument"]["languageId"] == "hathor");
+    REQUIRE(j["params"]["textDocument"]["version"] == 1);
+    REQUIRE(j["params"]["textDocument"]["text"] == "bd sn");
+
+    auto [ver2, framedChange] = rpc.serializeDidChange("file:///test.hathor", 2, "bd sn hh");
+    REQUIRE(ver2 == 2);
+
+    headerEnd = framedChange.find("\r\n\r\n");
+    body = framedChange.substr(headerEnd + 4);
+    j = nlohmann::json::parse(body);
+    REQUIRE(j["method"] == "textDocument/didChange");
+    REQUIRE(j["params"]["textDocument"]["version"] == 2);
+    REQUIRE(j["params"]["contentChanges"][0]["text"] == "bd sn hh");
+
+    std::string framedClose = rpc.serializeDidClose("file:///test.hathor");
+    headerEnd = framedClose.find("\r\n\r\n");
+    body = framedClose.substr(headerEnd + 4);
+    j = nlohmann::json::parse(body);
+    REQUIRE(j["method"] == "textDocument/didClose");
+    REQUIRE(j["params"]["textDocument"]["uri"] == "file:///test.hathor");
+}
+
+// ===========================================================================
+// parseGhostCompletionResponse
+// ===========================================================================
+
+TEST_CASE("parseGhostCompletionResponse parses standard response", "[ghost][jsonrpc]")
+{
+    nlohmann::json j = {
+        {"request_id", "abc-123"},
+        {"completions", {
+            {{"generated_text", "bd sn hh cp"}}
+        }}
+    };
+
+    auto resp = parseGhostCompletionResponse(j);
+    REQUIRE(resp.has_value());
+    REQUIRE(resp->request_id == "abc-123");
+    REQUIRE(resp->completions.size() == 1);
+    REQUIRE(resp->completions[0].generatedText == "bd sn hh cp");
+}
+
+TEST_CASE("parseGhostCompletionResponse parses wrapped-in-result response", "[ghost][jsonrpc]")
+{
+    nlohmann::json j = {
+        {"jsonrpc", "2.0"},
+        {"id", "abc-123"},
+        {"result", {
+            {"request_id", "abc-123"},
+            {"completions", {
+                {{"generated_text", "result"}}
+            }}
+        }}
+    };
+
+    auto resp = parseGhostCompletionResponse(j);
+    REQUIRE(resp.has_value());
+    REQUIRE(resp->request_id == "abc-123");
+    REQUIRE(resp->completions.size() == 1);
+    REQUIRE(resp->completions[0].generatedText == "result");
+}
+
+TEST_CASE("parseGhostCompletionResponse returns nullopt for null", "[ghost][jsonrpc]")
+{
+    nlohmann::json j = nullptr;
+    auto resp = parseGhostCompletionResponse(j);
+    REQUIRE_FALSE(resp.has_value());
+}
+
+TEST_CASE("parseGhostCompletionResponse handles multiple completions", "[ghost][jsonrpc]")
+{
+    nlohmann::json j = {
+        {"request_id", "multi-1"},
+        {"completions", {
+            {{"generated_text", "first"}},
+            {{"generated_text", "second"}}
+        }}
+    };
+
+    auto resp = parseGhostCompletionResponse(j);
+    REQUIRE(resp.has_value());
+    REQUIRE(resp->completions.size() == 2);
+    REQUIRE(resp->completions[0].generatedText == "first");
+    REQUIRE(resp->completions[1].generatedText == "second");
+}
+
+// ===========================================================================
+// GhostProviderResolver — backend parsing (static method via env)
+// ===========================================================================
+
+// Note: GhostProviderResolver::parseBackend and parseBool are private.
+// We test the public API (resolve / isEnabled) by setting/unsetting env vars.
+// These tests must run in the main thread since they modify process env.
+
+TEST_CASE("GhostProviderResolver.isEnabled respects GHOST_ENABLED", "[ghost][provider]")
+{
+    // Save and clear
+    const char* saved = std::getenv("GHOST_ENABLED");
+    std::string savedVal = saved ? saved : "";
+
+    // Unset
+    unsetenv("GHOST_ENABLED");
+    REQUIRE_FALSE(GhostProviderResolver::isEnabled());
+
+    // Set to "1"
+    setenv("GHOST_ENABLED", "1", 1);
+    REQUIRE(GhostProviderResolver::isEnabled());
+
+    // Set to "true"
+    setenv("GHOST_ENABLED", "true", 1);
+    REQUIRE(GhostProviderResolver::isEnabled());
+
+    // Set to "0"
+    setenv("GHOST_ENABLED", "0", 1);
+    REQUIRE_FALSE(GhostProviderResolver::isEnabled());
+
+    // Set to "false"
+    setenv("GHOST_ENABLED", "false", 1);
+    REQUIRE_FALSE(GhostProviderResolver::isEnabled());
+
+    // Restore
+    if (savedVal.empty())
+        unsetenv("GHOST_ENABLED");
+    else
+        setenv("GHOST_ENABLED", savedVal.c_str(), 1);
+}
+
+TEST_CASE("GhostProviderResolver.resolve returns nullopt when disabled", "[ghost][provider]")
+{
+    const char* savedEnabled = std::getenv("GHOST_ENABLED");
+    std::string savedEnabledVal = savedEnabled ? savedEnabled : "";
+
+    const char* savedBackend = std::getenv("GHOST_BACKEND");
+    std::string savedBackendVal = savedBackend ? savedBackend : "";
+
+    const char* savedModel = std::getenv("GHOST_MODEL");
+    std::string savedModelVal = savedModel ? savedModel : "";
+
+    // Disable
+    setenv("GHOST_ENABLED", "0", 1);
+    unsetenv("GHOST_BACKEND");
+    unsetenv("GHOST_MODEL");
+    auto result = GhostProviderResolver::resolve();
+    REQUIRE_FALSE(result.has_value());
+
+    // Restore
+    if (savedEnabledVal.empty())
+        unsetenv("GHOST_ENABLED");
+    else
+        setenv("GHOST_ENABLED", savedEnabledVal.c_str(), 1);
+    if (savedBackendVal.empty())
+        unsetenv("GHOST_BACKEND");
+    else
+        setenv("GHOST_BACKEND", savedBackendVal.c_str(), 1);
+    if (savedModelVal.empty())
+        unsetenv("GHOST_MODEL");
+    else
+        setenv("GHOST_MODEL", savedModelVal.c_str(), 1);
+}
+
+TEST_CASE("GhostProviderResolver.resolve returns nullopt when no model", "[ghost][provider]")
+{
+    const char* savedBackend = std::getenv("GHOST_BACKEND");
+    const char* savedModel = std::getenv("GHOST_MODEL");
+    const char* savedEnabled = std::getenv("GHOST_ENABLED");
+    std::string savedBackendVal = savedBackend ? savedBackend : "";
+    std::string savedModelVal = savedModel ? savedModel : "";
+    std::string savedEnabledVal = savedEnabled ? savedEnabled : "";
+
+    setenv("GHOST_ENABLED", "1", 1);
+    setenv("GHOST_BACKEND", "huggingface", 1);
+    unsetenv("GHOST_MODEL");
+    auto result = GhostProviderResolver::resolve();
+    REQUIRE_FALSE(result.has_value());
+
+    // Restore
+    if (savedEnabledVal.empty()) unsetenv("GHOST_ENABLED");
+    else setenv("GHOST_ENABLED", savedEnabledVal.c_str(), 1);
+    if (savedBackendVal.empty()) unsetenv("GHOST_BACKEND");
+    else setenv("GHOST_BACKEND", savedBackendVal.c_str(), 1);
+    if (savedModelVal.empty()) unsetenv("GHOST_MODEL");
+    else setenv("GHOST_MODEL", savedModelVal.c_str(), 1);
+}
+
+TEST_CASE("GhostProviderResolver.resolve returns nullopt for unknown backend", "[ghost][provider]")
+{
+    const char* savedEnabled = std::getenv("GHOST_ENABLED");
+    const char* savedBackend = std::getenv("GHOST_BACKEND");
+    const char* savedModel = std::getenv("GHOST_MODEL");
+    std::string savedEnabledVal = savedEnabled ? savedEnabled : "";
+    std::string savedBackendVal = savedBackend ? savedBackend : "";
+    std::string savedModelVal = savedModel ? savedModel : "";
+
+    setenv("GHOST_ENABLED", "1", 1);
+    setenv("GHOST_BACKEND", "unknown-backend", 1);
+    setenv("GHOST_MODEL", "test-model", 1);
+    auto result = GhostProviderResolver::resolve();
+    REQUIRE_FALSE(result.has_value());
+
+    // Restore
+    if (savedEnabledVal.empty()) unsetenv("GHOST_ENABLED");
+    else setenv("GHOST_ENABLED", savedEnabledVal.c_str(), 1);
+    if (savedBackendVal.empty()) unsetenv("GHOST_BACKEND");
+    else setenv("GHOST_BACKEND", savedBackendVal.c_str(), 1);
+    if (savedModelVal.empty()) unsetenv("GHOST_MODEL");
+    else setenv("GHOST_MODEL", savedModelVal.c_str(), 1);
+}
+
+TEST_CASE("GhostProviderResolver.resolve resolves HuggingFace config", "[ghost][provider]")
+{
+    const char* savedEnabled = std::getenv("GHOST_ENABLED");
+    const char* savedBackend = std::getenv("GHOST_BACKEND");
+    const char* savedModel = std::getenv("GHOST_MODEL");
+    const char* savedToken = std::getenv("HF_API_TOKEN");
+    std::string savedEnabledVal = savedEnabled ? savedEnabled : "";
+    std::string savedBackendVal = savedBackend ? savedBackend : "";
+    std::string savedModelVal = savedModel ? savedModel : "";
+    std::string savedTokenVal = savedToken ? savedToken : "";
+
+    setenv("GHOST_ENABLED", "1", 1);
+    setenv("GHOST_BACKEND", "huggingface", 1);
+    setenv("GHOST_MODEL", "bigcode/starcoder", 1);
+    setenv("HF_API_TOKEN", "hf-test-token", 1);
+
+    auto result = GhostProviderResolver::resolve();
+    REQUIRE(result.has_value());
+    REQUIRE(result->backend == LlmBackend::HuggingFace);
+    REQUIRE(result->model == "bigcode/starcoder");
+    REQUIRE(result->apiToken == "hf-test-token");
+    REQUIRE(result->url == "https://api-inference.huggingface.co");
+    REQUIRE(result->contextWindow == 2048);
+    REQUIRE_FALSE(result->tlsSkipVerify);
+    REQUIRE(result->tokenizerConfig == "default");
+
+    // Restore
+    if (savedEnabledVal.empty()) unsetenv("GHOST_ENABLED");
+    else setenv("GHOST_ENABLED", savedEnabledVal.c_str(), 1);
+    if (savedBackendVal.empty()) unsetenv("GHOST_BACKEND");
+    else setenv("GHOST_BACKEND", savedBackendVal.c_str(), 1);
+    if (savedModelVal.empty()) unsetenv("GHOST_MODEL");
+    else setenv("GHOST_MODEL", savedModelVal.c_str(), 1);
+    if (savedTokenVal.empty()) unsetenv("HF_API_TOKEN");
+    else setenv("HF_API_TOKEN", savedTokenVal.c_str(), 1);
+}
+
+TEST_CASE("GhostProviderResolver.resolve resolves OpenAi config", "[ghost][provider]")
+{
+    const char* savedEnabled = std::getenv("GHOST_ENABLED");
+    const char* savedBackend = std::getenv("GHOST_BACKEND");
+    const char* savedModel = std::getenv("GHOST_MODEL");
+    const char* savedToken = std::getenv("OPENAI_API_KEY");
+    std::string savedEnabledVal = savedEnabled ? savedEnabled : "";
+    std::string savedBackendVal = savedBackend ? savedBackend : "";
+    std::string savedModelVal = savedModel ? savedModel : "";
+    std::string savedTokenVal = savedToken ? savedToken : "";
+
+    setenv("GHOST_ENABLED", "1", 1);
+    setenv("GHOST_BACKEND", "openai", 1);
+    setenv("GHOST_MODEL", "gpt-3.5-turbo", 1);
+    setenv("OPENAI_API_KEY", "sk-test-123", 1);
+
+    auto result = GhostProviderResolver::resolve();
+    REQUIRE(result.has_value());
+    REQUIRE(result->backend == LlmBackend::OpenAi);
+    REQUIRE(result->model == "gpt-3.5-turbo");
+    REQUIRE(result->apiToken == "sk-test-123");
+    REQUIRE(result->url == "https://api.openai.com");
+
+    // Restore
+    if (savedEnabledVal.empty()) unsetenv("GHOST_ENABLED");
+    else setenv("GHOST_ENABLED", savedEnabledVal.c_str(), 1);
+    if (savedBackendVal.empty()) unsetenv("GHOST_BACKEND");
+    else setenv("GHOST_BACKEND", savedBackendVal.c_str(), 1);
+    if (savedModelVal.empty()) unsetenv("GHOST_MODEL");
+    else setenv("GHOST_MODEL", savedModelVal.c_str(), 1);
+    if (savedTokenVal.empty()) unsetenv("OPENAI_API_KEY");
+    else setenv("OPENAI_API_KEY", savedTokenVal.c_str(), 1);
+}
+
+TEST_CASE("GhostProviderResolver.resolve respects GHOST_URL override", "[ghost][provider]")
+{
+    const char* savedEnabled = std::getenv("GHOST_ENABLED");
+    const char* savedBackend = std::getenv("GHOST_BACKEND");
+    const char* savedModel = std::getenv("GHOST_MODEL");
+    const char* savedUrl = std::getenv("GHOST_URL");
+    std::string savedEnabledVal = savedEnabled ? savedEnabled : "";
+    std::string savedBackendVal = savedBackend ? savedBackend : "";
+    std::string savedModelVal = savedModel ? savedModel : "";
+    std::string savedUrlVal = savedUrl ? savedUrl : "";
+
+    setenv("GHOST_ENABLED", "1", 1);
+    setenv("GHOST_BACKEND", "ollama", 1);
+    setenv("GHOST_MODEL", "codellama", 1);
+    setenv("GHOST_URL", "http://localhost:11434", 1);
+
+    auto result = GhostProviderResolver::resolve();
+    REQUIRE(result.has_value());
+    REQUIRE(result->backend == LlmBackend::Ollama);
+    REQUIRE(result->model == "codellama");
+    REQUIRE(result->url == "http://localhost:11434");
+
+    // Restore
+    if (savedEnabledVal.empty()) unsetenv("GHOST_ENABLED");
+    else setenv("GHOST_ENABLED", savedEnabledVal.c_str(), 1);
+    if (savedBackendVal.empty()) unsetenv("GHOST_BACKEND");
+    else setenv("GHOST_BACKEND", savedBackendVal.c_str(), 1);
+    if (savedModelVal.empty()) unsetenv("GHOST_MODEL");
+    else setenv("GHOST_MODEL", savedModelVal.c_str(), 1);
+    if (savedUrlVal.empty()) unsetenv("GHOST_URL");
+    else setenv("GHOST_URL", savedUrlVal.c_str(), 1);
+}
+
+TEST_CASE("GhostProviderResolver.resolve respects GHOST_CONTEXT_WINDOW", "[ghost][provider]")
+{
+    const char* savedEnabled = std::getenv("GHOST_ENABLED");
+    const char* savedBackend = std::getenv("GHOST_BACKEND");
+    const char* savedModel = std::getenv("GHOST_MODEL");
+    const char* savedCw = std::getenv("GHOST_CONTEXT_WINDOW");
+    std::string savedEnabledVal = savedEnabled ? savedEnabled : "";
+    std::string savedBackendVal = savedBackend ? savedBackend : "";
+    std::string savedModelVal = savedModel ? savedModel : "";
+    std::string savedCwVal = savedCw ? savedCw : "";
+
+    setenv("GHOST_ENABLED", "1", 1);
+    setenv("GHOST_BACKEND", "huggingface", 1);
+    setenv("GHOST_MODEL", "starcoder", 1);
+    setenv("HF_API_TOKEN", "tok", 1);
+    setenv("GHOST_CONTEXT_WINDOW", "8192", 1);
+
+    auto result = GhostProviderResolver::resolve();
+    REQUIRE(result.has_value());
+    REQUIRE(result->contextWindow == 8192);
+
+    // Restore
+    if (savedEnabledVal.empty()) unsetenv("GHOST_ENABLED");
+    else setenv("GHOST_ENABLED", savedEnabledVal.c_str(), 1);
+    if (savedBackendVal.empty()) unsetenv("GHOST_BACKEND");
+    else setenv("GHOST_BACKEND", savedBackendVal.c_str(), 1);
+    if (savedModelVal.empty()) unsetenv("GHOST_MODEL");
+    else setenv("GHOST_MODEL", savedModelVal.c_str(), 1);
+    if (savedCwVal.empty()) unsetenv("GHOST_CONTEXT_WINDOW");
+    else setenv("GHOST_CONTEXT_WINDOW", savedCwVal.c_str(), 1);
+}
+
+// ===========================================================================
+// GhostProviderConfig — validity
+// ===========================================================================
+
+TEST_CASE("GhostProviderConfig.valid returns false when model empty", "[ghost][provider]")
+{
+    GhostProviderConfig config;
+    config.model = "";
+    config.backend = LlmBackend::HuggingFace;
+    config.apiToken = "token";
+    REQUIRE_FALSE(config.valid());
+}
+
+TEST_CASE("GhostProviderConfig.valid returns true for HuggingFace with token", "[ghost][provider]")
+{
+    GhostProviderConfig config;
+    config.model = "starcoder";
+    config.backend = LlmBackend::HuggingFace;
+    config.apiToken = "token";
+    REQUIRE(config.valid());
+}
+
+TEST_CASE("GhostProviderConfig.valid returns true for local backend without token", "[ghost][provider]")
+{
+    GhostProviderConfig config;
+    config.model = "codellama";
+    config.backend = LlmBackend::Ollama;
+    config.apiToken = "";
+    REQUIRE(config.valid());
+}
+
+// ===========================================================================
+// backendToString
+// ===========================================================================
+
+TEST_CASE("backendToString maps all enum values", "[ghost][protocol]")
+{
+    REQUIRE(backendToString(LlmBackend::HuggingFace) == "HuggingFace");
+    REQUIRE(backendToString(LlmBackend::LlamaCpp) == "LlamaCpp");
+    REQUIRE(backendToString(LlmBackend::Ollama) == "Ollama");
+    REQUIRE(backendToString(LlmBackend::OpenAi) == "OpenAi");
+    REQUIRE(backendToString(LlmBackend::Tgi) == "Tgi");
+}
+
+// ===========================================================================
+// GhostCompletionRequest::toJson / GhostCompletionResponse round-trip
+// ===========================================================================
+
+TEST_CASE("GhostCompletionRequest.toJson produces expected structure", "[ghost][protocol]")
+{
+    GhostCompletionRequest req;
+    req.uri = "file:///test.hathor";
+    req.languageId = "hathor";
+    req.line = 1;
+    req.character = 2;
+    req.textDocument = "hello world";
+    req.fim.enabled = true;
+    req.fim.prefix = "hello ";
+    req.fim.suffix = "world";
+    req.fim.middle = "";
+    req.backend.backend = LlmBackend::HuggingFace;
+    req.backend.url = "https://api-inference.huggingface.co";
+    req.backend.model = "starcoder";
+    req.apiToken = "tok";
+    req.tokenizerConfig = "my-tokenizer";
+    req.contextWindow = 1024;
+    req.tlsSkipVerify = false;
+
+    nlohmann::json j = req.toJson();
+
+    REQUIRE(j["textDocument"]["uri"] == "file:///test.hathor");
+    REQUIRE(j["textDocument"]["languageId"] == "hathor");
+    REQUIRE(j["textDocument"]["text"] == "hello world");
+    REQUIRE(j["position"]["line"] == 1);
+    REQUIRE(j["position"]["character"] == 2);
+    REQUIRE(j["fim"]["enabled"] == true);
+    REQUIRE(j["fim"]["prefix"] == "hello ");
+    REQUIRE(j["fim"]["suffix"] == "world");
+    REQUIRE(j["backend"]["backend"] == "HuggingFace");
+    REQUIRE(j["backend"]["url"] == "https://api-inference.huggingface.co");
+    REQUIRE(j["model"] == "starcoder");
+    REQUIRE(j["api_token"] == "tok");
+    REQUIRE(j["tokenizer_config"] == "my-tokenizer");
+    REQUIRE(j["context_window"] == 1024);
+    REQUIRE(j["tls_skip_verify_insecure"] == false);
+}

@@ -89,6 +89,13 @@ public:
     // drained events vector so the editor can update the now-playing overlay.
     std::function<void(const std::vector<hathor::Event<hathor::ParamMap>>&)> onUpdateNowPlaying;
 
+    // -----------------------------------------------------------------------
+    // AI-4: Ghost-text tick
+    // -----------------------------------------------------------------------
+    // Installed by MainWindow after construction. Called at 60 Hz so the
+    // active editor tab's ghost-text debounce and timeout logic fires on schedule.
+    std::function<void()> onGhostTick;
+
     // juce::Timer override — three-step drain/sync logic.
     void timerCallback() override;
 

@@ -153,7 +153,7 @@ public:
     int currentRevision() const noexcept { return revision_; }
 
     /** True if a ghost result is currently being displayed. */
-    bool hasActiveGhost() const noexcept { return active_ghost_.has_value(); }
+    bool hasActiveGhost() const noexcept { return activeGhost_.has_value(); }
 
     // -----------------------------------------------------------------------
     // Lifecycle methods

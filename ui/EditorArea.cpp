@@ -10,6 +10,8 @@
 #include "EditorArea.hpp"
 #include "HathorFileParser.hpp"
 #include "HathorLspClient.hpp"
+#include "GhostLlmClient.hpp"
+#include "GhostProviderConfig.hpp"
 #include "EditorContextBridge.hpp"
 #include "LspContextBridge.hpp"
 #include "hathor/LanguageMetadata.hpp"
@@ -268,6 +270,11 @@ EditorArea::EditorArea(AudioEngine& audio,
 
     lspClient_->start();
 
+    // AI-4: Create the ghost-text client (manages the llm-ls process).
+    // Only started if GHOST_ENABLED=true — the client checks this internally.
+    ghostClient_ = std::make_unique<GhostLlmClient>("reference/llm-ls/llm-ls");
+    ghostClient_->start();
+
     const auto& palette = HathorLookAndFeel::fromComponent(*this).getPalette();
 
     // Status bar styling — label-md: 11px, Medium 500 (mockup)
@@ -294,6 +301,10 @@ EditorArea::EditorArea(AudioEngine& audio,
 
 EditorArea::~EditorArea()
 {
+    // Stop the ghost-text client before destroying tabs.
+    if (ghostClient_)
+        ghostClient_->stop();
+
     // Hide all tab components before deletion to avoid dangling paint calls.
     for (auto& t : tabs_)
         t->setVisible(false);
@@ -353,9 +364,12 @@ bool EditorArea::openUntitledTab()
     wirePlayStopCallback(*tab);
     installKeyListenerForTab(*tab);
 
-    // AI-4: Install LSP client on the tab (for .hathor tabs)
-    tab->installLspClient(lspClient_.get());
-    tab->notifyLspDidOpen();
+     // AI-4: Install LSP client on the tab (for .hathor tabs)
+     tab->installLspClient(lspClient_.get());
+     tab->notifyLspDidOpen();
+
+     // AI-4: Install ghost-text client on the tab (for .hathor tabs)
+     tab->installGhostClient(ghostClient_.get());
 
     addAndMakeVisible(*tab);
     tabs_.push_back(std::move(tab));
@@ -447,9 +461,12 @@ bool EditorArea::openFile(const juce::File& file)
     wirePlayStopCallback(*tab);
     installKeyListenerForTab(*tab);
 
-    // AI-4: Install LSP client on the tab (for .hathor tabs)
-    tab->installLspClient(lspClient_.get());
-    tab->notifyLspDidOpen();
+     // AI-4: Install LSP client on the tab (for .hathor tabs)
+     tab->installLspClient(lspClient_.get());
+     tab->notifyLspDidOpen();
+
+     // AI-4: Install ghost-text client on the tab (for .hathor tabs)
+     tab->installGhostClient(ghostClient_.get());
 
     addAndMakeVisible(*tab);
     tabs_.push_back(std::move(tab));
@@ -922,6 +939,17 @@ void EditorArea::syncSlotButtonStates()
         // For .ck tabs, the eval state is managed by ckEval/stopCkTab
         // and the eval callback. No action needed here beyond the
         // button visual already set by setCkEvalState().
+    }
+}
+
+void EditorArea::ghostTick()
+{
+    // Tick every HathorTab's ghost-text lifecycle so that debounce timers
+    // and latency timeouts fire on schedule. Each tab early-returns if
+    // it has no ghost client or ghost text is disabled.
+    for (const auto& t : tabs_)
+    {
+        t->ghostTick();
     }
 }
 

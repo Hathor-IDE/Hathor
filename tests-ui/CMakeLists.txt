@@ -39,17 +39,22 @@ add_executable(hathor-ui-tests
     test_bake_to_song.cpp
     test_thread_state.cpp
     # AI-4: LSP unit tests (JUCE-free, req 31.1)
-    test_lsp_protocol.cpp
-    test_lsp_jsonrpc.cpp
-    test_lsp_completion_logic.cpp
-    ${CMAKE_SOURCE_DIR}/ui/HathorFileParser.cpp
-    ${CMAKE_SOURCE_DIR}/ui/ExplorerFileTypes.cpp
-    ${CMAKE_SOURCE_DIR}/ui/TreeBuilder.cpp
-    ${CMAKE_SOURCE_DIR}/ui/ChuckKeywords.cpp
-    ${CMAKE_SOURCE_DIR}/ui/LspJsonRpc.cpp
-    ${CMAKE_SOURCE_DIR}/ui/LspCompletionLogic.cpp
-    ${CMAKE_SOURCE_DIR}/ui/LspDiagnosticsDisplay.cpp
-    ${CMAKE_SOURCE_DIR}/app/LiveJamSessionManager.cpp
+     test_lsp_protocol.cpp
+     test_lsp_jsonrpc.cpp
+     test_lsp_completion_logic.cpp
+     # AI-4: Ghost text unit tests (JUCE-free, req 31.1)
+     test_ghost_completion_logic.cpp
+     ${CMAKE_SOURCE_DIR}/ui/HathorFileParser.cpp
+     ${CMAKE_SOURCE_DIR}/ui/ExplorerFileTypes.cpp
+     ${CMAKE_SOURCE_DIR}/ui/TreeBuilder.cpp
+     ${CMAKE_SOURCE_DIR}/ui/ChuckKeywords.cpp
+     ${CMAKE_SOURCE_DIR}/ui/LspJsonRpc.cpp
+     ${CMAKE_SOURCE_DIR}/ui/LspCompletionLogic.cpp
+     ${CMAKE_SOURCE_DIR}/ui/LspDiagnosticsDisplay.cpp
+     ${CMAKE_SOURCE_DIR}/ui/GhostJsonRpc.cpp
+     ${CMAKE_SOURCE_DIR}/ui/GhostProviderConfig.cpp
+     ${CMAKE_SOURCE_DIR}/ui/GhostCompletionLogic.cpp
+     ${CMAKE_SOURCE_DIR}/app/LiveJamSessionManager.cpp
 )
 
 target_compile_features(hathor-ui-tests PRIVATE cxx_std_20)

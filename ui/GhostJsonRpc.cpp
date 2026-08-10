@@ -392,13 +392,13 @@ std::string GhostJsonRpc::generateRequestId()
 
     char buf[37];
     std::snprintf(buf, sizeof(buf),
-        "%08x-%04x-4%03x-%04x-%012x%012x",
-        dist(rng) & 0x0FFFFFFF,
-        dist(rng) & 0x0000FFFF,
-        dist(rng) & 0x00000FFF,
-        (dist(rng) & 0x00003FFF) | 0x4000,
-        (dist(rng) >> 16) & 0x0000FFFFFFFFFFFFULL,
-        dist(rng) & 0x0000FFFFFFFFFFFFULL);
+        "%08x-%04x-4%03x-%04x-%012llx%012llx",
+        static_cast<unsigned int>(dist(rng) & 0x0FFFFFFF),
+        static_cast<unsigned int>(dist(rng) & 0x0000FFFF),
+        static_cast<unsigned int>(dist(rng) & 0x00000FFF),
+        static_cast<unsigned int>((dist(rng) & 0x00003FFF) | 0x4000),
+        static_cast<unsigned long long>((dist(rng) >> 16) & 0x0000FFFFFFFFFFFFULL),
+        static_cast<unsigned long long>(dist(rng) & 0x0000FFFFFFFFFFFFULL));
 
     return std::string(buf);
 }

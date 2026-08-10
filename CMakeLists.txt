@@ -51,6 +51,14 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(Catch2 nlohmann_json)
 
 # ---------------------------------------------------------------------------
+# AI-4: Download the llm-ls binary for ghost text (only for app builds)
+# ---------------------------------------------------------------------------
+if(HATHOR_BUILD_APP)
+    include(${CMAKE_CURRENT_SOURCE_DIR}/reference/llm-ls/download_llm_ls.cmake
+        OPTIONAL RESULT_VARIABLE _llm_ls_downloaded)
+endif()
+
+# ---------------------------------------------------------------------------
 # libchuck — vendored ChucK compiler/VM (B4-K4, AI-5)
 #
 # We download the ChucK source tree but do NOT run its CMake; instead we build

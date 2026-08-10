@@ -62,12 +62,18 @@ target_sources(hathor-ui
          EditorContextBridge.cpp       # AI-8: editor state snapshot bridge
          LspContextBridge.cpp          # AI-8: LSP diagnostics/status bridge
          # AI-4: LSP language integration
-        HathorLspClient.cpp           # LSP client process management
-        LspJsonRpc.cpp                # JSON-RPC serialization
-        LspCompletionLogic.cpp        # Completion merge with metadata fallback
-        LspCompletionPopup.cpp        # Completion popup UI
-        LspHoverHandler.cpp           # Hover tooltip UI
-        LspDiagnosticsDisplay.cpp     # Diagnostics data model
+         HathorLspClient.cpp           # LSP client process management
+         LspJsonRpc.cpp                # JSON-RPC serialization
+         LspCompletionLogic.cpp        # Completion merge with metadata fallback
+         LspCompletionPopup.cpp        # Completion popup UI
+         LspHoverHandler.cpp           # Hover tooltip UI
+         LspDiagnosticsDisplay.cpp     # Diagnostics data model
+         # AI-4: Ghost text (llm-ls inline completion)
+         GhostJsonRpc.cpp              # llm-ls JSON-RPC serialization
+         GhostProviderConfig.cpp       # provider config (env-var credentials)
+         GhostCompletionLogic.cpp      # JUCE-free lifecycle logic
+         GhostLlmClient.cpp            # JUCE process management for llm-ls
+         GhostTextOverlay.cpp          # ghost-text renderer overlay
          # App-layer sources (AudioEngine, SampleBank, VoicePool live in app/,
          # not in a linkable static lib — include them directly here)
           ${CMAKE_SOURCE_DIR}/app/AudioEngine.cpp

@@ -150,10 +150,16 @@ void UITimer::timerCallback()
     // setSlotRunningVisual() on each, so the button icon reflects the actual
     // armed/running state regardless of which path changed it.
     // -----------------------------------------------------------------------
-     if (onSyncSlotButtons)
-         onSyncSlotButtons();
+      if (onSyncSlotButtons)
+          onSyncSlotButtons();
 
-     // -----------------------------------------------------------------------
+      // -----------------------------------------------------------------------
+      // (f) AI-4: Ghost-text tick — drives debounce + timeout logic
+      // -----------------------------------------------------------------------
+      if (onGhostTick)
+          onGhostTick();
+
+      // -----------------------------------------------------------------------
      // (e) C1: Now-playing highlight update
      //
      // Pass the drained events to the EditorArea so it can resolve

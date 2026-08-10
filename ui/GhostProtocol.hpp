@@ -220,6 +220,8 @@ struct GhostResult {
     std::string displayText;    ///< text to show in the overlay (may include hints)
     std::string insertText;     ///< text to insert on accept
     std::string requestId;      ///< for accept/reject notifications
+    int         cursorLine = 0;  ///< 0-based line where ghost was requested
+    int         character  = 0;  ///< 0-based character offset on the line
     bool        isEmpty() const noexcept { return text.empty(); }
 };
 

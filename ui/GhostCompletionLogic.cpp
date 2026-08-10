@@ -12,6 +12,7 @@
  */
 
 #include "GhostCompletionLogic.hpp"
+#include "GhostJsonRpc.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -292,10 +293,12 @@ std::optional<GhostResult> GhostCompletionLogic::onGhostResponse(
 
     // Build the GhostResult
     GhostResult result;
-    result.text = text;
+     result.text = text;
     result.displayText = text;
     result.insertText = text;
     result.requestId = requestId;
+    result.cursorLine = currentCtx_.line;
+    result.character = currentCtx_.character;
 
     // Store as active ghost
     activeGhost_ = ActiveGhost{result, requestId, revision_};

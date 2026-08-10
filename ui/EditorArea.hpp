@@ -51,6 +51,7 @@
 #include "BakeOrchestrator.hpp"
 #include "EditorContextBridge.hpp"
 #include "LspContextBridge.hpp"
+#include "GhostLlmClient.hpp"
 
 namespace hathor::ui {
 
@@ -264,7 +265,14 @@ public:
        * Called from UITimer at 60 Hz so the UI reflects engine state changes
        * from any path, not only button clicks.
        */
-     void syncSlotButtonStates();
+      void syncSlotButtonStates();
+
+      /**
+       * Tick all open tabs' ghost-text logic. Called from UITimer at 60 Hz
+       * (via onGhostTick callback) so that debounce timers and latency
+       * timeouts fire on schedule.
+       */
+      void ghostTick();
 
      // -----------------------------------------------------------------------
      // C1: Now-playing highlight update path
@@ -452,7 +460,8 @@ private:
     // completions, hover, and diagnostics for .hathor tabs.
     // -----------------------------------------------------------------------
     std::unique_ptr<HathorLspClient> lspClient_;
-    hathor::language::LanguageMetadata metadata_;
+     std::unique_ptr<GhostLlmClient> ghostClient_;
+     hathor::language::LanguageMetadata metadata_;
     hathor::language::MetadataCompatibility metadataCompat_;
 
     // AI-8: Non-owning bridges for dynamic context assembly.

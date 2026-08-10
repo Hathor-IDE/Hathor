@@ -278,11 +278,18 @@ MainWindow::MainWindow(AudioEngine& audio,
     // B1: Sync per-tab Play/Stop button visuals to the engine's slot state.
     // This runs at 60 Hz so the UI reflects slot state changes from any path
     // (button clicks, slot-play/slot-stop commands, etc.) — not just clicks.
-     uiTimer_->onSyncSlotButtons = [this]()
-     {
-         if (editorArea_)
-             editorArea_->syncSlotButtonStates();
-     };
+      uiTimer_->onSyncSlotButtons = [this]()
+      {
+          if (editorArea_)
+              editorArea_->syncSlotButtonStates();
+      };
+
+      // AI-4: Ghost-text tick — drive debounce + timeout logic on all tabs.
+      uiTimer_->onGhostTick = [this]()
+      {
+          if (editorArea_)
+              editorArea_->ghostTick();
+      };
 
      // C1: Now-playing highlight — route drained events to the editor area
      // so it can resolve sourceOffset → glyph bounds and paint the overlay.
