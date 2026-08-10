@@ -33,45 +33,41 @@ using namespace hathor::lsp;
 // ===========================================================================
 // FIM context builder
 // ===========================================================================
+// NOTE: llm-ls extracts prefix/suffix from the document it receives via
+// didOpen/didChange. buildFimContext returns empty FIM params because the
+// document text is synced separately. These tests verify that the FIM params
+// are correctly empty.
 
-TEST_CASE("buildFimContext builds prefix (reversed, line-by-line) and suffix (forward)", "[ghost][fim]")
+TEST_CASE("buildFimContext returns empty FIM params (llm-ls handles document context)", "[ghost][fim]")
 {
     std::string doc = "line1\nline2\nline3";
     auto fim = buildFimContext(doc, 2, 0);
 
-    // Prefix should contain reversed lines 0,1 (in reverse order) + reversed current-line prefix
-    // Line 1 "line2" reversed = "2enil", followed by '\n'
-    // Line 0 "line1" reversed = "1enil", followed by '\n'
-    // Current line prefix (empty) reversed = ""
-    REQUIRE(fim.prefix.find("2enil") != std::string::npos);
-    REQUIRE(fim.prefix.find("1enil") != std::string::npos);
-    // Current line "line3" at char 0 → suffix is "line3"
-    REQUIRE(fim.suffix.find("line3") != std::string::npos);
+    REQUIRE(fim.prefix.empty());
+    REQUIRE(fim.suffix.empty());
     REQUIRE(fim.middle.empty());
 }
 
-TEST_CASE("buildFimContext prefix includes partial current line reversed", "[ghost][fim]")
+TEST_CASE("buildFimContext returns empty for partial cursor position", "[ghost][fim]")
 {
     std::string doc = "hello world";
     auto fim = buildFimContext(doc, 0, 6);
 
-    // Prefix = "hello " reversed = " olleh"
-    REQUIRE(fim.prefix == " olleh");
-    // Suffix = "world"
-    REQUIRE(fim.suffix == "world");
+    REQUIRE(fim.prefix.empty());
+    REQUIRE(fim.suffix.empty());
+    REQUIRE(fim.middle.empty());
 }
 
-TEST_CASE("buildFimContext clamps line out of range", "[ghost][fim]")
+TEST_CASE("buildFimContext returns empty for out-of-range line", "[ghost][fim]")
 {
     std::string doc = "one line";
     auto fim = buildFimContext(doc, 100, 0);
 
-    // Should clamp to line 0
     REQUIRE(fim.prefix.empty());
-    REQUIRE(fim.suffix == "one line");
+    REQUIRE(fim.suffix.empty());
 }
 
-TEST_CASE("buildFimContext empty document", "[ghost][fim]")
+TEST_CASE("buildFimContext returns empty for empty document", "[ghost][fim]")
 {
     std::string doc = "";
     auto fim = buildFimContext(doc, 0, 0);
@@ -79,19 +75,6 @@ TEST_CASE("buildFimContext empty document", "[ghost][fim]")
     REQUIRE(fim.prefix.empty());
     REQUIRE(fim.suffix.empty());
     REQUIRE(fim.middle.empty());
-}
-
-TEST_CASE("buildFimContext multi-line suffix includes subsequent lines", "[ghost][fim]")
-{
-    std::string doc = "first\nsecond\nthird";
-    auto fim = buildFimContext(doc, 1, 3);
-
-    // Prefix: line 0 "first" reversed = "tsrif\n" + current line "sec" reversed = "ces"
-    REQUIRE(fim.prefix.find("tsrif") != std::string::npos);
-    REQUIRE(fim.prefix.find("ces") != std::string::npos);
-    // Suffix: rest of current line "ond" + "\n" + "third"
-    REQUIRE(fim.suffix.find("ond") != std::string::npos);
-    REQUIRE(fim.suffix.find("third") != std::string::npos);
 }
 
 // ===========================================================================
@@ -314,9 +297,9 @@ TEST_CASE("GhostCompletionLogic onAccept returns params and clears ghost", "[gho
     auto acceptParams = logic.onAccept();
     REQUIRE(acceptParams.has_value());
     REQUIRE(acceptParams->requestId == requestId);
-    REQUIRE(acceptParams->uri == "file:///test.hathor");
-    REQUIRE(acceptParams->line == 0);
-    REQUIRE(acceptParams->character == 2);
+    REQUIRE(acceptParams->acceptedCompletion == 0);
+    REQUIRE(acceptParams->shownCompletions.size() == 1);
+    REQUIRE(acceptParams->shownCompletions[0] == 0);
 
     REQUIRE_FALSE(logic.hasActiveGhost());
 }
@@ -348,7 +331,8 @@ TEST_CASE("GhostCompletionLogic onReject returns params and clears ghost", "[gho
     auto rejectParams = logic.onReject();
     REQUIRE(rejectParams.has_value());
     REQUIRE(rejectParams->requestId == requestId);
-    REQUIRE(rejectParams->uri == "file:///test.hathor");
+    REQUIRE(rejectParams->shownCompletions.size() == 1);
+    REQUIRE(rejectParams->shownCompletions[0] == 0);
 
     REQUIRE_FALSE(logic.hasActiveGhost());
 }
@@ -562,7 +546,7 @@ TEST_CASE("GhostJsonRpc.serializeGhostCompletion returns request ID and framed m
     req.character = 5;
     req.textDocument = "bd sn";
     req.fim.enabled = true;
-    req.fim.prefix = "bd ";
+    req.fim.prefix = "";
     req.fim.suffix = "";
     req.fim.middle = "";
     req.backend.model = "starcoder";
@@ -582,19 +566,23 @@ TEST_CASE("GhostJsonRpc.serializeGhostCompletion returns request ID and framed m
     REQUIRE(j["id"] == requestId);
     REQUIRE(j["method"] == "llm-ls/getCompletions");
     REQUIRE(j["params"]["textDocument"]["uri"] == "file:///test.hathor");
+    REQUIRE(j["params"]["textDocument"]["languageId"] == "hathor");
+    REQUIRE_FALSE(j["params"]["textDocument"].contains("text"));
     REQUIRE(j["params"]["position"]["line"] == 0);
     REQUIRE(j["params"]["fim"]["enabled"] == true);
     REQUIRE(j["params"]["model"] == "starcoder");
     REQUIRE(j["params"]["api_token"] == "token123");
+    REQUIRE(j["params"]["ide"] == "unknown");
+    REQUIRE(j["params"]["backend"]["backend"] == "huggingface");
+    REQUIRE(j["params"]["tokenizer_config"].is_null());
 }
 
 TEST_CASE("GhostJsonRpc.serializeAcceptCompletion produces notification", "[ghost][jsonrpc]")
 {
     AcceptCompletionParams params;
     params.requestId = "req-123";
-    params.uri = "file:///test.hathor";
-    params.line = 1;
-    params.character = 5;
+    params.acceptedCompletion = 0;
+    params.shownCompletions = {0};
 
     GhostJsonRpc rpc;
     std::string framed = rpc.serializeAcceptCompletion(params);
@@ -606,16 +594,15 @@ TEST_CASE("GhostJsonRpc.serializeAcceptCompletion produces notification", "[ghos
     REQUIRE(j["jsonrpc"] == "2.0");
     REQUIRE(j["method"] == "llm-ls/acceptCompletion");
     REQUIRE(j["params"]["request_id"] == "req-123");
-    REQUIRE(j["params"]["uri"] == "file:///test.hathor");
-    REQUIRE(j["params"]["line"] == 1);
-    REQUIRE(j["params"]["character"] == 5);
+    REQUIRE(j["params"]["accepted_completion"] == 0);
+    REQUIRE(j["params"]["shown_completions"][0] == 0);
 }
 
 TEST_CASE("GhostJsonRpc.serializeRejectCompletion produces notification", "[ghost][jsonrpc]")
 {
     RejectCompletionParams params;
     params.requestId = "req-456";
-    params.uri = "file:///test.hathor";
+    params.shownCompletions = {0};
 
     GhostJsonRpc rpc;
     std::string framed = rpc.serializeRejectCompletion(params);
@@ -627,7 +614,7 @@ TEST_CASE("GhostJsonRpc.serializeRejectCompletion produces notification", "[ghos
     REQUIRE(j["jsonrpc"] == "2.0");
     REQUIRE(j["method"] == "llm-ls/rejectCompletion");
     REQUIRE(j["params"]["request_id"] == "req-456");
-    REQUIRE(j["params"]["uri"] == "file:///test.hathor");
+    REQUIRE(j["params"]["shown_completions"][0] == 0);
 }
 
 TEST_CASE("GhostJsonRpc.serializeDidOpen / DidChange / DidClose", "[ghost][jsonrpc]")
@@ -993,6 +980,36 @@ TEST_CASE("backendToString maps all enum values", "[ghost][protocol]")
 }
 
 // ===========================================================================
+// Language identification: .hathor and .ck
+// ===========================================================================
+
+TEST_CASE("GhostCompletionRequest serializes .hathor languageId", "[ghost][language]")
+{
+    GhostCompletionRequest req;
+    req.uri = "file:///test.hathor";
+    req.languageId = "hathor";
+    req.textDocument = "busking in hathor";
+    req.fim.enabled = false;
+    req.backend.model = "starcoder";
+
+    nlohmann::json j = req.toJson();
+    REQUIRE(j["textDocument"]["languageId"] == "hathor");
+}
+
+TEST_CASE("GhostCompletionRequest serializes .ck languageId as chuck", "[ghost][language]")
+{
+    GhostCompletionRequest req;
+    req.uri = "file:///test.ck";
+    req.languageId = "chuck";
+    req.textDocument = "SinOsc s => dac;";
+    req.fim.enabled = false;
+    req.backend.model = "starcoder";
+
+    nlohmann::json j = req.toJson();
+    REQUIRE(j["textDocument"]["languageId"] == "chuck");
+}
+
+// ===========================================================================
 // GhostCompletionRequest::toJson
 // ===========================================================================
 
@@ -1005,8 +1022,8 @@ TEST_CASE("GhostCompletionRequest.toJson produces expected structure", "[ghost][
     req.character = 2;
     req.textDocument = "hello world";
     req.fim.enabled = true;
-    req.fim.prefix = "hello ";
-    req.fim.suffix = "world";
+    req.fim.prefix = "";
+    req.fim.suffix = "";
     req.backend.backend = LlmBackend::HuggingFace;
     req.backend.url = "https://api-inference.huggingface.co";
     req.backend.model = "starcoder";
@@ -1019,17 +1036,30 @@ TEST_CASE("GhostCompletionRequest.toJson produces expected structure", "[ghost][
 
     REQUIRE(j["textDocument"]["uri"] == "file:///test.hathor");
     REQUIRE(j["textDocument"]["languageId"] == "hathor");
-    REQUIRE(j["textDocument"]["text"] == "hello world");
+    REQUIRE_FALSE(j["textDocument"].contains("text"));
     REQUIRE(j["position"]["line"] == 1);
     REQUIRE(j["position"]["character"] == 2);
+    REQUIRE(j["ide"] == "unknown");
     REQUIRE(j["fim"]["enabled"] == true);
-    REQUIRE(j["fim"]["prefix"] == "hello ");
-    REQUIRE(j["fim"]["suffix"] == "world");
-    REQUIRE(j["backend"]["backend"] == "HuggingFace");
+    REQUIRE(j["backend"]["backend"] == "huggingface");
     REQUIRE(j["backend"]["url"] == "https://api-inference.huggingface.co");
     REQUIRE(j["model"] == "starcoder");
     REQUIRE(j["api_token"] == "tok");
-    REQUIRE(j["tokenizer_config"] == "my-tokenizer");
+    REQUIRE(j["tokenizer_config"] == nlohmann::json{{"path", "my-tokenizer"}});
     REQUIRE(j["context_window"] == 1024);
     REQUIRE(j["tls_skip_verify_insecure"] == false);
+}
+
+TEST_CASE("GhostCompletionRequest.toJson sends null for empty api_token", "[ghost][protocol]")
+{
+    GhostCompletionRequest req;
+    req.uri = "file:///test.hathor";
+    req.apiToken = "";
+    req.backend.model = "starcoder";
+    req.tokenizerConfig = "";
+    req.contextWindow = 2048;
+
+    nlohmann::json j = req.toJson();
+    REQUIRE(j["api_token"].is_null());
+    REQUIRE(j["tokenizer_config"].is_null());
 }

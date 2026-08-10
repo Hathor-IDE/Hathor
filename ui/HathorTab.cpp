@@ -497,6 +497,11 @@ void HathorTab::notifyLspDidOpen()
     juce::String uri = lspDocumentUri();
     juce::String text = document_.getAllContent();
     lspClient_->didOpenDocument(uri.toStdString(), text.toStdString(), "hathor");
+
+    // AI-4: Mirror document open to the ghost-text (llm-ls) client so that
+    // llm-ls can resolve completion context from the synced document.
+    if (ghostClient_ && ghostLogic_ && ghostLogic_->isEnabled() && !useChuckTokeniser_)
+        ghostClient_->didOpenDocument(uri.toStdString(), text.toStdString(), "hathor");
 }
 
 void HathorTab::notifyLspDidChange()
@@ -518,6 +523,10 @@ void HathorTab::notifyLspDidChange()
     static int changeVersion = 1;
     ++changeVersion;
     lspClient_->didChangeDocument(uri.toStdString(), changeVersion, currentStr);
+
+    // AI-4: Mirror document change to the ghost-text (llm-ls) client.
+    if (ghostClient_ && ghostLogic_ && ghostLogic_->isEnabled() && !useChuckTokeniser_)
+        ghostClient_->didChangeDocument(uri.toStdString(), changeVersion, currentStr);
 }
 
 void HathorTab::notifyLspDidClose()
@@ -527,6 +536,10 @@ void HathorTab::notifyLspDidClose()
 
     juce::String uri = lspDocumentUri();
     lspClient_->didCloseDocument(uri.toStdString());
+
+    // AI-4: Mirror document close to the ghost-text (llm-ls) client.
+    if (ghostClient_ && ghostLogic_ && ghostLogic_->isEnabled() && !useChuckTokeniser_)
+        ghostClient_->didCloseDocument(uri.toStdString());
 }
 
 void HathorTab::requestLspCompletion()

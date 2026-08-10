@@ -81,31 +81,28 @@ std::pair<std::string, std::string> GhostJsonRpc::serializeGhostCompletion(
             {"line", req.line},
             {"character", req.character}
         }},
-        {"ide", "hathor"},
+        {"ide", "unknown"},
         {"fim", {
             {"enabled", req.fim.enabled},
             {"prefix", req.fim.prefix},
             {"suffix", req.fim.suffix},
             {"middle", req.fim.middle}
         }},
-        {"api_token", req.apiToken},
+        {"api_token", req.apiToken.empty() ? nullptr : json(req.apiToken)},
         {"model", req.backend.model},
         {"backend", {
             {"backend", backendToString(req.backend.backend)},
             {"url", req.backend.url}
         }},
-        {"tokenizer_config", req.tokenizerConfig},
+        {"tokenizer_config", req.tokenizerConfig.empty() || req.tokenizerConfig == "default"
+            ? nullptr
+            : json{{"path", req.tokenizerConfig}}},
         {"context_window", req.contextWindow},
         {"tls_skip_verify_insecure", req.tlsSkipVerify},
         {"request_body", req.requestBody.is_null() ? json::object() : req.requestBody},
         {"disable_url_path_completion", req.disableUrlPathCompletion},
         {"tokens_to_clear", req.tokensToClear}
     };
-
-    // Include the full document text as part of a custom parameter
-    // so llm-ls can build its context window properly.
-    params["text_document"] = params["textDocument"];
-    params["textDocument"]["text"] = req.textDocument;
 
     json msg = {
         {"jsonrpc", "2.0"},
@@ -119,14 +116,17 @@ std::pair<std::string, std::string> GhostJsonRpc::serializeGhostCompletion(
 
 std::string GhostJsonRpc::serializeAcceptCompletion(const AcceptCompletionParams& params)
 {
+    json shown;
+    for (auto idx : params.shownCompletions)
+        shown.push_back(idx);
+
     json msg = {
         {"jsonrpc", "2.0"},
         {"method", "llm-ls/acceptCompletion"},
         {"params", {
             {"request_id", params.requestId},
-            {"uri", params.uri},
-            {"line", params.line},
-            {"character", params.character}
+            {"accepted_completion", params.acceptedCompletion},
+            {"shown_completions", shown}
         }}
     };
 
@@ -135,12 +135,16 @@ std::string GhostJsonRpc::serializeAcceptCompletion(const AcceptCompletionParams
 
 std::string GhostJsonRpc::serializeRejectCompletion(const RejectCompletionParams& params)
 {
+    json shown;
+    for (auto idx : params.shownCompletions)
+        shown.push_back(idx);
+
     json msg = {
         {"jsonrpc", "2.0"},
         {"method", "llm-ls/rejectCompletion"},
         {"params", {
             {"request_id", params.requestId},
-            {"uri", params.uri}
+            {"shown_completions", shown}
         }}
     };
 
@@ -294,30 +298,41 @@ std::optional<json> GhostJsonRpc::parseResponse(std::string_view jsonStr,
 
 nlohmann::json GhostCompletionRequest::toJson() const
 {
+    // tokenizer_config: llm-ls expects Option<TokenizerConfig> (an enum of
+    // Local/Repository/Download objects), not a plain string. When empty or
+    // "default", send null so llm-ls auto-resolves the tokenizer from the
+    // model repository.
+    nlohmann::json tokenizerJson = nullptr;
+    if (!tokenizerConfig.empty() && tokenizerConfig != "default")
+    {
+        tokenizerJson = nlohmann::json{{"path", tokenizerConfig}};
+    }
+
+    nlohmann::json apiTokenJson = apiToken.empty() ? nullptr : nlohmann::json(apiToken);
+
     return nlohmann::json{
         {"textDocument", {
             {"uri", uri},
-            {"languageId", languageId},
-            {"text", textDocument}
+            {"languageId", languageId}
         }},
         {"position", {
             {"line", line},
             {"character", character}
         }},
-        {"ide", "hathor"},
+        {"ide", "unknown"},
         {"fim", {
             {"enabled", fim.enabled},
             {"prefix", fim.prefix},
             {"suffix", fim.suffix},
             {"middle", fim.middle}
         }},
-        {"api_token", apiToken},
+        {"api_token", apiTokenJson},
         {"model", backend.model},
         {"backend", {
             {"backend", backendToString(backend.backend)},
             {"url", backend.url}
         }},
-        {"tokenizer_config", tokenizerConfig},
+        {"tokenizer_config", tokenizerJson},
         {"context_window", contextWindow},
         {"tls_skip_verify_insecure", tlsSkipVerify},
         {"request_body", requestBody.is_null() ? nlohmann::json::object() : requestBody},

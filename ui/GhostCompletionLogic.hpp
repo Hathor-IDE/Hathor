@@ -61,11 +61,11 @@ struct GhostContext {
  * Built FIM context from a document + cursor position.
  *
  * llm-ls expects:
- *   - prefix: text before cursor, with each line reversed and joined.
- *     (This is a quirk of how llm-ls builds its prompt — it reverses the
- *      prefix line-by-line so the model sees the most recent characters first.)
- *   - suffix: text after cursor, forward line-by-line.
- *   - middle: left empty for llm-ls to fill from the tokenizer config.
+ *   - prefix: additional context prepended before the document prefix
+ *     (left empty — llm-ls extracts document prefix from synced document)
+ *   - suffix: additional context inserted between prefix and suffix
+ *     (left empty — llm-ls extracts document suffix from synced document)
+ *   - middle: FIM middle marker token (left empty for llm-ls to fill from tokenizer)
  *
  * The prefix and suffix are built from the raw document text.
  */
@@ -78,11 +78,16 @@ struct FimContext {
 /**
  * Build FIM context (prefix/suffix/middle) from the document and cursor.
  *
- * @param documentText  Full document text.
+ * llm-ls extracts prefix/suffix from the document text it received via
+ * didOpen/didChange notifications. The fim.prefix, fim.suffix, and fim.middle
+ * fields are for ADDITIONAL context (e.g., FIM token markers), NOT document text.
+ * This function returns empty FIM params; llm-ls builds the prompt internally
+ * from the synced document state.
+ *
+ * @param documentText  Full document text (currently unused — llm-ls syncs via LSP).
  * @param line          0-based cursor line.
  * @param character     0-based cursor character offset on the line.
- * @return FimContext with prefix (reversed, line-by-line), suffix (forward),
- *         and empty middle.
+ * @return FimContext with empty prefix/suffix/middle.
  */
 FimContext buildFimContext(std::string_view documentText, int line, int character);
 

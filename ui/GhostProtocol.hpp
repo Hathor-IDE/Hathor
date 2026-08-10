@@ -189,21 +189,27 @@ std::optional<GhostCompletionResponse> parseGhostCompletionResponse(
 /**
  * Parameters for the `llm-ls/acceptCompletion` notification.
  * Sent when the user accepts a ghost completion suggestion.
+ *
+ * Verified against llm-ls source: the Rust `AcceptCompletionParams` struct
+ * has `request_id: Uuid`, `accepted_completion: u32`,
+ * and `shown_completions: Vec<u32>`.
  */
 struct AcceptCompletionParams {
-    std::string requestId;     ///< the request_id from the completion response
-    std::string uri;
-    int         line      = 0;
-    int         character = 0;
+    std::string requestId;       ///< the request_id from the completion response (UUID string)
+    uint32_t    acceptedCompletion = 0;  ///< index of the accepted completion
+    std::vector<uint32_t> shownCompletions;  ///< indices of completions shown to user
 };
 
 /**
  * Parameters for the `llm-ls/rejectCompletion` notification.
  * Sent when the user dismisses or modifies a ghost completion suggestion.
+ *
+ * Verified against llm-ls source: the Rust `RejectCompletionParams` struct
+ * has `request_id: Uuid` and `shown_completions: Vec<u32>`.
  */
 struct RejectCompletionParams {
-    std::string requestId;     ///< the request_id from the completion response
-    std::string uri;
+    std::string requestId;       ///< the request_id from the completion response (UUID string)
+    std::vector<uint32_t> shownCompletions;  ///< indices of completions shown to user
 };
 
 // ---------------------------------------------------------------------------

@@ -25,70 +25,22 @@ namespace hathor::lsp {
 
 FimContext buildFimContext(std::string_view documentText, int line, int character)
 {
+    (void)documentText;
+    (void)line;
+    (void)character;
+
     FimContext result;
 
-    // Split document into lines for clean boundary detection.
-    std::vector<std::string_view> lines;
-    size_t start = 0;
-    size_t pos = 0;
-    while ((pos = documentText.find('\n', start)) != std::string_view::npos)
-    {
-        lines.push_back(documentText.substr(start, pos - start));
-        start = pos + 1;
-    }
-    lines.push_back(documentText.substr(start));
-
-    if (lines.empty())
-        return result;
-
-    // Clamp line to valid range.
-    if (line < 0)
-        line = 0;
-    if (line >= static_cast<int>(lines.size()))
-        line = static_cast<int>(lines.size()) - 1;
-
-    // Clamp character to line bounds.
-    if (character < 0)
-        character = 0;
-    if (character >= static_cast<int>(lines[line].size()))
-        character = static_cast<int>(lines[line].size());
-
-    // Build prefix: reversed lines [0..line-1] in reverse order, then reversed
-    // current-line prefix. llm-ls reverses each line so the model sees the
-    // most recent characters first, improving FIM completion quality.
-    {
-        std::string prefixText;
-        for (int i = line; i >= 0; --i)
-        {
-            if (i == line)
-            {
-                std::string_view linePrefix = lines[i].substr(0, static_cast<size_t>(character));
-                prefixText += std::string(linePrefix.rbegin(), linePrefix.rend());
-            }
-            else
-            {
-                std::string reversed(lines[i].rbegin(), lines[i].rend());
-                prefixText += reversed;
-                prefixText += '\n';
-            }
-        }
-        result.prefix = std::move(prefixText);
-    }
-
-    // Build suffix: rest of current line after cursor, then subsequent lines.
-    {
-        std::string suffixText;
-        std::string_view lineSuffix = lines[line].substr(static_cast<size_t>(character));
-        suffixText += std::string(lineSuffix);
-        for (int i = line + 1; i < static_cast<int>(lines.size()); ++i)
-        {
-            suffixText += '\n';
-            suffixText += lines[i];
-        }
-        result.suffix = std::move(suffixText);
-    }
-
-    // Middle is empty — llm-ls fills from tokenizer config.
+    // NOTE: llm-ls's build_prompt() extracts prefix/suffix from the document
+    // text it received via didOpen/didChange notifications. The fim.prefix,
+    // fim.suffix, and fim.middle fields are for ADDITIONAL context (e.g., FIM
+    // token markers for models like StarCoder), NOT for the document text
+    // itself. Putting document text here would duplicate it in the prompt.
+    //
+    // We leave prefix/suffix/middle empty and rely on llm-ls to build the
+    // prompt from the synced document state.
+    result.prefix.clear();
+    result.suffix.clear();
     result.middle.clear();
 
     return result;
@@ -261,9 +213,10 @@ std::optional<AcceptCompletionParams> GhostCompletionLogic::onAccept()
 
     AcceptCompletionParams params;
     params.requestId = activeGhost_->requestId;
-    params.uri = currentCtx_.uri;
-    params.line = currentCtx_.line;
-    params.character = currentCtx_.character;
+    // llm-ls track which completion was accepted and which were shown.
+    // We only track a single ghost completion per request cycle.
+    params.acceptedCompletion = 0;
+    params.shownCompletions = {0};
 
     activeGhost_.reset();
     pendingRequest_.reset();
@@ -278,7 +231,7 @@ std::optional<RejectCompletionParams> GhostCompletionLogic::onReject()
 
     RejectCompletionParams params;
     params.requestId = activeGhost_->requestId;
-    params.uri = currentCtx_.uri;
+    params.shownCompletions = {0};
 
     activeGhost_.reset();
     pendingRequest_.reset();
