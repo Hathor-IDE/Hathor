@@ -13,6 +13,7 @@
 #include "WorkerThread.hpp"
 #include "ChuckSessionService.hpp"
 #include "RenderService.hpp"
+#include "SongMutationService.hpp"
 
 // App headers (available when compiled as part of the hathor executable;
 // use paths relative to this file (control/) so the includes resolve
@@ -57,6 +58,7 @@ ControlInterface::ControlInterface(AudioEngineFacade& audio, SampleBank& bank)
     : audio_(audio)
     , bank_(bank)
     , readFacade_(std::make_unique<ProjectReadFacade>(audio, bank))
+    , songMutationService_(std::make_unique<SongMutationService>(audio, bank))
     , impl_(new Impl(audio))
 {
     // AI-5: Create the ChucK session service if the audio engine supports
@@ -196,12 +198,17 @@ void ControlInterface::dispatch(std::string_view rawLine)
         // AI-5: ChucK session lifecycle commands.
         handleChuckSessionCommand(cmd, rest);
     } else if (cmd == "render_chuck" ||
-                cmd == "get_job_status" ||
-                cmd == "commit_rendered_asset" ||
-                cmd == "cancel_render_job" ||
-                cmd == "list_render_jobs") {
+                 cmd == "get_job_status" ||
+                 cmd == "commit_rendered_asset" ||
+                 cmd == "cancel_render_job" ||
+                 cmd == "list_render_jobs") {
         // AI-6: Background render with explicit commit boundary.
         handleRenderCommand(cmd, rest);
+    } else if (cmd == "edit_song") {
+        // AI-7: Structured song mutation (persistent, confirmed).
+        // Format: edit_song <songFile> <opsJson>
+        auto [songFile, opsJson] = splitFirst(rest);
+        handleEditSong(songFile, trim(opsJson));
     } else {
         emitResponse({
             {"ok",    false},
@@ -1180,6 +1187,37 @@ void ControlInterface::handleCancelRenderJob(std::string_view rest)
         {"job_id", jobId},
         {"cancelled", cancelled}
     });
+}
+
+// ---------------------------------------------------------------------------
+// AI-7: Song mutation (edit_song)
+// ---------------------------------------------------------------------------
+
+void ControlInterface::handleEditSong(std::string_view songFile,
+                                       std::string_view rest)
+{
+    if (songFile.empty()) {
+        emitResponse({
+            {"ok", false},
+            {"cmd", "edit_song"},
+            {"error", "missing song file"}
+        });
+        return;
+    }
+
+    if (trim(rest).empty()) {
+        emitResponse({
+            {"ok", false},
+            {"cmd", "edit_song"},
+            {"error", "missing operations JSON"}
+        });
+        return;
+    }
+
+    const nlohmann::json result = songMutationService_->handleEditSong(songFile, rest);
+    nlohmann::json withCmd = result;
+    withCmd["cmd"] = "edit_song";
+    emitResponse(withCmd);
 }
 
 } // namespace hathor::control

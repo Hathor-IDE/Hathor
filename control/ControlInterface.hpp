@@ -24,6 +24,7 @@
 #include "ChuckSession.hpp"
 #include "ChuckSessionService.hpp"
 #include "RenderService.hpp"
+#include "SongMutationService.hpp"
 
 // Forward declarations — full headers are only needed in the .cpp.
 class AudioEngineFacade;
@@ -213,8 +214,17 @@ public:
      /// Format: cancel_render_job <jobId>
      void handleCancelRenderJob(std::string_view rest);
 
-     /// Dispatch an AI-6 render command.
-     void handleRenderCommand(std::string_view cmd, std::string_view rest);
+      /// Dispatch an AI-6 render command.
+      void handleRenderCommand(std::string_view cmd, std::string_view rest);
+
+      // -----------------------------------------------------------------------
+      // AI-7: Song mutation service
+      // -----------------------------------------------------------------------
+
+      /// Handle an edit_song command (persistent mutation — requires
+      /// confirmation for replace/delete/overwrite).
+      /// Format: edit_song <songFile> <opsJson>
+      void handleEditSong(std::string_view songFile, std::string_view rest);
 
 private:
     // --- Command handlers ---------------------------------------------------
@@ -271,6 +281,10 @@ private:
     // Constructed lazily after ChuckSessionService (shares the same session
     // store for source retrieval).
     std::unique_ptr<RenderService> renderService_;
+
+    // AI-7: Canonical song mutation service layer.
+    // Constructed eagerly — does not depend on ChuckSessionService.
+    std::unique_ptr<SongMutationService> songMutationService_;
 
     // WorkerThread is allocated on the heap to keep this header JUCE-free.
     // (WorkerThread.hpp only forward-declares AudioEngine, so it is safe.)

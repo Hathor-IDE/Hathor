@@ -51,6 +51,7 @@ add_library(hathor-control OBJECT
     ChuckSessionService.cpp
     JobTracker.cpp
     RenderService.cpp
+    SongMutationService.cpp
 )
 
 target_include_directories(hathor-control

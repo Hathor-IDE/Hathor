@@ -142,6 +142,23 @@ static json makeToolsList()
     gainSchema["properties"]["value"]["description"] = "Gain value (0.0-2.0)";
     gainSchema["required"] = json::array({"value"});
 
+    // edit_song: structured, transactional song mutation (AI-7)
+    json editSongOpsSchema;
+    editSongOpsSchema["type"] = "object";
+    editSongOpsSchema["properties"]["op"]["type"] = "string";
+    editSongOpsSchema["properties"]["op"]["description"] = "Operation type: replace_pattern | insert | set_meta | clear_pattern | delete_song";
+    editSongOpsSchema["required"] = json::array({"op"});
+    editSongOpsSchema["additionalProperties"] = true;
+
+    json editSongSchema;
+    editSongSchema["type"] = "object";
+    editSongSchema["properties"]["song_file"]["type"] = "string";
+    editSongSchema["properties"]["song_file"]["description"] = "Song file name (relative to project dir)";
+    editSongSchema["properties"]["ops"]["type"] = "array";
+    editSongSchema["properties"]["ops"]["description"] = "Array of operation objects";
+    editSongSchema["properties"]["ops"]["items"] = editSongOpsSchema;
+    editSongSchema["required"] = json::array({"song_file", "ops"});
+
     json tools = json::array();
 
     json setPattern;
@@ -173,6 +190,12 @@ static json makeToolsList()
     setGain["description"] = "Set master output gain (0.0-2.0)";
     setGain["inputSchema"] = gainSchema;
     tools.push_back(setGain);
+
+    json editSong;
+    editSong["name"] = "edit_song";
+    editSong["description"] = "Apply structured operations to a .hathor song file (replace_pattern, insert, set_meta, clear_pattern, delete_song)";
+    editSong["inputSchema"] = editSongSchema;
+    tools.push_back(editSong);
 
     json result;
     result["tools"] = tools;
@@ -219,6 +242,14 @@ static std::string buildHathorCommand(const std::string& toolName, const json& a
         char buf[64];
         std::snprintf(buf, sizeof(buf), "set-gain %g", v);
         return buf;
+    }
+    if (toolName == "edit_song")
+    {
+        if (!args.contains("song_file") || !args.contains("ops"))
+            return {};
+        const std::string songFile = args["song_file"].get<std::string>();
+        const std::string opsJson = args["ops"].dump();
+        return "edit_song " + songFile + " " + opsJson;
     }
     return {};
 }
