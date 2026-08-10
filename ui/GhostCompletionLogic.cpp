@@ -27,131 +27,68 @@ FimContext buildFimContext(std::string_view documentText, int line, int characte
 {
     FimContext result;
 
-    // Clamp line to valid range
-    int totalLines = 1;
-    for (size_t i = 0; i < documentText.size(); ++i)
+    // Split document into lines for clean boundary detection.
+    std::vector<std::string_view> lines;
+    size_t start = 0;
+    size_t pos = 0;
+    while ((pos = documentText.find('\n', start)) != std::string_view::npos)
     {
-        if (documentText[i] == '\n')
-            ++totalLines;
+        lines.push_back(documentText.substr(start, pos - start));
+        start = pos + 1;
     }
-    line = std::clamp(line, 0, totalLines - 1);
+    lines.push_back(documentText.substr(start));
 
-    // Extract the current line text (0-based line from '\n' splitting)
-    int currentLineStart = 0;
-    int currentLineNum = 0;
-    for (size_t i = 0; i <= documentText.size(); ++i)
-    {
-        if (currentLineNum == line)
-        {
-            currentLineStart = static_cast<int>(i);
-            break;
-        }
-        if (i < documentText.size() && documentText[i] == '\n')
-        {
-            ++currentLineNum;
-        }
-    }
+    if (lines.empty())
+        return result;
 
-    // Find end of current line
-    int currentLineEnd = currentLineStart;
-    while (currentLineEnd < static_cast<int>(documentText.size()) &&
-           documentText[currentLineEnd] != '\n')
-    {
-        ++currentLineEnd;
-    }
+    // Clamp line to valid range.
+    if (line < 0)
+        line = 0;
+    if (line >= static_cast<int>(lines.size()))
+        line = static_cast<int>(lines.size()) - 1;
 
-    // Clamp character to line bounds
-    character = std::clamp(character, 0, currentLineEnd - currentLineStart);
+    // Clamp character to line bounds.
+    if (character < 0)
+        character = 0;
+    if (character >= static_cast<int>(lines[line].size()))
+        character = static_cast<int>(lines[line].size());
 
-    // --- Build prefix (reversed, line-by-line) ---
-    // llm-ls reverses each line of the prefix so the model sees the most
-    // recent characters first, improving FIM completion quality.
-    //
-    // We take all text from (0,0) up to (line, character), split by lines,
-    // reverse each line, and join.
+    // Build prefix: reversed lines [0..line-1] in reverse order, then reversed
+    // current-line prefix. llm-ls reverses each line so the model sees the
+    // most recent characters first, improving FIM completion quality.
     {
         std::string prefixText;
-        prefixText.reserve(static_cast<size_t>(currentLineStart + character));
-
-        // Lines before the cursor line (in reverse order, reversed text)
-        int pos = currentLineStart - 1;
-        int lineNum = line;
-        while (lineNum > 0 && pos >= 0)
+        for (int i = line; i >= 0; --i)
         {
-            // Find the start of the previous line
-            int nextLineStart = pos;
-            while (pos >= 0 && documentText[pos] != '\n')
-                --pos;
-            // pos is at '\n' or -1
-            int lineStart = pos + 1;
-            int lineEnd = nextLineStart;
-
-            // Extract and reverse this line
-            std::string_view lineView = documentText.substr(
-                static_cast<size_t>(lineStart),
-                static_cast<size_t>(lineEnd - lineStart));
-
-            std::string reversed(lineView.rbegin(), lineView.rend());
-            prefixText += reversed;
-            prefixText += '\n';  // line separator (llm-ls uses \n between reversed lines)
-
-            --lineNum;
-            --pos;
+            if (i == line)
+            {
+                std::string_view linePrefix = lines[i].substr(0, static_cast<size_t>(character));
+                prefixText += std::string(linePrefix.rbegin(), linePrefix.rend());
+            }
+            else
+            {
+                std::string reversed(lines[i].rbegin(), lines[i].rend());
+                prefixText += reversed;
+                prefixText += '\n';
+            }
         }
-
-        // Current line prefix (before cursor), reversed
-        std::string_view currentPrefix = documentText.substr(
-            static_cast<size_t>(currentLineStart),
-            static_cast<size_t>(character));
-        std::string reversedCurrent(currentPrefix.rbegin(), currentPrefix.rend());
-        prefixText += reversedCurrent;
-
         result.prefix = std::move(prefixText);
     }
 
-    // --- Build suffix (forward, line-by-line) ---
-    // Text after cursor on the current line, then subsequent lines.
+    // Build suffix: rest of current line after cursor, then subsequent lines.
     {
         std::string suffixText;
-
-        // Rest of the current line (after cursor)
-        int restLen = currentLineEnd - (currentLineStart + character);
-        if (restLen > 0)
+        std::string_view lineSuffix = lines[line].substr(static_cast<size_t>(character));
+        suffixText += std::string(lineSuffix);
+        for (int i = line + 1; i < static_cast<int>(lines.size()); ++i)
         {
-            suffixText += std::string(documentText.substr(
-                static_cast<size_t>(currentLineStart + character),
-                static_cast<size_t>(restLen)));
+            suffixText += '\n';
+            suffixText += lines[i];
         }
-
-        // Subsequent lines
-        int pos = currentLineEnd + 1; // skip the '\n'
-        while (pos <= static_cast<int>(documentText.size()))
-        {
-            int lineEnd = pos;
-            while (lineEnd < static_cast<int>(documentText.size()) &&
-                   documentText[lineEnd] != '\n')
-            {
-                ++lineEnd;
-            }
-
-            int lineLen = lineEnd - pos;
-            if (lineLen > 0)
-            {
-                suffixText += '\n';
-                suffixText += std::string(documentText.substr(
-                    static_cast<size_t>(pos),
-                    static_cast<size_t>(lineLen)));
-            }
-
-            if (lineEnd >= static_cast<int>(documentText.size()))
-                break;
-            pos = lineEnd + 1;
-        }
-
         result.suffix = std::move(suffixText);
     }
 
-    // Middle is left empty — llm-ls fills from tokenizer config
+    // Middle is empty — llm-ls fills from tokenizer config.
     result.middle.clear();
 
     return result;
@@ -162,7 +99,7 @@ FimContext buildFimContext(std::string_view documentText, int line, int characte
 // ---------------------------------------------------------------------------
 
 std::optional<std::pair<GhostCompletionRequest, std::string>>
-GhostCompletionLogic::onEditorChanged(const GhostContext& ctx)
+GhostCompletionLogic::onEditorChanged(const GhostContext& ctx, int64_t nowMs)
 {
     if (!enabled_)
         return std::nullopt;
@@ -170,10 +107,7 @@ GhostCompletionLogic::onEditorChanged(const GhostContext& ctx)
     // Update the current context and revision
     currentCtx_ = ctx;
     ++revision_;
-    lastChangeTimeMs_ = static_cast<int64_t>(
-        std::chrono::duration_cast<std::chrono::milliseconds>(
-            std::chrono::steady_clock::now().time_since_epoch())
-        .count());
+    lastChangeTimeMs_ = nowMs;
     debouncePending_ = true;
 
     // Clear any active ghost — the document changed while it was showing
@@ -194,50 +128,45 @@ GhostCompletionLogic::onTimerTick(int64_t nowMs)
     {
         if (nowMs - pendingRequest_->sentAtMs > static_cast<int64_t>(timeoutMs_))
         {
-            // Timeout — clear pending request, don't send new one yet
+            // Timeout — clear pending request and debounce state so we
+            // don't immediately retry; wait for the next editor change.
             pendingRequest_.reset();
+            debouncePending_ = false;
         }
-    }
-
-    // Check debounce
-    if (debouncePending_ && pendingRequest_.has_value())
-    {
-        // Still have a pending request — wait for it to complete or timeout
+        // Request still in flight (or just timed out) — wait
         return std::nullopt;
     }
 
-    if (debouncePending_ && !pendingRequest_.has_value())
+    // No in-flight request — check if debounce has expired
+    if (debouncePending_ &&
+        nowMs - lastChangeTimeMs_ >= static_cast<int64_t>(debounceMs_))
     {
-        // Debounce window expired
-        if (nowMs - lastChangeTimeMs_ >= static_cast<int64_t>(debounceMs_))
-        {
-            debouncePending_ = false;
+        debouncePending_ = false;
 
-            GhostCompletionRequest req;
-            req.uri = currentCtx_.uri;
-            req.languageId = currentCtx_.languageId;
-            req.line = currentCtx_.line;
-            req.character = currentCtx_.character;
-            req.textDocument = currentCtx_.documentText;
+        GhostCompletionRequest req;
+        req.uri = currentCtx_.uri;
+        req.languageId = currentCtx_.languageId;
+        req.line = currentCtx_.line;
+        req.character = currentCtx_.character;
+        req.textDocument = currentCtx_.documentText;
 
-            // Build FIM context
-            auto fim = buildFimContext(currentCtx_.documentText,
-                                       currentCtx_.line,
-                                       currentCtx_.character);
-            req.fim.enabled = true;
-            req.fim.prefix = std::move(fim.prefix);
-            req.fim.suffix = std::move(fim.suffix);
-            req.fim.middle = std::move(fim.middle);
+        // Build FIM context
+        auto fim = buildFimContext(currentCtx_.documentText,
+                                   currentCtx_.line,
+                                   currentCtx_.character);
+        req.fim.enabled = true;
+        req.fim.prefix = std::move(fim.prefix);
+        req.fim.suffix = std::move(fim.suffix);
+        req.fim.middle = std::move(fim.middle);
 
-            // Generate a request ID (will be matched in onGhostResponse)
-            std::string requestId = GhostJsonRpc::generateRequestId();
+        // Generate a request ID (will be matched in onGhostResponse)
+        std::string requestId = GhostJsonRpc::generateRequestId();
 
-            pendingRequest_ = PendingRequest{
-                requestId, revision_, nowMs
-            };
+        pendingRequest_ = PendingRequest{
+            requestId, revision_, nowMs
+        };
 
-            return std::make_optional(std::make_pair(req, requestId));
-        }
+        return std::make_optional(std::make_pair(req, requestId));
     }
 
     return std::nullopt;
@@ -245,26 +174,29 @@ GhostCompletionLogic::onTimerTick(int64_t nowMs)
 
 std::optional<GhostResult> GhostCompletionLogic::onGhostResponse(
     const std::string& requestId,
-    const GhostCompletionResponse& response)
+    const GhostCompletionResponse& response,
+    int64_t nowMs)
 {
     if (!pendingRequest_.has_value())
         return std::nullopt;
 
     const auto& pending = pendingRequest_.value();
 
-    // 1. Check request ID match
-    if (pending.requestId != requestId)
+    // 1. Check request ID match (both the transport requestId and the
+    //    llm-ls response field must match the pending request)
+    if (pending.requestId != requestId || pending.requestId != response.request_id)
         return std::nullopt;
 
     // 2. Check revision match (stale response rejection)
     if (pending.revision != revision_)
-        return std::nullopt; // stale — editor changed since this request
+    {
+        // Response is stale — the editor changed since this request was sent.
+        // Clear the pending request so onTimerTick can send a fresh one.
+        pendingRequest_.reset();
+        return std::nullopt;
+    }
 
     // 3. Check timeout
-    int64_t nowMs = static_cast<int64_t>(
-        std::chrono::duration_cast<std::chrono::milliseconds>(
-            std::chrono::steady_clock::now().time_since_epoch())
-        .count());
     if (nowMs - pending.sentAtMs > static_cast<int64_t>(timeoutMs_))
         return std::nullopt;
 

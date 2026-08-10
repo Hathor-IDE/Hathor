@@ -455,7 +455,7 @@ void GhostLlmClient::handleResponse(const std::string& id,
     }
 
     // Parse the llm-ls completion response
-    auto ghostResponse = parseGhostCompletionResponse(result);
+    auto ghostResponse = lsp::parseGhostCompletionResponse(result);
     if (!ghostResponse.has_value())
     {
         if (req.callback)

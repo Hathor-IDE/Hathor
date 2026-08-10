@@ -49,35 +49,35 @@ public:
      * Serialize an initialize request for llm-ls.
      * llm-ls supports standard LSP initialize; we advertise FIM capability.
      */
-    std::string serializeInitialize();
+    static std::string serializeInitialize();
 
     /**
      * Serialize the `initialized` notification.
      */
-    std::string serializeInitialized();
+    static std::string serializeInitialized();
 
     /**
      * Serialize a `llm-ls/getCompletions` request with FIM context.
      * @return Pair of (requestId, framedMessage).
      */
-    std::pair<std::string, std::string> serializeGhostCompletion(
+    static std::pair<std::string, std::string> serializeGhostCompletion(
         const GhostCompletionRequest& req);
 
     /**
      * Serialize the `llm-ls/acceptCompletion` notification.
      */
-    std::string serializeAcceptCompletion(const AcceptCompletionParams& params);
+    static std::string serializeAcceptCompletion(const AcceptCompletionParams& params);
 
     /**
      * Serialize the `llm-ls/rejectCompletion` notification.
      */
-    std::string serializeRejectCompletion(const RejectCompletionParams& params);
+    static std::string serializeRejectCompletion(const RejectCompletionParams& params);
 
     /**
      * Serialize a `textDocument/didOpen` notification with the given languageId.
      * Used by GhostLlmClient to keep document state synchronized with llm-ls.
      */
-    std::pair<int, std::string> serializeDidOpen(
+    static std::pair<int, std::string> serializeDidOpen(
         std::string_view uri,
         std::string_view languageId,
         int version,
@@ -86,7 +86,7 @@ public:
     /**
      * Serialize a `textDocument/didChange` notification.
      */
-    std::pair<int, std::string> serializeDidChange(
+    static std::pair<int, std::string> serializeDidChange(
         std::string_view uri,
         int version,
         std::string_view text);
@@ -94,13 +94,13 @@ public:
     /**
      * Serialize a `textDocument/didClose` notification.
      */
-    std::string serializeDidClose(std::string_view uri);
+    static std::string serializeDidClose(std::string_view uri);
 
     /**
      * Serialize a shutdown/exit sequence.
      */
-    std::string serializeShutdown();
-    std::string serializeExit();
+    static std::string serializeShutdown();
+    static std::string serializeExit();
 
     // -----------------------------------------------------------------------
     // Incoming message parsing

@@ -136,6 +136,9 @@ public:
     /** Enable/disable ghost-text completion. */
     void setEnabled(bool e) noexcept { enabled_ = e; }
 
+    /** True if ghost-text completion is enabled. */
+    bool isEnabled() const noexcept { return enabled_; }
+
     /** Milliseconds to wait after the last editor change before requesting. */
     void setDebounceMs(int ms) noexcept { debounceMs_ = ms; }
 
@@ -147,7 +150,7 @@ public:
     // -----------------------------------------------------------------------
 
     /** True if a ghost completion request is currently in-flight. */
-    bool hasPendingRequest() const noexcept { return pendingRequestId_.has_value(); }
+    bool hasPendingRequest() const noexcept { return pendingRequest_.has_value(); }
 
     /** The current editor revision. */
     int currentRevision() const noexcept { return revision_; }
@@ -163,13 +166,14 @@ public:
      * Called when the editor changes (text, cursor, or focus).
      *
      * @param ctx   Current editor snapshot.
-     * @return Optional GhostCompletionRequest — present if a request should
-     *         be sent now (debounce expired, no in-flight request, provider valid).
-     *         Absent if the request is suppressed (still debouncing, request
-     *         already in flight, or ghost disabled / no valid config).
-     */
-    std::optional<std::pair<GhostCompletionRequest, std::string /*requestId*/>>
-    onEditorChanged(const GhostContext& ctx);
+      * @param nowMs  Current time in milliseconds (steady clock epoch).
+      * @return Optional GhostCompletionRequest — present if a request should
+      *         be sent now (debounce expired, no in-flight request, provider valid).
+      *         Absent if the request is suppressed (still debouncing, request
+      *         already in flight, or ghost disabled / no valid config).
+      */
+     std::optional<std::pair<GhostCompletionRequest, std::string /*requestId*/>>
+     onEditorChanged(const GhostContext& ctx, int64_t nowMs);
 
     /**
      * Called when a timer tick fires (for debounce + timeout checking).
@@ -184,14 +188,16 @@ public:
      * Called when a ghost completion response arrives.
      *
      * @param requestId   The request ID (must match pendingRequestId).
-     * @param response    The parsed llm-ls response.
-     * @return Optional GhostResult — present if the response is valid and
-     *         not stale. Absent if the response is stale, timed out, or
-     *         does not match the pending request.
-     */
-    std::optional<GhostResult> onGhostResponse(
-        const std::string& requestId,
-        const GhostCompletionResponse& response);
+      * @param response    The parsed llm-ls response.
+      * @param nowMs  Current time in milliseconds (steady clock epoch).
+      * @return Optional GhostResult — present if the response is valid and
+      *         not stale. Absent if the response is stale, timed out, or
+      *         does not match the pending request.
+      */
+     std::optional<GhostResult> onGhostResponse(
+         const std::string& requestId,
+         const GhostCompletionResponse& response,
+         int64_t nowMs);
 
     /**
      * Called when the ghost provider fails (error, timeout, or connection lost).

@@ -851,7 +851,11 @@ void HathorTab::triggerGhostCompletion()
 
     // Feed context to the logic layer — it handles debounce and returns
     // nullopt (the request is only sent when debounce expires via ghostTick).
-    ghostLogic_->onEditorChanged(ctx);
+    int64_t nowMs = static_cast<int64_t>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now().time_since_epoch())
+        .count());
+    ghostLogic_->onEditorChanged(ctx, nowMs);
 
     // Clear any existing ghost — a new request cycle has started
     if (ghostOverlay_)
@@ -932,7 +936,11 @@ void HathorTab::ghostTick()
             if (!ghostLogic_ || !ghostOverlay_)
                 return;
 
-            auto result = ghostLogic_->onGhostResponse(id, resp);
+            int64_t responseTime = static_cast<int64_t>(
+                std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::steady_clock::now().time_since_epoch())
+                .count());
+            auto result = ghostLogic_->onGhostResponse(id, resp, responseTime);
             if (!result.has_value() || result->isEmpty())
             {
                 ghostOverlay_->clearGhost();

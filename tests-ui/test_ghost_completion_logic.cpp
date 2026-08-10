@@ -9,7 +9,7 @@
  *   - GhostCompletionLogic debounce, revision tracking, stale rejection,
  *     timeout, accept/reject, request building
  *   - GhostJsonRpc UUID generation and response parsing
- *   - GhostProviderResolver backend parsing
+ *   - GhostProviderResolver env-var resolution
  *
  * JUCE-free tests compiled into the hathor-ui-tests target (req 31.1).
  */
@@ -39,12 +39,13 @@ TEST_CASE("buildFimContext builds prefix (reversed, line-by-line) and suffix (fo
     std::string doc = "line1\nline2\nline3";
     auto fim = buildFimContext(doc, 2, 0);
 
-    // Prefix should contain reversed lines 0,1 and reversed current line prefix (empty)
-    // Line 0 "line1" reversed = "1enil", followed by '\n'
+    // Prefix should contain reversed lines 0,1 (in reverse order) + reversed current-line prefix
     // Line 1 "line2" reversed = "2enil", followed by '\n'
-    // Current line "line3" prefix (0 chars before cursor) reversed = ""
-    REQUIRE(fim.prefix.find("1enil") != std::string::npos);
+    // Line 0 "line1" reversed = "1enil", followed by '\n'
+    // Current line prefix (empty) reversed = ""
     REQUIRE(fim.prefix.find("2enil") != std::string::npos);
+    REQUIRE(fim.prefix.find("1enil") != std::string::npos);
+    // Current line "line3" at char 0 → suffix is "line3"
     REQUIRE(fim.suffix.find("line3") != std::string::npos);
     REQUIRE(fim.middle.empty());
 }
@@ -85,15 +86,16 @@ TEST_CASE("buildFimContext multi-line suffix includes subsequent lines", "[ghost
     std::string doc = "first\nsecond\nthird";
     auto fim = buildFimContext(doc, 1, 3);
 
-    // Prefix: line 0 "first" reversed = "tsrif\n"
+    // Prefix: line 0 "first" reversed = "tsrif\n" + current line "sec" reversed = "ces"
     REQUIRE(fim.prefix.find("tsrif") != std::string::npos);
-    // Suffix: "ond\nthird" (rest of line 1 after char 3 + line 2)
+    REQUIRE(fim.prefix.find("ces") != std::string::npos);
+    // Suffix: rest of current line "ond" + "\n" + "third"
     REQUIRE(fim.suffix.find("ond") != std::string::npos);
     REQUIRE(fim.suffix.find("third") != std::string::npos);
 }
 
 // ===========================================================================
-// GhostCompletionLogic — debounce and state
+// GhostCompletionLogic — basic state
 // ===========================================================================
 
 TEST_CASE("GhostCompletionLogic starts disabled", "[ghost][logic]")
@@ -105,7 +107,7 @@ TEST_CASE("GhostCompletionLogic starts disabled", "[ghost][logic]")
     ctx.languageId = "hathor";
     ctx.uri = "file:///test.hathor";
 
-    auto result = logic.onEditorChanged(ctx);
+    auto result = logic.onEditorChanged(ctx, 0);
     REQUIRE_FALSE(result.has_value());
 }
 
@@ -120,12 +122,16 @@ TEST_CASE("GhostCompletionLogic returns nullopt on editor change (debounce mode)
     ctx.languageId = "hathor";
     ctx.uri = "file:///test.hathor";
 
-    auto result = logic.onEditorChanged(ctx);
+    auto result = logic.onEditorChanged(ctx, 0);
     REQUIRE_FALSE(result.has_value());
 
     REQUIRE(logic.hasPendingRequest() == false);
     REQUIRE(logic.currentRevision() == 1);
 }
+
+// ===========================================================================
+// GhostCompletionLogic — debounce
+// ===========================================================================
 
 TEST_CASE("GhostCompletionLogic sends request after debounce expires", "[ghost][logic]")
 {
@@ -138,7 +144,7 @@ TEST_CASE("GhostCompletionLogic sends request after debounce expires", "[ghost][
     ctx.languageId = "hathor";
     ctx.uri = "file:///test.hathor";
 
-    logic.onEditorChanged(ctx);
+    logic.onEditorChanged(ctx, 0);
 
     // Not enough time has elapsed
     int64_t t1 = 100;
@@ -160,6 +166,10 @@ TEST_CASE("GhostCompletionLogic sends request after debounce expires", "[ghost][
     REQUIRE(req.character == 0);
 }
 
+// ===========================================================================
+// GhostCompletionLogic — stale response rejection
+// ===========================================================================
+
 TEST_CASE("GhostCompletionLogic rejects stale response (revision mismatch)", "[ghost][logic]")
 {
     GhostCompletionLogic logic;
@@ -171,8 +181,8 @@ TEST_CASE("GhostCompletionLogic rejects stale response (revision mismatch)", "[g
     ctx.documentText = "bd";
     ctx.uri = "file:///test.hathor";
 
-    // First request cycle
-    logic.onEditorChanged(ctx);
+    // First request cycle at t=0
+    logic.onEditorChanged(ctx, 0);
     auto r1 = logic.onTimerTick(200);
     REQUIRE(r1.has_value());
     std::string requestId1 = r1.value().second;
@@ -180,17 +190,21 @@ TEST_CASE("GhostCompletionLogic rejects stale response (revision mismatch)", "[g
 
     // Editor changed during flight — revision increments, makes response stale
     ctx.documentText = "bd sn";
-    logic.onEditorChanged(ctx);
+    logic.onEditorChanged(ctx, 300);
     REQUIRE(logic.hasPendingRequest()); // still pending
 
-    // Response for the old request arrives
+    // Response for the old request arrives — stale
     GhostCompletionResponse staleResp;
     staleResp.request_id = requestId1;
     staleResp.completions = {{.generatedText = "bd sn hh cp"}};
-    auto result = logic.onGhostResponse(requestId1, staleResp);
+    auto result = logic.onGhostResponse(requestId1, staleResp, 400);
     REQUIRE_FALSE(result.has_value());
-    REQUIRE(logic.hasPendingRequest() == false);
+    REQUIRE_FALSE(logic.hasPendingRequest());
 }
+
+// ===========================================================================
+// GhostCompletionLogic — valid response
+// ===========================================================================
 
 TEST_CASE("GhostCompletionLogic accepts valid response", "[ghost][logic]")
 {
@@ -203,17 +217,16 @@ TEST_CASE("GhostCompletionLogic accepts valid response", "[ghost][logic]")
     ctx.documentText = "bd";
     ctx.uri = "file:///test.hathor";
 
-    logic.onEditorChanged(ctx);
+    logic.onEditorChanged(ctx, 0);
     auto r1 = logic.onTimerTick(200);
     REQUIRE(r1.has_value());
     std::string requestId = r1.value().second;
 
-    // Build a valid response immediately (no timeout)
     GhostCompletionResponse resp;
     resp.request_id = requestId;
     resp.completions = {{.generatedText = "bd sn hh cp"}};
 
-    auto result = logic.onGhostResponse(requestId, resp);
+    auto result = logic.onGhostResponse(requestId, resp, 300);
     REQUIRE(result.has_value());
     REQUIRE(result->text == "bd sn hh cp");
     REQUIRE(result->cursorLine == 0);
@@ -230,20 +243,23 @@ TEST_CASE("GhostCompletionLogic rejects mismatched request ID", "[ghost][logic]"
 
     GhostContext ctx;
     ctx.uri = "file:///test.hathor";
-    logic.onEditorChanged(ctx);
+    logic.onEditorChanged(ctx, 0);
     auto r1 = logic.onTimerTick(200);
     REQUIRE(r1.has_value());
     std::string correctId = r1.value().second;
 
-    // Response with wrong request ID
     GhostCompletionResponse resp;
     resp.request_id = "wrong-id";
     resp.completions = {{.generatedText = "text"}};
 
-    auto result = logic.onGhostResponse(correctId, resp);
+    auto result = logic.onGhostResponse(correctId, resp, 300);
     REQUIRE_FALSE(result.has_value());
     REQUIRE(logic.hasPendingRequest());
 }
+
+// ===========================================================================
+// GhostCompletionLogic — timeout
+// ===========================================================================
 
 TEST_CASE("GhostCompletionLogic timeout clears pending request", "[ghost][logic]")
 {
@@ -254,18 +270,22 @@ TEST_CASE("GhostCompletionLogic timeout clears pending request", "[ghost][logic]
 
     GhostContext ctx;
     ctx.uri = "file:///test.hathor";
-    logic.onEditorChanged(ctx);
+    logic.onEditorChanged(ctx, 0);
 
     // Request fires immediately (debounce=0)
     auto r1 = logic.onTimerTick(0);
     REQUIRE(r1.has_value());
     REQUIRE(logic.hasPendingRequest());
 
-    // Wait for timeout
+    // Wait for timeout (sentAtMs=0, nowMs=200, 200 > 100 → timeout)
     auto r2 = logic.onTimerTick(200);
     REQUIRE_FALSE(r2.has_value());
     REQUIRE_FALSE(logic.hasPendingRequest());
 }
+
+// ===========================================================================
+// GhostCompletionLogic — accept / reject
+// ===========================================================================
 
 TEST_CASE("GhostCompletionLogic onAccept returns params and clears ghost", "[ghost][logic]")
 {
@@ -277,7 +297,7 @@ TEST_CASE("GhostCompletionLogic onAccept returns params and clears ghost", "[gho
     ctx.uri = "file:///test.hathor";
     ctx.line = 0;
     ctx.character = 2;
-    logic.onEditorChanged(ctx);
+    logic.onEditorChanged(ctx, 0);
 
     auto r = logic.onTimerTick(0);
     REQUIRE(r.has_value());
@@ -287,7 +307,7 @@ TEST_CASE("GhostCompletionLogic onAccept returns params and clears ghost", "[gho
     resp.request_id = requestId;
     resp.completions = {{.generatedText = " completion"}};
 
-    auto ghostResult = logic.onGhostResponse(requestId, resp);
+    auto ghostResult = logic.onGhostResponse(requestId, resp, 0);
     REQUIRE(ghostResult.has_value());
     REQUIRE(logic.hasActiveGhost());
 
@@ -311,7 +331,7 @@ TEST_CASE("GhostCompletionLogic onReject returns params and clears ghost", "[gho
     ctx.uri = "file:///test.hathor";
     ctx.line = 0;
     ctx.character = 2;
-    logic.onEditorChanged(ctx);
+    logic.onEditorChanged(ctx, 0);
 
     auto r = logic.onTimerTick(0);
     REQUIRE(r.has_value());
@@ -321,7 +341,7 @@ TEST_CASE("GhostCompletionLogic onReject returns params and clears ghost", "[gho
     resp.request_id = requestId;
     resp.completions = {{.generatedText = " foo"}};
 
-    auto ghostResult = logic.onGhostResponse(requestId, resp);
+    auto ghostResult = logic.onGhostResponse(requestId, resp, 0);
     REQUIRE(ghostResult.has_value());
     REQUIRE(logic.hasActiveGhost());
 
@@ -333,6 +353,10 @@ TEST_CASE("GhostCompletionLogic onReject returns params and clears ghost", "[gho
     REQUIRE_FALSE(logic.hasActiveGhost());
 }
 
+// ===========================================================================
+// GhostCompletionLogic — cancel and provider failure
+// ===========================================================================
+
 TEST_CASE("GhostCompletionLogic cancelPendingRequest clears state", "[ghost][logic]")
 {
     GhostCompletionLogic logic;
@@ -341,7 +365,7 @@ TEST_CASE("GhostCompletionLogic cancelPendingRequest clears state", "[ghost][log
 
     GhostContext ctx;
     ctx.uri = "file:///test.hathor";
-    logic.onEditorChanged(ctx);
+    logic.onEditorChanged(ctx, 0);
 
     auto r = logic.onTimerTick(0);
     REQUIRE(r.has_value());
@@ -359,7 +383,7 @@ TEST_CASE("GhostCompletionLogic onProviderFailure clears ghost", "[ghost][logic]
 
     GhostContext ctx;
     ctx.uri = "file:///test.hathor";
-    logic.onEditorChanged(ctx);
+    logic.onEditorChanged(ctx, 0);
 
     auto r = logic.onTimerTick(0);
     REQUIRE(r.has_value());
@@ -368,7 +392,7 @@ TEST_CASE("GhostCompletionLogic onProviderFailure clears ghost", "[ghost][logic]
     GhostCompletionResponse resp;
     resp.request_id = requestId;
     resp.completions = {{.generatedText = "test"}};
-    logic.onGhostResponse(requestId, resp);
+    logic.onGhostResponse(requestId, resp, 0);
     REQUIRE(logic.hasActiveGhost());
 
     auto cleared = logic.onProviderFailure();
@@ -410,7 +434,7 @@ TEST_CASE("GhostCompletionLogic.buildRequest populates FIM and backend", "[ghost
     REQUIRE(req.backend.model == "bigcode/starcoder");
     REQUIRE(req.apiToken == "test-token");
     REQUIRE(req.contextWindow == 4096);
-    REQUIRE(req.tokenizerConfig == "default");
+    REQUIRE(req.tokenizerConfig.empty());
 }
 
 TEST_CASE("GhostCompletionLogic.currentContext returns last edit context", "[ghost][logic]")
@@ -424,7 +448,7 @@ TEST_CASE("GhostCompletionLogic.currentContext returns last edit context", "[gho
     ctx.line = 1;
     ctx.character = 3;
 
-    logic.onEditorChanged(ctx);
+    logic.onEditorChanged(ctx, 0);
 
     const auto& stored = logic.currentContext();
     REQUIRE(stored.uri == "file:///test.hathor");
@@ -456,6 +480,10 @@ TEST_CASE("GhostJsonRpc.generateRequestId produces UUID v4 strings", "[ghost][js
     // Version nibble should be 4 (UUID v4)
     REQUIRE(id1[14] == '4');
 }
+
+// ===========================================================================
+// GhostJsonRpc — response parsing
+// ===========================================================================
 
 TEST_CASE("GhostJsonRpc.parseResponse extracts string ID", "[ghost][jsonrpc]")
 {
@@ -701,91 +729,48 @@ TEST_CASE("parseGhostCompletionResponse handles multiple completions", "[ghost][
 }
 
 // ===========================================================================
-// GhostProviderResolver — backend parsing (static method via env)
+// GhostProviderResolver — env-var resolution
 // ===========================================================================
-
-// Note: GhostProviderResolver::parseBackend and parseBool are private.
-// We test the public API (resolve / isEnabled) by setting/unsetting env vars.
-// These tests must run in the main thread since they modify process env.
 
 TEST_CASE("GhostProviderResolver.isEnabled respects GHOST_ENABLED", "[ghost][provider]")
 {
-    // Save and clear
     const char* saved = std::getenv("GHOST_ENABLED");
     std::string savedVal = saved ? saved : "";
 
-    // Unset
     unsetenv("GHOST_ENABLED");
     REQUIRE_FALSE(GhostProviderResolver::isEnabled());
 
-    // Set to "1"
     setenv("GHOST_ENABLED", "1", 1);
     REQUIRE(GhostProviderResolver::isEnabled());
 
-    // Set to "true"
     setenv("GHOST_ENABLED", "true", 1);
     REQUIRE(GhostProviderResolver::isEnabled());
 
-    // Set to "0"
     setenv("GHOST_ENABLED", "0", 1);
     REQUIRE_FALSE(GhostProviderResolver::isEnabled());
 
-    // Set to "false"
     setenv("GHOST_ENABLED", "false", 1);
     REQUIRE_FALSE(GhostProviderResolver::isEnabled());
 
-    // Restore
     if (savedVal.empty())
         unsetenv("GHOST_ENABLED");
     else
         setenv("GHOST_ENABLED", savedVal.c_str(), 1);
 }
 
-TEST_CASE("GhostProviderResolver.resolve returns nullopt when disabled", "[ghost][provider]")
+TEST_CASE("GhostProviderResolver.resolve returns nullopt when no model set", "[ghost][provider]")
 {
     const char* savedEnabled = std::getenv("GHOST_ENABLED");
-    std::string savedEnabledVal = savedEnabled ? savedEnabled : "";
-
-    const char* savedBackend = std::getenv("GHOST_BACKEND");
-    std::string savedBackendVal = savedBackend ? savedBackend : "";
-
-    const char* savedModel = std::getenv("GHOST_MODEL");
-    std::string savedModelVal = savedModel ? savedModel : "";
-
-    // Disable
-    setenv("GHOST_ENABLED", "0", 1);
-    unsetenv("GHOST_BACKEND");
-    unsetenv("GHOST_MODEL");
-    auto result = GhostProviderResolver::resolve();
-    REQUIRE_FALSE(result.has_value());
-
-    // Restore
-    if (savedEnabledVal.empty())
-        unsetenv("GHOST_ENABLED");
-    else
-        setenv("GHOST_ENABLED", savedEnabledVal.c_str(), 1);
-    if (savedBackendVal.empty())
-        unsetenv("GHOST_BACKEND");
-    else
-        setenv("GHOST_BACKEND", savedBackendVal.c_str(), 1);
-    if (savedModelVal.empty())
-        unsetenv("GHOST_MODEL");
-    else
-        setenv("GHOST_MODEL", savedModelVal.c_str(), 1);
-}
-
-TEST_CASE("GhostProviderResolver.resolve returns nullopt when no model", "[ghost][provider]")
-{
     const char* savedBackend = std::getenv("GHOST_BACKEND");
     const char* savedModel = std::getenv("GHOST_MODEL");
-    const char* savedEnabled = std::getenv("GHOST_ENABLED");
+    std::string savedEnabledVal = savedEnabled ? savedEnabled : "";
     std::string savedBackendVal = savedBackend ? savedBackend : "";
     std::string savedModelVal = savedModel ? savedModel : "";
-    std::string savedEnabledVal = savedEnabled ? savedEnabled : "";
 
     setenv("GHOST_ENABLED", "1", 1);
     setenv("GHOST_BACKEND", "huggingface", 1);
     unsetenv("GHOST_MODEL");
+
     auto result = GhostProviderResolver::resolve();
     REQUIRE_FALSE(result.has_value());
 
@@ -810,6 +795,7 @@ TEST_CASE("GhostProviderResolver.resolve returns nullopt for unknown backend", "
     setenv("GHOST_ENABLED", "1", 1);
     setenv("GHOST_BACKEND", "unknown-backend", 1);
     setenv("GHOST_MODEL", "test-model", 1);
+
     auto result = GhostProviderResolver::resolve();
     REQUIRE_FALSE(result.has_value());
 
@@ -931,10 +917,12 @@ TEST_CASE("GhostProviderResolver.resolve respects GHOST_CONTEXT_WINDOW", "[ghost
     const char* savedEnabled = std::getenv("GHOST_ENABLED");
     const char* savedBackend = std::getenv("GHOST_BACKEND");
     const char* savedModel = std::getenv("GHOST_MODEL");
+    const char* savedToken = std::getenv("HF_API_TOKEN");
     const char* savedCw = std::getenv("GHOST_CONTEXT_WINDOW");
     std::string savedEnabledVal = savedEnabled ? savedEnabled : "";
     std::string savedBackendVal = savedBackend ? savedBackend : "";
     std::string savedModelVal = savedModel ? savedModel : "";
+    std::string savedTokenVal = savedToken ? savedToken : "";
     std::string savedCwVal = savedCw ? savedCw : "";
 
     setenv("GHOST_ENABLED", "1", 1);
@@ -954,6 +942,8 @@ TEST_CASE("GhostProviderResolver.resolve respects GHOST_CONTEXT_WINDOW", "[ghost
     else setenv("GHOST_BACKEND", savedBackendVal.c_str(), 1);
     if (savedModelVal.empty()) unsetenv("GHOST_MODEL");
     else setenv("GHOST_MODEL", savedModelVal.c_str(), 1);
+    if (savedTokenVal.empty()) unsetenv("HF_API_TOKEN");
+    else setenv("HF_API_TOKEN", savedTokenVal.c_str(), 1);
     if (savedCwVal.empty()) unsetenv("GHOST_CONTEXT_WINDOW");
     else setenv("GHOST_CONTEXT_WINDOW", savedCwVal.c_str(), 1);
 }
@@ -995,15 +985,15 @@ TEST_CASE("GhostProviderConfig.valid returns true for local backend without toke
 
 TEST_CASE("backendToString maps all enum values", "[ghost][protocol]")
 {
-    REQUIRE(backendToString(LlmBackend::HuggingFace) == "HuggingFace");
-    REQUIRE(backendToString(LlmBackend::LlamaCpp) == "LlamaCpp");
-    REQUIRE(backendToString(LlmBackend::Ollama) == "Ollama");
-    REQUIRE(backendToString(LlmBackend::OpenAi) == "OpenAi");
-    REQUIRE(backendToString(LlmBackend::Tgi) == "Tgi");
+    REQUIRE(backendToString(LlmBackend::HuggingFace) == "huggingface");
+    REQUIRE(backendToString(LlmBackend::LlamaCpp) == "llamacpp");
+    REQUIRE(backendToString(LlmBackend::Ollama) == "ollama");
+    REQUIRE(backendToString(LlmBackend::OpenAi) == "openai");
+    REQUIRE(backendToString(LlmBackend::Tgi) == "tgi");
 }
 
 // ===========================================================================
-// GhostCompletionRequest::toJson / GhostCompletionResponse round-trip
+// GhostCompletionRequest::toJson
 // ===========================================================================
 
 TEST_CASE("GhostCompletionRequest.toJson produces expected structure", "[ghost][protocol]")
@@ -1017,7 +1007,6 @@ TEST_CASE("GhostCompletionRequest.toJson produces expected structure", "[ghost][
     req.fim.enabled = true;
     req.fim.prefix = "hello ";
     req.fim.suffix = "world";
-    req.fim.middle = "";
     req.backend.backend = LlmBackend::HuggingFace;
     req.backend.url = "https://api-inference.huggingface.co";
     req.backend.model = "starcoder";

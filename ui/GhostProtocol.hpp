@@ -40,30 +40,32 @@ namespace hathor::lsp {
 
 /**
  * The LLM backend used by llm-ls.
- * Maps to the Rust `Backend` enum in llm-ls.
+ * Maps to the Rust `Backend` enum in llm-ls, which serializes as
+ * lowercase via `#[serde(rename_all = "lowercase", tag = "backend")]`.
  */
 enum class LlmBackend {
-    HuggingFace,  ///< api-inference.huggingface.co
-    LlamaCpp,     ///< local llama.cpp server
-    Ollama,        ///< local Ollama server
-    OpenAi,       ///< OpenAI-compatible API
-    Tgi,          ///< Text Generation Inference
+    HuggingFace,  ///< serialized as "huggingface"
+    LlamaCpp,     ///< serialized as "llamacpp"
+    Ollama,        ///< serialized as "ollama"
+    OpenAi,       ///< serialized as "openai"
+    Tgi,          ///< serialized as "tgi"
 };
 
 /**
  * Serialize a backend to its llm-ls string representation.
+ * Must be lowercase to match llm-ls's `#[serde(rename_all = "lowercase")]`.
  */
 inline std::string backendToString(LlmBackend b)
 {
     switch (b)
     {
-        case LlmBackend::HuggingFace: return "HuggingFace";
-        case LlmBackend::LlamaCpp:    return "LlamaCpp";
-        case LlmBackend::Ollama:      return "Ollama";
-        case LlmBackend::OpenAi:      return "OpenAi";
-        case LlmBackend::Tgi:         return "Tgi";
+        case LlmBackend::HuggingFace: return "huggingface";
+        case LlmBackend::LlamaCpp:    return "llamacpp";
+        case LlmBackend::Ollama:      return "ollama";
+        case LlmBackend::OpenAi:      return "openai";
+        case LlmBackend::Tgi:         return "tgi";
     }
-    return "HuggingFace";
+    return "huggingface";
 }
 
 // ---------------------------------------------------------------------------
