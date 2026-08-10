@@ -9,6 +9,7 @@
 
 #include "ProjectReadFacade.hpp"
 
+#include "HathorFileParser.hpp"
 #include "hathor/MiniParser.hpp"
 #include "hathor/MiniTokeniser.hpp"
 #include "ChuckDiagnostics.hpp"
@@ -16,6 +17,7 @@
 #include <algorithm>
 #include <chrono>
 #include <filesystem>
+#include <fstream>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -121,17 +123,74 @@ nlohmann::json ProjectReadFacade::inspectProject() const
         });
     }
 
-    // "Songs" in Hathor's model = the set of open editor tabs, each identified
-    // by its slot name.  There is no separate song-file abstraction yet.
+    // Songs: discover .hathor files from the project directory.
+    // Each .hathor file is a per-song/source file per Phase 2.5.
+    // Parse front matter to enrich the song entry with slot/BPM/bank/label/color.
     nlohmann::json songs = nlohmann::json::array();
+    {
+        const auto projectPath = audio_.currentProjectDir();
+        std::error_code ec;
+        if (std::filesystem::exists(projectPath, ec))
+        {
+            for (const auto& entry :
+                    std::filesystem::directory_iterator(projectPath, ec))
+            {
+                if (!entry.is_regular_file(ec))
+                    continue;
+                if (entry.path().extension() != ".hathor")
+                    continue;
+
+                const auto filePathStr = entry.path().string();
+                nlohmann::json songEntry{
+                    {"resource_id", "song:" + entry.path().stem().string()},
+                    {"file",        filePathStr},
+                };
+
+                // Parse front matter for metadata.
+                std::ifstream ifs(entry.path());
+                if (ifs)
+                {
+                    std::string contents{
+                        std::istreambuf_iterator<char>(ifs),
+                        std::istreambuf_iterator<char>()};
+                    const auto parseResult = hathor::ui::parseHathorFile(contents);
+                    if (const auto* hf = std::get_if<hathor::ui::HathorFile>(&parseResult))
+                    {
+                        if (hf->front.slot)   songEntry["slot"]   = *hf->front.slot;
+                        if (hf->front.bpm)    songEntry["bpm"]    = *hf->front.bpm;
+                        if (hf->front.label)  songEntry["label"]  = *hf->front.label;
+                        if (hf->front.bank)   songEntry["bank"]   = *hf->front.bank;
+                        if (hf->front.color)  songEntry["color"]  = *hf->front.color;
+                        songEntry["has_pattern"] = !hf->body.empty();
+                    }
+                    else
+                    {
+                        songEntry["has_pattern"] = false;
+                    }
+                }
+                songs.push_back(std::move(songEntry));
+            }
+        }
+    }
+
+    // Merge in open editor tabs (active runtime state).
     for (const auto& s : slots) {
         if (!s.slotName.empty()) {
-            songs.push_back(nlohmann::json{
-                {"resource_id", "slot:" + s.slotName},
-                {"slot_index",  s.slotIndex},
-                {"slot_name",   s.slotName},
-                {"has_pattern", s.active}
-            });
+            bool found = false;
+            for (const auto& song : songs) {
+                if (song.value("slot_name", "") == s.slotName) {
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) {
+                songs.push_back(nlohmann::json{
+                    {"resource_id", "slot:" + s.slotName},
+                    {"slot_index",  s.slotIndex},
+                    {"slot_name",   s.slotName},
+                    {"has_pattern", s.active}
+                });
+            }
         }
     }
 

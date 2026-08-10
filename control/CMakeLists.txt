@@ -27,6 +27,8 @@ target_include_directories(hathor-control
         ${CMAKE_CURRENT_SOURCE_DIR}
         ${CMAKE_SOURCE_DIR}/engine/include
         ${CMAKE_SOURCE_DIR}/app/audio-worker
+    PRIVATE
+        ${CMAKE_SOURCE_DIR}/ui
 )
 
 target_compile_features(hathor-control PUBLIC cxx_std_20)

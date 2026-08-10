@@ -62,6 +62,7 @@ add_executable(hathor-control-tests
     test_mcp_socket.cpp
     test_control_slots.cpp
     test_ai2_readonly.cpp
+    ../ui/HathorFileParser.cpp
 )
 
 target_compile_features(hathor-control-tests PRIVATE cxx_std_20)
@@ -72,6 +73,7 @@ target_include_directories(hathor-control-tests PRIVATE
     ${CMAKE_SOURCE_DIR}/app/audio-worker
     ${CMAKE_SOURCE_DIR}/control
     ${CMAKE_SOURCE_DIR}/engine/include
+    ${CMAKE_SOURCE_DIR}/ui
 )
 
 target_link_libraries(hathor-control-tests PRIVATE

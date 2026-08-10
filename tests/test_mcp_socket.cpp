@@ -197,7 +197,8 @@ public:
          const std::filesystem::path&) const noexcept override { return {}; }
      std::filesystem::path studioInstrumentsDir(
          const std::filesystem::path&) const noexcept override { return {}; }
-     std::filesystem::path currentProjectDir() const noexcept override { return {}; }
+     std::filesystem::path currentProjectDir() const noexcept override { return projectDir_; }
+     void setProjectDir(std::filesystem::path dir) override { projectDir_ = std::move(dir); }
 
 private:
     double bpm_ = 120.0;
@@ -206,6 +207,7 @@ private:
     std::vector<std::string> names_;
     std::vector<std::shared_ptr<SlotState>> states_;
     std::vector<bool> slotRunning_;
+    std::filesystem::path projectDir_;
 };
 
 // ---------------------------------------------------------------------------

@@ -138,13 +138,15 @@ public:
           const std::filesystem::path&) const noexcept override { return {}; }
       std::filesystem::path studioInstrumentsDir(
           const std::filesystem::path&) const noexcept override { return {}; }
-      std::filesystem::path currentProjectDir() const noexcept override { return {}; }
+       std::filesystem::path currentProjectDir() const noexcept override { return projectDir_; }
+       void setProjectDir(std::filesystem::path dir) override { projectDir_ = std::move(dir); }
 
      static constexpr int kNumSlots = 16;
     std::string names_[kNumSlots];
     std::shared_ptr<SlotState> states_[kNumSlots];
     bool slotRunning_[kNumSlots] = {};
-    int  count_ = 0;
+     int  count_ = 0;
+     std::filesystem::path projectDir_;
 };
 
 // Capture emitResponse output by replacing stdout is tricky in-process;

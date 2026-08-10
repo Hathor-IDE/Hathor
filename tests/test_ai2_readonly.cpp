@@ -33,6 +33,13 @@
 #include "hathor/Rational.hpp"
 
 #include "ChuckDiagnostics.hpp"
+#include "HathorFileParser.hpp"
+
+using hathor::ui::HathorFile;
+using hathor::ui::FrontMatter;
+using hathor::ui::ParseFileError;
+using hathor::ui::parseHathorFile;
+using hathor::ui::serialiseHathorFile;
 
 #include <nlohmann/json.hpp>
 
@@ -41,6 +48,7 @@
 
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <map>
 #include <memory>
 #include <string>
@@ -290,10 +298,14 @@ public:
         return (projectDir / ".hathor_assets" / "chuck_instruments");
     }
 
-    std::filesystem::path currentProjectDir() const noexcept override
-    {
-        return projectDir_;
-    }
+     std::filesystem::path currentProjectDir() const noexcept override
+     {
+         return projectDir_;
+     }
+     void setProjectDir(std::filesystem::path dir) override
+     {
+         projectDir_ = std::move(dir);
+     }
 
     // --- Test helpers ---
     static constexpr int kNumSlots = 16;
@@ -391,6 +403,31 @@ static hathor::Event<hathor::ParamMap> blankEvent()
     hathor::Arc z{R(0, 1), R(0, 1)};
     return hathor::Event<hathor::ParamMap>{z, z, hathor::ParamMap{}};
 }
+
+namespace {
+/// RAII temporary directory for integration tests.
+struct TempDir {
+    std::filesystem::path path;
+
+    TempDir() {
+        path = std::filesystem::temp_directory_path() /
+               ("hathor-integration-test-" + std::to_string(tempDirCounter_++));
+        std::filesystem::create_directories(path);
+    }
+
+    ~TempDir() {
+        std::error_code ec;
+        std::filesystem::remove_all(path, ec);
+    }
+
+    TempDir(const TempDir&) = delete;
+    TempDir& operator=(const TempDir&) = delete;
+
+    static uint64_t tempDirCounter_;
+};
+
+uint64_t TempDir::tempDirCounter_ = 0;
+} // anonymous namespace
 
 /// Capture helper using dispatchWithCallback (same pattern as existing tests).
 
@@ -1416,9 +1453,421 @@ TEST_CASE("AI-2: ProjectReadFacade can be called directly without MCP",
     REQUIRE(j.value("ok", false) == true);
     REQUIRE(j.contains("project_name"));
 
-    // Direct call to get_audio_status
-    auto audioResult = facade.getAudioStatus();
-    j = audioResult;
-    REQUIRE(j.value("ok", false) == true);
-    REQUIRE(j.contains("transport"));
+     // Direct call to get_audio_status
+     auto audioResult = facade.getAudioStatus();
+     j = audioResult;
+     REQUIRE(j.value("ok", false) == true);
+     REQUIRE(j.contains("transport"));
+}
+
+// ===========================================================================
+// 12. Integration tests for Phase 2.5 .hathor / project / ChucK fixes
+// ===========================================================================
+
+// ---------------------------------------------------------------------------
+// PART 10: Project initialization — setProjectDir at startup
+// ---------------------------------------------------------------------------
+
+TEST_CASE("AI-2: currentProjectDir returns what was set via setProjectDir",
+          "[ai2][integration][project_dir][set_project_dir]")
+{
+    TrackingFakeFacade audio;
+    SampleBank bank;
+
+    // Before setProjectDir, projectDir_ defaults to "/test/project"
+    REQUIRE(audio.currentProjectDir() == std::filesystem::path("/test/project"));
+
+    // Set a real project directory
+    audio.setProjectDir(std::filesystem::path("/my/album"));
+    REQUIRE(audio.currentProjectDir() == std::filesystem::path("/my/album"));
+}
+
+// ---------------------------------------------------------------------------
+// PART 10: .hathor front-matter handling — parse, metadata separated from body
+// ---------------------------------------------------------------------------
+
+TEST_CASE("parseHathorFile: file with front matter separates metadata from body",
+          "[ai2][integration][hathor][parse][front_matter]")
+{
+    const std::string content =
+        "[hathor]\n"
+        "slot = d1\n"
+        "bpm = 128.0\n"
+        "label = My Groove\n"
+        "color = #ff0000\n"
+        "\n"
+        "bd sn hh cp";
+
+    auto result = parseHathorFile(content);
+    REQUIRE(std::holds_alternative<HathorFile>(result));
+
+    const auto& hf = std::get<HathorFile>(result);
+    REQUIRE(hf.front.slot == "d1");
+    REQUIRE(hf.front.bpm == 128.0);
+    REQUIRE(hf.front.label == "My Groove");
+    REQUIRE(hf.front.color == "#ff0000");
+    REQUIRE(hf.body == "bd sn hh cp");
+}
+
+TEST_CASE("parseHathorFile: file without front matter — all body",
+          "[ai2][integration][hathor][parse][no_front_matter]")
+{
+    const std::string content = "bd sn hh cp";
+    auto result = parseHathorFile(content);
+    REQUIRE(std::holds_alternative<HathorFile>(result));
+
+    const auto& hf = std::get<HathorFile>(result);
+    REQUIRE_FALSE(hf.front.slot.has_value());
+    REQUIRE_FALSE(hf.front.bpm.has_value());
+    REQUIRE_FALSE(hf.front.label.has_value());
+    REQUIRE_FALSE(hf.front.color.has_value());
+    REQUIRE_FALSE(hf.front.bank.has_value());
+    REQUIRE(hf.body == "bd sn hh cp");
+}
+
+TEST_CASE("parseHathorFile: malformed front matter returns ParseFileError",
+          "[ai2][integration][hathor][parse][malformed]")
+{
+    const std::string content =
+        "[hathor]\n"
+        "slot = d1\n"
+        "this is not key=value\n"
+        "\n"
+        "bd sn";
+
+    auto result = parseHathorFile(content);
+    REQUIRE(std::holds_alternative<ParseFileError>(result));
+    const auto& err = std::get<ParseFileError>(result);
+    REQUIRE(err.line == 3);
+    REQUIRE_FALSE(err.message.empty());
+}
+
+TEST_CASE("serialiseHathorFile: round-trip parse → serialize → parse is stable",
+          "[ai2][integration][hathor][serialize][round_trip]")
+{
+    const std::string content =
+        "[hathor]\n"
+        "slot = d1\n"
+        "bpm = 128.0\n"
+        "label = My Groove\n"
+        "color = #ff0000\n"
+        "\n"
+        "bd sn hh cp";
+
+    auto parsed = parseHathorFile(content);
+    REQUIRE(std::holds_alternative<HathorFile>(parsed));
+
+    const auto& hf1 = std::get<HathorFile>(parsed);
+    const std::string serialized = serialiseHathorFile(hf1);
+    REQUIRE(serialized == content);
+
+    auto reparsed = parseHathorFile(serialized);
+    REQUIRE(std::holds_alternative<HathorFile>(reparsed));
+    const auto& hf2 = std::get<HathorFile>(reparsed);
+    REQUIRE(hf2.front.slot == hf1.front.slot);
+    REQUIRE(hf2.front.bpm == hf1.front.bpm);
+    REQUIRE(hf2.front.label == hf1.front.label);
+    REQUIRE(hf2.front.color == hf1.front.color);
+    REQUIRE(hf2.body == hf1.body);
+}
+
+TEST_CASE("serialiseHathorFile: file with no front matter produces body only",
+          "[ai2][integration][hathor][serialize][no_front_matter]")
+{
+    HathorFile hf;
+    hf.body = "bd sn hh cp";
+
+    const std::string serialized = serialiseHathorFile(hf);
+    REQUIRE(serialized == "bd sn hh cp");
+}
+
+// ---------------------------------------------------------------------------
+// PART 10: Full .hathor open/save/reopen cycle via temp project directory
+// ---------------------------------------------------------------------------
+
+TEST_CASE("Integration: .hathor open → edit → save → reopen preserves body + metadata",
+          "[ai2][integration][hathor][open_save_reopen]")
+{
+    TempDir projDir;
+    const auto hathorFile = projDir.path / "intro.hathor";
+
+    const std::string original =
+        "[hathor]\n"
+        "slot = d3\n"
+        "bpm = 96.5\n"
+        "label = Intro Track\n"
+        "color = #e05a5a\n"
+        "\n"
+        "bd*2 sn hh";
+
+    std::ofstream(hathorFile) << original;
+
+    // Parse the file
+    std::ifstream ifs(hathorFile);
+    std::string contents{std::istreambuf_iterator<char>(ifs),
+                         std::istreambuf_iterator<char>()};
+
+    auto parsed = parseHathorFile(contents);
+    REQUIRE(std::holds_alternative<HathorFile>(parsed));
+    const auto& hf = std::get<HathorFile>(parsed);
+
+    // Verify front matter is separate from body
+    REQUIRE(hf.front.slot == "d3");
+    REQUIRE(hf.front.bpm == 96.5);
+    REQUIRE(hf.front.label == "Intro Track");
+    REQUIRE(hf.front.color == "#e05a5a");
+    REQUIRE(hf.body == "bd*2 sn hh");
+
+    // Simulate editing the body (editor has only body, not front matter)
+    HathorFile modified = hf;
+    modified.body = "bd*2 sn hh cp";
+
+    // Save using serialiseHathorFile
+    const std::string serialized = serialiseHathorFile(modified);
+    std::ofstream(hathorFile) << serialized;
+
+    // Reopen and verify
+    std::ifstream ifs2(hathorFile);
+    std::string reopened{std::istreambuf_iterator<char>(ifs2),
+                         std::istreambuf_iterator<char>()};
+
+    auto reparsed = parseHathorFile(reopened);
+    REQUIRE(std::holds_alternative<HathorFile>(reparsed));
+    const auto& hf2 = std::get<HathorFile>(reparsed);
+
+    // Metadata preserved
+    REQUIRE(hf2.front.slot == "d3");
+    REQUIRE(hf2.front.bpm == 96.5);
+    REQUIRE(hf2.front.label == "Intro Track");
+    REQUIRE(hf2.front.color == "#e05a5a");
+
+    // Body updated
+    REQUIRE(hf2.body == "bd*2 sn hh cp");
+}
+
+// ---------------------------------------------------------------------------
+// PART 10: ChucK asset lifecycle — .ck + .wav persisted after bake
+// ---------------------------------------------------------------------------
+
+TEST_CASE("Integration: B8 Studio bake persists both .ck source and .wav",
+          "[ai2][integration][b8][ck_source_persistence]")
+{
+    TempDir projDir;
+    const auto instrDir = projDir.path / ".hathor_assets" / "chuck_instruments";
+
+    // Simulate the post-bake state: both .ck and .wav exist
+    const std::string instrumentName = "acid_bass";
+    const std::string ckSource = "SinOsc s => dac; 440 => s.freq; 1::second => now;";
+
+    std::filesystem::create_directories(instrDir);
+
+    // Write .ck source (simulating what BakeOrchestrator now does)
+    {
+        std::ofstream f(instrDir / (instrumentName + ".ck"));
+        f << ckSource;
+    }
+
+    // Write .wav (minimal)
+    {
+        std::ofstream wav(instrDir / (instrumentName + ".wav"), std::ios::binary);
+        writeMinimalWav(wav);
+    }
+
+    // Verify both files exist
+    REQUIRE(std::filesystem::exists(instrDir / (instrumentName + ".ck")));
+    REQUIRE(std::filesystem::exists(instrDir / (instrumentName + ".wav")));
+
+    // Verify content of .ck
+    std::ifstream ckFile(instrDir / (instrumentName + ".ck"));
+    std::string ckContent{std::istreambuf_iterator<char>(ckFile),
+                          std::istreambuf_iterator<char>()};
+    REQUIRE(ckContent == ckSource);
+
+    // Verify discovery via listChuckInstruments
+    TrackingFakeFacade audio;
+    SampleBank bank;
+    audio.projectDir_ = projDir.path.string();
+    audio.bankOverride = &bank;
+
+    const auto instruments = audio.listChuckInstruments(projDir.path);
+    REQUIRE(instruments.size() == 1);
+    REQUIRE(instruments[0].name == "acid_bass");
+    REQUIRE(instruments[0].sourceCkExists);
+    REQUIRE(instruments[0].renderedWavExists);
+}
+
+// ---------------------------------------------------------------------------
+// PART 10: AI-2 inspect_project with real project files
+// ---------------------------------------------------------------------------
+
+TEST_CASE("Integration: inspect_project discovers .hathor songs from project dir",
+          "[ai2][integration][inspect_project][songs]")
+{
+    TempDir projDir;
+
+    // Create .hathor files with front matter
+    {
+        std::ofstream(projDir.path / "intro.hathor")
+            << "[hathor]\n"
+            << "slot = d1\n"
+            << "bpm = 120.0\n"
+            << "label = Intro\n"
+            << "\n"
+            << "bd sn";
+    }
+    {
+        std::ofstream(projDir.path / "main.hathor")
+            << "[hathor]\n"
+            << "slot = d2\n"
+            << "bpm = 128.0\n"
+            << "label = Main\n"
+            << "\n"
+            << "hh cp";
+    }
+    {
+        std::ofstream(projDir.path / "nofront.hathor")
+            << "bd hh cp";
+    }
+
+    TrackingFakeFacade audio;
+    SampleBank bank;
+    audio.setProjectDir(projDir.path);
+    hathor::control::ControlInterface ci(audio, bank);
+
+    RespCapture cap;
+    runCmd(ci, "inspect_project", cap);
+
+    REQUIRE(cap.got);
+    REQUIRE(cap.data.value("ok", false) == true);
+
+    // Project name should derive from directory name
+    const std::string dirName = projDir.path.filename().string();
+    REQUIRE(cap.data.value("project_name", "") == dirName);
+
+    // Songs should include the .hathor files
+    const auto& songs = cap.data["songs"];
+    REQUIRE(songs.is_array());
+    REQUIRE(songs.size() == 3);
+
+    // Verify song entries
+    bool foundIntro = false, foundMain = false, foundNoFront = false;
+    for (const auto& song : songs) {
+        const auto file = song.value("file", "");
+        const auto stem = std::filesystem::path(file).stem().string();
+        if (stem == "intro") {
+            foundIntro = true;
+            REQUIRE(song.value("slot", "") == "d1");
+            REQUIRE(song.value("bpm", 0.0) == Catch::Approx(120.0));
+            REQUIRE(song.value("label", "") == "Intro");
+        }
+        else if (stem == "main") {
+            foundMain = true;
+            REQUIRE(song.value("slot", "") == "d2");
+        }
+        else if (stem == "nofront") {
+            foundNoFront = true;
+            REQUIRE(song.value("has_pattern", false) == true);
+        }
+    }
+    REQUIRE(foundIntro);
+    REQUIRE(foundMain);
+    REQUIRE(foundNoFront);
+
+    // No mutations
+    REQUIRE(audio.mutations.empty());
+}
+
+// ---------------------------------------------------------------------------
+// PART 10: AI-2 list_chuck_instruments with real project + baked assets
+// ---------------------------------------------------------------------------
+
+TEST_CASE("Integration: list_chuck_instruments discovers baked Studio instruments",
+          "[ai2][integration][list_chuck_instruments][baked_assets]")
+{
+    TempDir projDir;
+    const auto instrDir = projDir.path / ".hathor_assets" / "chuck_instruments";
+    std::filesystem::create_directories(instrDir);
+
+    // Create a baked instrument
+    {
+        std::ofstream ck(instrDir / "acid_bass.ck");
+        ck << "SinOsc s => dac; 440 => s.freq; 1::second => now;";
+    }
+    {
+        std::ofstream wav(instrDir / "acid_bass.wav", std::ios::binary);
+        writeMinimalWav(wav);
+    }
+
+    TrackingFakeFacade audio;
+    SampleBank bank;
+    audio.setProjectDir(projDir.path);
+    audio.bankOverride = &bank;
+
+    // Register the instrument in SampleBank (simulating post-bake registration)
+    std::vector<float> dummyData(44100, 0.5f);
+    bank.addEntry("acid_bass", 0, dummyData, 1, 44100.0,
+                  (instrDir / "acid_bass.wav").string());
+
+    hathor::control::ControlInterface ci(audio, bank);
+
+    RespCapture cap;
+    runCmd(ci, "list_chuck_instruments " + projDir.path.string(), cap);
+
+    REQUIRE(cap.got);
+    REQUIRE(cap.data.value("ok", false) == true);
+    REQUIRE(cap.data["instruments"].is_array());
+    REQUIRE(cap.data["instruments"].size() == 1);
+
+    const auto& inst = cap.data["instruments"][0];
+    REQUIRE(inst.value("name", "") == "acid_bass");
+    REQUIRE(inst.value("source_ck_exists", false) == true);
+    REQUIRE(inst.value("rendered_wav_exists", false) == true);
+    REQUIRE(inst.value("bound_to_sample_bank", false) == true);
+    REQUIRE(inst.value("lifecycle_state", "") == "bound");
+
+    // No mutations
+    REQUIRE(audio.mutations.empty());
+}
+
+// ---------------------------------------------------------------------------
+// PART 10: listChuckInstruments honors a different projectDir parameter
+// ---------------------------------------------------------------------------
+
+TEST_CASE("Integration: listChuckInstruments honors projectDir parameter (not engine's dir)",
+          "[ai2][integration][list_chuck_instruments][honors_param]")
+{
+    TempDir projA;
+    TempDir projB;
+
+    const auto instrDirA = projA.path / ".hathor_assets" / "chuck_instruments";
+    const auto instrDirB = projB.path / ".hathor_assets" / "chuck_instruments";
+    std::filesystem::create_directories(instrDirA);
+    std::filesystem::create_directories(instrDirB);
+
+    // Put an instrument in projA only
+    {
+        std::ofstream ck(instrDirA / "a_bass.ck");
+        ck << "SinOsc s => dac;";
+    }
+    {
+        std::ofstream wav(instrDirA / "a_bass.wav", std::ios::binary);
+        writeMinimalWav(wav);
+    }
+
+    TrackingFakeFacade audio;
+    SampleBank bank;
+    // Set engine's project dir to projA, but query with projB
+    audio.setProjectDir(projA.path);
+    audio.bankOverride = &bank;
+
+    // Query with projB — should return empty (no instruments there)
+    const auto resultB = audio.listChuckInstruments(projB.path);
+    REQUIRE(resultB.empty());
+
+    // Query with projA — should find the instrument
+    const auto resultA = audio.listChuckInstruments(projA.path);
+    REQUIRE(resultA.size() == 1);
+    REQUIRE(resultA[0].name == "a_bass");
+    REQUIRE(resultA[0].sourceCkExists);
+    REQUIRE(resultA[0].renderedWavExists);
 }
