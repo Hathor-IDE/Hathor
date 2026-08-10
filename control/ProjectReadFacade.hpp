@@ -95,9 +95,19 @@ public:
     // 4. list_samples — from the real SampleBank
     // -----------------------------------------------------------------------
 
-    /// Returns all samples from the real SampleBank:
-    ///   {ok, samples: [{name, path, duration_seconds, channels, sample_rate, index}]}
-    nlohmann::json listSamples() const;
+     /// Returns all samples from the real SampleBank:
+     ///   {ok, samples: [{name, path, duration_seconds, channels, sample_rate, index}]}
+     nlohmann::json listSamples() const;
+
+     // -----------------------------------------------------------------------
+     // 4b. list_assets — combined project asset inventory
+     // -----------------------------------------------------------------------
+
+     /// Returns a combined view of all project assets: songs (.hathor), ChucK
+     /// instruments (baked .ck + .wav), and samples from the SampleBank.
+     /// This is the canonical Project-namespace asset read endpoint (AI-2).
+     ///   {ok, songs: [...], chuck_instruments: [...], samples: [...]}
+     nlohmann::json listAssets() const;
 
     // -----------------------------------------------------------------------
     // 5. list_chuck_instruments — B8-K1/K2/K3/K4 instrument lifecycle

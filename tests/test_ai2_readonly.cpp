@@ -206,6 +206,8 @@ public:
         return true;
     }
     std::vector<std::string> listSamples() const override {
+        if (bankOverride)
+            return bankOverride->listNames();
         return {};
     }
 
@@ -1870,4 +1872,91 @@ TEST_CASE("Integration: listChuckInstruments honors projectDir parameter (not en
     REQUIRE(resultA[0].name == "a_bass");
     REQUIRE(resultA[0].sourceCkExists);
     REQUIRE(resultA[0].renderedWavExists);
+}
+
+// ---------------------------------------------------------------------------
+// PART 11: list_assets — combined asset inventory (AI-2 read-only)
+// ---------------------------------------------------------------------------
+
+TEST_CASE("Integration: list_assets returns combined project asset view",
+          "[ai2][integration][list_assets]")
+{
+    TempDir projDir;
+    std::filesystem::create_directories(projDir.path / ".hathor_assets" / "chuck_instruments");
+
+    // Create a .hathor song
+    std::ofstream(projDir.path / "test_song.hathor")
+        << "[hathor]\n"
+        << "slot = d0\n"
+        << "label = Test\n"
+        << "\n"
+        << "bd sn";
+
+    // Create a baked ChucK instrument
+    const auto instrDir = projDir.path / ".hathor_assets" / "chuck_instruments";
+    std::ofstream(instrDir / "acid_bass.ck") << "SinOsc s => dac;";
+    std::ofstream(instrDir / "acid_bass.wav", std::ios::binary).close();
+    // Write minimal WAV
+    {
+        std::ofstream wav(instrDir / "acid_bass.wav", std::ios::binary);
+        writeMinimalWav(wav);
+    }
+
+    // Register sample in SampleBank
+    SampleBank bank;
+    std::vector<float> dummyData(44100, 0.5f);
+    bank.addEntry("acid_bass", 0, dummyData, 1, 44100.0,
+                  (instrDir / "acid_bass.wav").string());
+
+    TrackingFakeFacade audio;
+    audio.setProjectDir(projDir.path);
+    audio.bankOverride = &bank;
+    hathor::control::ControlInterface ci(audio, bank);
+
+    RespCapture cap;
+    runCmd(ci, "list_assets", cap);
+
+    REQUIRE(cap.got);
+    REQUIRE(cap.data.value("ok", false) == true);
+    REQUIRE(cap.data.contains("project_name"));
+    REQUIRE(cap.data.value("project_name", "") == projDir.path.filename().string());
+
+    // Songs array should contain the .hathor file
+    REQUIRE(cap.data.contains("songs"));
+    REQUIRE(cap.data["songs"].is_array());
+    REQUIRE(cap.data["songs"].size() == 1);
+    REQUIRE(cap.data["songs"][0].value("label", "") == "Test");
+
+    // ChucK instruments
+    REQUIRE(cap.data.contains("chuck_instruments"));
+    REQUIRE(cap.data["chuck_instruments"].is_array());
+    REQUIRE(cap.data["chuck_instruments"].size() == 1);
+    REQUIRE(cap.data["chuck_instruments"][0].value("name", "") == "acid_bass");
+
+    // Samples
+    REQUIRE(cap.data.contains("samples_count"));
+    REQUIRE(cap.data.value("samples_count", 0) == 1);
+
+    // No mutations
+    REQUIRE(audio.mutations.empty());
+}
+
+TEST_CASE("AI-2: list_assets routes through canonical ProjectReadFacade",
+          "[ai2][readonly][list_assets][mcp_routing]")
+{
+    TrackingFakeFacade audio;
+    SampleBank bank;
+    hathor::control::ControlInterface ci(audio, bank);
+
+    RespCapture cap;
+    runCmd(ci, "list_assets", cap);
+
+    REQUIRE(cap.got);
+    REQUIRE(cap.data.value("ok", false) == true);
+    REQUIRE(cap.data.contains("project_name"));
+    REQUIRE(cap.data.contains("songs"));
+    REQUIRE(cap.data.contains("chuck_instruments"));
+    REQUIRE(cap.data.contains("samples_count"));
+
+    REQUIRE(audio.mutations.empty());
 }

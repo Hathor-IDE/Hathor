@@ -374,6 +374,17 @@ nlohmann::json ProjectReadFacade::listSamples() const
 }
 
 // ---------------------------------------------------------------------------
+// 4. list_assets — combined project asset inventory (AI-2)
+// ---------------------------------------------------------------------------
+
+nlohmann::json ProjectReadFacade::listAssets() const
+{
+    // list_assets = combined asset view (songs + instruments + samples).
+    // Delegates to inspectProject() which already provides all of these.
+    return inspectProject();
+}
+
+// ---------------------------------------------------------------------------
 // 5. list_chuck_instruments — B8-K1/K2/K3/K4 instrument lifecycle
 // ---------------------------------------------------------------------------
 

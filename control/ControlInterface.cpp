@@ -169,6 +169,7 @@ void ControlInterface::dispatch(std::string_view rawLine)
         handleSlotPlayStop(trim(rest), /*start=*/false);
     } else if (cmd == "inspect_project" ||
                cmd == "get_current_song" ||
+               cmd == "list_assets" ||
                cmd == "list_samples" ||
                cmd == "list_chuck_instruments" ||
                cmd == "get_diagnostics" ||
@@ -610,6 +611,11 @@ bool ControlInterface::handleReadOnlyCommand(std::string_view cmd,
 {
     if (cmd == "inspect_project") {
         emitResponse(readFacade_->inspectProject());
+        return true;
+    }
+
+    if (cmd == "list_assets") {
+        emitResponse(readFacade_->listAssets());
         return true;
     }
 

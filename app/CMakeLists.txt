@@ -45,6 +45,7 @@ target_sources(hathor
         VoicePool.cpp
         LiveJamSessionManager.cpp
         Main.cpp
+        ../ui/HathorFileParser.cpp
         $<TARGET_OBJECTS:hathor-control>
 )
 
