@@ -65,6 +65,12 @@ ControlInterface::ControlInterface(AudioEngineFacade& audio, SampleBank& bank)
     // Providers (editor, LSP, metadata) are injected later by the UI layer.
     authoringContext_ = std::make_unique<AuthoringContext>(
         *readFacade_, nullptr, nullptr, nullptr, nullptr);
+    // AI-G3: Create the Hathor-specific FIM authoring-context provider.
+    // It reuses the same read facade; providers are forwarded by the AI-8
+    // setters (setEditorContextProvider / setLspContextProvider /
+    // setLanguageMetadata) so there is a single injection point.
+    completionContext_ = std::make_unique<CompletionContextProvider>(
+        *readFacade_, nullptr, nullptr, nullptr, nullptr);
     // AI-5: Create the ChucK session service if the audio engine supports
     // B4 per-tab ChucK VM operations (hasWorker() indicates the B4-K3
     // architecture is available).
@@ -81,12 +87,16 @@ void ControlInterface::setEditorContextProvider(EditorContextProvider* provider)
 {
     if (authoringContext_)
         authoringContext_->setEditorContextProvider(provider);
+    if (completionContext_)
+        completionContext_->setEditorContextProvider(provider);
 }
 
 void ControlInterface::setLspContextProvider(LspContextProvider* provider) noexcept
 {
     if (authoringContext_)
         authoringContext_->setLspContextProvider(provider);
+    if (completionContext_)
+        completionContext_->setLspContextProvider(provider);
 }
 
 void ControlInterface::setLanguageMetadata(
@@ -95,6 +105,8 @@ void ControlInterface::setLanguageMetadata(
 {
     if (authoringContext_)
         authoringContext_->setMetadata(metadata, compat);
+    if (completionContext_)
+        completionContext_->setMetadata(metadata, compat);
 }
 
 ControlInterface::~ControlInterface()
@@ -220,6 +232,28 @@ void ControlInterface::handleGetContext(std::string_view args)
 
     nlohmann::json result = authoringContext_->assemble(req);
     emitResponse(result);
+}
+
+// ---------------------------------------------------------------------------
+// AI-G3: assembleCompletionContext — direct UI access for llm-ls FIM
+// ---------------------------------------------------------------------------
+
+nlohmann::json ControlInterface::assembleCompletionContext(const CompletionRequest& req) const
+{
+    if (!completionContext_)
+    {
+        return nlohmann::json{
+            {"ok",    false},
+            {"error", "completion context provider not initialized"}
+        };
+    }
+
+    auto ctx = completionContext_->assemble(req);
+    if (!ctx.ok)
+        return nlohmann::json{{"ok", false}, {"error", ctx.error}};
+    nlohmann::json out = ctx.context;
+    out["fim_prefix_size"] = ctx.fimPrefix.size();
+    return out;
 }
 
 // ---------------------------------------------------------------------------

@@ -26,6 +26,7 @@
 #include "RenderService.hpp"
 #include "SongMutationService.hpp"
 #include "AuthoringContext.hpp"
+#include "CompletionContextProvider.hpp"
 
 // Forward declarations — full headers are only needed in the .cpp.
 class AudioEngineFacade;
@@ -206,9 +207,19 @@ public:
       * @param req  The context request (file, line, language, scope, etc.).
       * @return JSON object with "ok", "sections", "metadata_version", etc.
       *
-      * Requirement references: AI-8 §4, §7, AI-G2
-      */
+     * Requirement references: AI-8 §4, §7, AI-G2
+       */
      nlohmann::json assembleAuthoringContext(const ContextRequest& req) const;
+
+    // -----------------------------------------------------------------------
+    // AI-G3: Hathor-specific authoring-context provider for llm-ls FIM
+    // -----------------------------------------------------------------------
+    // Assembles a compact, location-aware, bounded context for the llm-ls ghost-
+    // writing (FIM) request. Reuses the SAME providers as AI-8 (no second
+    // context model). The resulting JSON is injected as fim.prefix.
+    //
+    // Requirement references: AI-G3, AI-G1, AI-G2
+    nlohmann::json assembleCompletionContext(const CompletionRequest& req) const;
 
     // -----------------------------------------------------------------------
     // AI-5: ChucK session lifecycle (read-only + non-destructive execution)
@@ -345,6 +356,12 @@ private:
     // by the UI layer via setEditorContextProvider / setLspContextProvider /
     // setLanguageMetadata.  Null if not yet configured.
     std::unique_ptr<AuthoringContext> authoringContext_;
+
+    // AI-G3: Hathor-specific authoring-context provider for llm-ls FIM.
+    // Created in the constructor with readFacade_; shares the same providers
+    // as AuthoringContext (set via the AI-8 setters below, forwarded here).
+    // Null if not yet configured.
+    std::unique_ptr<CompletionContextProvider> completionContext_;
 
     // WorkerThread is allocated on the heap to keep this header JUCE-free.
     // (WorkerThread.hpp only forward-declares AudioEngine, so it is safe.)

@@ -53,6 +53,7 @@ add_library(hathor-control OBJECT
     RenderService.cpp
     SongMutationService.cpp
     AuthoringContext.cpp
+    CompletionContextProvider.cpp
 )
 
 target_include_directories(hathor-control

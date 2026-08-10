@@ -14,6 +14,7 @@
 #include "GhostProviderConfig.hpp"
 #include "EditorContextBridge.hpp"
 #include "LspContextBridge.hpp"
+#include "control/CompletionContextProvider.hpp"  // AI-G3: CompletionRequest
 #include "hathor/LanguageMetadata.hpp"
 #include "AudioEngine.hpp"
 
@@ -371,21 +372,32 @@ bool EditorArea::openUntitledTab()
      // AI-4: Install ghost-text client on the tab (for both .hathor and .ck)
      tab->installGhostClient(ghostClient_.get());
 
-     // AI-8: Wire the authoring context callback for FIM (ghost text).
-     // The callback assembles a targeted AI-8 context (supported surface from
-     // AI-3, diagnostics, editor state) and injects it as additional FIM context.
-     tab->getAuthoringContext = [this, tab]() -> nlohmann::json {
-         auto caretPos = tab->editor().getCaretPos();
-         hathor::control::ContextRequest req;
-         req.file = tab->lspDocumentUri().toStdString();
-         req.line = caretPos.getLineNumber();
-         req.character = caretPos.getCharacter();
-         req.language = tab->isChuckTab() ? "chuck" : "hathor";
-         req.includeContent = false;
-         // Request relevant scopes for completion context
-         req.scope = {"editor", "metadata", "diagnostics"};
-         return ci_.assembleAuthoringContext(req);
-     };
+      // AI-G3: Wire the Hathor-specific authoring-context callback for llm-ls FIM.
+      // The callback assembles a compact, location-aware, bounded context
+      // (AI-G3) reusing AI-8's providers + AI-3 metadata + AI-4 LSP, and injects
+      // it as additional FIM context (fim.prefix) for the ghost completion.
+      tab->getAuthoringContext = [this, tab]() -> nlohmann::json {
+          auto caretPos = tab->editor().getCaretPos();
+          hathor::control::CompletionRequest req;
+          req.file = tab->lspDocumentUri().toStdString();
+          req.uri = tab->lspDocumentUri().toStdString();
+          req.line = caretPos.getLineNumber();
+          req.character = caretPos.getIndexInLine();
+          req.language = tab->isChuckTab() ? "chuck" : "mininotation";
+          req.documentText = tab->document().getAllContent().toStdString();
+          // Selection (selection-aware retrieval — AI-G3)
+          const auto region = tab->editor().getHighlightedRegion();
+          if (!region.isEmpty())
+          {
+              const auto selStart = tab->editor().getSelectionStart();
+              const auto selEnd   = tab->editor().getSelectionEnd();
+              req.selection = hathor::control::CompletionRequest::Range{
+                  selStart.getLineNumber(), selStart.getIndexInLine(),
+                  selEnd.getLineNumber(),   selEnd.getIndexInLine()};
+              req.selectedText = tab->editor().getTextInRange(region).toStdString();
+          }
+          return ci_.assembleCompletionContext(req);
+      };
 
     addAndMakeVisible(*tab);
     tabs_.push_back(std::move(tab));
@@ -484,17 +496,27 @@ bool EditorArea::openFile(const juce::File& file)
       // AI-4: Install ghost-text client on the tab (for both .hathor and .ck)
       tab->installGhostClient(ghostClient_.get());
 
-      // AI-8: Wire the authoring context callback for FIM (ghost text).
+      // AI-G3: Wire the Hathor-specific authoring-context callback for llm-ls FIM.
       tab->getAuthoringContext = [this, tab]() -> nlohmann::json {
           auto caretPos = tab->editor().getCaretPos();
-          hathor::control::ContextRequest req;
+          hathor::control::CompletionRequest req;
           req.file = tab->lspDocumentUri().toStdString();
+          req.uri = tab->lspDocumentUri().toStdString();
           req.line = caretPos.getLineNumber();
-          req.character = caretPos.getCharacter();
-          req.language = tab->isChuckTab() ? "chuck" : "hathor";
-          req.includeContent = false;
-          req.scope = {"editor", "metadata", "diagnostics"};
-          return ci_.assembleAuthoringContext(req);
+          req.character = caretPos.getIndexInLine();
+          req.language = tab->isChuckTab() ? "chuck" : "mininotation";
+          req.documentText = tab->document().getAllContent().toStdString();
+          const auto region = tab->editor().getHighlightedRegion();
+          if (!region.isEmpty())
+          {
+              const auto selStart = tab->editor().getSelectionStart();
+              const auto selEnd   = tab->editor().getSelectionEnd();
+              req.selection = hathor::control::CompletionRequest::Range{
+                  selStart.getLineNumber(), selStart.getIndexInLine(),
+                  selEnd.getLineNumber(),   selEnd.getIndexInLine()};
+              req.selectedText = tab->editor().getTextInRange(region).toStdString();
+          }
+          return ci_.assembleCompletionContext(req);
       };
 
      addAndMakeVisible(*tab);
