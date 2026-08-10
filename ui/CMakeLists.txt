@@ -59,6 +59,13 @@ target_sources(hathor-ui
          BakeTargetDialog.cpp          # B8-K6
          BakeProgressDialog.cpp        # B8-K6
          BakeOrchestrator.cpp          # B8-K6
+        # AI-4: LSP language integration
+        HathorLspClient.cpp           # LSP client process management
+        LspJsonRpc.cpp                # JSON-RPC serialization
+        LspCompletionLogic.cpp        # Completion merge with metadata fallback
+        LspCompletionPopup.cpp        # Completion popup UI
+        LspHoverHandler.cpp           # Hover tooltip UI
+        LspDiagnosticsDisplay.cpp     # Diagnostics data model
          # App-layer sources (AudioEngine, SampleBank, VoicePool live in app/,
          # not in a linkable static lib — include them directly here)
           ${CMAKE_SOURCE_DIR}/app/AudioEngine.cpp

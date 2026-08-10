@@ -38,10 +38,17 @@ add_executable(hathor-ui-tests
     test_tree_builder.cpp
     test_bake_to_song.cpp
     test_thread_state.cpp
+    # AI-4: LSP unit tests (JUCE-free, req 31.1)
+    test_lsp_protocol.cpp
+    test_lsp_jsonrpc.cpp
+    test_lsp_completion_logic.cpp
     ${CMAKE_SOURCE_DIR}/ui/HathorFileParser.cpp
     ${CMAKE_SOURCE_DIR}/ui/ExplorerFileTypes.cpp
     ${CMAKE_SOURCE_DIR}/ui/TreeBuilder.cpp
     ${CMAKE_SOURCE_DIR}/ui/ChuckKeywords.cpp
+    ${CMAKE_SOURCE_DIR}/ui/LspJsonRpc.cpp
+    ${CMAKE_SOURCE_DIR}/ui/LspCompletionLogic.cpp
+    ${CMAKE_SOURCE_DIR}/ui/LspDiagnosticsDisplay.cpp
     ${CMAKE_SOURCE_DIR}/app/LiveJamSessionManager.cpp
 )
 

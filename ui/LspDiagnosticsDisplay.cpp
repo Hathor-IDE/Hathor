@@ -92,7 +92,7 @@ int LspDiagnosticsDisplay::errorCount(const std::string& uri) const
     return count;
 }
 
-juce::String LspDiagnosticsDisplay::summary(const std::string& uri) const
+std::string LspDiagnosticsDisplay::summary(const std::string& uri) const
 {
     auto it = docs_.find(uri);
     if (it == docs_.end() || it->second.all.empty())
@@ -113,15 +113,15 @@ juce::String LspDiagnosticsDisplay::summary(const std::string& uri) const
         }
     }
 
-    juce::String s;
+    std::string s;
     if (errors > 0)
     {
-        s << errors << " error" << (errors > 1 ? "s" : "");
+        s += std::to_string(errors) + " error" + (errors > 1 ? "s" : "");
         if (warnings > 0)
-            s << ", ";
+            s += ", ";
     }
     if (warnings > 0)
-        s << warnings << " warning" << (warnings > 1 ? "s" : "");
+        s += std::to_string(warnings) + " warning" + (warnings > 1 ? "s" : "");
 
     return s;
 }

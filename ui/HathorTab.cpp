@@ -637,7 +637,12 @@ void HathorTab::onCompletionSelected(const lsp::CompletionCandidate& candidate)
 }
 
 // ---------------------------------------------------------------------------
-// AI-4: LSP key handling (installed as KeyListener on editor_)
+// AI-4: LSP key handling (KeyListener on editor_)
+// ---------------------------------------------------------------------------
+// Note: CodeEditorComponent::keyPressed() consumes Up/Down/Enter/Tab/Escape
+// before our KeyListener is called. Only keys the editor doesn't handle
+// (like Ctrl+Space) reach this listener. The popup handles its own
+// navigation keys when it has focus.
 // ---------------------------------------------------------------------------
 
 bool HathorTab::handleLspKeyPress(const juce::KeyPress& key)
@@ -649,35 +654,12 @@ bool HathorTab::handleLspKeyPress(const juce::KeyPress& key)
         return true;
     }
 
-    // Tab: accept current completion (only when popup is active)
-    if (key == juce::KeyPress::tabKey &&
-        lspCompletionPopup_ && lspCompletionPopup_->hasCandidates())
-    {
-        lspCompletionPopup_->confirmSelection();
-        return true;
-    }
-
-    // Escape: dismiss completion popup
+    // Escape: dismiss completion popup (works when popup doesn't have focus)
     if (key == juce::KeyPress::escapeKey &&
         lspCompletionPopup_ && lspCompletionPopup_->hasCandidates())
     {
         lspCompletionPopup_->dismiss();
         return true;
-    }
-
-    // Up/Down: navigate completion when popup is active
-    if (lspCompletionPopup_ && lspCompletionPopup_->hasCandidates())
-    {
-        if (key == juce::KeyPress::upKey)
-        {
-            lspCompletionPopup_->selectPrevious();
-            return true;
-        }
-        if (key == juce::KeyPress::downKey)
-        {
-            lspCompletionPopup_->selectNext();
-            return true;
-        }
     }
 
     return false; // let other handlers process the key
@@ -692,28 +674,23 @@ void HathorTab::handleCursorMove()
     int cursorLine = caretPos.getLineNumber();
     int cursorCol = caretPos.getCharacter();
 
-    // Debounce: only request hover if we haven't already requested for this position
+    // Debounce: only request hover if position changed
     if (hoverPendingLine_ == cursorLine && hoverPendingCol_ == cursorCol)
         return;
 
-    // Clear any existing hover
-    if (lspHoverHandler_->isShowing())
-        lspHoverHandler_->dismiss();
-
-    // Request hover with a short delay (implemented via debounced callback)
     hoverPendingLine_ = cursorLine;
     hoverPendingCol_ = cursorCol;
     hoverPending_ = true;
 
-    // Use MessageManager to debounce — only fire if cursor hasn't moved
-    // by the time the async callback runs
-    auto* async = new juce::MessageCallbackReceiver();
-    juce::MessageManager::callAsync([this, cursorLine, cursorCol]() {
-        if (hoverPendingLine_ == cursorLine && hoverPendingCol_ == cursorCol && hoverPending_)
+    // Request hover via async callback with debounce — only fire if cursor
+    // hasn't moved by the time the lambda runs
+    const int line = cursorLine;
+    const int col = cursorCol;
+    juce::MessageManager::callAsync([this, line, col]() {
+        if (hoverPendingLine_ == line && hoverPendingCol_ == col && hoverPending_)
         {
             hoverPending_ = false;
-            // Only show hover for identifiers, not empty space
-            requestLspHover(cursorLine, cursorCol);
+            requestLspHover(line, col);
         }
     });
 }

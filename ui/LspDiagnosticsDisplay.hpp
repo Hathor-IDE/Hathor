@@ -12,10 +12,10 @@
  *
  * The diagnostics are stored per-URI and indexed by line for efficient lookup.
  *
+ * JUCE-free: can be unit tested without the JUCE GUI stack (req 31.1).
+ *
  * Requirement references: AI-4
  */
-
-#include <juce_gui_basics/juce_gui_basics.h>
 
 #include "LspProtocol.hpp"
 
@@ -89,7 +89,7 @@ public:
     /**
      * Get a summary string for the status bar (e.g. "2 errors, 1 warning").
      */
-    juce::String summary(const std::string& uri) const;
+    std::string summary(const std::string& uri) const;
 
 private:
     /** Diagnostics for a single document. */
