@@ -219,7 +219,11 @@ public:
     // context model). The resulting JSON is injected as fim.prefix.
     //
     // Requirement references: AI-G3, AI-G1, AI-G2
-    nlohmann::json assembleCompletionContext(const CompletionRequest& req) const;
+     nlohmann::json assembleCompletionContext(const CompletionRequest& req) const;
+
+     /// Set the default bounds for the completion context provider (AI-G3).
+     /// Called by the UI layer to configure the context size budget.
+     void setCompletionBounds(const ContextBounds& bounds) noexcept;
 
     // -----------------------------------------------------------------------
     // AI-5: ChucK session lifecycle (read-only + non-destructive execution)

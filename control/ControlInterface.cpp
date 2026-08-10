@@ -256,6 +256,12 @@ nlohmann::json ControlInterface::assembleCompletionContext(const CompletionReque
     return out;
 }
 
+void ControlInterface::setCompletionBounds(const ContextBounds& bounds) noexcept
+{
+    if (completionContext_)
+        completionContext_->setBounds(bounds);
+}
+
 // ---------------------------------------------------------------------------
 // AI-8: assembleAuthoringContext — direct UI access (no socket I/O)
 // ---------------------------------------------------------------------------

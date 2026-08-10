@@ -747,9 +747,9 @@ nlohmann::json CompletionContextProvider::assembleDiagnostics(
             {
                 RankedDiag rd;
                 rd.diag = d;
-                const int dline = d.value("location", nlohmann::json{})
+                const int dline = d.value("location", nlohmann::json::object())
                                      .value("line", req.line);
-                const int dchar = d.value("location", nlohmann::json{})
+                const int dchar = d.value("location", nlohmann::json::object())
                                      .value("column", req.character);
                 rd.lineDelta = std::abs(dline - req.line);
                 rd.charDelta = (dline == req.line) ? std::abs(dchar - req.character) : 100000;
@@ -1164,7 +1164,7 @@ nlohmann::json CompletionContextProvider::assembleExamples(
     }
 
     nlohmann::json result;
-    result = std::move(examples);
+    result["examples"] = std::move(examples);
     result["count"] = emitted;
     result["max"] = bounds.maxExamples;
     result["version_attributed"] = true;
@@ -1352,8 +1352,6 @@ CompletionContext CompletionContextProvider::assemble(const CompletionRequest& r
 
     // --- project (compact overview) ---
     ctxJson["project"] = assembleProject(req);
-
-    // --- instructions hint for the model ---
     ctxJson["instructions"] =
         "You are a Hathor inline-completion (FIM) assistant. Complete only the "
         "missing middle code at the cursor. Prefer Hathor-supported language "
@@ -1361,43 +1359,57 @@ CompletionContext CompletionContextProvider::assemble(const CompletionRequest& r
         "prefix/suffix so your completion fits between them. Do not invent "
         "syntax the supported surface does not include.";
 
-    // --- final size budget enforcement ---
-    out.fimPrefix = ctxJson.dump();
-    if (static_cast<int>(out.fimPrefix.size()) > bounds.maxContextChars)
-    {
-        // Progressive trim: drop examples, then samples, then instruments,
-        // then region content, until we fit (best-effort).
-        if (ctxJson.contains("examples"))
-        {
-            ctxJson["examples"] = nlohmann::json::array();
-            ctxJson["examples"]["count"] = 0;
-            out.fimPrefix = ctxJson.dump();
-        }
-        else if (ctxJson.contains("samples"))
-        {
-            ctxJson["samples"]["samples"] = nlohmann::json::array();
-            out.fimPrefix = ctxJson.dump();
-        }
-        else if (ctxJson.contains("instruments"))
-        {
-            ctxJson["instruments"]["instruments"] = nlohmann::json::array();
-            out.fimPrefix = ctxJson.dump();
-        }
-        else if (ctxJson.contains("region") && ctxJson["region"].contains("surrounding"))
-        {
-            ctxJson["region"]["surrounding"] = "";
-            out.fimPrefix = ctxJson.dump();
-        }
-    }
-    // If still over budget, hard-truncate the serialized blob so fim.prefix is
-    // always bounded (never the whole repo, never unbounded).
-    if (static_cast<int>(out.fimPrefix.size()) > bounds.maxContextChars)
-    {
-        out.fimPrefix = out.fimPrefix.substr(0, static_cast<std::size_t>(bounds.maxContextChars));
-        // Re-parse so `context` and `fimPrefix` stay consistent.
-        try { ctxJson = nlohmann::json::parse(out.fimPrefix); }
-        catch (...) { ctxJson = nlohmann::json::object(); ctxJson["ok"] = false; ctxJson["error"] = "context truncated to fit budget"; }
-    }
+      // --- final size budget enforcement ---
+      out.fimPrefix = ctxJson.dump();
+      // Progressive trim: strip categories one at a time (examples, samples,
+      // instruments, region surrounding) until the budget is met or no more
+      // categories remain. Each category is trimmed at most once; if the
+      // metadata block alone exceeds the budget the hard-truncate below
+      // handles it.
+      if (static_cast<int>(out.fimPrefix.size()) > bounds.maxContextChars)
+      {
+          if (ctxJson.contains("examples") &&
+              ctxJson["examples"].contains("examples") &&
+              !ctxJson["examples"]["examples"].empty())
+          {
+              ctxJson["examples"]["examples"] = nlohmann::json::array();
+              ctxJson["examples"]["count"] = 0;
+              out.fimPrefix = ctxJson.dump();
+          }
+          if (static_cast<int>(out.fimPrefix.size()) > bounds.maxContextChars &&
+              ctxJson.contains("samples") &&
+              ctxJson["samples"].contains("samples") &&
+              !ctxJson["samples"]["samples"].empty())
+          {
+              ctxJson["samples"]["samples"] = nlohmann::json::array();
+              out.fimPrefix = ctxJson.dump();
+          }
+          if (static_cast<int>(out.fimPrefix.size()) > bounds.maxContextChars &&
+              ctxJson.contains("instruments") &&
+              ctxJson["instruments"].contains("instruments") &&
+              !ctxJson["instruments"]["instruments"].empty())
+          {
+              ctxJson["instruments"]["instruments"] = nlohmann::json::array();
+              out.fimPrefix = ctxJson.dump();
+          }
+          if (static_cast<int>(out.fimPrefix.size()) > bounds.maxContextChars &&
+              ctxJson.contains("region") &&
+              ctxJson["region"].contains("surrounding") &&
+              !ctxJson["region"]["surrounding"].empty())
+          {
+              ctxJson["region"]["surrounding"] = "";
+              out.fimPrefix = ctxJson.dump();
+          }
+      }
+      // If still over budget, hard-truncate the serialized blob so fim.prefix is
+      // always bounded (never the whole repo, never unbounded).
+      if (static_cast<int>(out.fimPrefix.size()) > bounds.maxContextChars)
+      {
+          out.fimPrefix = out.fimPrefix.substr(0, static_cast<std::size_t>(bounds.maxContextChars));
+          // Re-parse so `context` and `fimPrefix` stay consistent.
+          try { ctxJson = nlohmann::json::parse(out.fimPrefix); }
+          catch (...) { ctxJson = nlohmann::json::object(); ctxJson["ok"] = false; ctxJson["error"] = "context truncated to fit budget"; }
+      }
 
     out.context = std::move(ctxJson);
     return out;

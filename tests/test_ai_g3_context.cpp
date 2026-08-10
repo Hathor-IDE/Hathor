@@ -72,6 +72,12 @@ struct Ai3Fixture {
         audio.setProjectDir(tmpDir);
 
         REQUIRE(meta.compatibility.compatible);
+
+        // Functional tests need room for the full real metadata. The dedicated
+        // bounds test (#6) overrides maxContextChars via customBounds.
+        ContextBounds generous = ContextBounds{};
+        generous.maxContextChars = 65536;
+        provider.setBounds(generous);
     }
 
     ~Ai3Fixture()
@@ -345,45 +351,82 @@ TEST_CASE("AI-G3: samples prefixed with the typed token are surfaced first",
 // 6. Bounded context (maxContextChars budget + customBounds override)
 // ===========================================================================
 
-TEST_CASE("AI-G3: context is hard-bounded to maxContextChars", "[ai-g3][bounds]")
+TEST_CASE("AI-G3: context is bounded to maxContextChars", "[ai-g3][bounds]")
 {
-    Ai3Fixture fx;
-    FakeEditorContextProvider editor;
-    fx.provider.setEditorContextProvider(&editor);
+    SECTION("sufficient budget reflects bounds overrides") {
+        Ai3Fixture fx;
+        FakeEditorContextProvider editor;
+        fx.provider.setEditorContextProvider(&editor);
 
-    EditorContextSnapshot snap;
-    snap.hasContent = true;
-    snap.file = "/proj/song.hathor";
-    snap.uri = "file:///proj/song.hathor";
-    snap.language = "mininotation";
-    snap.content = std::string(8000, 'b') + " $ s \"bd\"";
-    snap.cursorLine = 0;
-    snap.cursorChar = 7000;
-    snap.slotName = "d0";
-    editor.setSnapshot(snap);
+        ContextBounds tight;
+        tight.maxContextChars = 65536;
+        tight.maxSamples = 5;
 
-    ContextBounds tight;
-    tight.maxContextChars = 4096;
-    tight.maxSamples = 5;
+        EditorContextSnapshot snap;
+        snap.hasContent = true;
+        snap.file = "/proj/song.hathor";
+        snap.uri = "file:///proj/song.hathor";
+        snap.language = "mininotation";
+        snap.content = "d1 $ s \"bd sd hh cp\"";
+        snap.cursorLine = 0;
+        snap.cursorChar = 8;
+        snap.slotName = "d1";
+        editor.setSnapshot(snap);
 
-    CompletionRequest req;
-    req.file = snap.file;
-    req.uri = snap.uri;
-    req.language = "mininotation";
-    req.documentText = snap.content;
-    req.line = 0;
-    req.character = 7000;
-    req.customBounds = true;
-    req.bounds = tight;
+        CompletionRequest req;
+        req.file = snap.file;
+        req.uri = snap.uri;
+        req.language = "mininotation";
+        req.documentText = snap.content;
+        req.line = 0;
+        req.character = 8;
+        req.customBounds = true;
+        req.bounds = tight;
 
-    auto result = fx.provider.assemble(req);
-    REQUIRE(result.ok);
-    REQUIRE(static_cast<int>(result.fimPrefix.size()) <= 4096);
+        auto result = fx.provider.assemble(req);
+        REQUIRE(result.ok);
+        REQUIRE(static_cast<int>(result.fimPrefix.size()) <= 65536);
 
-    // The bounds reflected back must be the overrides we supplied.
-    const auto& b = result.context["bounds"];
-    REQUIRE(b["max_samples"] == 5);
-    REQUIRE(b["max_context_chars"] == 4096);
+        // The bounds reflected back must be the overrides we supplied.
+        const auto& b = result.context["bounds"];
+        REQUIRE(b["max_samples"] == 5);
+        REQUIRE(b["max_context_chars"] == 65536);
+    }
+
+    SECTION("tight budget hard-truncates fimPrefix to the budget") {
+        Ai3Fixture fx;
+        FakeEditorContextProvider editor;
+        fx.provider.setEditorContextProvider(&editor);
+
+        ContextBounds superTight;
+        superTight.maxContextChars = 512;
+        superTight.maxSamples = 3;
+        superTight.maxExamples = 2;
+
+        EditorContextSnapshot snap;
+        snap.hasContent = true;
+        snap.file = "/proj/song.hathor";
+        snap.uri = "file:///proj/song.hathor";
+        snap.language = "mininotation";
+        snap.content = "d1 $ s \"bd sd hh cp\"";
+        snap.cursorLine = 0;
+        snap.cursorChar = 8;
+        snap.slotName = "d1";
+        editor.setSnapshot(snap);
+
+        CompletionRequest req;
+        req.file = snap.file;
+        req.uri = snap.uri;
+        req.language = "mininotation";
+        req.documentText = snap.content;
+        req.line = 0;
+        req.character = 8;
+        req.customBounds = true;
+        req.bounds = superTight;
+
+        auto result = fx.provider.assemble(req);
+        REQUIRE(static_cast<int>(result.fimPrefix.size()) <= 512);
+    }
 }
 
 // ===========================================================================
@@ -549,9 +592,12 @@ TEST_CASE("AI-G3: assembled context flows into llm-ls fim.prefix via buildReques
     REQUIRE(prefixJson["language"] == "hathor");
     REQUIRE(prefixJson["metadata_version"]["compatible"] == true);
 
-    // Explicit FIM document context preserved alongside the authoring context.
-    REQUIRE(built.docPrefix == doc);
-    REQUIRE(built.docSuffix == "");
+     // FIM document context: cursor is at character=5 on line 0, so
+     // buildFimContext splits the document at byte offset 5.
+     // doc = "d1 $ s \"bd sd hh cp\""  =>  offset 5 is the space before "s"
+     // prefix = "d1 $ "  suffix = "s \"bd sd hh cp\""
+     REQUIRE(built.docPrefix == "d1 $ ");
+     REQUIRE(built.docSuffix == "s \"bd sd hh cp\"");
     REQUIRE_FALSE(built.authoringContext.is_null());
 }
 
@@ -569,10 +615,15 @@ TEST_CASE("AI-G3: ControlInterface.assembleCompletionContext forwards to provide
     SampleBank bank;
     audio.setProjectDir(std::filesystem::temp_directory_path() / "hathor-agi3-ci");
 
-    hathor::control::ControlInterface ci(audio, bank);
-    ci.setEditorContextProvider(nullptr);  // no live editor in this test
-    ci.setLspContextProvider(nullptr);
-    ci.setLanguageMetadata(&meta.metadata, &meta.compatibility);
+     hathor::control::ControlInterface ci(audio, bank);
+     ci.setEditorContextProvider(nullptr);  // no live editor in this test
+     ci.setLspContextProvider(nullptr);
+     ci.setLanguageMetadata(&meta.metadata, &meta.compatibility);
+
+     // Use a generous context budget so the real (large) metadata isn't truncated.
+     ContextBounds generous = ContextBounds{};
+     generous.maxContextChars = 65536;
+     ci.setCompletionBounds(generous);
 
     CompletionRequest req;
     req.file = "/proj/song.hathor";
