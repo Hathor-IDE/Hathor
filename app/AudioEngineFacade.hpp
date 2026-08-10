@@ -206,13 +206,26 @@ public:
     /// @param sampleRate  Sample rate (typically 44100).
     /// @param destPath    Resolved .wav destination (from B8-K1).
     /// @param onComplete  Async completion callback (called on the render thread).
-    /// @return A RenderHandle for status polling / cancellation.
-    virtual hathor::RenderHandle startBakeRender(uint8_t                            tabId,
-                                                 std::string                        ckSource,
-                                                 uint64_t                           numSamples,
-                                                 unsigned                           sampleRate,
-                                                 const std::filesystem::path&       destPath,
-                                                 hathor::ChuckRenderWriter::CompletionCallback onComplete) = 0;
+     /// @return A RenderHandle for status polling / cancellation.
+     virtual hathor::RenderHandle startBakeRender(uint8_t                            tabId,
+                                                  std::string                        ckSource,
+                                                  uint64_t                           numSamples,
+                                                  unsigned                           sampleRate,
+                                                  const std::filesystem::path&       destPath,
+                                                  hathor::ChuckRenderWriter::CompletionCallback onComplete) = 0;
+
+     /// Start a background render WITHOUT auto-registering the result in the
+     /// SampleBank.  Used by AI-6 (render_chuck) which separates the render
+     /// phase from the commit phase — registration happens explicitly at
+     /// commit time, not when the render completes.
+     ///
+     /// @return A RenderHandle for status polling / cancellation.
+     virtual hathor::RenderHandle startBakeRenderRaw(uint8_t                            tabId,
+                                                     std::string                        ckSource,
+                                                     uint64_t                           numSamples,
+                                                     unsigned                           sampleRate,
+                                                     const std::filesystem::path&       destPath,
+                                                     hathor::ChuckRenderWriter::CompletionCallback onComplete) = 0;
 
     /// Number of renders currently in progress.
     virtual int activeRenderCount() const noexcept = 0;

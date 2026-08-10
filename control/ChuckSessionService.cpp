@@ -101,6 +101,13 @@ ChuckSession ChuckSessionService::createSession(uint8_t slotIdx, std::string sou
 
     session.vmGeneration = 0;
 
+    // Persist the session (including source) so AI-6 render_chuck can
+    // retrieve the source code later.
+    {
+        std::lock_guard<std::mutex> lock(sessionsMtx_);
+        sessions_[session.sessionId] = session;
+    }
+
     return session;
 }
 
@@ -122,6 +129,14 @@ ChuckSession ChuckSessionService::getSession(std::string_view sessionId) const
 
     session.sessionId = std::string(sessionId);
 
+    // Return any stored source from a prior createSession() call.
+    {
+        std::lock_guard<std::mutex> lock(sessionsMtx_);
+        auto it = sessions_.find(std::string(sessionId));
+        if (it != sessions_.end())
+            session.source = it->second.source;
+    }
+
     // Query the B4 VM state via the facade (B4-K3 vm_query).
     // This is a read-only operation that does NOT mutate VM state.
     const std::string status = audio_.queryCkTab(tabId);
@@ -133,6 +148,19 @@ ChuckSession ChuckSessionService::getSession(std::string_view sessionId) const
     }
 
     return session;
+}
+
+// ---------------------------------------------------------------------------
+// AI-5/AI-6: Session source retrieval
+// ---------------------------------------------------------------------------
+
+std::string ChuckSessionService::getSessionSource(std::string_view sessionId) const
+{
+    std::lock_guard<std::mutex> lock(sessionsMtx_);
+    auto it = sessions_.find(std::string(sessionId));
+    if (it != sessions_.end())
+        return it->second.source;
+    return {};
 }
 
 // ---------------------------------------------------------------------------

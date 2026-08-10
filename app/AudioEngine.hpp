@@ -260,13 +260,21 @@ public:
     // The destination path is supplied by B8-K1 (resolveRenderPath above).
     // The renderer never duplicates target-selection/path-resolution logic.
 
-    /// Start a background render.  Returns immediately with a handle.
-    hathor::RenderHandle startBakeRender(uint8_t                            tabId,
-                                         std::string                        ckSource,
-                                         uint64_t                           numSamples,
-                                         unsigned                           sampleRate,
-                                         const std::filesystem::path&       destPath,
-                                         hathor::ChuckRenderWriter::CompletionCallback onComplete) override;
+     /// Start a background render.  Returns immediately with a handle.
+     hathor::RenderHandle startBakeRender(uint8_t                            tabId,
+                                          std::string                        ckSource,
+                                          uint64_t                           numSamples,
+                                          unsigned                           sampleRate,
+                                          const std::filesystem::path&       destPath,
+                                          hathor::ChuckRenderWriter::CompletionCallback onComplete) override;
+
+     /// Start a background render without auto-registering in SampleBank (AI-6).
+     hathor::RenderHandle startBakeRenderRaw(uint8_t                            tabId,
+                                             std::string                        ckSource,
+                                             uint64_t                           numSamples,
+                                             unsigned                           sampleRate,
+                                             const std::filesystem::path&       destPath,
+                                             hathor::ChuckRenderWriter::CompletionCallback onComplete) override;
 
     /// Number of renders currently in progress.
     int activeRenderCount() const noexcept override;

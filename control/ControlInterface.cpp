@@ -12,6 +12,7 @@
 #include "ProjectReadFacade.hpp"
 #include "WorkerThread.hpp"
 #include "ChuckSessionService.hpp"
+#include "RenderService.hpp"
 
 // App headers (available when compiled as part of the hathor executable;
 // use paths relative to this file (control/) so the includes resolve
@@ -186,14 +187,21 @@ void ControlInterface::dispatch(std::string_view rawLine)
         // ProjectReadFacade service layer (Phase 2.5 H0).
         handleReadOnlyCommand(cmd, rest);
     } else if (cmd == "create_chuck_session" ||
-               cmd == "get_chuck_session" ||
-               cmd == "compile_chuck" ||
-               cmd == "audition_chuck" ||
-               cmd == "stop_chuck" ||
-               cmd == "get_chuck_job" ||
-               cmd == "cancel_chuck_job") {
+                cmd == "get_chuck_session" ||
+                cmd == "compile_chuck" ||
+                cmd == "audition_chuck" ||
+                cmd == "stop_chuck" ||
+                cmd == "get_chuck_job" ||
+                cmd == "cancel_chuck_job") {
         // AI-5: ChucK session lifecycle commands.
         handleChuckSessionCommand(cmd, rest);
+    } else if (cmd == "render_chuck" ||
+                cmd == "get_job_status" ||
+                cmd == "commit_rendered_asset" ||
+                cmd == "cancel_render_job" ||
+                cmd == "list_render_jobs") {
+        // AI-6: Background render with explicit commit boundary.
+        handleRenderCommand(cmd, rest);
     } else {
         emitResponse({
             {"ok",    false},
@@ -967,6 +975,208 @@ void ControlInterface::handleCancelChuckJob(std::string_view rest)
     emitResponse({
         {"ok", true},
         {"cmd", "cancel_chuck_job"},
+        {"job_id", jobId},
+        {"cancelled", cancelled}
+    });
+}
+
+// ---------------------------------------------------------------------------
+// AI-6: Rendering command handlers
+// ---------------------------------------------------------------------------
+
+void ControlInterface::handleRenderCommand(std::string_view cmd,
+                                            std::string_view rest)
+{
+    // Lazy-initialize services if not yet created.
+    if (!chuckSessionService_)
+        chuckSessionService_ = std::make_unique<ChuckSessionService>(audio_);
+    if (!renderService_)
+        renderService_ = std::make_unique<RenderService>(
+            audio_, bank_, *chuckSessionService_);
+
+    if (cmd == "render_chuck") {
+        handleRenderChuck(rest);
+    } else if (cmd == "get_job_status") {
+        handleGetJobStatus(rest);
+    } else if (cmd == "commit_rendered_asset") {
+        handleCommitRenderedAsset(rest);
+    } else if (cmd == "cancel_render_job") {
+        handleCancelRenderJob(rest);
+    } else if (cmd == "list_render_jobs") {
+        emitResponse({
+            {"ok", true},
+            {"cmd", "list_render_jobs"},
+            {"jobs", renderService_->listRenderJobs()}
+        });
+    }
+}
+
+void ControlInterface::handleRenderChuck(std::string_view rest)
+{
+    // Format: <sessionId> <durationBars> <assetName> [target]
+    auto [sessionId, afterSession] = splitFirst(rest);
+    auto [durStr, afterDur] = splitFirst(afterSession);
+    auto [assetName, afterAsset] = splitFirst(trim(afterDur));
+
+    if (sessionId.empty()) {
+        emitResponse({
+            {"ok", false},
+            {"cmd", "render_chuck"},
+            {"error", "missing session_id"}
+        });
+        return;
+    }
+
+    int durationBars = 0;
+    try {
+        durationBars = std::stoi(std::string(durStr));
+    } catch (...) {
+        emitResponse({
+            {"ok", false},
+            {"cmd", "render_chuck"},
+            {"error", "invalid duration_bars"}
+        });
+        return;
+    }
+
+    if (assetName.empty()) {
+        emitResponse({
+            {"ok", false},
+            {"cmd", "render_chuck"},
+            {"error", "missing asset_name"}
+        });
+        return;
+    }
+
+    // Optional target.
+    hathor::AssetTarget target = hathor::AssetTarget::Studio;
+    std::string_view targetStr = trim(afterAsset);
+    if (!targetStr.empty()) {
+        if (!hathor::parseAssetTarget(targetStr, target)) {
+            emitResponse({
+                {"ok", false},
+                {"cmd", "render_chuck"},
+                {"error", "unknown target; valid: studio, live_jam"}
+            });
+            return;
+        }
+    }
+
+    uint64_t jobId = renderService_->renderChuck(sessionId, durationBars,
+                                                  assetName, target);
+
+    emitResponse({
+        {"ok", true},
+        {"cmd", "render_chuck"},
+        {"job_id", jobId},
+        {"status", "queued"}
+    });
+}
+
+void ControlInterface::handleGetJobStatus(std::string_view rest)
+{
+    const std::string_view jobIdStr = trim(rest);
+    if (jobIdStr.empty()) {
+        emitResponse({
+            {"ok", false},
+            {"cmd", "get_job_status"},
+            {"error", "missing job_id"}
+        });
+        return;
+    }
+
+    uint64_t jobId = 0;
+    try {
+        jobId = std::stoull(std::string(jobIdStr));
+    } catch (...) {
+        emitResponse({
+            {"ok", false},
+            {"cmd", "get_job_status"},
+            {"error", "invalid job_id"}
+        });
+        return;
+    }
+
+    nlohmann::json result = renderService_->getJobStatus(jobId);
+    result["cmd"] = "get_job_status";
+    emitResponse(result);
+}
+
+void ControlInterface::handleCommitRenderedAsset(std::string_view rest)
+{
+    // Format: <jobId> <assetName> [confirm_overwrite]
+    auto [jobIdStr, afterJob] = splitFirst(rest);
+    auto [assetName, afterAsset] = splitFirst(trim(afterJob));
+
+    if (jobIdStr.empty()) {
+        emitResponse({
+            {"ok", false},
+            {"cmd", "commit_rendered_asset"},
+            {"error", "missing job_id"}
+        });
+        return;
+    }
+
+    uint64_t jobId = 0;
+    try {
+        jobId = std::stoull(std::string(jobIdStr));
+    } catch (...) {
+        emitResponse({
+            {"ok", false},
+            {"cmd", "commit_rendered_asset"},
+            {"error", "invalid job_id"}
+        });
+        return;
+    }
+
+    if (assetName.empty()) {
+        emitResponse({
+            {"ok", false},
+            {"cmd", "commit_rendered_asset"},
+            {"error", "missing asset_name"}
+        });
+        return;
+    }
+
+    const std::string_view confirmStr = trim(afterAsset);
+    const bool confirmOverwrite = (confirmStr == "true" || confirmStr == "1"
+                                    || confirmStr == "confirm");
+
+    nlohmann::json result = renderService_->commitRenderedAsset(
+        jobId, assetName, confirmOverwrite);
+    result["cmd"] = "commit_rendered_asset";
+    emitResponse(result);
+}
+
+void ControlInterface::handleCancelRenderJob(std::string_view rest)
+{
+    const std::string_view jobIdStr = trim(rest);
+    if (jobIdStr.empty()) {
+        emitResponse({
+            {"ok", false},
+            {"cmd", "cancel_render_job"},
+            {"error", "missing job_id"}
+        });
+        return;
+    }
+
+    uint64_t jobId = 0;
+    try {
+        jobId = std::stoull(std::string(jobIdStr));
+    } catch (...) {
+        emitResponse({
+            {"ok", false},
+            {"cmd", "cancel_render_job"},
+            {"error", "invalid job_id"}
+        });
+        return;
+    }
+
+    bool cancelled = renderService_->cancelJob(jobId);
+
+    emitResponse({
+        {"ok", true},
+        {"cmd", "cancel_render_job"},
         {"job_id", jobId},
         {"cancelled", cancelled}
     });

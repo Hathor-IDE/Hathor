@@ -145,7 +145,23 @@ public:
      * @param sessionId  The session to audition.
      * @return The session after audition (state should be Live).
      */
-    ChuckSession auditionSession(std::string_view sessionId);
+     ChuckSession auditionSession(std::string_view sessionId);
+
+    // -----------------------------------------------------------------------
+    // AI-5/AI-6: Session source retrieval
+    // -----------------------------------------------------------------------
+
+    /**
+      * Retrieve the stored source code for a session.
+      *
+      * This is used by AI-6 (render_chuck) to obtain the ChucK source
+      * associated with a session without requiring the caller to pass it
+      * separately.  Returns an empty string if the session does not exist.
+      *
+      * @param sessionId  The session ID (e.g. "ck:3").
+      * @return The source code, or empty string if not found.
+      */
+    std::string getSessionSource(std::string_view sessionId) const;
 
     // -----------------------------------------------------------------------
     // AI-5 §12: stop_chuck
@@ -217,8 +233,14 @@ private:
     /// Translate B4 VMState string to canonical SessionState.
     static SessionState translateState(const std::string& vmStateStr);
 
-    AudioEngineFacade&        audio_;
-    std::shared_ptr<JobTracker>  jobTracker_;
+    AudioEngineFacade&              audio_;
+    std::shared_ptr<JobTracker>     jobTracker_;
+
+    // AI-5/AI-6: Persist sessions so source code survives between calls.
+    // createSession() stores the session; getSession()/getSessionSource()
+    // retrieve the stored source.
+    mutable std::mutex              sessionsMtx_;
+    std::unordered_map<std::string, ChuckSession> sessions_;
 };
 
 } // namespace hathor::control

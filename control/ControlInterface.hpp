@@ -23,6 +23,7 @@
 
 #include "ChuckSession.hpp"
 #include "ChuckSessionService.hpp"
+#include "RenderService.hpp"
 
 // Forward declarations — full headers are only needed in the .cpp.
 class AudioEngineFacade;
@@ -183,13 +184,37 @@ public:
     /// Format: get_chuck_job <jobId>
     void handleGetChuckJob(std::string_view rest);
 
-    /// Handle a cancel_chuck_job command (non-destructive execution).
-    /// Format: cancel_chuck_job <jobId>
-    void handleCancelChuckJob(std::string_view rest);
+     /// Handle a cancel_chuck_job command (non-destructive execution).
+     /// Format: cancel_chuck_job <jobId>
+     void handleCancelChuckJob(std::string_view rest);
 
-    /// Dispatch an AI-5 ChucK session command.
-    /// Routes to the appropriate handle*Chuck* method.
-    void handleChuckSessionCommand(std::string_view cmd, std::string_view rest);
+     /// Dispatch an AI-5 ChucK session command.
+     /// Routes to the appropriate handle*Chuck* method.
+     void handleChuckSessionCommand(std::string_view cmd, std::string_view rest);
+
+     // -----------------------------------------------------------------------
+     // AI-6: Rendering service
+     // -----------------------------------------------------------------------
+
+     /// Handle a render_chuck command (async, non-blocking).
+     /// Format: render_chuck <sessionId> <durationBars> <assetName> [target]
+     void handleRenderChuck(std::string_view rest);
+
+     /// Handle a get_job_status command (read-only).
+     /// Format: get_job_status <jobId>
+     void handleGetJobStatus(std::string_view rest);
+
+     /// Handle a commit_rendered_asset command (mutating — requires confirmation
+     /// for overwrites).
+     /// Format: commit_rendered_asset <jobId> <assetName> [confirm_overwrite]
+     void handleCommitRenderedAsset(std::string_view rest);
+
+     /// Handle a cancel_render_job command.
+     /// Format: cancel_render_job <jobId>
+     void handleCancelRenderJob(std::string_view rest);
+
+     /// Dispatch an AI-6 render command.
+     void handleRenderCommand(std::string_view cmd, std::string_view rest);
 
 private:
     // --- Command handlers ---------------------------------------------------
@@ -241,6 +266,11 @@ private:
     // AI-5: Canonical ChucK session service layer.
     // Constructed when HATHOR_BUILD_APP and the worker is available.
     std::unique_ptr<ChuckSessionService> chuckSessionService_;
+
+    // AI-6: Canonical rendering service layer.
+    // Constructed lazily after ChuckSessionService (shares the same session
+    // store for source retrieval).
+    std::unique_ptr<RenderService> renderService_;
 
     // WorkerThread is allocated on the heap to keep this header JUCE-free.
     // (WorkerThread.hpp only forward-declares AudioEngine, so it is safe.)

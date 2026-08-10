@@ -328,8 +328,34 @@ void SampleBank::reloadStudioAssets(const std::filesystem::path&     dir,
             interleavedData = interleave(*sourceBuf, numChannels);
         }
 
-        addEntry(stem, 0, std::move(interleavedData),
-                 numChannels, sampleRate,
-                 entry.path().string());
+         addEntry(stem, 0, std::move(interleavedData),
+                  numChannels, sampleRate,
+                  entry.path().string());
+     }
+}
+
+// ---------------------------------------------------------------------------
+// B8-K4 / AI-6: removeEntry — rollback registration on commit failure
+// ---------------------------------------------------------------------------
+
+int SampleBank::removeEntry(std::string_view name, int64_t index)
+{
+    std::lock_guard<std::mutex> lock(registrationMutex_);
+
+    int removed = 0;
+    for (auto it = entries_.begin(); it != entries_.end(); )
+    {
+        if (it->name == name && it->index == index)
+        {
+            it = entries_.erase(it);
+            ++removed;
+        }
+        else
+        {
+            ++it;
+        }
     }
+
+    loaded_ = std::max(0, loaded_ - removed);
+    return removed;
 }

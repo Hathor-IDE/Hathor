@@ -65,6 +65,7 @@ add_executable(hathor-control-tests
     test_control_slots.cpp
     test_ai2_readonly.cpp
     test_ai5_chuck_lifecycle.cpp
+    test_ai6_render_lifecycle.cpp
     ../ui/HathorFileParser.cpp
 )
 

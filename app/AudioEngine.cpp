@@ -891,8 +891,36 @@ hathor::RenderHandle AudioEngine::startBakeRender(
     };
 
     return renderWriter_->startRender(tabId, std::move(ckSource), numSamples,
+                                       sampleRate, destPath,
+                                       std::move(wrappedCallback));
+}
+
+// ---------------------------------------------------------------------------
+// B8-K2: Background render without auto-registration (AI-6 render_chuck)
+// ---------------------------------------------------------------------------
+
+hathor::RenderHandle AudioEngine::startBakeRenderRaw(
+    uint8_t                            tabId,
+    std::string                        ckSource,
+    uint64_t                           numSamples,
+    unsigned                           sampleRate,
+    const std::filesystem::path&       destPath,
+    hathor::ChuckRenderWriter::CompletionCallback onComplete)
+{
+    if (!renderWriter_) {
+        if (onComplete)
+            onComplete(hathor::RenderResult{
+                .success = false,
+                .state = hathor::RenderState::Failed,
+                .errorMessage = "Render writer not initialised (worker not started)",
+            });
+        return hathor::RenderHandle{};
+    }
+
+    // No SampleBank auto-registration — AI-6 handles registration at commit time.
+    return renderWriter_->startRender(tabId, std::move(ckSource), numSamples,
                                       sampleRate, destPath,
-                                      std::move(wrappedCallback));
+                                      std::move(onComplete));
 }
 
 int AudioEngine::activeRenderCount() const noexcept

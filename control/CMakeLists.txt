@@ -50,6 +50,7 @@ add_library(hathor-control OBJECT
     SocketServer.cpp
     ChuckSessionService.cpp
     JobTracker.cpp
+    RenderService.cpp
 )
 
 target_include_directories(hathor-control
