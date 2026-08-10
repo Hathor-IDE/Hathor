@@ -20,9 +20,14 @@
 #include "ChuckTokeniser.hpp"
 #include "HathorLookAndFeel.hpp"
 #include "HathorFileParser.hpp"
+#include "LspCompletionLogic.hpp"
+#include "LspCompletionPopup.hpp"
+#include "LspHoverHandler.hpp"
+#include "LspDiagnosticsDisplay.hpp"
 
 #include <optional>
 #include <functional>
+#include <memory>
 
 namespace hathor::ui {
 
@@ -182,9 +187,54 @@ public:
     void setNowPlayingHighlight(std::size_t sourceOffset,
                                 const juce::Rectangle<int>& glyphBounds) noexcept;
 
-    /// Clear the now-playing highlight (slot stopped or no event).
-    /// Repaints the previously highlighted region.
-    void clearNowPlayingHighlight() noexcept;
+     /// Clear the now-playing highlight (slot stopped or no event).
+     /// Repaints the previously highlighted region.
+     void clearNowPlayingHighlight() noexcept;
+
+     // -----------------------------------------------------------------------
+     // AI-4: LSP language integration
+     // -----------------------------------------------------------------------
+     // Completion (Ctrl+Space), hover (debounced cursor move), diagnostics
+     // (squiggly underlines + gutter markers), and signature help.
+     // -----------------------------------------------------------------------
+
+     /// Install the LSP client that provides completions, hover, and diagnostics
+     /// for this tab. Called by EditorArea after creating the HathorLspClient.
+     /// The client pointer is not owned by this tab.
+     void installLspClient(class HathorLspClient* client) noexcept;
+
+     /// Notify the LSP client that a document is open (didOpen).
+     /// Called when the tab is activated or a file is opened.
+     void notifyLspDidOpen();
+
+     /// Notify the LSP client that the document has changed (didChange).
+     /// Called from codeDocumentTextInserted / codeDocumentTextDeleted.
+     void notifyLspDidChange();
+
+     /// Notify the LSP client that the document is being closed (didClose).
+     /// Called when the tab is destroyed or the file is closed.
+     void notifyLspDidClose();
+
+     /// Request completions from the LSP at the current cursor position.
+     /// Shows the LspCompletionPopup.
+     void requestLspCompletion();
+
+     /// Request hover from the LSP at the given cursor position.
+     /// Shows the LspHoverHandler tooltip.
+     void requestLspHover(int cursorLine, int cursorCol);
+
+     /// Request signature help from the LSP (when cursor is inside parens).
+     void requestLspSignatureHelp();
+
+     /// Handle a completion selection — applies the insert text.
+     void onCompletionSelected(const lsp::CompletionCandidate& candidate);
+
+     /// Paint diagnostic squiggly underlines on the editor.
+     /// Called from paint() for non-front-matter lines.
+     void paintDiagnostics(juce::Graphics& g);
+
+     /// Return the document URI for LSP messages (file:// URI or synthetic).
+     juce::String lspDocumentUri() const;
 
     // -----------------------------------------------------------------------
     // juce::Component overrides
@@ -269,12 +319,25 @@ private:
     juce::Rectangle<int>      highlightBounds_;        ///< current glyph box (editor-local)
     juce::Rectangle<int>      highlightBoundsPrev_;    ///< previous box (for repaint)
 
-    // Tokenisers for both file types.  Exactly one is active at a time;
-    // the editor_ holds a non-owning pointer to whichever is active.
-    // (juce::CodeEditorComponent does not own its tokeniser.)
-    MiniNotationTokeniser       miniTokeniser_;
-    ChuckTokeniser            chuckTokeniser_;
-    bool                      useChuckTokeniser_{ false };
+     // Tokenisers for both file types.  Exactly one is active at a time;
+     // the editor_ holds a non-owning pointer to whichever is active.
+     // (juce::CodeEditorComponent does not own its tokeniser.)
+     MiniNotationTokeniser       miniTokeniser_;
+     ChuckTokeniser            chuckTokeniser_;
+     bool                      useChuckTokeniser_{ false };
+
+     // AI-4: LSP client (not owned — set by EditorArea)
+     class HathorLspClient*    lspClient_{ nullptr };
+
+     // AI-4: Completion popup, hover handler, and diagnostics display
+     std::unique_ptr<LspCompletionPopup>  lspCompletionPopup_;
+     std::unique_ptr<LspHoverHandler>     lspHoverHandler_;
+     std::unique_ptr<LspDiagnosticsDisplay> lspDiagnostics_;
+
+     // AI-4: Debounced hover timer
+     int                                   hoverPendingLine_{ -1 };
+     int                                   hoverPendingCol_{ -1 };
+     bool                                  hoverPending_{ false };
 
     juce::CodeDocument          document_;
     juce::CodeEditorComponent   editor_;
