@@ -14,6 +14,12 @@
 #include <juce_gui_extra/juce_gui_extra.h>
 
 // ---------------------------------------------------------------------------
+// AI-8: Context bridges
+// ---------------------------------------------------------------------------
+#include "EditorContextBridge.hpp"
+#include "LspContextBridge.hpp"
+
+// ---------------------------------------------------------------------------
 // Real child component headers (include when available)
 // ---------------------------------------------------------------------------
 //
@@ -73,7 +79,25 @@ MainWindow::MainWindow(AudioEngine& audio,
     // -----------------------------------------------------------------------
     activityRibbon_  = std::make_unique<hathor::ui::ActivityRibbon>();
     explorerPanel_   = std::make_unique<hathor::ui::ExplorerPanel>();
-    editorArea_      = std::make_unique<hathor::ui::EditorArea>(audio_, ci_);
+     editorArea_      = std::make_unique<hathor::ui::EditorArea>(audio_, ci_);
+
+     // AI-8: Create and wire the editor + LSP context bridges.
+     // EditorContextBridge captures editor state (file, cursor, selection)
+     // from the EditorArea on the JUCE message thread and snapshots it for
+     // thread-safe access from the MCP accept-loop.
+     editorContextBridge_ = std::make_unique<hathor::ui::EditorContextBridge>(*editorArea_);
+     editorArea_->setEditorContextBridge(editorContextBridge_.get());
+
+     // LspContextBridge captures LSP diagnostics and status from the HathorLspClient.
+     lspContextBridge_ = std::make_unique<hathor::ui::LspContextBridge>(editorArea_->lspClient());
+     editorArea_->setLspContextBridge(lspContextBridge_.get());
+
+     // Inject all AI-8 context providers into ControlInterface so that the
+     // get-context MCP command can assemble dynamic context.
+     ci_.setEditorContextProvider(editorContextBridge_.get());
+     ci_.setLspContextProvider(lspContextBridge_.get());
+     ci_.setLanguageMetadata(&editorArea_->metadata(),
+                             &editorArea_->metadataCompatibility());
     chatSidebar_     = std::make_unique<hathor::ui::ChatSidebar>(audio_, ci_);
     visualizerPanel_ = std::make_unique<hathor::ui::VisualizerPanel>(audio_);
 

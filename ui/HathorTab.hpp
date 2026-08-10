@@ -245,9 +245,14 @@ public:
       /// Return the document URI for LSP messages (file:// URI or synthetic).
       juce::String lspDocumentUri() const;
 
-      /// Callback fired by the LspHoverHandler when it's dismissed
-      /// (used to clear hover state).
-      std::function<void(const juce::String&)> onStatusMessage;
+    /// Callback fired by the LspHoverHandler when it's dismissed
+    /// (used to clear hover state).
+    std::function<void(const juce::String&)> onStatusMessage;
+
+    /// Callback fired when the cursor position changes (AI-8).
+    /// Called from handleCursorMove() and on key events that move the caret.
+    /// Installed by EditorArea to refresh the editor context snapshot.
+    std::function<void()> onCursorMoved;
 
       // -----------------------------------------------------------------------
       // juce::Component overrides

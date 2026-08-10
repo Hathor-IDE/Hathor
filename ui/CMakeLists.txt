@@ -59,7 +59,9 @@ target_sources(hathor-ui
          BakeTargetDialog.cpp          # B8-K6
          BakeProgressDialog.cpp        # B8-K6
          BakeOrchestrator.cpp          # B8-K6
-        # AI-4: LSP language integration
+         EditorContextBridge.cpp       # AI-8: editor state snapshot bridge
+         LspContextBridge.cpp          # AI-8: LSP diagnostics/status bridge
+         # AI-4: LSP language integration
         HathorLspClient.cpp           # LSP client process management
         LspJsonRpc.cpp                # JSON-RPC serialization
         LspCompletionLogic.cpp        # Completion merge with metadata fallback

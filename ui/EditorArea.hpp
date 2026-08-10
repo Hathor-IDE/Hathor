@@ -49,6 +49,8 @@
 #include "HathorLookAndFeel.hpp"
 #include "SettingsComponent.hpp"
 #include "BakeOrchestrator.hpp"
+#include "EditorContextBridge.hpp"
+#include "LspContextBridge.hpp"
 
 namespace hathor::ui {
 
@@ -210,6 +212,29 @@ public:
 
     /// The currently active tab, or nullptr if no tabs are open.
     HathorTab* activeTab() noexcept;
+
+    // -----------------------------------------------------------------------
+    // AI-8: Editor/LSP context bridges
+    // -----------------------------------------------------------------------
+    // The MainWindow installs EditorContextBridge and LspContextBridge
+    // instances (non-owning pointers) that are refreshed whenever the editor
+    // state or LSP diagnostics change.  These bridges implement the JUCE-free
+    // abstract interfaces consumed by the control-layer AuthoringContext.
+    //
+    // Requirement references: AI-8 §2, §9
+
+    /// Install the editor context bridge (non-owning, may be null).
+    void setEditorContextBridge(class EditorContextBridge* bridge) noexcept;
+
+    /// Install the LSP context bridge (non-owning, may be null).
+    void setLspContextBridge(class LspContextBridge* bridge) noexcept;
+
+    /// Expose the LSP client for context bridge wiring (AI-8).
+    class HathorLspClient* lspClient() const noexcept;
+
+    /// Expose the language metadata for AI-8 context assembly (AI-3).
+    const hathor::language::LanguageMetadata& metadata() const noexcept;
+    const hathor::language::MetadataCompatibility& metadataCompatibility() const noexcept;
 
     // -----------------------------------------------------------------------
     // juce::Component overrides
@@ -429,6 +454,12 @@ private:
     std::unique_ptr<HathorLspClient> lspClient_;
     hathor::language::LanguageMetadata metadata_;
     hathor::language::MetadataCompatibility metadataCompat_;
+
+    // AI-8: Non-owning bridges for dynamic context assembly.
+    // Refreshed when tabs activate, documents change, or LSP diagnostics
+    // are published.  May be null if AI-8 context is not wired up.
+    class EditorContextBridge* editorContextBridge_{nullptr};
+    class LspContextBridge*    lspContextBridge_{nullptr};
 
     // Timer for clearing the status bar message
     juce::Timer* statusClearTimer_{ nullptr };

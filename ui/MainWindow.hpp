@@ -58,6 +58,10 @@
 #include "ChatSidebar.hpp"
 #include "AcpAgentSession.hpp"
 
+// AI-8: Context bridges
+#include "EditorContextBridge.hpp"
+#include "LspContextBridge.hpp"
+
 // ---------------------------------------------------------------------------
 // Forward declarations — child components not yet implemented
 // ---------------------------------------------------------------------------
@@ -157,6 +161,12 @@ private:
     /// The hathorMcpPath_ is resolved at startup and reused for all threads.
     std::string                                    agentExePath_;
     std::string                                    hathorMcpPath_;
+
+    // -----------------------------------------------------------------------
+    // AI-8: Dynamic authoring context bridges (JUCE-dependent providers)
+    // -----------------------------------------------------------------------
+    std::unique_ptr<hathor::ui::EditorContextBridge> editorContextBridge_;
+    std::unique_ptr<hathor::ui::LspContextBridge>    lspContextBridge_;
 
     // -----------------------------------------------------------------------
     // Engine references

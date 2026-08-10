@@ -94,9 +94,11 @@ public:
     // Diagnostics callback registration
     void setDiagnosticsCallback(DiagnosticsCallback callback) { diagnosticsCb_ = std::move(callback); }
 
-    // Accessors for HathorTab
+    // Accessors for HathorTab / AI-8 context
     const hathor::language::LanguageMetadata* metadata() const noexcept { return metadata_; }
     const hathor::language::MetadataCompatibility* compatibility() const noexcept { return compatibility_; }
+    const std::string& serverScriptPath() const noexcept { return serverScriptPath_; }
+    const std::string& nodeExePath() const noexcept { return nodeExePath_; }
 
 private:
     // juce::Timer — polls child process stdout for incoming messages

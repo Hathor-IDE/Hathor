@@ -10,6 +10,8 @@
 #include "EditorArea.hpp"
 #include "HathorFileParser.hpp"
 #include "HathorLspClient.hpp"
+#include "EditorContextBridge.hpp"
+#include "LspContextBridge.hpp"
 #include "hathor/LanguageMetadata.hpp"
 #include "AudioEngine.hpp"
 
@@ -241,7 +243,8 @@ EditorArea::EditorArea(AudioEngine& audio,
         &metadata_,
         &metadataCompat_);
 
-    // Wire diagnostics callback — forward to the active tab
+     // Wire diagnostics callback — forward to the active tab and to the
+     // AI-8 LSP context bridge (for authoring context assembly).
     lspClient_->setDiagnosticsCallback([this](const std::string& uri,
                                                const std::vector<lsp::Diagnostic>& diags)
     {
@@ -257,6 +260,10 @@ EditorArea::EditorArea(AudioEngine& audio,
                 }
             }
         }
+        // AI-8: Forward to the LSP context bridge so get-context can include
+        // LSP-derived diagnostics in the authoring context payload.
+        if (lspContextBridge_ != nullptr)
+            lspContextBridge_->setLspDiagnostics(uri, diags);
     });
 
     lspClient_->start();
@@ -292,6 +299,39 @@ EditorArea::~EditorArea()
         t->setVisible(false);
 
     delete statusClearTimer_;
+}
+
+// ---------------------------------------------------------------------------
+// AI-8: Context bridge accessors
+// ---------------------------------------------------------------------------
+
+void EditorArea::setEditorContextBridge(EditorContextBridge* bridge) noexcept
+{
+    editorContextBridge_ = bridge;
+    if (bridge != nullptr)
+        bridge->refresh();
+}
+
+void EditorArea::setLspContextBridge(LspContextBridge* bridge) noexcept
+{
+    lspContextBridge_ = bridge;
+    if (bridge != nullptr && lspClient_ != nullptr)
+        bridge->setLspClient(lspClient_.get());
+}
+
+HathorLspClient* EditorArea::lspClient() const noexcept
+{
+    return lspClient_.get();
+}
+
+const hathor::language::LanguageMetadata& EditorArea::metadata() const noexcept
+{
+    return metadata_;
+}
+
+const hathor::language::MetadataCompatibility& EditorArea::metadataCompatibility() const noexcept
+{
+    return metadataCompat_;
 }
 
 // ---------------------------------------------------------------------------
@@ -686,14 +726,18 @@ void EditorArea::activateTab(int index)
         settingsActive_ = false;
         activeIndex_    = index;
         auto* tab = tabs_[static_cast<std::size_t>(index)].get();
-        tab->setVisible(true);
-        tab->setBounds(getLocalBounds()
-                           .withTrimmedTop(kTabBarHeight)
-                           .withTrimmedBottom(kStatusBarHeight));
-        tab->editor().grabKeyboardFocus();
-    }
+         tab->setVisible(true);
+         tab->setBounds(getLocalBounds()
+                            .withTrimmedTop(kTabBarHeight)
+                            .withTrimmedBottom(kStatusBarHeight));
+         tab->editor().grabKeyboardFocus();
+     }
 
-    refreshTabBar();
+     // AI-8: Refresh the editor context snapshot for the newly activated tab.
+     if (editorContextBridge_ != nullptr)
+         editorContextBridge_->refresh();
+
+     refreshTabBar();
 }
 
 void EditorArea::removeTabAt(int index)
@@ -792,6 +836,16 @@ void EditorArea::wireUnsavedCallback(HathorTab& tab)
     tab.onUnsavedDotChanged = [this]()
     {
         refreshTabBar();
+        // AI-8: Refresh the editor context snapshot after any document edit.
+        if (editorContextBridge_ != nullptr)
+            editorContextBridge_->refresh();
+    };
+
+    // AI-8: Refresh the editor context snapshot when the cursor moves.
+    tab.onCursorMoved = [this]()
+    {
+        if (editorContextBridge_ != nullptr)
+            editorContextBridge_->refresh();
     };
 }
 

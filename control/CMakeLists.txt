@@ -52,6 +52,7 @@ add_library(hathor-control OBJECT
     JobTracker.cpp
     RenderService.cpp
     SongMutationService.cpp
+    AuthoringContext.cpp
 )
 
 target_include_directories(hathor-control

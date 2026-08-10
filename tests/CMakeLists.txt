@@ -67,6 +67,7 @@ add_executable(hathor-control-tests
     test_ai5_chuck_lifecycle.cpp
     test_ai6_render_lifecycle.cpp
     test_ai7_song_mutation.cpp
+    test_ai8_context.cpp
     ../ui/HathorFileParser.cpp
 )
 
@@ -91,10 +92,16 @@ target_link_libraries(hathor-control-tests PRIVATE
 
 if(CHUCK_AVAILABLE)
     target_link_libraries(hathor-control-tests PRIVATE libchuck)
-    target_compile_definitions(hathor-control-tests PRIVATE CHUCK_AVAILABLE=1)
-else()
-    target_compile_definitions(hathor-control-tests PRIVATE CHUCK_AVAILABLE=0)
-endif()
+ target_compile_definitions(hathor-control-tests PRIVATE CHUCK_AVAILABLE=1
+     GOLDEN_FIXTURE_DIR="${CMAKE_SOURCE_DIR}/reference/strudel-golden"
+     LANGUAGE_METADATA_DIR="${CMAKE_SOURCE_DIR}/reference/language-metadata"
+ )
+ else()
+     target_compile_definitions(hathor-control-tests PRIVATE CHUCK_AVAILABLE=0
+         GOLDEN_FIXTURE_DIR="${CMAKE_SOURCE_DIR}/reference/strudel-golden"
+         LANGUAGE_METADATA_DIR="${CMAKE_SOURCE_DIR}/reference/language-metadata"
+     )
+ endif()
 
 include(Catch)
 catch_discover_tests(hathor-control-tests DISCOVERY_MODE PRE_TEST)

@@ -667,6 +667,10 @@ bool HathorTab::handleLspKeyPress(const juce::KeyPress& key)
 
 void HathorTab::handleCursorMove()
 {
+    // AI-8: Notify listeners that the cursor position may have changed.
+    if (onCursorMoved)
+        onCursorMoved();
+
     if (!lspClient_ || !lspHoverHandler_ || useChuckTokeniser_)
         return;
 
