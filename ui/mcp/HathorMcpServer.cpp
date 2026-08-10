@@ -142,7 +142,47 @@ static json makeToolsList()
     gainSchema["properties"]["value"]["description"] = "Gain value (0.0-2.0)";
     gainSchema["required"] = json::array({"value"});
 
-    // edit_song: structured, transactional song mutation (AI-7)
+    // get_context: dynamic authoring context (AI-8)
+    // Assembles targeted editor/language/project/runtime context for AI requests.
+    // Parameters are all optional — absent parameters default to the current
+    // editor state and auto-detected relevance.
+    json getContextSchema;
+    getContextSchema["type"] = "object";
+    getContextSchema["properties"]["file"] = json::object({
+        {"type", "string"},
+        {"description", "File path or URI to focus on (e.g. 'song.hathor'). If omitted, uses the current active editor tab."}
+    });
+    getContextSchema["properties"]["line"] = json::object({
+        {"type", "integer"},
+        {"description", "0-based cursor line number. If omitted, uses the current cursor position."}
+    });
+    getContextSchema["properties"]["character"] = json::object({
+        {"type", "integer"},
+        {"description", "0-based cursor character column. If omitted, uses the current cursor position."}
+    });
+    getContextSchema["properties"]["language"] = json::object({
+        {"type", "string"},
+        {"description", "Language hint: 'mininotation' or 'chuck'. If omitted, inferred from file extension."}
+    });
+    getContextSchema["properties"]["selected_text"] = json::object({
+        {"type", "string"},
+        {"description", "Currently selected text, if any."}
+    });
+    getContextSchema["properties"]["scope"] = json::object({
+        {"type", "array"},
+        {"description", "Which context sections to include. If omitted, auto-determined from file type. Values: 'editor', 'diagnostics', 'metadata', 'runtime', 'samples', 'instruments', 'lsp', 'project'."},
+        {"items", json::object({{"type", "string"}})}
+    });
+    getContextSchema["properties"]["include_content"] = json::object({
+        {"type", "boolean"},
+        {"description", "Include the full file content in the response (default: false to keep context targeted)."}
+    });
+    getContextSchema["properties"]["max_content_length"] = json::object({
+        {"type", "integer"},
+        {"description", "Maximum content length in bytes if include_content is true (default: 8192). 0 = no limit."},
+        {"default", 8192}
+    });
+
     json editSongOpsSchema;
     editSongOpsSchema["type"] = "object";
     editSongOpsSchema["properties"]["op"]["type"] = "string";
@@ -190,6 +230,17 @@ static json makeToolsList()
     setGain["description"] = "Set master output gain (0.0-2.0)";
     setGain["inputSchema"] = gainSchema;
     tools.push_back(setGain);
+
+    // get_context: AI-8 dynamic authoring context
+    json getContext;
+    getContext["name"] = "get_context";
+    getContext["description"] = "Assemble targeted editor/language/project/runtime context for AI authoring. "
+        "Returns a compact JSON payload with sections relevant to the current file "
+        "and cursor position. Language intelligence comes from the Strudel LSP; "
+        "Hathor-specific facts come from versioned supported-surface metadata (AI-3). "
+        "All parameters are optional — omit them to use the current editor state.";
+    getContext["inputSchema"] = getContextSchema;
+    tools.push_back(getContext);
 
     json editSong;
     editSong["name"] = "edit_song";
@@ -250,6 +301,32 @@ static std::string buildHathorCommand(const std::string& toolName, const json& a
         const std::string songFile = args["song_file"].get<std::string>();
         const std::string opsJson = args["ops"].dump();
         return "edit_song " + songFile + " " + opsJson;
+    }
+    if (toolName == "get_context")
+    {
+        // Forward the arguments as a JSON object to the Hathor process.
+        // The ControlInterface parses this JSON into a ContextRequest.
+        // We pass the raw args JSON (minus any empty fields to keep the
+        // command line compact).
+        json filtered = json::object();
+        if (args.contains("file") && args["file"].is_string())
+            filtered["file"] = args["file"];
+        if (args.contains("line") && args["line"].is_number_integer())
+            filtered["line"] = args["line"];
+        if (args.contains("character") && args["character"].is_number_integer())
+            filtered["character"] = args["character"];
+        if (args.contains("language") && args["language"].is_string())
+            filtered["language"] = args["language"];
+        if (args.contains("selected_text") && args["selected_text"].is_string())
+            filtered["selected_text"] = args["selected_text"];
+        if (args.contains("scope") && args["scope"].is_array())
+            filtered["scope"] = args["scope"];
+        if (args.contains("include_content") && args["include_content"].is_boolean())
+            filtered["include_content"] = args["include_content"];
+        if (args.contains("max_content_length") && args["max_content_length"].is_number_integer())
+            filtered["max_content_length"] = args["max_content_length"];
+
+        return "get-context " + filtered.dump();
     }
     return {};
 }

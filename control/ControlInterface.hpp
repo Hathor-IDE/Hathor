@@ -25,10 +25,16 @@
 #include "ChuckSessionService.hpp"
 #include "RenderService.hpp"
 #include "SongMutationService.hpp"
+#include "AuthoringContext.hpp"
 
 // Forward declarations — full headers are only needed in the .cpp.
 class AudioEngineFacade;
 class SampleBank;
+
+namespace hathor::language {
+struct LanguageMetadata;
+struct MetadataCompatibility;
+}
 
 namespace hathor::control {
 
@@ -154,6 +160,43 @@ public:
     /// ProjectReadFacade — the canonical AI-2 read-only service layer.
     /// Constructed in the ControlInterface constructor; all read operations
     /// route through it.
+    ProjectReadFacade& readOnly() noexcept { return *readFacade_; }
+
+    // -----------------------------------------------------------------------
+    // AI-8: Dynamic authoring context assembly
+    // -----------------------------------------------------------------------
+    // These methods inject the editor and LSP context providers so that
+    // the get-context command can assemble a targeted, dynamic context
+    // payload for AI authoring requests (MCP get_context tool).
+    //
+    // All providers are JUCE-free abstract interfaces; the UI layer supplies
+    // concrete implementations that read from JUCE components on the message
+    // thread and snapshot state for thread-safe access from the acceptor thread.
+    //
+    // Requirement references: AI-8 §2, §3, §9
+
+    /// Install the editor context provider (current file, cursor, selection).
+    /// May be called at any time; a null provider disables editor context.
+    void setEditorContextProvider(EditorContextProvider* provider) noexcept;
+
+    /// Install the LSP context provider (diagnostics, completions, hover).
+    /// May be called at any time; a null provider disables LSP context.
+    void setLspContextProvider(LspContextProvider* provider) noexcept;
+
+    /// Set the LanguageMetadata + compatibility (AI-3 versioned metadata).
+    /// Called after the UI layer loads and validates the metadata JSON.
+    /// May be called multiple times (hot-reload); the latest valid set wins.
+    void setLanguageMetadata(const hathor::language::LanguageMetadata* metadata,
+                             const hathor::language::MetadataCompatibility* compat) noexcept;
+
+    /// Assemble and emit the dynamic authoring context for the given request.
+    /// Parses JSON arguments from the socket command line, builds a
+    /// ContextRequest, and responds via the thread-local response sink.
+    ///
+    /// Format: get-context <json-args>
+    ///   json-args: {"file":"...","line":N,"character":N,"language":"...",
+    ///               "scope":["editor","diagnostics"],"include_content":bool}
+    void handleGetContext(std::string_view args);
     ProjectReadFacade& readOnly() noexcept { return *readFacade_; }
 
     // -----------------------------------------------------------------------
@@ -285,6 +328,12 @@ private:
     // AI-7: Canonical song mutation service layer.
     // Constructed eagerly — does not depend on ChuckSessionService.
     std::unique_ptr<SongMutationService> songMutationService_;
+
+    // AI-8: Dynamic authoring context assembler.
+    // Created in the constructor with readFacade_; providers are set later
+    // by the UI layer via setEditorContextProvider / setLspContextProvider /
+    // setLanguageMetadata.  Null if not yet configured.
+    std::unique_ptr<AuthoringContext> authoringContext_;
 
     // WorkerThread is allocated on the heap to keep this header JUCE-free.
     // (WorkerThread.hpp only forward-declares AudioEngine, so it is safe.)

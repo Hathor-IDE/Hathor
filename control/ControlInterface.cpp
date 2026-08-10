@@ -61,12 +61,94 @@ ControlInterface::ControlInterface(AudioEngineFacade& audio, SampleBank& bank)
     , songMutationService_(std::make_unique<SongMutationService>(audio, bank))
     , impl_(new Impl(audio))
 {
+    // AI-8: Create the authoring context assembler with the read facade.
+    // Providers (editor, LSP, metadata) are injected later by the UI layer.
+    authoringContext_ = std::make_unique<AuthoringContext>(
+        *readFacade_, nullptr, nullptr, nullptr, nullptr);
     // AI-5: Create the ChucK session service if the audio engine supports
     // B4 per-tab ChucK VM operations (hasWorker() indicates the B4-K3
     // architecture is available).
     // The AudioWorkerManager is accessed through the AudioEngineFacade
     // in the real application; for now, we create the service eagerly
     // and it will gracefully handle the case where the worker is not running.
+}
+
+// ---------------------------------------------------------------------------
+// AI-8: Provider injection
+// ---------------------------------------------------------------------------
+
+void ControlInterface::setEditorContextProvider(EditorContextProvider* provider) noexcept
+{
+    if (authoringContext_)
+        authoringContext_->setEditorContextProvider(provider);
+}
+
+void ControlInterface::setLspContextProvider(LspContextProvider* provider) noexcept
+{
+    if (authoringContext_)
+        authoringContext_->setLspContextProvider(provider);
+}
+
+// ---------------------------------------------------------------------------
+// AI-8: handleGetContext
+// ---------------------------------------------------------------------------
+
+void ControlInterface::handleGetContext(std::string_view args)
+{
+    if (!authoringContext_)
+    {
+        emitResponse({
+            {"ok",    false},
+            {"error", "authoring context not initialized"},
+            {"cmd",   "get-context"}
+        });
+        return;
+    }
+
+    // Parse JSON args from the command line.
+    // The MCP server forwards the tool arguments as a JSON string.
+    ContextRequest req;
+    if (!args.empty())
+    {
+        try {
+            nlohmann::json j = nlohmann::json::parse(
+                std::string(args));
+
+            if (j.contains("file") && j["file"].is_string())
+                req.file = j["file"].get<std::string>();
+            if (j.contains("line") && j["line"].is_number_integer())
+                req.line = j["line"].get<int>();
+            if (j.contains("character") && j["character"].is_number_integer())
+                req.character = j["character"].get<int>();
+            if (j.contains("language") && j["language"].is_string())
+                req.language = j["language"].get<std::string>();
+            if (j.contains("selected_text") && j["selected_text"].is_string())
+                req.selectedText = j["selected_text"].get<std::string>();
+            if (j.contains("scope") && j["scope"].is_array())
+            {
+                for (const auto& s : j["scope"])
+                {
+                    if (s.is_string())
+                        req.scope.push_back(s.get<std::string>());
+                }
+            }
+            if (j.contains("include_content"))
+                req.includeContent = j["include_content"].get<bool>();
+            if (j.contains("max_content_length") && j["max_content_length"].is_number_integer())
+                req.maxContentLength = j["max_content_length"].get<int>();
+        }
+        catch (const nlohmann::json::exception& e) {
+            emitResponse({
+                {"ok",    false},
+                {"cmd",   "get-context"},
+                {"error", std::string("invalid arguments: ") + e.what()}
+            });
+            return;
+        }
+    }
+
+    nlohmann::json result = authoringContext_->assemble(req);
+    emitResponse(result);
 }
 
 ControlInterface::~ControlInterface()
@@ -188,6 +270,11 @@ void ControlInterface::dispatch(std::string_view rawLine)
         // AI-2 read-only introspection commands — route through the canonical
         // ProjectReadFacade service layer (Phase 2.5 H0).
         handleReadOnlyCommand(cmd, rest);
+    } else if (cmd == "get-context") {
+        // AI-8: Dynamic authoring context assembly.
+        // Routes through AuthoringContext, which pulls from EditorContextProvider,
+        // LspContextProvider, LanguageMetadata, and ProjectReadFacade.
+        handleGetContext(rest);
     } else if (cmd == "create_chuck_session" ||
                 cmd == "get_chuck_session" ||
                 cmd == "compile_chuck" ||
