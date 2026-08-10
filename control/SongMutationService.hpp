@@ -47,8 +47,11 @@
 
 #include "../app/AudioEngineFacade.hpp"
 #include "../app/SampleBank.hpp"
+#include "../ui/HathorFileParser.hpp"
 
 namespace hathor::control {
+
+using hathor::ui::HathorFile;
 
 /**
  * SongMutationService — canonical structured mutation service for .hathor songs.

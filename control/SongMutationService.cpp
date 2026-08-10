@@ -11,6 +11,7 @@
 #include "HathorFileParser.hpp"
 
 #include "hathor/MiniParser.hpp"
+#include "hathor/MiniTokeniser.hpp"
 #include "hathor/PrettyPrinter.hpp"
 #include "hathor/PatternCompiler.hpp"
 
@@ -20,7 +21,11 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <set>
 #include <sstream>
+#include <string>
+#include <string_view>
+#include <vector>
 
 namespace hathor::control {
 
@@ -165,19 +170,20 @@ SongMutationService::resolveSongPath(std::string_view songFile) const noexcept
     if (trimmed.empty())
         return {{}, "song file name is empty"};
 
-    // Must end with .hathor
-    {
-        std::string str = std::string(trimmed);
-        std::transform(str.begin(), str.end(), str.begin, ::tolower);
-        const std::string ext = ".hathor";
-        if (str.size() < ext.size() || str.compare(str.size() - ext.size(), ext.size(), ext) != 0)
-            return {{}, "song file must have .hathor extension"};
-    }
+    const std::string str(trimmed);
 
     // Check for path traversal
-    const std::string str(trimmed);
     if (str.find("..") != std::string::npos)
         return {{}, "path traversal is not allowed"};
+
+    // Must end with .hathor
+    {
+        std::string lower = str;
+        std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
+        const std::string ext = ".hathor";
+        if (lower.size() < ext.size() || lower.compare(lower.size() - ext.size(), ext.size(), ext) != 0)
+            return {{}, "song file must have .hathor extension"};
+    }
 
     // Resolve relative to project directory
     const auto projectDir = audio_.currentProjectDir();
@@ -693,10 +699,8 @@ nlohmann::json SongMutationService::editSong(std::string_view songFile,
 
     const auto parseResult = parseHathorFile(contents);
     HathorFile file;
-    bool wasParsed = false;
     if (const auto* hf = std::get_if<HathorFile>(&parseResult)) {
         file = *hf;
-        wasParsed = true;
     } else if (const auto* err = std::get_if<ParseFileError>(&parseResult)) {
         auditLog("edit_song", songName, false, "parse error at line " + std::to_string(err->line));
         return {
@@ -905,20 +909,53 @@ nlohmann::json SongMutationService::editSong(std::string_view songFile,
     auditLog("edit_song", songName, true,
              "ops=" + std::to_string(ops.size()));
 
+    nlohmann::json frontMatter;
+    frontMatter["slot"]  = workingCopy.front.slot.has_value()
+                             ? nlohmann::json(*workingCopy.front.slot)
+                             : nlohmann::json(nullptr);
+    frontMatter["bpm"]   = workingCopy.front.bpm.has_value()
+                             ? nlohmann::json(*workingCopy.front.bpm)
+                             : nlohmann::json(nullptr);
+    frontMatter["label"] = workingCopy.front.label.has_value()
+                             ? nlohmann::json(*workingCopy.front.label)
+                             : nlohmann::json(nullptr);
+    frontMatter["color"] = workingCopy.front.color.has_value()
+                             ? nlohmann::json(*workingCopy.front.color)
+                             : nlohmann::json(nullptr);
+    frontMatter["bank"]  = workingCopy.front.bank.has_value()
+                             ? nlohmann::json(*workingCopy.front.bank)
+                             : nlohmann::json(nullptr);
+
+    // Build referenced samples list from the body notation (cross-reference
+    // with the real SampleBank, same pattern as ProjectReadFacade::getCurrentSong).
+    nlohmann::json referencedSamples = nlohmann::json::array();
+    {
+        const auto tokens = hathor::tokenise(workingCopy.body);
+        const auto sampleNames = bank_.listNames();
+        std::set<std::string> seen(sampleNames.begin(), sampleNames.end());
+        for (const auto& tok : tokens) {
+            if (tok.kind == hathor::TokenKind::TK_ATOM) {
+                const std::string atomStr(tok.text);
+                if (seen.count(atomStr)) {
+                    referencedSamples.push_back(nlohmann::json{
+                        {"resource_id", "sample:" + atomStr},
+                        {"name", atomStr},
+                        {"type", "sample"}
+                    });
+                }
+            }
+        }
+    }
+
     return {
         {"ok", true},
         {"cmd", "edit_song"},
         {"song", songName},
         {"file", resolvedPath.string()},
         {"applied", appliedOps},
-        {"front_matter", {
-            {"slot", workingCopy.front.slot},
-            {"bpm", workingCopy.front.bpm},
-            {"label", workingCopy.front.label},
-            {"color", workingCopy.front.color},
-            {"bank", workingCopy.front.bank}
-        }},
+        {"front_matter", frontMatter},
         {"body", workingCopy.body},
+        {"referenced_samples", std::move(referencedSamples)},
         {"timestamp", isoTimestamp()}
     };
 }

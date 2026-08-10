@@ -337,16 +337,16 @@ struct SongTempDir {
 uint64_t SongTempDir::counter_ = 0;
 
 // ===========================================================================
-// RespCapture helper (same pattern as test_ai2_readonly.cpp)
+// RespCapture helper (mirrors test_ai2_readonly pattern, with unique names)
 // ===========================================================================
 
-struct RespCapture {
+struct AI7RespCapture {
     nlohmann::json data;
     bool got = false;
 };
 
-void runCmd(hathor::control::ControlInterface& ci,
-            const std::string& cmd, RespCapture& cap) {
+void runAICmd(hathor::control::ControlInterface& ci,
+              const std::string& cmd, AI7RespCapture& cap) {
     ci.dispatchWithCallback(cmd,
         [&cap](nlohmann::json j) { cap.data = std::move(j); cap.got = true; });
 }
@@ -614,7 +614,8 @@ TEST_CASE("AI-7: set_meta updates bpm, label, color, slot atomically",
 
     nlohmann::json ops = nlohmann::json::array({
         {{"op", "set_meta"},
-         {"bpm", 140.0}, {"label", "Modified"}, {"color", "#00ff00"}, {"slot", "d1"}}
+         {"bpm", 140.0}, {"label", "Modified"}, {"color", "#00ff00"}, {"slot", "d1"},
+         {"confirm", true}}
     });
 
     auto result = svc.editSong("test.hathor", ops);
@@ -689,7 +690,11 @@ TEST_CASE("AI-7: set_meta requires at least one field",
           "[ai7][set_meta][validation][empty]")
 {
     SongTempDir dir;
-    dir.writeSong("test.hathor", "bd");
+    dir.writeSong("test.hathor",
+        "[hathor]\n"
+        "slot = d0\n"
+        "\n"
+        "bd sn");
 
     TrackingFakeFacade audio;
     SampleBank bank;
@@ -1050,7 +1055,11 @@ TEST_CASE("AI-7: successful mutation produces audit log entry on stderr",
     // is reflected in the JSON response which includes audit-like fields.
 
     SongTempDir dir;
-    dir.writeSong("test.hathor", "bd sn");
+    dir.writeSong("test.hathor",
+        "[hathor]\n"
+        "slot = d0\n"
+        "\n"
+        "bd sn");
 
     TrackingFakeFacade audio;
     SampleBank bank;
@@ -1101,8 +1110,8 @@ TEST_CASE("AI-7: MCP routes edit_song through ControlInterface to SongMutationSe
     });
     std::string cmd = "edit_song test.hathor " + ops.dump();
 
-    RespCapture cap;
-    runCmd(ci, cmd, cap);
+    AI7RespCapture cap;
+    runAICmd(ci, cmd, cap);
 
     REQUIRE(cap.got);
     REQUIRE(cap.data["ok"].get<bool>() == true);
@@ -1133,8 +1142,8 @@ TEST_CASE("AI-7: MCP edit_song returns parse error for invalid JSON ops",
 
     ControlInterface ci(audio, bank);
 
-    RespCapture cap;
-    runCmd(ci, "edit_song test.hathor {invalid json}", cap);
+    AI7RespCapture cap;
+    runAICmd(ci, "edit_song test.hathor {invalid json}", cap);
 
     REQUIRE(cap.got);
     REQUIRE(cap.data["ok"].get<bool>() == false);
