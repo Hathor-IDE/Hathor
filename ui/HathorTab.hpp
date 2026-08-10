@@ -223,23 +223,36 @@ public:
      /// Shows the LspHoverHandler tooltip.
      void requestLspHover(int cursorLine, int cursorCol);
 
-     /// Request signature help from the LSP (when cursor is inside parens).
-     void requestLspSignatureHelp();
+      /// Request signature help from the LSP (when cursor is inside parens).
+      void requestLspSignatureHelp();
 
-     /// Handle a completion selection — applies the insert text.
-     void onCompletionSelected(const lsp::CompletionCandidate& candidate);
+      /// Handle a key press for LSP features (Ctrl+Space, Tab, Escape, Up/Down).
+      /// Called by the LspKeyListener installed on the editor. Returns true
+      /// if the key was consumed by LSP logic.
+      bool handleLspKeyPress(const juce::KeyPress& key);
 
-     /// Paint diagnostic squiggly underlines on the editor.
-     /// Called from paint() for non-front-matter lines.
-     void paintDiagnostics(juce::Graphics& g);
+      /// Handle cursor movement for debounced hover requests.
+      /// Called by EditorArea / UITimer when the cursor position changes.
+      void handleCursorMove();
 
-     /// Return the document URI for LSP messages (file:// URI or synthetic).
-     juce::String lspDocumentUri() const;
+      /// Handle a completion selection — applies the insert text.
+      void onCompletionSelected(const lsp::CompletionCandidate& candidate);
 
-    // -----------------------------------------------------------------------
-    // juce::Component overrides
-    // -----------------------------------------------------------------------
-    void resized() override;
+      /// Set/clear the LSP document diagnostics for this tab.
+      void notifyLspDiagnostics(const std::string& uri,
+                                 const std::vector<lsp::Diagnostic>& diagnostics);
+
+      /// Return the document URI for LSP messages (file:// URI or synthetic).
+      juce::String lspDocumentUri() const;
+
+      /// Callback fired by the LspHoverHandler when it's dismissed
+      /// (used to clear hover state).
+      std::function<void()> onStatusMessage;
+
+      // -----------------------------------------------------------------------
+      // juce::Component overrides
+      // -----------------------------------------------------------------------
+      void resized() override;
 
     /// Re-apply palette-derived editor colours + syntax scheme on theme switch.
     /// JUCE's CodeEditorComponent::lookAndFeelChanged() does not refresh the
@@ -270,6 +283,46 @@ private:
     };
 
     HighlightOverlay highlightOverlay_;
+
+    // AI-4: Diagnostics overlay — draws squiggly underlines on top of the editor
+    class DiagnosticsOverlay : public juce::Component
+    {
+    public:
+        struct Squiggle
+        {
+            juce::Rectangle<int> bounds;
+            juce::Colour colour;
+        };
+
+        DiagnosticsOverlay() { setInterceptsMouseClicks(false, false); }
+        void paint(juce::Graphics& g) override;
+        void setDiagnostics(const std::vector<Squiggle>& squiggles) noexcept;
+        void clearDiagnostics() noexcept;
+    private:
+        std::vector<Squiggle> squiggles_;
+        JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(DiagnosticsOverlay)
+    };
+
+     DiagnosticsOverlay diagnosticsOverlay_;
+
+     // -----------------------------------------------------------------------
+     // AI-4: KeyListener for LSP hot-keys (Ctrl+Space, Tab, Escape, arrows)
+     // -----------------------------------------------------------------------
+     class LspKeyListener : public juce::KeyListener
+     {
+     public:
+         LspKeyListener(HathorTab& owner) : owner_(owner) {}
+         bool keyPressed(const juce::KeyPress& key,
+                         juce::Component* /*source*/) override
+         {
+             return owner_.handleLspKeyPress(key);
+         }
+     private:
+         HathorTab& owner_;
+         JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(LspKeyListener)
+     };
+
+     std::unique_ptr<LspKeyListener> lspKeyListener_;
 
     // -----------------------------------------------------------------------
     // juce::CodeDocument::Listener

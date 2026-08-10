@@ -9,6 +9,10 @@
 
 #include "HathorTab.hpp"
 #include "HathorLookAndFeel.hpp"
+#include "HathorLspClient.hpp"
+
+#include <cctype>
+#include <unordered_map>
 
 namespace hathor::ui {
 
@@ -51,20 +55,12 @@ HathorTab::HathorTab(int slotIndex, const juce::File& file)
      // -----------------------------------------------------------------------
      document_.addListener(this);
 
-     // -----------------------------------------------------------------------
-     // C1: Register the playback highlight overlay as a child component.
-     // It sits on top of editor_ and paints only the transient highlight.
-     // -----------------------------------------------------------------------
      addAndMakeVisible(highlightOverlay_);
      highlightOverlay_.setInterceptsMouseClicks(false, false);
 
      addAndMakeVisible(editor_);
 
-     // -----------------------------------------------------------------------
-     // AI-4: LSP language integration — completion popup, hover, diagnostics
-     // The popup and hover handler are children of HathorTab, positioned over
-     // the editor. The diagnostics display is a data-only model.
-     // -----------------------------------------------------------------------
+     // AI-4: LSP language integration components
      if (!useChuckTokeniser_)
      {
          lspCompletionPopup_ = std::make_unique<LspCompletionPopup>(
@@ -76,12 +72,18 @@ HathorTab::HathorTab(int slotIndex, const juce::File& file)
 
          lspDiagnostics_ = std::make_unique<LspDiagnosticsDisplay>();
 
-         // Add as children (they'll be positioned over the editor in resized())
          addAndMakeVisible(lspCompletionPopup_.get());
          addAndMakeVisible(lspHoverHandler_.get());
+         addAndMakeVisible(diagnosticsOverlay_);
 
          lspCompletionPopup_->setVisible(false);
          lspHoverHandler_->setVisible(false);
+         diagnosticsOverlay_.setVisible(true);
+
+         // Install LSP key listener on the editor (after TabKeyListener
+         // is installed by EditorArea, so it handles keys first)
+         lspKeyListener_ = std::make_unique<LspKeyListener>(*this);
+         editor_.addKeyListener(lspKeyListener_.get());
      }
 
     // -----------------------------------------------------------------------
@@ -355,6 +357,15 @@ void HathorTab::resized()
     // Highlight overlay covers the same area as the editor so that glyph-box
     // coordinates (editor-local) map directly to overlay-local coordinates.
     highlightOverlay_.setBounds(0, editorTop, getWidth(), getHeight() - editorTop);
+
+    // AI-4: LSP components cover the editor area too
+    if (diagnosticsOverlay_.isVisible())
+        diagnosticsOverlay_.setBounds(0, editorTop, getWidth(), getHeight() - editorTop);
+    if (lspCompletionPopup_)
+        lspCompletionPopup_->setBounds(0, editorTop, getWidth(),
+                                        std::min(LspCompletionPopup::kPopupWidth, getWidth()));
+    if (lspHoverHandler_)
+        lspHoverHandler_->setBounds(0, editorTop, getWidth(), getHeight() - editorTop);
 }
 
 void HathorTab::lookAndFeelChanged()
@@ -390,6 +401,10 @@ void HathorTab::lookAndFeelChanged()
 
     // C1: repaint the highlight overlay so it picks up the new palette colours.
     highlightOverlay_.repaint();
+
+    // AI-4: repaint diagnostics overlay to refresh squiggle colours.
+    if (diagnosticsOverlay_.isVisible())
+        diagnosticsOverlay_.repaint();
 }
 
 // ---------------------------------------------------------------------------
@@ -437,7 +452,6 @@ juce::String HathorTab::lspDocumentUri() const
 {
     if (filePath_.has_value())
         return "file://" + filePath_->getFullPathName().replace("\\", "/");
-    // Synthetic URI for untitled tabs
     return "untitled://hathor-tab-" + juce::String(slotIndex_);
 }
 
@@ -446,18 +460,9 @@ void HathorTab::notifyLspDidOpen()
     if (!lspClient_ || useChuckTokeniser_)
         return;
 
-    // Only .hathor tabs use LSP
-    if (useChuckTokeniser_)
-        return;
-
     juce::String uri = lspDocumentUri();
     juce::String text = document_.getAllContent();
-    juce::String langId = useChuckTokeniser_ ? "chuck" : "hathor";
-
-    // This requires HathorLspClient to be accessible — forward-declared
-    // but full type needed for method call. We'll use a simple inline call.
-    // The actual implementation is in hathor-lsp integration.
-    // (Method implemented below)
+    lspClient_->didOpenDocument(uri.toStdString(), text.toStdString(), "hathor");
 }
 
 void HathorTab::notifyLspDidChange()
@@ -465,16 +470,29 @@ void HathorTab::notifyLspDidChange()
     if (!lspClient_ || useChuckTokeniser_)
         return;
 
-    // Defer to the LSP client — but we need the document text
-    // The didChange will be handled by the LSP client directly from
-    // the CodeDocument listener callbacks. For now, this is a no-op
-    // since the client reads from the document.
+    // Debounce: only send if text actually changed since last send
+    static std::unordered_map<juce::Component*, std::string> lastText;
+    juce::String currentText = document_.getAllContent();
+    std::string currentStr = currentText.toStdString();
+
+    if (lastText[this] == currentStr)
+        return;
+
+    lastText[this] = currentStr;
+
+    juce::String uri = lspDocumentUri();
+    static int changeVersion = 1;
+    ++changeVersion;
+    lspClient_->didChangeDocument(uri.toStdString(), changeVersion, currentStr);
 }
 
 void HathorTab::notifyLspDidClose()
 {
     if (!lspClient_ || useChuckTokeniser_)
         return;
+
+    juce::String uri = lspDocumentUri();
+    lspClient_->didCloseDocument(uri.toStdString());
 }
 
 void HathorTab::requestLspCompletion()
@@ -482,47 +500,39 @@ void HathorTab::requestLspCompletion()
     if (!lspClient_ || !lspCompletionPopup_ || useChuckTokeniser_)
         return;
 
-    // Get cursor position
-    int cursorLine = editor_.getCaretLine();
-    int cursorCol = editor_.getCaretColumn();
+    auto caretPos = editor_.getCaretPos();
+    int cursorLine = caretPos.getLineNumber();
+    int cursorCol = caretPos.getCharacter();
 
     juce::String uri = lspDocumentUri();
 
-    // Request completion from LSP
-    // We use a lambda that captures the editor state and merges with metadata
     lspClient_->requestCompletion(
         uri.toStdString(),
         cursorLine,
         cursorCol,
-        [this, cursorLine, cursorCol](const lsp::CompletionResult& result)
+        [this](const lsp::CompletionResult& result)
         {
             if (!lspCompletionPopup_)
                 return;
 
-            // Show the completion popup
             std::vector<lsp::CompletionCandidate> candidates = result.items;
             if (!candidates.empty())
             {
                 lspCompletionPopup_->setCandidates(candidates);
 
-                // Position over the cursor
-                auto cursorPos = editor_.getCaretPos();
-                juce::Point<int> screenPos = editor_.localPointToGlobal(cursorPos);
-                juce::Point<int> relativePos = this->relativeCoordinate(screenPos).xy());
-
                 // Position the popup at the cursor
-                int popupX = cursorPos.x;
-                int popupY = cursorPos.y + 16; // below the cursor line
+                juce::Rectangle<int> caretRect = editor_.getCaretRectangleForCharIndex(
+                    editor_.getCaretPosition());
+                int popupX = caretRect.getX();
+                int popupY = caretRect.getBottom() + 2;
 
-                // Adjust to stay within bounds
-                if (popupX + LspCompletionPopup::kPopupWidth > getWidth())
-                    popupX = getWidth() - LspCompletionPopup::kPopupWidth;
+                // Keep within editor bounds
+                if (popupX < 0) popupX = 0;
+                if (popupY + lspCompletionPopup_->getHeight() > this->getHeight())
+                    popupY = std::max(0, this->getHeight() - lspCompletionPopup_->getHeight());
 
                 lspCompletionPopup_->setTopLeftPosition(popupX, popupY);
                 lspCompletionPopup_->setVisible(true);
-                lspCompletionPopup_->setBounds(popupX, popupY,
-                                                  LspCompletionPopup::kPopupWidth,
-                                                  lspCompletionPopup_->getHeight());
                 this->addAndMakeVisible(lspCompletionPopup_.get());
                 lspCompletionPopup_->toFront(false);
             }
@@ -534,8 +544,8 @@ void HathorTab::requestLspHover(int cursorLine, int cursorCol)
     if (!lspClient_ || !lspHoverHandler_ || useChuckTokeniser_)
         return;
 
-    // Debounce: only request hover if cursor moved to a new position
-    if (hoverPendingLine_ == cursorLine && hoverPendingCol_ == cursorCol && !hoverPending_)
+    // Debounce: skip if same position as last request and pending
+    if (hoverPendingLine_ == cursorLine && hoverPendingCol_ == cursorCol && hoverPending_)
         return;
 
     hoverPendingLine_ = cursorLine;
@@ -548,17 +558,16 @@ void HathorTab::requestLspHover(int cursorLine, int cursorCol)
         uri.toStdString(),
         cursorLine,
         cursorCol,
-        [this, cursorLine, cursorCol](const std::optional<lsp::Hover>& hover)
+        [this](const std::optional<lsp::Hover>& hover)
         {
             hoverPending_ = false;
-            if (!lspHoverHandler_)
+            if (!lspHoverHandler_ || !hover.has_value())
                 return;
 
-            if (hover.has_value())
-            {
-                auto cursorPos = editor_.getCaretPos();
-                lspHoverHandler_->showHover(hover.value(), cursorPos);
-            }
+            juce::Rectangle<int> caretRect = editor_.getCaretRectangleForCharIndex(
+                editor_.getCaretPosition());
+            lspHoverHandler_->showHover(hover.value(),
+                                        {caretRect.getX(), caretRect.getBottom()});
         });
 }
 
@@ -567,8 +576,9 @@ void HathorTab::requestLspSignatureHelp()
     if (!lspClient_ || useChuckTokeniser_)
         return;
 
-    int cursorLine = editor_.getCaretLine();
-    int cursorCol = editor_.getCaretColumn();
+    auto caretPos = editor_.getCaretPos();
+    int cursorLine = caretPos.getLineNumber();
+    int cursorCol = caretPos.getCharacter();
     juce::String uri = lspDocumentUri();
 
     lspClient_->requestSignatureHelp(
@@ -577,12 +587,10 @@ void HathorTab::requestLspSignatureHelp()
         cursorCol,
         [this](const std::optional<lsp::SignatureHelp>& sig)
         {
-            // Display signature in a small overlay or status bar
-            // For now, just store it and repaint
             if (sig.has_value() && !sig->signatures.empty())
             {
                 const auto& s = sig->signatures[0];
-                // Could show in status bar or as a mini tooltip
+                // Show signature in status bar via callback
                 if (onStatusMessage)
                     onStatusMessage(juce::String(s.label));
             }
@@ -591,18 +599,17 @@ void HathorTab::requestLspSignatureHelp()
 
 void HathorTab::onCompletionSelected(const lsp::CompletionCandidate& candidate)
 {
-    // Apply the completion: replace the current word with the candidate's insert text
-    juce::String insertText(candidate.insertText.empty() ? candidate.label : candidate.insertText);
+    juce::String insertText(candidate.insertText.empty()
+                                ? candidate.label
+                                : candidate.insertText);
 
-    // Get the current word before the cursor
-    int cursorPos = editor_.getCaretPosition();
+    // Get the word boundaries for the current word
+    int caretAbs = editor_.getCaretPosition();
     juce::String docText = document_.getAllContent();
 
-    // Find the word boundaries
-    int wordStart = cursorPos;
-    int wordEnd = cursorPos;
+    int wordStart = caretAbs;
+    int wordEnd = caretAbs;
 
-    // Walk backwards to find word start
     while (wordStart > 0)
     {
         char c = docText[wordStart - 1];
@@ -612,7 +619,6 @@ void HathorTab::onCompletionSelected(const lsp::CompletionCandidate& candidate)
             break;
     }
 
-    // Walk forward to find word end
     while (wordEnd < static_cast<int>(docText.size()))
     {
         char c = docText[wordEnd];
@@ -622,88 +628,192 @@ void HathorTab::onCompletionSelected(const lsp::CompletionCandidate& candidate)
             break;
     }
 
-    document_.replaceSection(wordStart, wordEnd, insertText);
+    if (wordEnd > wordStart)
+        document_.deleteSection(wordStart, wordEnd);
+    document_.insertText(wordStart, insertText);
 
-    // Dismiss the popup
     if (lspCompletionPopup_)
         lspCompletionPopup_->dismiss();
 }
 
-void HathorTab::paintDiagnostics(juce::Graphics& g)
+// ---------------------------------------------------------------------------
+// AI-4: LSP key handling (installed as KeyListener on editor_)
+// ---------------------------------------------------------------------------
+
+bool HathorTab::handleLspKeyPress(const juce::KeyPress& key)
 {
-    if (!lspDiagnostics_ || useChuckTokeniser_)
+    // Ctrl+Space: trigger manual completion
+    if (key == juce::KeyPress(' ', juce::ModifierKeys::ctrlModifier, 0))
+    {
+        requestLspCompletion();
+        return true;
+    }
+
+    // Tab: accept current completion (only when popup is active)
+    if (key == juce::KeyPress::tabKey &&
+        lspCompletionPopup_ && lspCompletionPopup_->hasCandidates())
+    {
+        lspCompletionPopup_->confirmSelection();
+        return true;
+    }
+
+    // Escape: dismiss completion popup
+    if (key == juce::KeyPress::escapeKey &&
+        lspCompletionPopup_ && lspCompletionPopup_->hasCandidates())
+    {
+        lspCompletionPopup_->dismiss();
+        return true;
+    }
+
+    // Up/Down: navigate completion when popup is active
+    if (lspCompletionPopup_ && lspCompletionPopup_->hasCandidates())
+    {
+        if (key == juce::KeyPress::upKey)
+        {
+            lspCompletionPopup_->selectPrevious();
+            return true;
+        }
+        if (key == juce::KeyPress::downKey)
+        {
+            lspCompletionPopup_->selectNext();
+            return true;
+        }
+    }
+
+    return false; // let other handlers process the key
+}
+
+void HathorTab::handleCursorMove()
+{
+    if (!lspClient_ || !lspHoverHandler_ || useChuckTokeniser_)
         return;
 
-    juce::String uri = lspDocumentUri();
-    const auto diags = lspDiagnostics_->getDiagnosticsForLine(uri.toStdString(), -1);
+    auto caretPos = editor_.getCaretPos();
+    int cursorLine = caretPos.getLineNumber();
+    int cursorCol = caretPos.getCharacter();
 
-    if (diags.empty())
+    // Debounce: only request hover if we haven't already requested for this position
+    if (hoverPendingLine_ == cursorLine && hoverPendingCol_ == cursorCol)
         return;
 
+    // Clear any existing hover
+    if (lspHoverHandler_->isShowing())
+        lspHoverHandler_->dismiss();
+
+    // Request hover with a short delay (implemented via debounced callback)
+    hoverPendingLine_ = cursorLine;
+    hoverPendingCol_ = cursorCol;
+    hoverPending_ = true;
+
+    // Use MessageManager to debounce — only fire if cursor hasn't moved
+    // by the time the async callback runs
+    auto* async = new juce::MessageCallbackReceiver();
+    juce::MessageManager::callAsync([this, cursorLine, cursorCol]() {
+        if (hoverPendingLine_ == cursorLine && hoverPendingCol_ == cursorCol && hoverPending_)
+        {
+            hoverPending_ = false;
+            // Only show hover for identifiers, not empty space
+            requestLspHover(cursorLine, cursorCol);
+        }
+    });
+}
+
+void HathorTab::notifyLspDiagnostics(const std::string& uri,
+                                      const std::vector<lsp::Diagnostic>& diagnostics)
+{
+    if (!lspDiagnostics_)
+        return;
+
+    lspDiagnostics_->setDiagnostics(uri, diagnostics);
+
+    // Convert diagnostics to pixel rectangles for the overlay
+    std::vector<DiagnosticsOverlay::Squiggle> squiggles;
     const auto& palette = HathorLookAndFeel::fromComponent(*this).getPalette();
 
-    // Draw squiggly underline for each diagnostic in the visible area
-    juce::Rectangle<int> editorBounds = editor_.getBounds();
-
-    for (const auto& diag : diags)
+    for (const auto& diag : diagnostics)
     {
-        int line = diag.range.start.line;
+        int startLine = diag.range.start.line;
         int startChar = diag.range.start.character;
+        int endLine = diag.range.end.line;
         int endChar = diag.range.end.character;
 
-        // Convert to pixel coordinates
-        juce::Rectangle<int> startRect = editor_.getTextBounds(
-            juce::CodeDocument::Position(line, startChar));
-        juce::Rectangle<int> endRect = editor_.getTextBounds(
-            juce::CodeDocument::Position(line, endChar));
-
-        if (startRect.isEmpty() || endRect.isEmpty())
+        if (startLine != endLine)
             continue;
 
-        // Draw squiggly line
-        juce::Colour diagColor = (diag.severity.has_value() &&
-                                  diag.severity.value() == lsp::DiagnosticSeverity::Error)
-                                     ? palette.error
-                                     : palette.warning.withAlpha(0.8f);
+        juce::CodeDocument::Position startPos(document_, startLine, startChar);
+        juce::CodeDocument::Position endPos(document_, endLine, endChar);
 
-        g.setColour(diagColor);
+        int startAbs = startPos.getPosition();
+        int endAbs = endPos.getPosition();
+
+        if (startAbs >= endAbs)
+            continue;
+
+        // Get pixel bounds for the text range
+        auto bounds = editor_.getTextBounds(juce::Range<int>(startAbs, endAbs));
+
+        juce::Colour diagColor = palette.error;
+        if (diag.severity.has_value())
+        {
+            if (diag.severity.value() == lsp::DiagnosticSeverity::Error)
+                diagColor = palette.error;
+            else if (diag.severity.value() == lsp::DiagnosticSeverity::Warning)
+                diagColor = palette.warning;
+            else
+                diagColor = palette.textSecondary;
+        }
+
+        for (int i = 0; i < bounds.getNumRectangles(); ++i)
+        {
+            squiggles.push_back({bounds.getRectangle(i), diagColor});
+        }
+    }
+
+    diagnosticsOverlay_.setDiagnostics(squiggles);
+}
+
+// ---------------------------------------------------------------------------
+// DiagnosticsOverlay implementation
+// ---------------------------------------------------------------------------
+
+void HathorTab::DiagnosticsOverlay::paint(juce::Graphics& g)
+{
+    if (squiggles_.empty())
+        return;
+
+    for (const auto& sq : squiggles_)
+    {
         juce::Path path;
-        path.startNewSubPath(
-            static_cast<float>(startRect.getRight()),
-            static_cast<float>(startRect.getBottom()) + 1.0f);
+        int x = sq.bounds.getX();
+        int endX = sq.bounds.getRight();
+        int y = sq.bounds.getBottom() + 1;
 
-        int x = startRect.getRight();
-        int endX = endRect.getRight();
+        path.startNewSubPath(static_cast<float>(x), static_cast<float>(y));
+
         while (x < endX)
         {
-            path.lineTo(
-                static_cast<float>(x + 2),
-                static_cast<float>(startRect.getBottom()) + 4.0f);
-            path.lineTo(
-                static_cast<float>(x + 4),
-                static_cast<float>(startRect.getBottom()) + 1.0f);
-            x += 4;
+            x += 2;
+            path.lineTo(static_cast<float>(x), static_cast<float>(y + 2));
+            x += 2;
+            if (x < endX)
+                path.lineTo(static_cast<float>(x), static_cast<float>(y));
         }
+
+        g.setColour(sq.colour);
         g.strokePath(path, juce::PathStrokeType(1.0f));
     }
 }
 
-void HathorTab::codeDocumentTextInserted(const juce::String& /*newText*/,
-                                          int /*insertIndex*/)
+void HathorTab::DiagnosticsOverlay::setDiagnostics(const std::vector<Squiggle>& squiggles) noexcept
 {
-    markUnsaved();
-
-    // Notify LSP of document change (debounced in the client)
-    notifyLspDidChange();
+    squiggles_ = squiggles;
+    repaint();
 }
 
-void HathorTab::codeDocumentTextDeleted(int /*startIndex*/,
-                                         int /*endIndex*/)
+void HathorTab::DiagnosticsOverlay::clearDiagnostics() noexcept
 {
-    markUnsaved();
-
-    // Notify LSP of document change
-    notifyLspDidChange();
+    squiggles_.clear();
+    repaint();
 }
 
 } // namespace hathor::ui

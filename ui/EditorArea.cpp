@@ -9,6 +9,8 @@
 
 #include "EditorArea.hpp"
 #include "HathorFileParser.hpp"
+#include "HathorLspClient.hpp"
+#include "LanguageMetadata.hpp"
 #include "AudioEngine.hpp"
 
 #include <nlohmann/json.hpp>
@@ -16,6 +18,7 @@
 #include <algorithm>
 #include <optional>
 #include <thread>
+#include <filesystem>
 
 namespace hathor::ui {
 
@@ -208,6 +211,56 @@ EditorArea::EditorArea(AudioEngine& audio,
     : audio_(audio)
     , ci_(ci)
 {
+    // AI-4: Load language metadata for LSP fallback (AI-3)
+    {
+        for (const char* p : {
+            "reference/language-metadata/HathorLanguageMetadata.json",
+            "./reference/language-metadata/HathorLanguageMetadata.json",
+        })
+        {
+            std::error_code ec;
+            if (std::filesystem::exists(p, ec))
+            {
+                auto result = hathor::language::loadAndValidate(p);
+                if (result.compatibility.compatible)
+                {
+                    metadata_ = std::move(result.metadata);
+                    metadataCompat_ = std::move(result.compatibility);
+                    hathor::language::assignToConsumer(metadata_, "hathor-editor");
+                    break;
+                }
+            }
+        }
+    }
+
+    // AI-4: Create the LSP client (manages the strudel-lsp-server process)
+    // The server script is located at reference/strudel-lsp/strudel-lsp-server.cjs
+    lspClient_ = std::make_unique<HathorLspClient>(
+        "reference/strudel-lsp/strudel-lsp-server.cjs",
+        "/usr/local/bin/node",
+        &metadata_,
+        &metadataCompat_);
+
+    // Wire diagnostics callback — forward to the active tab
+    lspClient_->setDiagnosticsCallback([this](const std::string& uri,
+                                               const std::vector<lsp::Diagnostic>& diags)
+    {
+        for (auto& tab : tabs_)
+        {
+            if (tab && !tab->isChuckTab())
+            {
+                juce::String tabUri = tab->lspDocumentUri();
+                if (tabUri.toStdString() == uri)
+                {
+                    tab->notifyLspDiagnostics(uri, diags);
+                    break;
+                }
+            }
+        }
+    });
+
+    lspClient_->start();
+
     const auto& palette = HathorLookAndFeel::fromComponent(*this).getPalette();
 
     // Status bar styling — label-md: 11px, Medium 500 (mockup)
@@ -259,6 +312,11 @@ bool EditorArea::openUntitledTab()
     wireUnsavedCallback(*tab);
     wirePlayStopCallback(*tab);
     installKeyListenerForTab(*tab);
+
+    // AI-4: Install LSP client on the tab (for .hathor tabs)
+    tab->installLspClient(lspClient_.get());
+    tab->notifyLspDidOpen();
+
     addAndMakeVisible(*tab);
     tabs_.push_back(std::move(tab));
 
@@ -348,6 +406,11 @@ bool EditorArea::openFile(const juce::File& file)
     wireUnsavedCallback(*tab);
     wirePlayStopCallback(*tab);
     installKeyListenerForTab(*tab);
+
+    // AI-4: Install LSP client on the tab (for .hathor tabs)
+    tab->installLspClient(lspClient_.get());
+    tab->notifyLspDidOpen();
+
     addAndMakeVisible(*tab);
     tabs_.push_back(std::move(tab));
 
@@ -679,6 +742,11 @@ void EditorArea::removeTabAt(int index)
             .removeKeyListener(kl.get());
         keyListeners_.erase(keyListeners_.begin() + index);
     }
+
+    // AI-4: Notify LSP that the document is closing.
+    HathorTab* closingTab = tabs_[static_cast<std::size_t>(index)].get();
+    if (closingTab && lspClient_ && !closingTab->isChuckTab())
+        closingTab->notifyLspDidClose();
 
     // Remove the component from the hierarchy before erasing.
     removeChildComponent(tabs_[static_cast<std::size_t>(index)].get());

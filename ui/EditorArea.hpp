@@ -419,6 +419,16 @@ private:
     // -----------------------------------------------------------------------
     std::unique_ptr<BakeOrchestrator> bakeOrchestrator_;
 
+    // -----------------------------------------------------------------------
+    // AI-4: LSP language server integration
+    // -----------------------------------------------------------------------
+    // The LSP client manages the strudel-lsp-server process and provides
+    // completions, hover, and diagnostics for .hathor tabs.
+    // -----------------------------------------------------------------------
+    std::unique_ptr<HathorLspClient> lspClient_;
+    hathor::language::LanguageMetadata metadata_;
+    hathor::language::MetadataCompatibility metadataCompat_;
+
     // Timer for clearing the status bar message
     juce::Timer* statusClearTimer_{ nullptr };
 
