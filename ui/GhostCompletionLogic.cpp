@@ -2,14 +2,26 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 /**
- * GhostCompletionLogic.cpp — JUCE-free implementation of ghost-text lifecycle.
- *
- * Handles debounce, revision tracking for stale-response rejection,
- * latency timeouts (client-side cancellation since llm-ls lacks $/cancelRequest),
- * FIM prompt building, and GhostResult extraction.
- *
- * Requirement references: AI-4, AI-8 §4, §7
- */
+  * GhostCompletionLogic.cpp — JUCE-free implementation of ghost-text lifecycle.
+  *
+  * Handles debounce, revision tracking for stale-response rejection,
+  * latency timeouts (client-side cancellation since llm-ls lacks $/cancelRequest),
+  * FIM prompt building (AI-G2: explicit prefix/suffix computation), and
+  * GhostResult extraction with suffix-overlap trimming.
+  *
+  * AI-G2 (Fill-in-the-Middle as a First-Class Requirement):
+  *   - buildFimContext() computes the actual document prefix/suffix from the
+  *     cursor position.
+  *   - onGhostResponse() trims the generated MIDDLE against the document suffix
+  *     to ensure only the missing middle is inserted — the suffix is never
+  *     silently discarded.
+  *   - The AI-8 authoring context is included as additional FIM context.
+  *
+  * FIM generation is entirely outside the JUCE real-time audio thread — all
+  * logic here runs on the JUCE message thread (via UITimer/ghostTick).
+  *
+  * Requirement references: AI-2, AI-3, AI-4, AI-8 §4, §7, AI-G1, AI-G2
+  */
 
 #include "GhostCompletionLogic.hpp"
 #include "GhostJsonRpc.hpp"
@@ -23,28 +35,127 @@ namespace hathor::lsp {
 // FIM context builder
 // ---------------------------------------------------------------------------
 
+namespace {
+
+/// Trim leading/trailing whitespace (space, tab, newline, carriage return).
+void stripWhitespace(std::string& s)
+{
+    while (!s.empty() &&
+           (s[0] == ' ' || s[0] == '\t' || s[0] == '\n' || s[0] == '\r'))
+        s.erase(0, 1);
+    while (!s.empty() &&
+           (s.back() == ' ' || s.back() == '\t' || s.back() == '\n' || s.back() == '\r'))
+        s.pop_back();
+}
+
+} // anonymous namespace
+
 FimContext buildFimContext(std::string_view documentText, int line, int character)
 {
-    (void)documentText;
-    (void)line;
-    (void)character;
-
     FimContext result;
 
-    // NOTE: llm-ls's build_prompt() extracts prefix/suffix from the document
-    // text it received via didOpen/didChange notifications. The fim.prefix,
-    // fim.suffix, and fim.middle fields are for ADDITIONAL context (e.g., FIM
-    // token markers for models like StarCoder), NOT for the document text
-    // itself. Putting document text here would duplicate it in the prompt.
-    //
-    // We leave prefix/suffix/middle empty and rely on llm-ls to build the
-    // prompt from the synced document state.
-    result.prefix.clear();
-    result.suffix.clear();
+    // Compute the byte offset of the cursor position within the document.
+    // Lines are split on '\n'. Character is a UTF-8 byte offset within the line.
+    std::size_t offset = 0;
+    int currentLine = 0;
+    bool found = false;
+    for (std::size_t i = 0; i < documentText.size(); ++i)
+    {
+        if (currentLine == line)
+        {
+            offset += static_cast<std::size_t>(character);
+            found = true;
+            break;
+        }
+        if (documentText[i] == '\n')
+        {
+            ++currentLine;
+            offset = i + 1;
+        }
+    }
+    // If we didn't find the line in the loop, check if we're on the last
+    // line (no trailing newline) or beyond the document.
+    if (!found)
+    {
+        if (currentLine == line)
+            offset += static_cast<std::size_t>(character);
+        else
+            offset = documentText.size();
+    }
+    // Clamp to content size.
+    if (offset > documentText.size())
+        offset = documentText.size();
+
+    // docPrefix: everything before the cursor (from start of document to cursor).
+    result.docPrefix = std::string(documentText.substr(0, offset));
+
+    // docSuffix: everything after the cursor (from cursor to end of document).
+    result.docSuffix = std::string(documentText.substr(offset));
+
+    // middle: empty — llm-ls fills from tokenizer.
     result.middle.clear();
 
     return result;
 }
+
+// ---------------------------------------------------------------------------
+// FIM response trimming helpers
+// ---------------------------------------------------------------------------
+
+namespace {
+
+/// Trim prefix-overlap from the generated text.
+///
+/// The LLM may repeat the end of the document prefix as part of its output.
+/// This function finds the longest overlapping suffix of `docPrefix` that
+/// matches a prefix of `text`, and strips it, so the result is only the MIDDLE.
+void trimPrefixOverlap(std::string& text, const std::string& docPrefix)
+{
+    if (docPrefix.empty() || text.empty())
+        return;
+
+    const std::size_t maxOverlap = std::min(docPrefix.size(), text.size());
+    std::size_t bestOverlap = 0;
+    for (std::size_t overlap = 1; overlap <= maxOverlap; ++overlap)
+    {
+        std::string_view prefixTail =
+            std::string_view(docPrefix).substr(docPrefix.size() - overlap);
+        std::string_view textHead =
+            std::string_view(text).substr(0, overlap);
+        if (prefixTail == textHead)
+            bestOverlap = overlap;
+    }
+    if (bestOverlap > 0)
+        text.erase(0, bestOverlap);
+}
+
+/// Trim suffix-overlap from the generated text.
+///
+/// The LLM may include the beginning of the document suffix as part of its
+/// output. This function finds the longest overlapping prefix of `docSuffix`
+/// that matches a suffix of `text`, and strips it, so the result is only the
+/// MIDDLE that fits between prefix and suffix.
+void trimSuffixOverlap(std::string& text, const std::string& docSuffix)
+{
+    if (docSuffix.empty() || text.empty())
+        return;
+
+    const std::size_t maxOverlap = std::min(docSuffix.size(), text.size());
+    std::size_t bestOverlap = 0;
+    for (std::size_t overlap = 1; overlap <= maxOverlap; ++overlap)
+    {
+        std::string_view suffixHead =
+            std::string_view(docSuffix).substr(0, overlap);
+        std::string_view textTail =
+            std::string_view(text).substr(text.size() - overlap);
+        if (suffixHead == textTail)
+            bestOverlap = overlap;
+    }
+    if (bestOverlap > 0)
+        text.erase(text.size() - bestOverlap);
+}
+
+} // anonymous namespace
 
 // ---------------------------------------------------------------------------
 // GhostCompletionLogic implementation
@@ -95,6 +206,12 @@ GhostCompletionLogic::onTimerTick(int64_t nowMs)
     {
         debouncePending_ = false;
 
+        // Build explicit FIM document context from the current cursor position.
+        // AI-G2: prefix/suffix are explicitly computed, not discarded.
+        auto fim = buildFimContext(currentCtx_.documentText,
+                                   currentCtx_.line,
+                                   currentCtx_.character);
+
         GhostCompletionRequest req;
         req.uri = currentCtx_.uri;
         req.languageId = currentCtx_.languageId;
@@ -102,20 +219,32 @@ GhostCompletionLogic::onTimerTick(int64_t nowMs)
         req.character = currentCtx_.character;
         req.textDocument = currentCtx_.documentText;
 
-        // Build FIM context
-        auto fim = buildFimContext(currentCtx_.documentText,
-                                   currentCtx_.line,
-                                   currentCtx_.character);
+        // AI-G2: Explicitly preserve document prefix/suffix in the request.
+        req.docPrefix = std::move(fim.docPrefix);
+        req.docSuffix = std::move(fim.docSuffix);
+
+        // AI-8: Include authoring context as additional FIM context (fim.prefix).
+        // This carries the supported-surface info (AI-3), diagnostics, and
+        // other relevant project/language information. llm-ls prepends
+        // fim.prefix to the document prefix in the FIM prompt.
         req.fim.enabled = true;
-        req.fim.prefix = std::move(fim.prefix);
-        req.fim.suffix = std::move(fim.suffix);
+        if (!currentCtx_.authoringContext.is_null())
+            req.fim.prefix = currentCtx_.authoringContext.dump();
         req.fim.middle = std::move(fim.middle);
+
+        // Store authoring context on the request for inspection
+        req.authoringContext = currentCtx_.authoringContext;
 
         // Generate a request ID (will be matched in onGhostResponse)
         std::string requestId = GhostJsonRpc::generateRequestId();
 
+        // Snapshot the docPrefix/docSuffix at request time for response trimming.
+        // AI-G2: The pending request carries the exact prefix/suffix context
+        // that was used to generate this request, so that onGhostResponse
+        // can trim the generated MIDDLE correctly.
         pendingRequest_ = PendingRequest{
-            requestId, revision_, nowMs
+            requestId, revision_, nowMs,
+            req.docPrefix, req.docSuffix
         };
 
         return std::make_optional(std::make_pair(req, requestId));
@@ -150,9 +279,18 @@ std::optional<GhostResult> GhostCompletionLogic::onGhostResponse(
 
     // 3. Check timeout
     if (nowMs - pending.sentAtMs > static_cast<int64_t>(timeoutMs_))
+    {
+        pendingRequest_.reset();
         return std::nullopt;
+    }
 
-    // 4. Clear the pending request
+    // 4. Extract docPrefix/docSuffix before clearing pending request
+    //    (pending is a reference to the soon-to-be-reset optional)
+    std::string docPrefix = pending.docPrefix;
+    std::string docSuffix = pending.docSuffix;
+    std::string respRequestId = pending.requestId;
+
+    // 5. Clear the pending request
     pendingRequest_.reset();
 
     // 5. Extract the best completion from the response
@@ -165,27 +303,39 @@ std::optional<GhostResult> GhostCompletionLogic::onGhostResponse(
 
     // Trim whitespace from the generated text
     // llm-ls may return text with leading/trailing whitespace
-    while (!text.empty() &&
-           (text[0] == ' ' || text[0] == '\t' || text[0] == '\n' || text[0] == '\r'))
-        text.erase(0, 1);
-    while (!text.empty() &&
-           (text.back() == ' ' || text.back() == '\t' || text.back() == '\n' || text.back() == '\r'))
-        text.pop_back();
+    stripWhitespace(text);
+
+    // AI-G2: Trim prefix/suffix overlap from the generated text.
+    // The LLM may repeat the end of the document prefix or include the
+    // beginning of the document suffix. We trim these so only the MIDDLE
+    // (the code that fits between prefix and suffix) is inserted at the cursor.
+    // The suffix is NEVER silently discarded — it is explicitly used for trimming.
+    trimPrefixOverlap(text, docPrefix);
+    trimSuffixOverlap(text, docSuffix);
+
+    // Strip whitespace again after trimming
+    stripWhitespace(text);
 
     if (text.empty())
         return std::nullopt;
 
     // Build the GhostResult
     GhostResult result;
-     result.text = text;
+    result.text = text;
     result.displayText = text;
     result.insertText = text;
-    result.requestId = requestId;
+    result.requestId = respRequestId;
     result.cursorLine = currentCtx_.line;
     result.character = currentCtx_.character;
 
+    // AI-G2: Carry the document prefix/suffix in the result for editor
+    // verification. The editor can check that the ghost text still fits
+    // between these markers before displaying or inserting it.
+    result.docPrefix = docPrefix;
+    result.docSuffix = docSuffix;
+
     // Store as active ghost
-    activeGhost_ = ActiveGhost{result, requestId, revision_};
+    activeGhost_ = ActiveGhost{result, respRequestId, revision_};
 
     return result;
 }
@@ -268,9 +418,14 @@ GhostCompletionRequest GhostCompletionLogic::buildRequest(
 
     // Build FIM context
     auto fim = buildFimContext(ctx.documentText, ctx.line, ctx.character);
+    req.docPrefix = std::move(fim.docPrefix);
+    req.docSuffix = std::move(fim.docSuffix);
+
+    // AI-8: Include authoring context as additional FIM context
+    req.authoringContext = ctx.authoringContext;
     req.fim.enabled = true;
-    req.fim.prefix = std::move(fim.prefix);
-    req.fim.suffix = std::move(fim.suffix);
+    if (!ctx.authoringContext.is_null())
+        req.fim.prefix = ctx.authoringContext.dump();
     req.fim.middle = std::move(fim.middle);
 
     // Backend config

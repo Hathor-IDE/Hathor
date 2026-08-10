@@ -198,6 +198,18 @@ public:
     ///               "scope":["editor","diagnostics"],"include_content":bool}
      void handleGetContext(std::string_view args);
 
+     /**
+      * Assemble the dynamic authoring context directly (without socket I/O).
+      * Used by the UI layer (HathorTab) to inject AI-8 context into ghost-text
+      * (llm-ls) FIM requests as additional prompt context.
+      *
+      * @param req  The context request (file, line, language, scope, etc.).
+      * @return JSON object with "ok", "sections", "metadata_version", etc.
+      *
+      * Requirement references: AI-8 §4, §7, AI-G2
+      */
+     nlohmann::json assembleAuthoringContext(const ContextRequest& req) const;
+
     // -----------------------------------------------------------------------
     // AI-5: ChucK session lifecycle (read-only + non-destructive execution)
     // -----------------------------------------------------------------------

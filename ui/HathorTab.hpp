@@ -16,6 +16,8 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <juce_gui_extra/juce_gui_extra.h>
 
+#include <nlohmann/json.hpp>
+
 #include "MiniNotationTokeniser.hpp"
 #include "ChuckTokeniser.hpp"
 #include "HathorLookAndFeel.hpp"
@@ -261,6 +263,9 @@ public:
 
       /// Trigger a ghost completion request at the current cursor position.
       /// Called on idle / debounced cursor movement.
+      /// Supports both .hathor and .ck files — the languageId is determined
+      /// by the active tokeniser (MiniNotationTokeniser → "hathor",
+      /// ChuckTokeniser → "chuck").
       void triggerGhostCompletion();
 
       /// Accept the currently displayed ghost text (Tab key).
@@ -283,10 +288,21 @@ public:
     /// (used to clear hover state).
     std::function<void(const juce::String&)> onStatusMessage;
 
-    /// Callback fired when the cursor position changes (AI-8).
-    /// Called from handleCursorMove() and on key events that move the caret.
-    /// Installed by EditorArea to refresh the editor context snapshot.
-    std::function<void()> onCursorMoved;
+     /// Callback fired when the cursor position changes (AI-8).
+     /// Called from handleCursorMove() and on key events that move the caret.
+     /// Installed by EditorArea to refresh the editor context snapshot.
+     std::function<void()> onCursorMoved;
+
+     // -----------------------------------------------------------------------
+     // AI-8: Authoring context provider for ghost text (FIM)
+     // -----------------------------------------------------------------------
+     // Installed by EditorArea. Returns the dynamic authoring context JSON
+     // (supported-surface from AI-3, diagnostics, editor state) to be
+     // included as additional FIM context (fim.prefix) in the llm-ls request.
+     // May be null if the AI-8 context provider is not wired.
+     // AI-G2: This is the FIM extension point for AI-8 context injection.
+     // -----------------------------------------------------------------------
+     std::function<nlohmann::json()> getAuthoringContext;
 
       // -----------------------------------------------------------------------
       // juce::Component overrides

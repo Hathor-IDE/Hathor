@@ -368,8 +368,24 @@ bool EditorArea::openUntitledTab()
      tab->installLspClient(lspClient_.get());
      tab->notifyLspDidOpen();
 
-     // AI-4: Install ghost-text client on the tab (for .hathor tabs)
+     // AI-4: Install ghost-text client on the tab (for both .hathor and .ck)
      tab->installGhostClient(ghostClient_.get());
+
+     // AI-8: Wire the authoring context callback for FIM (ghost text).
+     // The callback assembles a targeted AI-8 context (supported surface from
+     // AI-3, diagnostics, editor state) and injects it as additional FIM context.
+     tab->getAuthoringContext = [this, tab]() -> nlohmann::json {
+         auto caretPos = tab->editor().getCaretPos();
+         hathor::control::ContextRequest req;
+         req.file = tab->lspDocumentUri().toStdString();
+         req.line = caretPos.getLineNumber();
+         req.character = caretPos.getCharacter();
+         req.language = tab->isChuckTab() ? "chuck" : "hathor";
+         req.includeContent = false;
+         // Request relevant scopes for completion context
+         req.scope = {"editor", "metadata", "diagnostics"};
+         return ci_.assembleAuthoringContext(req);
+     };
 
     addAndMakeVisible(*tab);
     tabs_.push_back(std::move(tab));
@@ -465,11 +481,24 @@ bool EditorArea::openFile(const juce::File& file)
      tab->installLspClient(lspClient_.get());
      tab->notifyLspDidOpen();
 
-     // AI-4: Install ghost-text client on the tab (for .hathor tabs)
-     tab->installGhostClient(ghostClient_.get());
+      // AI-4: Install ghost-text client on the tab (for both .hathor and .ck)
+      tab->installGhostClient(ghostClient_.get());
 
-    addAndMakeVisible(*tab);
-    tabs_.push_back(std::move(tab));
+      // AI-8: Wire the authoring context callback for FIM (ghost text).
+      tab->getAuthoringContext = [this, tab]() -> nlohmann::json {
+          auto caretPos = tab->editor().getCaretPos();
+          hathor::control::ContextRequest req;
+          req.file = tab->lspDocumentUri().toStdString();
+          req.line = caretPos.getLineNumber();
+          req.character = caretPos.getCharacter();
+          req.language = tab->isChuckTab() ? "chuck" : "hathor";
+          req.includeContent = false;
+          req.scope = {"editor", "metadata", "diagnostics"};
+          return ci_.assembleAuthoringContext(req);
+      };
+
+     addAndMakeVisible(*tab);
+     tabs_.push_back(std::move(tab));
 
     activateTab(static_cast<int>(tabs_.size()) - 1);
     return true;

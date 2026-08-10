@@ -223,6 +223,23 @@ void ControlInterface::handleGetContext(std::string_view args)
 }
 
 // ---------------------------------------------------------------------------
+// AI-8: assembleAuthoringContext — direct UI access (no socket I/O)
+// ---------------------------------------------------------------------------
+
+nlohmann::json ControlInterface::assembleAuthoringContext(const ContextRequest& req) const
+{
+    if (!authoringContext_)
+    {
+        return nlohmann::json{
+            {"ok",    false},
+            {"error", "authoring context not initialized"}
+        };
+    }
+
+    return authoringContext_->assemble(req);
+}
+
+// ---------------------------------------------------------------------------
 // dispatch() — O(n) command routing
 // ---------------------------------------------------------------------------
 

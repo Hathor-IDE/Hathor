@@ -31,50 +31,71 @@
 using namespace hathor::lsp;
 
 // ===========================================================================
-// FIM context builder
+// FIM context builder — AI-G2: explicit prefix/suffix computation
 // ===========================================================================
-// NOTE: llm-ls extracts prefix/suffix from the document it receives via
-// didOpen/didChange. buildFimContext returns empty FIM params because the
-// document text is synced separately. These tests verify that the FIM params
-// are correctly empty.
+// buildFimContext computes the actual document prefix (text before cursor)
+// and suffix (text after cursor) from the cursor position. These are used
+// for client-side FIM response trimming and result verification.
+// llm-ls extracts prefix/suffix from the synced document; our docPrefix/
+// docSuffix are for trimming only.
 
-TEST_CASE("buildFimContext returns empty FIM params (llm-ls handles document context)", "[ghost][fim]")
+TEST_CASE("buildFimContext computes docPrefix/docSuffix from cursor position", "[ghost][fim]")
 {
     std::string doc = "line1\nline2\nline3";
     auto fim = buildFimContext(doc, 2, 0);
 
-    REQUIRE(fim.prefix.empty());
-    REQUIRE(fim.suffix.empty());
+    // Cursor at line 2, char 0 → prefix = everything before line 3 start
+    REQUIRE(fim.docPrefix == "line1\nline2\n");
+    REQUIRE(fim.docSuffix == "line3");
     REQUIRE(fim.middle.empty());
 }
 
-TEST_CASE("buildFimContext returns empty for partial cursor position", "[ghost][fim]")
+TEST_CASE("buildFimContext computes prefix/suffix for mid-line cursor", "[ghost][fim]")
 {
     std::string doc = "hello world";
     auto fim = buildFimContext(doc, 0, 6);
 
-    REQUIRE(fim.prefix.empty());
-    REQUIRE(fim.suffix.empty());
-    REQUIRE(fim.middle.empty());
+    REQUIRE(fim.docPrefix == "hello ");
+    REQUIRE(fim.docSuffix == "world");
 }
 
-TEST_CASE("buildFimContext returns empty for out-of-range line", "[ghost][fim]")
+TEST_CASE("buildFimContext handles out-of-range line (clamped to end)", "[ghost][fim]")
 {
     std::string doc = "one line";
     auto fim = buildFimContext(doc, 100, 0);
 
-    REQUIRE(fim.prefix.empty());
-    REQUIRE(fim.suffix.empty());
+    // Out-of-range line → offset clamped to end of document
+    REQUIRE(fim.docPrefix == "one line");
+    REQUIRE(fim.docSuffix == "");
 }
 
-TEST_CASE("buildFimContext returns empty for empty document", "[ghost][fim]")
+TEST_CASE("buildFimContext handles empty document", "[ghost][fim]")
 {
     std::string doc = "";
     auto fim = buildFimContext(doc, 0, 0);
 
-    REQUIRE(fim.prefix.empty());
-    REQUIRE(fim.suffix.empty());
+    REQUIRE(fim.docPrefix == "");
+    REQUIRE(fim.docSuffix == "");
     REQUIRE(fim.middle.empty());
+}
+
+TEST_CASE("buildFimContext handles cursor at end of document", "[ghost][fim]")
+{
+    std::string doc = "hello world";
+    auto fim = buildFimContext(doc, 0, 11);
+
+    REQUIRE(fim.docPrefix == "hello world");
+    REQUIRE(fim.docSuffix == "");
+}
+
+TEST_CASE("buildFimContext handles multi-line document with cursor mid-line", "[ghost][fim]")
+{
+    std::string doc = "first\nsecond\nthird";
+    auto fim = buildFimContext(doc, 1, 3);
+
+    // line 0: "first\n" (6 chars), cursor on line 1 at char 3 → offset = 6+3 = 9
+    REQUIRE(fim.docPrefix == "first\nsec");
+    REQUIRE(fim.docSuffix == "ond\nthird");
 }
 
 // ===========================================================================
@@ -419,6 +440,10 @@ TEST_CASE("GhostCompletionLogic.buildRequest populates FIM and backend", "[ghost
     REQUIRE(req.apiToken == "test-token");
     REQUIRE(req.contextWindow == 4096);
     REQUIRE(req.tokenizerConfig.empty());
+
+    // AI-G2: verify docPrefix/docSuffix are computed
+    REQUIRE(req.docPrefix == "first\nsecond\nthi");
+    REQUIRE(req.docSuffix == "rd");
 }
 
 TEST_CASE("GhostCompletionLogic.currentContext returns last edit context", "[ghost][logic]")
@@ -1062,4 +1087,441 @@ TEST_CASE("GhostCompletionRequest.toJson sends null for empty api_token", "[ghos
     nlohmann::json j = req.toJson();
     REQUIRE(j["api_token"].is_null());
     REQUIRE(j["tokenizer_config"].is_null());
+}
+
+// ===========================================================================
+// AI-G2: FIM response trimming
+// ===========================================================================
+
+TEST_CASE("onGhostResponse trims suffix overlap from generated text", "[ghost][fim]")
+{
+    GhostCompletionLogic logic;
+    logic.setEnabled(true);
+    logic.setDebounceMs(0);
+    logic.setTimeoutMs(5000);
+
+    // Document: "s(\"bd  sd hh\")\n" (two spaces between bd and sd)
+    // docPrefix = "s(\"bd  ", docSuffix = "sd hh\")\n"
+    GhostContext ctx;
+    ctx.documentText = "s(\"bd  sd hh\")\n";
+    ctx.languageId = "hathor";
+    ctx.uri = "file:///test.hathor";
+    ctx.line = 0;
+    ctx.character = 7;
+
+    logic.onEditorChanged(ctx, 0);
+    auto r = logic.onTimerTick(0);
+    REQUIRE(r.has_value());
+    std::string requestId = r.value().second;
+
+    // LLM generates text that includes the suffix " sd hh\")\n" at the end.
+    // After suffix trimming, only " sn" should remain.
+    GhostCompletionResponse resp;
+    resp.request_id = requestId;
+    resp.completions = {{.generatedText = "sn sd hh\")\n"}};
+
+    auto result = logic.onGhostResponse(requestId, resp, 0);
+    REQUIRE(result.has_value());
+    REQUIRE(result->text == "sn");
+    REQUIRE(result->docPrefix == "s(\"bd  ");
+    REQUIRE(result->docSuffix == "sd hh\")\n");
+}
+
+TEST_CASE("onGhostResponse trims prefix overlap from generated text", "[ghost][fim]")
+{
+    GhostCompletionLogic logic;
+    logic.setEnabled(true);
+    logic.setDebounceMs(0);
+    logic.setTimeoutMs(5000);
+
+    // Document: "bd sd" + cursor + ""
+    // docPrefix = "bd sd", docSuffix = ""
+    GhostContext ctx;
+    ctx.documentText = "bd sd";
+    ctx.languageId = "hathor";
+    ctx.uri = "file:///test.hathor";
+    ctx.line = 0;
+    ctx.character = 5;
+
+    logic.onEditorChanged(ctx, 0);
+    auto r = logic.onTimerTick(0);
+    REQUIRE(r.has_value());
+    std::string requestId = r.value().second;
+
+    // LLM repeats "bd sd" at the start, then generates " hh cp"
+    GhostCompletionResponse resp;
+    resp.request_id = requestId;
+    resp.completions = {{.generatedText = "bd sd hh cp"}};
+
+    auto result = logic.onGhostResponse(requestId, resp, 0);
+    REQUIRE(result.has_value());
+    // trimPrefixOverlap removes "bd sd" → " hh cp"; stripWhitespace removes the leading space
+    REQUIRE(result->text == "hh cp");
+}
+
+TEST_CASE("onGhostResponse trims both prefix and suffix overlap", "[ghost][fim]")
+{
+    GhostCompletionLogic logic;
+    logic.setEnabled(true);
+    logic.setDebounceMs(0);
+    logic.setTimeoutMs(5000);
+
+    // Document: "p())" — cursor at position 2 (inside the parens)
+    // docPrefix = "p(", docSuffix = "))"
+    GhostContext ctx;
+    ctx.documentText = "p())";
+    ctx.languageId = "hathor";
+    ctx.uri = "file:///test.hathor";
+    ctx.line = 0;
+    ctx.character = 2;
+
+    logic.onEditorChanged(ctx, 0);
+    auto r = logic.onTimerTick(0);
+    REQUIRE(r.has_value());
+    std::string requestId = r.value().second;
+
+    // LLM generates "p( inner ))" — repeats prefix "p(" at start and suffix "))" at end
+    GhostCompletionResponse resp;
+    resp.request_id = requestId;
+    resp.completions = {{.generatedText = "p( inner ))"}};
+
+    auto result = logic.onGhostResponse(requestId, resp, 0);
+    REQUIRE(result.has_value());
+    // trimPrefixOverlap removes "p(" → " inner ))"
+    // trimSuffixOverlap removes "))" → " inner "
+    // stripWhitespace → "inner"
+    REQUIRE(result->text == "inner");
+}
+
+TEST_CASE("onGhostResponse does not trim when no overlap exists", "[ghost][fim]")
+{
+    GhostCompletionLogic logic;
+    logic.setEnabled(true);
+    logic.setDebounceMs(0);
+    logic.setTimeoutMs(5000);
+
+    GhostContext ctx;
+    ctx.documentText = "bd ";
+    ctx.languageId = "hathor";
+    ctx.uri = "file:///test.hathor";
+    ctx.line = 0;
+    ctx.character = 3;
+
+    // docPrefix = "bd ", docSuffix = ""
+    logic.onEditorChanged(ctx, 0);
+    auto r = logic.onTimerTick(0);
+    REQUIRE(r.has_value());
+    std::string requestId = r.value().second;
+
+    // LLM generates text with no overlap
+    GhostCompletionResponse resp;
+    resp.request_id = requestId;
+    resp.completions = {{.generatedText = "sn hh"}};
+
+    auto result = logic.onGhostResponse(requestId, resp, 0);
+    REQUIRE(result.has_value());
+    REQUIRE(result->text == "sn hh");
+}
+
+TEST_CASE("onGhostResponse strips whitespace before and after trimming", "[ghost][fim]")
+{
+    GhostCompletionLogic logic;
+    logic.setEnabled(true);
+    logic.setDebounceMs(0);
+    logic.setTimeoutMs(5000);
+
+    GhostContext ctx;
+    ctx.documentText = "bd ";
+    ctx.languageId = "hathor";
+    ctx.uri = "file:///test.hathor";
+    ctx.line = 0;
+    ctx.character = 3;
+
+    logic.onEditorChanged(ctx, 0);
+    auto r = logic.onTimerTick(0);
+    REQUIRE(r.has_value());
+    std::string requestId = r.value().second;
+
+    // LLM generates text with surrounding whitespace
+    GhostCompletionResponse resp;
+    resp.request_id = requestId;
+    resp.completions = {{.generatedText = "  sn hh  "}};
+
+    auto result = logic.onGhostResponse(requestId, resp, 0);
+    REQUIRE(result.has_value());
+    REQUIRE(result->text == "sn hh");
+}
+
+TEST_CASE("onGhostResponse trims and leaves non-overlapping text intact", "[ghost][fim]")
+{
+    GhostCompletionLogic logic;
+    logic.setEnabled(true);
+    logic.setDebounceMs(0);
+    logic.setTimeoutMs(5000);
+
+    // Document: "start " + cursor + "end"
+    // docPrefix = "start ", docSuffix = "end"
+    GhostContext ctx;
+    ctx.documentText = "start end";
+    ctx.uri = "file:///test.hathor";
+    ctx.languageId = "hathor";
+    ctx.line = 0;
+    ctx.character = 6;
+
+    logic.onEditorChanged(ctx, 0);
+    auto r = logic.onTimerTick(0);
+    REQUIRE(r.has_value());
+    std::string requestId = r.value().second;
+
+    // LLM generates text with no overlap with prefix or suffix
+    GhostCompletionResponse resp;
+    resp.request_id = requestId;
+    resp.completions = {{.generatedText = "middle stuff"}};
+
+    auto result = logic.onGhostResponse(requestId, resp, 0);
+    REQUIRE(result.has_value());
+    REQUIRE(result->text == "middle stuff");
+    REQUIRE(result->docPrefix == "start ");
+    REQUIRE(result->docSuffix == "end");
+}
+
+// ===========================================================================
+// AI-G2: AI-8 authoring context propagation
+// ===========================================================================
+
+TEST_CASE("onTimerTick includes authoring context in fim.prefix", "[ghost][logic][ai8]")
+{
+    GhostCompletionLogic logic;
+    logic.setEnabled(true);
+    logic.setDebounceMs(0);
+
+    GhostContext ctx;
+    ctx.documentText = "bd";
+    ctx.uri = "file:///test.hathor";
+    ctx.languageId = "hathor";
+    ctx.line = 0;
+    ctx.character = 2;
+
+    // AI-8: Set authoring context with supported-surface info
+    nlohmann::json ai8 = {
+        {"ok", true},
+        {"sections", {
+            {"metadata", {
+                {"functions", {{"name", "s"}, {"name", "bd"}}},
+                {"chuckApi", {{"name", "SinOsc"}}}
+            }}
+        }}
+    };
+    ctx.authoringContext = ai8;
+
+    logic.onEditorChanged(ctx, 0);
+    auto r = logic.onTimerTick(0);
+    REQUIRE(r.has_value());
+
+    auto [req, requestId] = r.value();
+    REQUIRE(req.fim.enabled == true);
+    REQUIRE_FALSE(req.fim.prefix.empty());
+    REQUIRE(req.docPrefix == "bd");
+    REQUIRE(req.docSuffix == "");
+}
+
+TEST_CASE("onTimerTick handles null authoring context gracefully", "[ghost][logic][ai8]")
+{
+    GhostCompletionLogic logic;
+    logic.setEnabled(true);
+    logic.setDebounceMs(0);
+
+    GhostContext ctx;
+    ctx.documentText = "bd";
+    ctx.uri = "file:///test.hathor";
+    ctx.languageId = "hathor";
+    ctx.line = 0;
+    ctx.character = 2;
+
+    // No authoring context set (null)
+    logic.onEditorChanged(ctx, 0);
+    auto r = logic.onTimerTick(0);
+    REQUIRE(r.has_value());
+
+    auto [req, requestId] = r.value();
+    REQUIRE(req.fim.enabled == true);
+    REQUIRE(req.fim.prefix.empty());
+}
+
+TEST_CASE("buildRequest includes authoring context and doc prefix/suffix", "[ghost][logic][ai8]")
+{
+    GhostContext ctx;
+    ctx.uri = "file:///test.hathor";
+    ctx.languageId = "hathor";
+    ctx.line = 1;
+    ctx.character = 2;
+    ctx.documentText = "hello\nworld";
+
+    nlohmann::json ai8 = {
+        {"ok", true},
+        {"sections", {
+            {"metadata", {{"functions", {{"name", "bd"}}}}}
+        }}
+    };
+    ctx.authoringContext = ai8;
+
+    GhostProviderConfig config;
+    config.backend = LlmBackend::HuggingFace;
+    config.model = "starcoder";
+
+    GhostCompletionRequest req = GhostCompletionLogic::buildRequest(ctx, config);
+
+    REQUIRE(req.fim.enabled == true);
+    REQUIRE_FALSE(req.fim.prefix.empty());
+    REQUIRE(req.docPrefix == "hello\nwo");
+    REQUIRE(req.docSuffix == "rld");
+    REQUIRE_FALSE(req.authoringContext.is_null());
+    REQUIRE(req.authoringContext["ok"] == true);
+}
+
+// ===========================================================================
+// AI-G2: FIM contract — prefix/suffix preservation in onGhostResponse
+// ===========================================================================
+
+TEST_CASE("GhostResult carries docPrefix/docSuffix from request", "[ghost][fim][result]")
+{
+    GhostCompletionLogic logic;
+    logic.setEnabled(true);
+    logic.setDebounceMs(0);
+    logic.setTimeoutMs(5000);
+
+    // Document: "p())" — p, (, ), ) — cursor inside the parens at char 2
+    // docPrefix = "p(", docSuffix = "))"
+    GhostContext ctx;
+    ctx.documentText = "p())";
+    ctx.uri = "file:///test.hathor";
+    ctx.languageId = "hathor";
+    ctx.line = 0;
+    ctx.character = 2;
+
+    logic.onEditorChanged(ctx, 0);
+    auto r = logic.onTimerTick(0);
+    REQUIRE(r.has_value());
+    std::string requestId = r.value().second;
+
+    GhostCompletionResponse resp;
+    resp.request_id = requestId;
+    resp.completions = {{.generatedText = "inner"}};
+
+    auto result = logic.onGhostResponse(requestId, resp, 0);
+    REQUIRE(result.has_value());
+    REQUIRE(result->docPrefix == "p(");
+    REQUIRE(result->docSuffix == "))");
+    REQUIRE(result->text == "inner");
+}
+
+// ===========================================================================
+// AI-G2: Empty document FIM edge cases
+// ===========================================================================
+
+TEST_CASE("onGhostResponse handles empty docPrefix and docSuffix", "[ghost][fim]")
+{
+    GhostCompletionLogic logic;
+    logic.setEnabled(true);
+    logic.setDebounceMs(0);
+    logic.setTimeoutMs(5000);
+
+    GhostContext ctx;
+    ctx.documentText = "";
+    ctx.uri = "file:///test.hathor";
+    ctx.languageId = "hathor";
+    ctx.line = 0;
+    ctx.character = 0;
+
+    logic.onEditorChanged(ctx, 0);
+    auto r = logic.onTimerTick(0);
+    REQUIRE(r.has_value());
+    std::string requestId = r.value().second;
+
+    GhostCompletionResponse resp;
+    resp.request_id = requestId;
+    resp.completions = {{.generatedText = "bd sn"}};
+
+    auto result = logic.onGhostResponse(requestId, resp, 0);
+    REQUIRE(result.has_value());
+    REQUIRE(result->docPrefix == "");
+    REQUIRE(result->docSuffix == "");
+    REQUIRE(result->text == "bd sn");
+}
+
+TEST_CASE("onGhostResponse with response text shorter than overlap does not over-trim", "[ghost][fim]")
+{
+    GhostCompletionLogic logic;
+    logic.setEnabled(true);
+    logic.setDebounceMs(0);
+    logic.setTimeoutMs(5000);
+
+    // Document: "hello " + cursor + "world"
+    // docPrefix = "hello ", docSuffix = "world"
+    GhostContext ctx;
+    ctx.documentText = "hello world";
+    ctx.uri = "file:///test.hathor";
+    ctx.languageId = "hathor";
+    ctx.line = 0;
+    ctx.character = 6;
+
+    logic.onEditorChanged(ctx, 0);
+    auto r = logic.onTimerTick(0);
+    REQUIRE(r.has_value());
+    std::string requestId = r.value().second;
+
+    // LLM generates just "w" — which matches the start of docSuffix "world"
+    // The full suffix is "world" (5 chars), text is "w" (1 char).
+    // overlap=1: suffixHead="w", textTail="w" → match! bestOverlap=1
+    // After trimming: text is empty → should return nullopt
+    GhostCompletionResponse resp;
+    resp.request_id = requestId;
+    resp.completions = {{.generatedText = "w"}};
+
+    auto result = logic.onGhostResponse(requestId, resp, 0);
+    REQUIRE_FALSE(result.has_value());
+}
+
+// ===========================================================================
+// AI-G2: Stale response after document change with new cursor position
+// ===========================================================================
+
+TEST_CASE("onGhostResponse rejects stale response with correct revision check", "[ghost][fim][stale]")
+{
+    GhostCompletionLogic logic;
+    logic.setEnabled(true);
+    logic.setDebounceMs(0);
+    logic.setTimeoutMs(5000);
+
+    GhostContext ctx;
+    ctx.documentText = "bd";
+    ctx.uri = "file:///test.hathor";
+    ctx.languageId = "hathor";
+    ctx.line = 0;
+    ctx.character = 2;
+
+    // First request cycle at t=0
+    logic.onEditorChanged(ctx, 0);
+    auto r1 = logic.onTimerTick(0);
+    REQUIRE(r1.has_value());
+    std::string requestId1 = r1.value().second;
+
+    // Editor changed during flight — revision increments, makes response stale
+    ctx.documentText = "bd sn";
+    ctx.character = 5;
+    logic.onEditorChanged(ctx, 10);
+
+    // Response for the old request arrives — stale (revision mismatch)
+    GhostCompletionResponse oldResp;
+    oldResp.request_id = requestId1;
+    oldResp.completions = {{.generatedText = "old"}};
+    auto result = logic.onGhostResponse(requestId1, oldResp, 50);
+    REQUIRE_FALSE(result.has_value());
+    REQUIRE_FALSE(logic.hasPendingRequest()); // cleared by revision mismatch
+
+    // Now a new request can be sent (debounce was set by onEditorChanged)
+    auto r2 = logic.onTimerTick(110);
+    REQUIRE(r2.has_value());
+    std::string requestId2 = r2.value().second;
+    REQUIRE(requestId1 != requestId2);
 }

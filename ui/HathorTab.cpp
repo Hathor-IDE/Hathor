@@ -90,19 +90,17 @@ HathorTab::HathorTab(int slotIndex, const juce::File& file)
       }
 
       // AI-4: Ghost text overlay (llm-ls inline completion)
-      // Only for .hathor tabs (not .ck)
-      if (!useChuckTokeniser_)
-      {
-          ghostLogic_ = std::make_unique<lsp::GhostCompletionLogic>();
-          ghostLogic_->setEnabled(lsp::GhostProviderResolver::isEnabled());
-          ghostLogic_->setDebounceMs(300);
-          ghostLogic_->setTimeoutMs(5000);
+      // Supports both .hathor and .ck files — the languageId is set
+      // from the active tokeniser in triggerGhostCompletion().
+      ghostLogic_ = std::make_unique<lsp::GhostCompletionLogic>();
+      ghostLogic_->setEnabled(lsp::GhostProviderResolver::isEnabled());
+      ghostLogic_->setDebounceMs(300);
+      ghostLogic_->setTimeoutMs(5000);
 
-          ghostOverlay_ = std::make_unique<GhostTextOverlay>();
-          ghostOverlay_->setInterceptsMouseClicks(false, false);
-          addAndMakeVisible(*ghostOverlay_);
-          ghostOverlay_->setVisible(false);
-      }
+      ghostOverlay_ = std::make_unique<GhostTextOverlay>();
+      ghostOverlay_->setInterceptsMouseClicks(false, false);
+      addAndMakeVisible(*ghostOverlay_);
+      ghostOverlay_->setVisible(false);
 
     // -----------------------------------------------------------------------
     // Per-slot Play/Stop button (B1)
@@ -500,8 +498,12 @@ void HathorTab::notifyLspDidOpen()
 
     // AI-4: Mirror document open to the ghost-text (llm-ls) client so that
     // llm-ls can resolve completion context from the synced document.
-    if (ghostClient_ && ghostLogic_ && ghostLogic_->isEnabled() && !useChuckTokeniser_)
-        ghostClient_->didOpenDocument(uri.toStdString(), text.toStdString(), "hathor");
+    // Supports both .hathor and .ck files with their respective languageId.
+    if (ghostClient_ && ghostLogic_ && ghostLogic_->isEnabled())
+    {
+        std::string ghostLangId = useChuckTokeniser_ ? "chuck" : "hathor";
+        ghostClient_->didOpenDocument(uri.toStdString(), text.toStdString(), ghostLangId);
+    }
 }
 
 void HathorTab::notifyLspDidChange()
@@ -525,8 +527,12 @@ void HathorTab::notifyLspDidChange()
     lspClient_->didChangeDocument(uri.toStdString(), changeVersion, currentStr);
 
     // AI-4: Mirror document change to the ghost-text (llm-ls) client.
-    if (ghostClient_ && ghostLogic_ && ghostLogic_->isEnabled() && !useChuckTokeniser_)
+    // Supports both .hathor and .ck files.
+    if (ghostClient_ && ghostLogic_ && ghostLogic_->isEnabled())
+    {
+        std::string ghostLangId = useChuckTokeniser_ ? "chuck" : "hathor";
         ghostClient_->didChangeDocument(uri.toStdString(), changeVersion, currentStr);
+    }
 }
 
 void HathorTab::notifyLspDidClose()
@@ -538,7 +544,8 @@ void HathorTab::notifyLspDidClose()
     lspClient_->didCloseDocument(uri.toStdString());
 
     // AI-4: Mirror document close to the ghost-text (llm-ls) client.
-    if (ghostClient_ && ghostLogic_ && ghostLogic_->isEnabled() && !useChuckTokeniser_)
+    // Supports both .hathor and .ck files.
+    if (ghostClient_ && ghostLogic_ && ghostLogic_->isEnabled())
         ghostClient_->didCloseDocument(uri.toStdString());
 }
 
@@ -695,10 +702,11 @@ void HathorTab::onCompletionSelected(const lsp::CompletionCandidate& candidate)
 bool HathorTab::handleLspKeyPress(const juce::KeyPress& key)
 {
     // AI-4: Ghost text — Ctrl+Space forces a ghost completion request
-    // (overrides the normal debounce / idle trigger)
-    if (!useChuckTokeniser_ && ghostLogic_ && ghostLogic_->isEnabled())
+    // (overrides the normal debounce / idle trigger).
+    // Supports both .hathor and .ck files.
+    if (ghostLogic_ && ghostLogic_->isEnabled())
     {
-        if (key == juce::KeyPress(' ', juce::ModifierKeys::ctrlModifier, 0))
+               if (key == juce::KeyPress(' ', juce::ModifierKeys::ctrlModifier, 0))
         {
             // Force trigger — clear debounce and request immediately
             ghostLogic_->cancelPendingRequest();
@@ -707,12 +715,9 @@ bool HathorTab::handleLspKeyPress(const juce::KeyPress& key)
         }
     }
 
-    // Tab to accept ghost — if ghost is visible, the caller will handle
-    // it. The CodeEditorComponent consumes Tab for indentation, so we
-    // can't intercept it here. Instead, acceptance happens via:
-    //   - EditorArea::acceptGhostOnActiveTab() (called by a keybinding)
-    //   - Typing text that matches the ghost prefix (auto-accepts)
-    if (!useChuckTokeniser_ && ghostLogic_ && ghostLogic_->isEnabled()
+    // Accept ghost — if ghost is visible, accept on Ctrl+. (Tab is consumed
+    // by the editor's key map for indentation, so we use Ctrl+. here.)
+    if (ghostLogic_ && ghostLogic_->isEnabled()
         && ghostOverlay_ && ghostOverlay_->hasGhost())
     {
         if (key.getModifiers().isCtrlDown() && key.getKeyCode() == '.')
@@ -749,7 +754,8 @@ void HathorTab::handleCursorMove()
     if (!lspClient_ || !lspHoverHandler_ || useChuckTokeniser_)
         return;
 
-    // AI-4: Trigger ghost text on cursor movement (debounced in GhostCompletionLogic)
+    // AI-4: Trigger ghost text on cursor movement (debounced in GhostCompletionLogic).
+    // Supports both .hathor and .ck files.
     if (ghostLogic_ && ghostLogic_->isEnabled())
     {
         triggerGhostCompletion();
@@ -861,6 +867,12 @@ void HathorTab::triggerGhostCompletion()
     ctx.languageId = useChuckTokeniser_ ? "chuck" : "hathor";
     ctx.line = cursorLine;
     ctx.character = cursorCol;
+
+    // AI-8: Inject dynamic authoring context (supported-surface, diagnostics)
+    // as additional FIM context. The callback is installed by EditorArea
+    // and delegates to ControlInterface's AuthoringContext.
+    if (getAuthoringContext)
+        ctx.authoringContext = getAuthoringContext();
 
     // Feed context to the logic layer — it handles debounce and returns
     // nullopt (the request is only sent when debounce expires via ghostTick).

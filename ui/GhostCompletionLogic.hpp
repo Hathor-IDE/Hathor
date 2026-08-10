@@ -4,27 +4,35 @@
 #pragma once
 
 /**
- * GhostCompletionLogic.hpp — JUCE-free ghost-text lifecycle logic.
- *
- * Manages the lifecycle of ghost-text (inline completion) requests to llm-ls:
- *
- *   1. Debouncing — suppress requests while the user is still typing.
- *   2. Revision tracking — each editor change increments a revision counter.
- *      When a response arrives, we compare its revision against the current
- *      revision. If they differ, the response is stale and discarded.
- *   3. Timeout — llm-ls does not support `$/cancelRequest`. We enforce a
- *      latency timeout; if the server doesn't respond within the window,
- *      we treat the response as failed and surface a fallback.
- *   4. FIM prompt building — constructs the prefix/suffix/middle context
- *      from the document text and cursor position, matching llm-ls's expected
- *      reversed-line prefix and forward-line suffix format.
- *   5. GhostResult assembly — extracts the completion text from the llm-ls
- *      response, trims to the current prefix, and produces a GhostResult.
- *
- * This class is JUCE-free and fully unit-testable in hathor-ui-tests.
- *
- * Requirement references: AI-4, AI-8 §4, §7
- */
+  * GhostCompletionLogic.hpp — JUCE-free ghost-text lifecycle logic.
+  *
+  * Manages the lifecycle of ghost-text (inline completion) requests to llm-ls:
+  *
+  *   1. Debouncing — suppress requests while the user is still typing.
+  *   2. Revision tracking — each editor change increments a revision counter.
+  *      When a response arrives, we compare its revision against the current
+  *      revision. If they differ, the response is stale and discarded.
+  *   3. Timeout — llm-ls does not support `$/cancelRequest`. We enforce a
+  *      latency timeout; if the server doesn't respond within the window,
+  *      we treat the response as failed and surface a fallback.
+  *   4. FIM prompt building — constructs the prefix/suffix/middle context
+  *      from the document text and cursor position (AI-G2). The document
+  *      prefix and suffix are explicitly computed and stored in the request
+  *      so that the generated MIDDLE can be trimmed against the suffix.
+  *   5. GhostResult assembly — extracts the completion text from the llm-ls
+  *      response, trims prefix/suffix overlap, and produces a GhostResult
+  *      carrying the explicit docPrefix/docSuffix for editor verification.
+  *
+  * AI-G2 (Fill-in-the-Middle as a First-Class Requirement):
+  *   - The document prefix (text before cursor) and suffix (text after cursor)
+  *     are explicitly computed and preserved in every request.
+  *   - The response is trimmed against the suffix so only the MIDDLE is inserted.
+  *   - The AI-8 authoring context is included as additional FIM context.
+  *
+  * This class is JUCE-free and fully unit-testable in hathor-ui-tests.
+  *
+  * Requirement references: AI-2, AI-3, AI-4, AI-8 §4, §7, AI-G1, AI-G2
+  */
 
 #include "GhostProtocol.hpp"
 #include "GhostProviderConfig.hpp"
@@ -34,6 +42,8 @@
 #include <string>
 #include <string_view>
 
+#include <nlohmann/json.hpp>
+
 namespace hathor::lsp {
 
 // ---------------------------------------------------------------------------
@@ -41,9 +51,13 @@ namespace hathor::lsp {
 // ---------------------------------------------------------------------------
 
 /**
- * A point-in-time snapshot of the editor state needed for ghost-text requests.
- * This mirrors the fields from EditorContextSnapshot relevant to FIM.
- */
+  * A point-in-time snapshot of the editor state needed for ghost-text requests.
+  * This mirrors the fields from EditorContextSnapshot relevant to FIM.
+  *
+  * AI-G2: includes explicit docPrefix/docSuffix for FIM trimming.
+  * AI-8: includes authoringContext (dynamic authoring context JSON,
+  *       assembled by AuthoringContext — may be null if not wired).
+  */
 struct GhostContext {
     std::string documentText;  ///< full document text
     std::string uri;           ///< file:// URI or synthetic URI
@@ -51,6 +65,12 @@ struct GhostContext {
     int         line      = 0; ///< 0-based cursor line
     int         character = 0; ///< 0-based cursor character offset
     int         revision  = 0; ///< incremented on each document edit
+
+    // AI-G8: Dynamic authoring context (from AuthoringContext / AI-8).
+    // May be null if the AI-8 context provider is not wired. When present,
+    // this JSON includes supported-surface info (AI-3), diagnostics, editor
+    // state, and other relevant project/language information.
+    nlohmann::json authoringContext;
 };
 
 // ---------------------------------------------------------------------------
@@ -58,37 +78,43 @@ struct GhostContext {
 // ---------------------------------------------------------------------------
 
 /**
- * Built FIM context from a document + cursor position.
- *
- * llm-ls expects:
- *   - prefix: additional context prepended before the document prefix
- *     (left empty — llm-ls extracts document prefix from synced document)
- *   - suffix: additional context inserted between prefix and suffix
- *     (left empty — llm-ls extracts document suffix from synced document)
- *   - middle: FIM middle marker token (left empty for llm-ls to fill from tokenizer)
- *
- * The prefix and suffix are built from the raw document text.
- */
+  * Built FIM context from a document + cursor position.
+  *
+  * AI-G2 (Fill-in-the-Middle as a First-Class Requirement):
+  *   - `docPrefix`: the actual document text before the cursor (from the
+  *     start of the document to the cursor position). Used for client-side
+  *     prefix-overlap trimming of the generated MIDDLE.
+  *   - `docSuffix`: the actual document text after the cursor (from the
+  *     cursor position to the end of the document). Used for client-side
+  *     suffix-overlap trimming of the generated MIDDLE.
+  *   - `middle`: empty (llm-ls fills from tokenizer).
+  *
+  * llm-ls extracts prefix/suffix from the document it receives via
+  * didOpen/didChange notifications. The docPrefix/docSuffix fields here
+  * are NOT sent to llm-ls directly — they are used for client-side
+  * response trimming and result verification. The AI-8 authoring context
+  * is injected separately by the caller into fim.prefix.
+  */
 struct FimContext {
-    std::string prefix;     ///< reversed-prefix, line-by-line
-    std::string suffix;     ///< forward-suffix, line-by-line
-    std::string middle;     ///< empty (llm-ls fills from tokenizer)
+    std::string docPrefix;          ///< document text before cursor (for trimming)
+    std::string docSuffix;          ///< document text after cursor (for trimming)
+    std::string middle;             ///< empty (llm-ls fills from tokenizer)
 };
 
 /**
- * Build FIM context (prefix/suffix/middle) from the document and cursor.
- *
- * llm-ls extracts prefix/suffix from the document text it received via
- * didOpen/didChange notifications. The fim.prefix, fim.suffix, and fim.middle
- * fields are for ADDITIONAL context (e.g., FIM token markers), NOT document text.
- * This function returns empty FIM params; llm-ls builds the prompt internally
- * from the synced document state.
- *
- * @param documentText  Full document text (currently unused — llm-ls syncs via LSP).
- * @param line          0-based cursor line.
- * @param character     0-based cursor character offset on the line.
- * @return FimContext with empty prefix/suffix/middle.
- */
+  * Build FIM context (prefix/suffix/middle) from the document and cursor.
+  *
+  * Computes the actual document prefix (text before the cursor) and suffix
+  * (text after the cursor) from the document text and cursor position.
+  * These are used for client-side response trimming: the generated MIDDLE
+  * will be trimmed against the suffix to ensure it fits between prefix and
+  * suffix without overlap.
+  *
+  * @param documentText  Full document text.
+  * @param line          0-based cursor line.
+  * @param character     0-based cursor character offset on the line.
+  * @return FimContext with computed docPrefix/docSuffix.
+  */
 FimContext buildFimContext(std::string_view documentText, int line, int character);
 
 // ---------------------------------------------------------------------------
@@ -272,15 +298,19 @@ private:
     bool        debouncePending_  = false;
 
     /// The current in-flight request (requestId + revision at time of request).
+    // AI-G2: also carries docPrefix/docSuffix for response trimming.
     struct PendingRequest {
         std::string requestId;
         int         revision;
         int64_t     sentAtMs;
+        std::string docPrefix;  ///< snapshot of document prefix at request time
+        std::string docSuffix;  ///< snapshot of document suffix at request time
     };
     std::optional<PendingRequest> pendingRequest_;
 
     /// The currently displayed ghost text (cleared on cursor move, accept,
     /// reject, or timeout).
+    // AI-G2: carries docPrefix/docSuffix for editor-side verification.
     struct ActiveGhost {
         GhostResult   result;
         std::string   requestId;
