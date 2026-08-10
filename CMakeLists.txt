@@ -51,6 +51,159 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(Catch2 nlohmann_json)
 
 # ---------------------------------------------------------------------------
+# libchuck — vendored ChucK compiler/VM (B4-K4, AI-5)
+#
+# We download the ChucK source tree but do NOT run its CMake; instead we build
+# a minimal "vanilla" static libchuck from a curated file list (matching the
+# upstream vanilla makefile). This avoids pulling in ChucK's own build system
+# and lets us control exactly which sources are compiled.
+#
+# Requires bison + flex to generate the parser/lexer. If unavailable, we
+# gracefully skip libchuck and fall back to placeholder diagnostics.
+# ---------------------------------------------------------------------------
+find_package(BISON)
+find_package(FLEX)
+
+FetchContent_Declare(
+    chuck_src
+    GIT_REPOSITORY https://github.com/ccrma/chuck.git
+    GIT_TAG        main
+    GIT_SHALLOW    TRUE
+)
+
+if(BISON_FOUND AND FLEX_FOUND)
+    # Populate (download) the chuck source without configuring it
+    FetchContent_Populate(chuck_src)
+    set(CHUCK_AVAILABLE TRUE CACHE BOOL "libchuck is available" FORCE)
+else()
+    message(STATUS "Bison/Flex not found — libchuck unavailable. AI-5 tests will use fallback diagnostics.")
+    FetchContent_Populate(chuck_src)
+    set(CHUCK_AVAILABLE FALSE CACHE BOOL "libchuck is available" FORCE)
+endif()
+
+set(CHUCK_CORE_DIR "${chuck_src_SOURCE_DIR}/src/core" CACHE PATH "libchuck core source")
+
+if(CHUCK_AVAILABLE)
+    # Generate the parser and lexer (bison + flex)
+    add_custom_command(
+        OUTPUT ${CHUCK_CORE_DIR}/chuck.tab.c ${CHUCK_CORE_DIR}/chuck.tab.h
+        COMMAND ${BISON_EXECUTABLE} -d -o ${CHUCK_CORE_DIR}/chuck.tab.c ${CHUCK_CORE_DIR}/chuck.y
+        DEPENDS ${CHUCK_CORE_DIR}/chuck.y
+        COMMENT "Generating Chuck parser with bison"
+    )
+
+    add_custom_command(
+        OUTPUT ${CHUCK_CORE_DIR}/chuck.yy.c
+        COMMAND ${FLEX_EXECUTABLE} --nounistd -o ${CHUCK_CORE_DIR}/chuck.yy.c ${CHUCK_CORE_DIR}/chuck.lex
+        DEPENDS ${CHUCK_CORE_DIR}/chuck.lex ${CHUCK_CORE_DIR}/chuck.tab.h
+        COMMENT "Generating Chuck lexer with flex"
+    )
+
+    file(GLOB CHUCK_LO_SRCS ${CHUCK_CORE_DIR}/lo/*.c)
+
+    set(CHUCK_CXX_SRCS
+        ${CHUCK_CORE_DIR}/chuck_absyn.cpp
+        ${CHUCK_CORE_DIR}/chuck_parse.cpp
+        ${CHUCK_CORE_DIR}/chuck_errmsg.cpp
+        ${CHUCK_CORE_DIR}/chuck_frame.cpp
+        ${CHUCK_CORE_DIR}/chuck_symbol.cpp
+        ${CHUCK_CORE_DIR}/chuck_table.cpp
+        ${CHUCK_CORE_DIR}/chuck_vm.cpp
+        ${CHUCK_CORE_DIR}/chuck_instr.cpp
+        ${CHUCK_CORE_DIR}/chuck_scan.cpp
+        ${CHUCK_CORE_DIR}/chuck_type.cpp
+        ${CHUCK_CORE_DIR}/chuck_emit.cpp
+        ${CHUCK_CORE_DIR}/chuck_compile.cpp
+        ${CHUCK_CORE_DIR}/chuck_dl.cpp
+        ${CHUCK_CORE_DIR}/chuck_oo.cpp
+        ${CHUCK_CORE_DIR}/chuck_lang.cpp
+        ${CHUCK_CORE_DIR}/chuck_ugen.cpp
+        ${CHUCK_CORE_DIR}/chuck_otf.cpp
+        ${CHUCK_CORE_DIR}/chuck_stats.cpp
+        ${CHUCK_CORE_DIR}/chuck_shell.cpp
+        ${CHUCK_CORE_DIR}/chuck_io.cpp
+        ${CHUCK_CORE_DIR}/chuck.cpp
+        ${CHUCK_CORE_DIR}/chuck_carrier.cpp
+        ${CHUCK_CORE_DIR}/chuck_globals.cpp
+        ${CHUCK_CORE_DIR}/ugen_osc.cpp
+        ${CHUCK_CORE_DIR}/ugen_filter.cpp
+        ${CHUCK_CORE_DIR}/ugen_stk.cpp
+        ${CHUCK_CORE_DIR}/ugen_xxx.cpp
+        ${CHUCK_CORE_DIR}/ulib_ai.cpp
+        ${CHUCK_CORE_DIR}/ulib_doc.cpp
+        ${CHUCK_CORE_DIR}/ulib_machine.cpp
+        ${CHUCK_CORE_DIR}/ulib_math.cpp
+        ${CHUCK_CORE_DIR}/ulib_std.cpp
+        ${CHUCK_CORE_DIR}/ulib_opsc.cpp
+        ${CHUCK_CORE_DIR}/util_buffers.cpp
+        ${CHUCK_CORE_DIR}/util_console.cpp
+        ${CHUCK_CORE_DIR}/util_math.cpp
+        ${CHUCK_CORE_DIR}/util_platforms.cpp
+        ${CHUCK_CORE_DIR}/util_string.cpp
+        ${CHUCK_CORE_DIR}/util_thread.cpp
+        ${CHUCK_CORE_DIR}/util_opsc.cpp
+        ${CHUCK_CORE_DIR}/util_serial.cpp
+        ${CHUCK_CORE_DIR}/util_hid.cpp
+        ${CHUCK_CORE_DIR}/uana_xform.cpp
+        ${CHUCK_CORE_DIR}/uana_extract.cpp
+    )
+
+    add_library(libchuck STATIC
+        ${CHUCK_CORE_DIR}/chuck.tab.c
+        ${CHUCK_CORE_DIR}/chuck.yy.c
+        ${CHUCK_CORE_DIR}/util_network.c
+        ${CHUCK_CORE_DIR}/util_raw.c
+        ${CHUCK_CORE_DIR}/util_xforms.c
+        ${CHUCK_CXX_SRCS}
+        ${CHUCK_LO_SRCS}
+    )
+
+    target_include_directories(libchuck PUBLIC
+        ${CHUCK_CORE_DIR}
+        ${CHUCK_CORE_DIR}/lo
+    )
+
+    target_compile_features(libchuck PUBLIC cxx_std_14)
+    target_compile_definitions(libchuck PUBLIC HAVE_CONFIG_H)
+
+    # libchuck has pre-existing warnings (deprecated-copy, etc.) from older C++
+    # standards. Disable -Werror for libchuck sources and suppress those
+    # warnings for any target that includes libchuck headers.
+    if(MSVC)
+        target_compile_options(libchuck PRIVATE /W4)
+    else()
+        target_compile_options(libchuck PRIVATE -Wall -Wextra -Wno-error)
+        # Propagate warning suppression to consumers via INTERFACE so that
+        # files including chuck.h don't trigger -Werror failures.
+        target_compile_options(libchuck INTERFACE
+            -Wno-deprecated-copy
+            -Wno-deprecated-declarations
+        )
+    endif()
+
+    if(APPLE)
+        target_link_libraries(libchuck PUBLIC
+            "-framework Foundation"
+            "-framework CoreFoundation"
+            "-framework CoreMIDI"
+            "-framework CoreAudio"
+            "-framework AudioToolbox"
+            "-framework IOKit"
+            "-framework ApplicationServices"
+        )
+        target_link_options(libchuck PUBLIC "-Wl,-undefined,dynamic_lookup")
+    endif()
+
+    find_package(PkgConfig QUIET)
+    if(PkgConfig_FOUND)
+        pkg_check_modules(SNDFILE IMPORTED_TARGET sndfile)
+        if(SNDFILE_FOUND)
+            target_link_libraries(libchuck PUBLIC PkgConfig::SNDFILE)
+        endif()
+    endif()
+endif()
+
+# ---------------------------------------------------------------------------
 # Subdirectories (build order: engine → control → app → tests)
 # ---------------------------------------------------------------------------
 add_subdirectory(engine)

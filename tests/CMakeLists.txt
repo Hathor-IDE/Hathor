@@ -87,6 +87,13 @@ target_link_libraries(hathor-control-tests PRIVATE
     nlohmann_json::nlohmann_json
 )
 
+if(CHUCK_AVAILABLE)
+    target_link_libraries(hathor-control-tests PRIVATE libchuck)
+    target_compile_definitions(hathor-control-tests PRIVATE CHUCK_AVAILABLE=1)
+else()
+    target_compile_definitions(hathor-control-tests PRIVATE CHUCK_AVAILABLE=0)
+endif()
+
 include(Catch)
 catch_discover_tests(hathor-control-tests DISCOVERY_MODE PRE_TEST)
 

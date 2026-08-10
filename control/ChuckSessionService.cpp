@@ -16,7 +16,6 @@
 #include "JobTracker.hpp"
 
 #include <cstdint>
-#include <future>
 #include <string>
 #include <string_view>
 
@@ -182,8 +181,12 @@ AsyncJobHandle ChuckSessionService::compileChuck(
 
     // Submit the compile work to the shared job tracker.
     // The job function runs on the JobTracker's worker thread.
-    // It uses AudioEngineFacade::startAsyncCkCompile which delegates to the
-    // B4-K4 ChuckCompiler dispatcher thread.
+    //
+    // The real compiler (libchuck) is linked into the control process, so
+    // we call validateChuckSource() directly — NO blocking on a promise/future
+    // from startAsyncCkCompile. If diagnostics pass, we publish to the worker
+    // via startAsyncCkCompile (fire-and-forget; the callback updates the
+    // job entry asynchronously).
     uint64_t jobId = jobTracker_->submit(
         [this, tabId, sourceCopy, onComplete](
             std::shared_ptr<JobEntry> entry)
@@ -197,70 +200,87 @@ AsyncJobHandle ChuckSessionService::compileChuck(
             // Mark as running.
             entry->state.store(JobState::Running, std::memory_order_release);
 
-            // Use the facade's async compile, which delegates to AudioWorkerManager
-            // → control plane → B4-K4 ChuckCompiler dispatcher.
-            // The facade returns immediately with its own job ID.
-            // We use a promise/future to receive the result synchronously
-            // on this job tracker thread (the facade's async mechanism handles
-            // the actual background work).
-            std::string compileResponse;
-            std::promise<std::pair<bool, std::string>> prom;
-            auto future = prom.get_future();
-
-            uint64_t facadeJobId = audio_.startAsyncCkCompile(tabId, sourceCopy,
-                [&prom](bool success, const std::string& response) {
-                    prom.set_value({success, response});
-                });
-
-            // Wait for the compile to complete (the facade's worker thread
-            // handles the actual ChucK compilation; this thread waits on the
-            // future, which is fine — this IS the JobTracker's worker thread).
-            auto [success, response] = future.get();
+            // Run the real ChucK compiler diagnostics directly on this thread.
+            // This uses the vendored libchuck via validateChuckSource(),
+            // which is the SAME function called by ChuckCompiler::dispatcherLoop()
+            // in the worker process (B4-K4). No IPC round-trip needed.
+            auto diag = audio_worker::validateChuckSource(sourceCopy);
 
             CompileResult cr;
             cr.sourceHash = "compiled";
             cr.shredId = -1;
 
-            if (success) {
-                cr.success = true;
-                cr.diagnostics.push_back({
-                    "info", "CK_OK", "ChucK source compiled and published", 0, 0
-                });
-                // Parse shred info from response if available.
-                auto hashPos = response.find("hash=");
-                if (hashPos != std::string::npos) {
-                    cr.sourceHash = response.substr(hashPos + 5);
-                }
-            } else {
+            if (!diag.ok) {
+                // Compilation failed — structured diagnostics from the real compiler.
                 cr.success = false;
-                cr.errorMessage = response;
+                cr.errorMessage = diag.message;
+                cr.diagnostics.push_back({
+                    "error", "CK_COMPILE_ERROR",
+                    diag.message, diag.errorLine, diag.errorColumn
+                });
 
-                // Run validateChuckSource for structured diagnostics.
-                // This is the same validation the worker uses (AI-5 §10).
-                auto diag = audio_worker::validateChuckSource(sourceCopy);
-                if (!diag.ok) {
-                    cr.diagnostics.push_back({
-                        "error", "CK_COMPILE_ERROR",
-                        diag.message, diag.errorLine, diag.errorColumn
-                    });
-                } else {
-                    cr.diagnostics.push_back({
-                        "error", "CK_COMPILE_ERROR",
-                        "compilation failed (see worker logs)", 0, 0
-                    });
+                // Store result and mark complete (no worker publish needed).
+                {
+                    std::lock_guard<std::mutex> lock(entry->resultMtx);
+                    entry->result = cr;
+                    entry->state.store(JobState::Failed, std::memory_order_release);
                 }
+
+                if (onComplete)
+                    onComplete(cr);
+                return;
             }
 
-            // Store the result and mark complete.
-            {
-                std::lock_guard<std::mutex> lock(entry->resultMtx);
-                entry->result = cr;
-                entry->state.store(cr.success ? JobState::Succeeded : JobState::Failed,
-                                   std::memory_order_release);
-            }
+            // Diagnostics passed — publish to the worker process.
+            // startAsyncCkCompile dispatches to the B4-K4 ChuckCompiler
+            // dispatcher thread in the worker process. We fire-and-forget:
+            // the callback updates the job entry when the shred is loaded.
+            //
+            // We capture the entry weak_ptr so the callback can update it.
+            std::weak_ptr<JobEntry> weakEntry = entry;
+            audio_.startAsyncCkCompile(tabId, sourceCopy,
+                [weakEntry, onComplete, sourceCopy](bool /*success*/, const std::string& response) {
+                    // This callback fires on the worker thread's notification
+                    // thread. Update the job entry if it still exists.
+                    if (auto entry = weakEntry.lock()) {
+                        CompileResult cr;
+                        cr.success = true;
+                        cr.sourceHash = "compiled";
+                        cr.shredId = -1;
 
-            if (onComplete)
-                onComplete(cr);
+                        // Parse response for shred/hash info if the worker
+                        // provided it.
+                        auto hashPos = response.find("hash=");
+                        if (hashPos != std::string::npos) {
+                            size_t end = response.find(' ', hashPos);
+                            if (end == std::string::npos) end = response.size();
+                            cr.sourceHash = response.substr(hashPos + 5, end - hashPos - 5);
+                        }
+                        auto shredPos = response.find("shred=");
+                        if (shredPos != std::string::npos) {
+                            try {
+                                cr.shredId = std::stoi(response.substr(shredPos + 6));
+                            } catch (...) {}
+                        }
+
+                        cr.diagnostics.push_back({
+                            "info", "CK_OK", "ChucK source compiled and published", 0, 0
+                        });
+
+                        {
+                            std::lock_guard<std::mutex> lock(entry->resultMtx);
+                            entry->result = cr;
+                            entry->state.store(JobState::Succeeded, std::memory_order_release);
+                        }
+
+                        if (onComplete)
+                            onComplete(cr);
+                    }
+                });
+
+            // Return immediately — the job will be marked complete by the
+            // callback above. The job tracker reports "running" status until
+            // the callback fires.
         },
         [onComplete]() {
             // Cancellation cleanup

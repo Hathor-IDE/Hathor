@@ -462,10 +462,12 @@ void ControlInterface::handleSetPattern(std::string_view slot,
     // (the stdin/stdout CLI path).
     if (g_responseSink)
         impl_->worker.enqueue(CompileJob{std::string(slot),
-                                         std::string(notation),
-                                         g_responseSink});
+                                          std::string(notation),
+                                          g_responseSink});
     else
-        impl_->worker.enqueue({std::string(slot), std::string(notation)});
+        impl_->worker.enqueue(CompileJob{std::string(slot),
+                                          std::string(notation),
+                                          nullptr});
     // Response is sent asynchronously (worker onComplete / g_responseSink).
 }
 

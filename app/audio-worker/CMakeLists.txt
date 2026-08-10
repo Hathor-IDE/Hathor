@@ -30,6 +30,14 @@ target_include_directories(hathor-audio-worker-lib
 target_compile_features(hathor-audio-worker-lib PUBLIC cxx_std_20)
 target_compile_options(hathor-audio-worker-lib PRIVATE -Wall -Wextra -Werror)
 
+if(CHUCK_AVAILABLE)
+    target_link_libraries(hathor-audio-worker-lib
+        PUBLIC libchuck)
+    target_compile_definitions(hathor-audio-worker-lib PUBLIC CHUCK_AVAILABLE=1)
+else()
+    target_compile_definitions(hathor-audio-worker-lib PUBLIC CHUCK_AVAILABLE=0)
+endif()
+
 # ---------------------------------------------------------------------------
 # hathor-audio-worker — standalone JUCE-free companion process executable
 # ---------------------------------------------------------------------------

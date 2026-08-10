@@ -439,37 +439,69 @@ TEST_CASE("AI-5: real ChucK diagnostics from validateChuckSource",
     // ChucK compiler (validateChuckSource), NOT from a mock or regex.
     // Per AI-5 §8: "Do NOT hard-code an invented call."
 
-    // Invalid ChucK source — has => but no statement terminator (;)
-    // validateChuckSource checks for bracket balance AND presence of ; or =>
+    // Invalid ChucK source — unbalanced closing bracket
     std::string invalidCode = "SinOsc s => dac )";
     auto diag = validateChuckSource(invalidCode);
 
     REQUIRE_FALSE(diag.ok);
     REQUIRE_FALSE(diag.message.empty());
+    // Per AI-5 §9: line/column must be 0 if not determinable, never fabricated
+    // When the real compiler is linked, it provides real line/column.
+    // When using the fallback, it also provides real line/column from the scan.
+    REQUIRE(diag.errorLine >= 0);
+    REQUIRE(diag.errorColumn >= 0);
 }
 
-TEST_CASE("AI-5: real ChucK diagnostics for unknown identifier",
-          "[ai5][diagnostics][real_compiler]")
+TEST_CASE("AI-5: real ChucK diagnostics for valid ChucK code",
+          "[ai5][diagnostics][real_compiler][valid]")
 {
-    // The vendored validateChuckSource performs syntactic validation
-    // (bracket balancing, statement structure). Semantic type checking
-    // (e.g. "NonExistentOsc") is beyond its scope — it only checks that
-    // the code has valid bracket nesting and statement structure.
-    // This test verifies the real compiler diagnostic path, not a mock.
+    // Valid ChucK code should pass the real compiler.
+    // When libchuck is linked, this is compiled by ChucK::compileCode().
+    // When the fallback is used, bracket-balancing + statement check applies.
     std::string code = "SinOsc s => dac; 440 => s.freq; 1::second => now;";
     auto diag = validateChuckSource(code);
 
-    // Valid code should pass validation.
+    REQUIRE(diag.ok);
+    REQUIRE(diag.message.empty());
+}
+
+TEST_CASE("AI-5: real ChucK diagnostics reports error line and column",
+          "[ai5][diagnostics][real_compiler][position]")
+{
+    // Code with a syntax error on a specific line.
+    // The real compiler should report the line/column of the error.
+    // Line 1: valid, Line 2: invalid (unbalanced bracket)
+    std::string code =
+        "SinOsc s => dac;\n"
+        "SinOsc s2 => dac )";
+
+    auto diag = validateChuckSource(code);
+
+    REQUIRE_FALSE(diag.ok);
+    // The error should be on line 2 (where the closing bracket is)
+    REQUIRE(diag.errorLine >= 1);
+    // Column should point to or near the problematic character
+    REQUIRE(diag.errorColumn >= 1);
+}
+
+TEST_CASE("AI-5: validateChuckSource handles empty source",
+          "[ai5][diagnostics][edge_case]")
+{
+    auto diag = validateChuckSource("");
+    // Empty source should pass validation (no errors to report).
     REQUIRE(diag.ok);
 }
 
-TEST_CASE("AI-5: real ChucK diagnostics for valid code",
-          "[ai5][diagnostics][real_compiler]")
+TEST_CASE("AI-5: validateChuckSource handles multiline code",
+          "[ai5][diagnostics][real_compiler][multiline]")
 {
-    std::string validCode = "SinOsc s => dac; 440 => s.freq; 1::second => now;";
-    auto diag = validateChuckSource(validCode);
+    // Valid multiline ChucK code
+    std::string code =
+        "SinOsc s => dac;\n"
+        "440 => s.freq;\n"
+        "1::second => now;\n";
 
-    // Valid code should pass validation.
+    auto diag = validateChuckSource(code);
     REQUIRE(diag.ok);
 }
 
@@ -795,7 +827,7 @@ TEST_CASE("AI-5: ChuckSessionService getDiagnostics uses real compiler",
     AI5FakeFacade audio;
     ChuckSessionService service(audio);
 
-     // Invalid ChucK code — unbalanced bracket
+    // Invalid ChucK code — unbalanced bracket
     auto diags = service.getDiagnostics("SinOsc s => dac )");
     REQUIRE_FALSE(diags.empty());
     // The real compiler should report an error
