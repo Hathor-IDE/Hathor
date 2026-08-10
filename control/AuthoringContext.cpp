@@ -62,11 +62,7 @@ std::string languageFromPath(std::string_view path)
     return "unknown";
 }
 
-/// Escape and wrap a string for safe JSON (nlohmann::json handles this,
-/// but we use it for constructing error messages).
-std::string safeStr(const std::string& s) { return s; }
-
-/// Check if a scope string is in the requested scope list, or if
+} // anonymous namespace
 /// "auto" mode (empty scope) includes it.
 bool scopeIncludes(const std::vector<std::string>& scope,
                    bool autoMode,
@@ -82,10 +78,10 @@ std::string truncateContent(std::string_view content, int maxLen)
 {
     if (maxLen <= 0 || static_cast<int>(content.size()) <= maxLen)
         return std::string(content);
-    return std::string(content.substr(0, static_cast<std::size_t>(maxLen))) + "...[truncated]";
-}
+     return std::string(content.substr(0, static_cast<std::size_t>(maxLen))) + "...[truncated]";
+ }
 
-} // anonymous namespace
+/// Check if a scope string is in the requested scope list, or if
 
 // ---------------------------------------------------------------------------
 // Construction
@@ -102,7 +98,6 @@ AuthoringContext::AuthoringContext(
     , lspCtx_(lspCtx)
     , metadata_(metadata)
     , compat_(compat)
-    , dummy_(std::make_shared<std::atomic<int>>(0))
 {
 }
 
@@ -320,6 +315,7 @@ nlohmann::json AuthoringContext::assembleEditor(
     };
 
     // Selection
+    editor["hasSelection"] = snap.hasSelection;
     if (snap.hasSelection)
     {
         editor["selection"] = nlohmann::json{
@@ -602,6 +598,8 @@ nlohmann::json AuthoringContext::assembleLsp(
     const EditorContextSnapshot& snap,
     std::string_view language) const
 {
+    (void)req;
+    (void)language;
     nlohmann::json result;
 
     if (lspCtx_ == nullptr)
@@ -647,8 +645,9 @@ nlohmann::json AuthoringContext::assembleLsp(
 // assembleProject — project overview
 // ---------------------------------------------------------------------------
 
-nlohmann::json AuthoringContext::assembleProject(const ContextRequest& /*req*/) const
+nlohmann::json AuthoringContext::assembleProject(const ContextRequest& req) const
 {
+    (void)req;
     return readFacade_.inspectProject();
 }
 

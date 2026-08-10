@@ -39,7 +39,7 @@ std::string isoTimestamp()
     return std::string(buf);
 }
 
-/// Build a file:// URI or synthetic URI from a file path.
+/// Build a file:// URI from a file path.
 std::string uriFromFile(const std::string& path)
 {
     if (path.empty())
@@ -48,11 +48,11 @@ std::string uriFromFile(const std::string& path)
 }
 
 /// Build a synthetic URI for an untitled buffer.
-std::string uriForSlot(const std::string& slotName)
+std::string uriForSlot(const std::string& slotLabel)
 {
-    if (slotName.empty())
+    if (slotLabel.empty())
         return "untitled://untitled";
-    return "slot://" + slotName;
+    return "slot://" + slotLabel;
 }
 
 } // anonymous namespace
@@ -89,7 +89,7 @@ void EditorContextBridge::refresh()
 
     // File path
     const auto& filePath = tab->filePath();
-    if (filePath.has_value() && !filePath->isFullScreen())
+    if (filePath.has_value())
     {
         const std::string path = filePath->getFullPathName().toStdString();
         snap.file = path;
@@ -97,43 +97,49 @@ void EditorContextBridge::refresh()
     }
     else
     {
-        // Untitled — synthetic URI
+        // Untitled — synthetic URI from slot label
         snap.file = "";
-        snap.slotName = tab->slotName().toStdString();
+        snap.slotName = tab->tabLabel().toStdString();
         snap.uri = uriForSlot(snap.slotName);
     }
 
     // Language
     snap.language = tab->isChuckTab() ? "chuck" : "mininotation";
 
-    // Document content — from the CodeDocument
+    // Document content
     snap.content = tab->document().getAllContent().toStdString();
 
-    // Cursor position
+    // Cursor position (from the CodeEditorComponent)
     const auto& editor = tab->editor();
-    const auto cursorPos = editor.getCaretPosition();
-    snap.cursorLine = cursorPos.getLineNumber();
-    snap.cursorChar = cursorPos.getIndexInLine();
+    const auto caretPos = editor.getCaretPos();
+    snap.cursorLine = caretPos.getLineNumber();
+    snap.cursorChar = caretPos.getIndexInLine();
 
-    // Selection
-    const juce::TextEditor::TextSelection sel = editor.getTextSelection();
-    snap.hasSelection = sel.isSet;
-    if (sel.isSet)
+    // Note: cursor position changes trigger onCursorMoved callback which
+    // calls refresh() on the active bridge.
+
+    // Selection (from CodeEditorComponent's highlighted region)
+    const auto region = editor.getHighlightedRegion();
+    snap.hasSelection = !region.isEmpty();
+    if (snap.hasSelection)
     {
-        snap.selStartLine  = sel.start.getPosition().getLine();
-        snap.selStartChar  = sel.start.getPosition().getIndexInLine();
-        snap.selEndLine    = sel.end.getPosition().getLine();
-        snap.selEndChar    = sel.end.getPosition().getIndexInLine();
-        snap.selectedText   = sel.ToString().toStdString();
+        const auto selStart = editor.getSelectionStart();
+        const auto selEnd = editor.getSelectionEnd();
+        snap.selStartLine = selStart.getLineNumber();
+        snap.selStartChar = selStart.getIndexInLine();
+        snap.selEndLine = selEnd.getLineNumber();
+        snap.selEndChar = selEnd.getIndexInLine();
+        snap.selectedText = editor.getTextInRange(region).toStdString();
     }
 
     // Slot info
     snap.slotIndex = tab->slotIndex();
     if (snap.slotName.empty())
-        snap.slotName = tab->slotName().toStdString();
+        snap.slotName = tab->tabLabel().toStdString();
 
     // Front-matter
-    if (const auto* fm = tab->frontMatter())
+    const auto& fm = tab->frontMatter();
+    if (fm.has_value())
     {
         if (fm->slot)    snap.frontMatterSlot  = *fm->slot;
         if (fm->bpm)     snap.frontMatterBpm   = *fm->bpm;
@@ -157,7 +163,7 @@ void EditorContextBridge::refreshFromTab(HathorTab* tab)
     snap.hasContent = true;
 
     const auto& filePath = tab->filePath();
-    if (filePath.has_value() && !filePath->isFullScreen())
+    if (filePath.has_value())
     {
         const std::string path = filePath->getFullPathName().toStdString();
         snap.file = path;
@@ -166,7 +172,7 @@ void EditorContextBridge::refreshFromTab(HathorTab* tab)
     else
     {
         snap.file = "";
-        snap.slotName = tab->slotName().toStdString();
+        snap.slotName = tab->tabLabel().toStdString();
         snap.uri = uriForSlot(snap.slotName);
     }
 
@@ -174,15 +180,16 @@ void EditorContextBridge::refreshFromTab(HathorTab* tab)
     snap.content = tab->document().getAllContent().toStdString();
 
     const auto& editor = tab->editor();
-    const auto cursorPos = editor.getCaretPosition();
-    snap.cursorLine = cursorPos.getLineNumber();
-    snap.cursorChar = cursorPos.getIndexInLine();
+    const auto caretPos = editor.getCaretPos();
+    snap.cursorLine = caretPos.getLineNumber();
+    snap.cursorChar = caretPos.getIndexInLine();
 
     snap.slotIndex = tab->slotIndex();
     if (snap.slotName.empty())
-        snap.slotName = tab->slotName().toStdString();
+        snap.slotName = tab->tabLabel().toStdString();
 
-    if (const auto* fm = tab->frontMatter())
+    const auto& fm = tab->frontMatter();
+    if (fm.has_value())
     {
         if (fm->slot)    snap.frontMatterSlot  = *fm->slot;
         if (fm->bpm)     snap.frontMatterBpm   = *fm->bpm;

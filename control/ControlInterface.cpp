@@ -89,66 +89,12 @@ void ControlInterface::setLspContextProvider(LspContextProvider* provider) noexc
         authoringContext_->setLspContextProvider(provider);
 }
 
-// ---------------------------------------------------------------------------
-// AI-8: handleGetContext
-// ---------------------------------------------------------------------------
-
-void ControlInterface::handleGetContext(std::string_view args)
+void ControlInterface::setLanguageMetadata(
+    const hathor::language::LanguageMetadata* metadata,
+    const hathor::language::MetadataCompatibility* compat) noexcept
 {
-    if (!authoringContext_)
-    {
-        emitResponse({
-            {"ok",    false},
-            {"error", "authoring context not initialized"},
-            {"cmd",   "get-context"}
-        });
-        return;
-    }
-
-    // Parse JSON args from the command line.
-    // The MCP server forwards the tool arguments as a JSON string.
-    ContextRequest req;
-    if (!args.empty())
-    {
-        try {
-            nlohmann::json j = nlohmann::json::parse(
-                std::string(args));
-
-            if (j.contains("file") && j["file"].is_string())
-                req.file = j["file"].get<std::string>();
-            if (j.contains("line") && j["line"].is_number_integer())
-                req.line = j["line"].get<int>();
-            if (j.contains("character") && j["character"].is_number_integer())
-                req.character = j["character"].get<int>();
-            if (j.contains("language") && j["language"].is_string())
-                req.language = j["language"].get<std::string>();
-            if (j.contains("selected_text") && j["selected_text"].is_string())
-                req.selectedText = j["selected_text"].get<std::string>();
-            if (j.contains("scope") && j["scope"].is_array())
-            {
-                for (const auto& s : j["scope"])
-                {
-                    if (s.is_string())
-                        req.scope.push_back(s.get<std::string>());
-                }
-            }
-            if (j.contains("include_content"))
-                req.includeContent = j["include_content"].get<bool>();
-            if (j.contains("max_content_length") && j["max_content_length"].is_number_integer())
-                req.maxContentLength = j["max_content_length"].get<int>();
-        }
-        catch (const nlohmann::json::exception& e) {
-            emitResponse({
-                {"ok",    false},
-                {"cmd",   "get-context"},
-                {"error", std::string("invalid arguments: ") + e.what()}
-            });
-            return;
-        }
-    }
-
-    nlohmann::json result = authoringContext_->assemble(req);
-    emitResponse(result);
+    if (authoringContext_)
+        authoringContext_->setMetadata(metadata, compat);
 }
 
 ControlInterface::~ControlInterface()
@@ -216,6 +162,65 @@ static void emitResponse(const nlohmann::json& j)
 }
 
 } // anonymous namespace
+
+// ---------------------------------------------------------------------------
+// AI-8: handleGetContext — dynamic authoring context assembly
+// ---------------------------------------------------------------------------
+
+void ControlInterface::handleGetContext(std::string_view args)
+{
+    if (!authoringContext_)
+    {
+        emitResponse(nlohmann::json{
+            {"ok",    false},
+            {"error", "authoring context not initialized"},
+            {"cmd",   "get-context"}
+        });
+        return;
+    }
+
+    ContextRequest req;
+    if (!args.empty())
+    {
+        try {
+            nlohmann::json j = nlohmann::json::parse(std::string(args));
+
+            if (j.contains("file") && j["file"].is_string())
+                req.file = j["file"].get<std::string>();
+            if (j.contains("line") && j["line"].is_number_integer())
+                req.line = j["line"].get<int>();
+            if (j.contains("character") && j["character"].is_number_integer())
+                req.character = j["character"].get<int>();
+            if (j.contains("language") && j["language"].is_string())
+                req.language = j["language"].get<std::string>();
+            if (j.contains("selected_text") && j["selected_text"].is_string())
+                req.selectedText = j["selected_text"].get<std::string>();
+            if (j.contains("scope") && j["scope"].is_array())
+            {
+                for (const auto& s : j["scope"])
+                {
+                    if (s.is_string())
+                        req.scope.push_back(s.get<std::string>());
+                }
+            }
+            if (j.contains("include_content"))
+                req.includeContent = j["include_content"].get<bool>();
+            if (j.contains("max_content_length") && j["max_content_length"].is_number_integer())
+                req.maxContentLength = j["max_content_length"].get<int>();
+        }
+        catch (const nlohmann::json::exception& e) {
+            emitResponse(nlohmann::json{
+                {"ok",    false},
+                {"cmd",   "get-context"},
+                {"error", std::string("invalid arguments: ") + e.what()}
+            });
+            return;
+        }
+    }
+
+    nlohmann::json result = authoringContext_->assemble(req);
+    emitResponse(result);
+}
 
 // ---------------------------------------------------------------------------
 // dispatch() — O(n) command routing

@@ -29,8 +29,11 @@
 #include "LspContextProvider.hpp"
 
 #include "AudioEngineFacade.hpp"
-#include "SampleBank.hpp"
 #include "SlotState.hpp"
+#include "MasterEq.hpp"
+#include "AssetTarget.hpp"
+#include "ChuckRenderWriter.hpp"
+#include "SampleBank.hpp"
 #include "MasterEq.hpp"
 #include "AssetTarget.hpp"
 #include "ChuckRenderWriter.hpp"
@@ -65,20 +68,20 @@ using hathor::control::LspContextProvider;
 // Fake AudioEngineFacade (JUCE-free stand-in)
 // ---------------------------------------------------------------------------
 
-class FakeFacade final : public AudioEngineFacade {
+class Ai8FakeFacade final : public AudioEngineFacade {
 public:
     void play() noexcept override                       { running_ = true; }
-    void stop() noexcept                                 { running_ = false; }
-    void setBpm(double b) noexcept                        { bpm_ = b; }
-    double getBpm() const noexcept                        { return bpm_; }
-    bool isRunning() const noexcept                       { return running_; }
-    void slotPlay(int s) noexcept                         { slotRunning_[s] = true; }
-    void slotStop(int s) noexcept                         { slotRunning_[s] = false; }
-    bool isSlotRunning(int s) const noexcept              { return slotRunning_[s]; }
-    void setMasterGain(float g) noexcept                  { gain_ = g; }
-    float getMasterGain() const noexcept                  { return gain_; }
-    void setMasterEqPreset(hathor::EqPreset) noexcept     {}
-    hathor::EqPreset getMasterEqPreset() const noexcept   { return hathor::EqPreset::Flat; }
+    void stop() noexcept override                         { running_ = false; }
+    void setBpm(double b) noexcept override               { bpm_ = b; }
+    double getBpm() const noexcept override               { return bpm_; }
+    bool isRunning() const noexcept override              { return running_; }
+    void slotPlay(int s) noexcept override                         { slotRunning_[s] = true; }
+    void slotStop(int s) noexcept override                         { slotRunning_[s] = false; }
+    bool isSlotRunning(int s) const noexcept override              { return slotRunning_[s]; }
+    void setMasterGain(float g) noexcept override                  { gain_ = g; }
+    float getMasterGain() const noexcept override                  { return gain_; }
+    void setMasterEqPreset(hathor::EqPreset) noexcept override     {}
+    hathor::EqPreset getMasterEqPreset() const noexcept override   { return hathor::EqPreset::Flat; }
 
     int findOrAddSlot(const std::string& name) override {
         for (size_t i = 0; i < names_.size(); ++i)
@@ -91,58 +94,58 @@ public:
         }
         return -1;
     }
-    void storeSlot(int idx, std::shared_ptr<SlotState> state) noexcept {
+    void storeSlot(int idx, std::shared_ptr<SlotState> state) noexcept override {
         if (idx >= 0 && static_cast<size_t>(idx) < states_.size())
             states_[idx] = std::move(state);
     }
-    bool clearSlot(int idx) noexcept {
+    bool clearSlot(int idx) noexcept override {
         if (idx >= 0 && static_cast<size_t>(idx) < states_.size()) {
             states_[idx].reset();
             return true;
         }
         return false;
     }
-    int slotCount() const noexcept                        { return static_cast<int>(names_.size()); }
+    int slotCount() const noexcept override               { return static_cast<int>(names_.size()); }
     std::string slotName(int idx) const override {
         if (idx >= 0 && static_cast<size_t>(idx) < names_.size())
             return names_[idx];
         return {};
     }
-    std::shared_ptr<SlotState> loadSlot(int idx) const noexcept {
+    std::shared_ptr<SlotState> loadSlot(int idx) const noexcept override {
         if (idx >= 0 && static_cast<size_t>(idx) < states_.size())
             return states_[idx];
         return nullptr;
     }
 
-    bool hasWorker() const noexcept                       { return false; }
-    bool ckEval(int, const std::string&) noexcept         { return false; }
-    bool stopCkTab(int) noexcept                          { return false; }
-    std::string queryCkTab(int) const                     { return {}; }
+    bool hasWorker() const noexcept override              { return false; }
+    bool ckEval(int, const std::string&) noexcept override { return false; }
+    bool stopCkTab(int) noexcept override                 { return false; }
+    std::string queryCkTab(int) const override            { return {}; }
     uint64_t startAsyncCkCompile(int, const std::string&,
                                  std::function<void(bool,const std::string&)>) override { return 0; }
-    nlohmann::json queryCkJob(uint64_t) const            { return {{"ok",false}}; }
-    bool cancelCkJob(uint64_t)                             { return false; }
+    nlohmann::json queryCkJob(uint64_t) const override   { return {{"ok",false}}; }
+    bool cancelCkJob(uint64_t) override                    { return false; }
 
     std::filesystem::path resolveRenderPath(hathor::AssetTarget,
                                             std::string_view,
                                             const std::filesystem::path&) override { return {}; }
-    void setLiveJamSessionDir(std::filesystem::path)      {}
-    void cleanupLiveJamAssets()                           {}
-    bool isStudioAssetPath(const std::filesystem::path&) const { return false; }
+    void setLiveJamSessionDir(std::filesystem::path)      override {}
+    void cleanupLiveJamAssets() noexcept                  override {}
+    bool isStudioAssetPath(const std::filesystem::path&) const override { return false; }
     hathor::RenderHandle startBakeRender(uint8_t, std::string, uint64_t, unsigned,
                                          const std::filesystem::path&,
                                          hathor::ChuckRenderWriter::CompletionCallback) override { return {}; }
     hathor::RenderHandle startBakeRenderRaw(uint8_t, std::string, uint64_t, unsigned,
                                             const std::filesystem::path&,
                                             hathor::ChuckRenderWriter::CompletionCallback) override { return {}; }
-    int activeRenderCount() const noexcept                { return 0; }
-    void shutdownRender() noexcept                        {}
-    bool registerBakedAsset(std::string, const std::filesystem::path&) { return false; }
+    int activeRenderCount() const noexcept     override { return 0; }
+    void shutdownRender() noexcept               override {}
+    bool registerBakedAsset(std::string, const std::filesystem::path&) override { return false; }
 
     std::vector<std::string> listSamples() const override  { return bank_.names_; }
     void addSampleName(const std::string& name)            { bank_.names_.push_back(name); }
 
-    // AI-2 read-only introspection — minimal stubs
+    // AI-2 read-only introspection
     std::vector<SlotInfo> listSlots() const noexcept override {
         std::vector<SlotInfo> out;
         for (size_t i = 0; i < names_.size(); ++i) {
@@ -189,7 +192,7 @@ private:
     float gain_ = 0.8f;
     std::vector<std::string> names_;
     std::vector<std::shared_ptr<SlotState>> states_;
-    std::vector<bool> slotRunning_{16, false};
+    std::vector<bool> slotRunning_ = std::vector<bool>(16, false);
     std::filesystem::path projectDir_ = std::filesystem::current_path();
 
     struct BankInfo {
@@ -340,11 +343,6 @@ static hathor::language::LoadResult loadTestMetadata()
     return hathor::language::loadAndValidate(path);
 }
 
-static std::string snapshotTimestamp(const EditorContextSnapshot& snap)
-{
-    return snap.capturedAt;
-}
-
 // ===========================================================================
 // TESTS
 // ===========================================================================
@@ -359,10 +357,10 @@ TEST_CASE("AI-8: context assembly for .hathor files includes relevant sections",
     auto metaResult = loadTestMetadata();
     REQUIRE(metaResult.compatibility.compatible);
 
-    FakeFacade audio;
+    Ai8FakeFacade audio;
     SampleBank bank;
-    bank.addTestEntry(hathor::SampleEntry{"bd", 0, {}, 1, 44100.0, "bd.wav"});
-    bank.addTestEntry(hathor::SampleEntry{"sn", 1, {}, 1, 44100.0, "sn.wav"});
+    bank.addTestEntry(SampleEntry{"bd", 0, {}, 1, 44100.0, "bd.wav"});
+    bank.addTestEntry(SampleEntry{"sn", 1, {}, 1, 44100.0, "sn.wav"});
 
     hathor::control::ProjectReadFacade readFacade(audio, bank);
 
@@ -434,7 +432,7 @@ TEST_CASE("AI-8: context assembly for .ck files includes relevant sections",
     auto metaResult = loadTestMetadata();
     REQUIRE(metaResult.compatibility.compatible);
 
-    FakeFacade audio;
+    Ai8FakeFacade audio;
     SampleBank bank;
 
     hathor::control::ProjectReadFacade readFacade(audio, bank);
@@ -487,7 +485,7 @@ TEST_CASE("AI-8: cursor and selection changes are reflected in context",
           "[ai8][cursor][selection]")
 {
     auto metaResult = loadTestMetadata();
-    FakeFacade audio;
+    Ai8FakeFacade audio;
     SampleBank bank;
     hathor::control::ProjectReadFacade readFacade(audio, bank);
     AuthoringContext ctx(readFacade, nullptr, nullptr,
@@ -554,7 +552,7 @@ TEST_CASE("AI-8: metadata version is identified in context response",
     auto metaResult = loadTestMetadata();
     REQUIRE(metaResult.compatibility.compatible);
 
-    FakeFacade audio;
+    Ai8FakeFacade audio;
     SampleBank bank;
     hathor::control::ProjectReadFacade readFacade(audio, bank);
     AuthoringContext ctx(readFacade, nullptr, nullptr,
@@ -580,9 +578,9 @@ TEST_CASE("AI-8: runtime state changes (BPM, samples) are reflected dynamically"
           "[ai8][runtime-dynamics]")
 {
     auto metaResult = loadTestMetadata();
-    FakeFacade audio;
+    Ai8FakeFacade audio;
     SampleBank bank;
-    bank.addTestEntry(hathor::SampleEntry{"bd", 0, {}, 1, 44100.0, "bd.wav"});
+    bank.addTestEntry(SampleEntry{"bd", 0, {}, 1, 44100.0, "bd.wav"});
     hathor::control::ProjectReadFacade readFacade(audio, bank);
     AuthoringContext ctx(readFacade, nullptr, nullptr,
                          &metaResult.metadata, &metaResult.compatibility);
@@ -605,7 +603,7 @@ TEST_CASE("AI-8: runtime state changes (BPM, samples) are reflected dynamically"
     }
 
     // Add a sample — the next request should include it.
-    bank.addTestEntry(hathor::SampleEntry{"sn", 1, {}, 1, 44100.0, "sn.wav"});
+    bank.addTestEntry(SampleEntry{"sn", 1, {}, 1, 44100.0, "sn.wav"});
     {
         ContextRequest req;
         req.scope = {"samples"};
@@ -613,7 +611,7 @@ TEST_CASE("AI-8: runtime state changes (BPM, samples) are reflected dynamically"
         auto& samples = result["sections"]["samples"];
         REQUIRE(samples["ok"] == true);
         // Should have at least 2 sample names
-        REQUIRE(samples["sample_names"].size() >= 2);
+        REQUIRE(samples["samples"].size() >= 2);
     }
 }
 
@@ -625,7 +623,7 @@ TEST_CASE("AI-8: LSP diagnostics are included when LSP is available",
           "[ai8][lsp-diagnostics]")
 {
     auto metaResult = loadTestMetadata();
-    FakeFacade audio;
+    Ai8FakeFacade audio;
     SampleBank bank;
     hathor::control::ProjectReadFacade readFacade(audio, bank);
     AuthoringContext ctx(readFacade, nullptr, nullptr,
@@ -672,7 +670,7 @@ TEST_CASE("AI-8: missing LSP provider degrades gracefully",
           "[ai8][lsp-missing]")
 {
     auto metaResult = loadTestMetadata();
-    FakeFacade audio;
+    Ai8FakeFacade audio;
     SampleBank bank;
     hathor::control::ProjectReadFacade readFacade(audio, bank);
     AuthoringContext ctx(readFacade, nullptr, nullptr,
@@ -691,7 +689,7 @@ TEST_CASE("AI-8: LSP unavailable (server not running) is surfaced explicitly",
           "[ai8][lsp-unavailable]")
 {
     auto metaResult = loadTestMetadata();
-    FakeFacade audio;
+    Ai8FakeFacade audio;
     SampleBank bank;
     hathor::control::ProjectReadFacade readFacade(audio, bank);
     AuthoringContext ctx(readFacade, nullptr, nullptr,
@@ -716,7 +714,7 @@ TEST_CASE("AI-8: LSP unavailable (server not running) is surfaced explicitly",
 TEST_CASE("AI-8: missing metadata is surfaced explicitly",
           "[ai8][metadata-missing]")
 {
-    FakeFacade audio;
+    Ai8FakeFacade audio;
     SampleBank bank;
     hathor::control::ProjectReadFacade readFacade(audio, bank);
     // No metadata (nullptr).
@@ -737,7 +735,7 @@ TEST_CASE("AI-8: missing metadata is surfaced explicitly",
 TEST_CASE("AI-8: incompatible metadata is surfaced explicitly",
           "[ai8][metadata-incompatible]")
 {
-    FakeFacade audio;
+    Ai8FakeFacade audio;
     SampleBank bank;
     hathor::control::ProjectReadFacade readFacade(audio, bank);
 
@@ -765,7 +763,7 @@ TEST_CASE("AI-8: incompatible metadata is surfaced explicitly",
 
     auto& metadataSection = result["sections"]["metadata"];
     REQUIRE(metadataSection["available"] == false);
-    REQUIRE(metadataSection["reason"].find("incompatible") != std::string::npos);
+    REQUIRE(metadataSection["reason"].get<std::string>().find("incompatible") != std::string::npos);
 }
 
 // ---------------------------------------------------------------------------
@@ -776,7 +774,7 @@ TEST_CASE("AI-8: explicit scope limits sections to what is requested",
           "[ai8][targeted]")
 {
     auto metaResult = loadTestMetadata();
-    FakeFacade audio;
+    Ai8FakeFacade audio;
     SampleBank bank;
     hathor::control::ProjectReadFacade readFacade(audio, bank);
     AuthoringContext ctx(readFacade, nullptr, nullptr,
@@ -825,9 +823,9 @@ TEST_CASE("AI-8: context assembly is read-only — no state mutations",
           "[ai8][read-only]")
 {
     auto metaResult = loadTestMetadata();
-    FakeFacade audio;
+    Ai8FakeFacade audio;
     SampleBank bank;
-    bank.addTestEntry(hathor::SampleEntry{"bd", 0, {}, 1, 44100.0, "bd.wav"});
+    bank.addTestEntry(SampleEntry{"bd", 0, {}, 1, 44100.0, "bd.wav"});
     hathor::control::ProjectReadFacade readFacade(audio, bank);
     AuthoringContext ctx(readFacade, nullptr, nullptr,
                          &metaResult.metadata, &metaResult.compatibility);
@@ -876,9 +874,9 @@ TEST_CASE("AI-8: get-context command routes through ControlInterface",
     auto metaResult = loadTestMetadata();
     REQUIRE(metaResult.compatibility.compatible);
 
-    FakeFacade audio;
+    Ai8FakeFacade audio;
     SampleBank bank;
-    bank.addTestEntry(hathor::SampleEntry{"bd", 0, {}, 1, 44100.0, "bd.wav"});
+    bank.addTestEntry(SampleEntry{"bd", 0, {}, 1, 44100.0, "bd.wav"});
 
     hathor::control::ControlInterface ci(audio, bank);
 
@@ -922,7 +920,7 @@ TEST_CASE("AI-8: context assembly with no editor provider returns available=fals
           "[ai8][no-editor]")
 {
     auto metaResult = loadTestMetadata();
-    FakeFacade audio;
+    Ai8FakeFacade audio;
     SampleBank bank;
     hathor::control::ProjectReadFacade readFacade(audio, bank);
     AuthoringContext ctx(readFacade, nullptr, nullptr,

@@ -9,6 +9,7 @@
 
 #include "LspContextBridge.hpp"
 #include "HathorLspClient.hpp"
+#include "LspProtocol.hpp"
 
 #include <atomic>
 
@@ -33,6 +34,31 @@ void LspContextBridge::setDiagnostics(
 {
     std::lock_guard<std::mutex> lock(diagsMtx_);
     diags_[uri] = diags;
+}
+
+void LspContextBridge::setLspDiagnostics(
+    const std::string& uri,
+    const std::vector<lsp::Diagnostic>& diags)
+{
+    std::lock_guard<std::mutex> lock(diagsMtx_);
+    auto& arr = diags_[uri];
+    arr.clear();
+    for (const auto& d : diags)
+    {
+        nlohmann::json diag;
+        diag["severity"] = static_cast<int>(
+            d.severity.value_or(lsp::DiagnosticSeverity::Error));
+        diag["code"] = d.code.value_or("");
+        diag["source"] = d.source.value_or("strudel_lsp");
+        diag["message"] = d.message;
+        diag["range"] = nlohmann::json{
+            {"start_line",   d.range.start.line},
+            {"start_char",   d.range.start.character},
+            {"end_line",     d.range.end.line},
+            {"end_char",     d.range.end.character}
+        };
+        arr.push_back(std::move(diag));
+    }
 }
 
 void LspContextBridge::clearDiagnostics(const std::string& uri)

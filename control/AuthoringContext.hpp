@@ -151,7 +151,6 @@ public:
      * Sections whose data source is unavailable include an "unavailable"
      * field explaining why.
      */
-     */
     nlohmann::json assemble(const ContextRequest& req) const;
 
     /**

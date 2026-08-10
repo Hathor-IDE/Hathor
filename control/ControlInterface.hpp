@@ -196,8 +196,7 @@ public:
     /// Format: get-context <json-args>
     ///   json-args: {"file":"...","line":N,"character":N,"language":"...",
     ///               "scope":["editor","diagnostics"],"include_content":bool}
-    void handleGetContext(std::string_view args);
-    ProjectReadFacade& readOnly() noexcept { return *readFacade_; }
+     void handleGetContext(std::string_view args);
 
     // -----------------------------------------------------------------------
     // AI-5: ChucK session lifecycle (read-only + non-destructive execution)

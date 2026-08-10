@@ -18,6 +18,7 @@
  */
 
 #include "LspContextProvider.hpp"
+#include "LspProtocol.hpp"
 
 #include <juce_gui_basics/juce_gui_basics.h>
 
@@ -71,8 +72,16 @@ public:
      * @param uri      The document URI.
      * @param diags    The diagnostics as JSON objects.
      */
-    void setDiagnostics(const std::string& uri,
+     void setDiagnostics(const std::string& uri,
                         const std::vector<nlohmann::json>& diags);
+
+    /**
+     * Store LSP diagnostics (from the lsp::Diagnostic struct) for a document.
+     * Called from the JUCE message thread via the HathorLspClient diagnostics
+     * callback.  Converts diagnostics to JSON internally.
+     */
+    void setLspDiagnostics(const std::string& uri,
+                          const std::vector<lsp::Diagnostic>& diags);
 
     /**
      * Clear all stored diagnostics for a URI (document closed).
