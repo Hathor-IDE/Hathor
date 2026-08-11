@@ -180,6 +180,26 @@ public:
      */
     nlohmann::json listRenderJobs() const;
 
+    // -----------------------------------------------------------------------
+    // AI-10.3: remove a committed rendered asset (change-set rollback)
+    // -----------------------------------------------------------------------
+
+    /**
+     * Remove a committed rendered asset (.ck + .wav + SampleBank entry).
+     *
+     * This is the AI-10.3 rollback path for a whole change-set that created
+     * a baked instrument.  It REUSES the same canonical file + SampleBank
+     * removal that the AI-6 commit rollback already performs — it is NOT a
+     * parallel rollback implementation.
+     *
+     * DESTRUCTIVE: permanently removes the asset files and unregisters the
+     * sample.  Callers MUST obtain AI-1 confirmation before invoking.
+     *
+     * @param assetName  The committed asset name (Studio target).
+     * @return JSON {ok:true, ...} on success, {ok:false, error} otherwise.
+     */
+    nlohmann::json removeRenderedAsset(std::string_view assetName);
+
 private:
     // -----------------------------------------------------------------------
     // Internal: render job state (maintained alongside JobTracker)

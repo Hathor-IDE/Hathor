@@ -361,6 +361,30 @@ public:
      /// Format: clear_working_set
      void handleClearWorkingSet(std::string_view rest);
 
+     // -----------------------------------------------------------------------
+     // AI-10.3: First-class diff / preview / undo for AI changes
+     // -----------------------------------------------------------------------
+
+     /// Handle a changeset_status command (query the active change-set).
+     /// Format: changeset_status
+     void handleChangeSetStatus(std::string_view rest);
+
+     /// Handle a changeset_preview command (human-readable diff of changes).
+     /// Format: changeset_preview
+     void handleChangeSetPreview(std::string_view rest);
+
+     /// Handle a changeset_accept command (finalise the active change-set).
+     /// Format: changeset_accept
+     void handleChangeSetAccept(std::string_view rest);
+
+     /// Handle a changeset_reject command (revert the entire pending change-set).
+     /// Format: changeset_reject [confirm]
+     void handleChangeSetReject(std::string_view rest);
+
+     /// Handle a changeset_undo command (revert an accepted change-set).
+     /// Format: changeset_undo <change_set_id> [confirm]
+     void handleChangeSetUndo(std::string_view rest);
+
 private:
     // --- Command handlers ---------------------------------------------------
 

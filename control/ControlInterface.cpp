@@ -30,6 +30,7 @@
 #include <cstdlib>
 #include <iostream>
 #include <memory>
+#include <sstream>
 #include <string>
 #include <string_view>
 
@@ -389,7 +390,12 @@ void ControlInterface::dispatch(std::string_view rawLine)
                cmd == "working_set" ||
                cmd == "resolve_reference" ||
                cmd == "revert_change" ||
-               cmd == "clear_working_set") {
+               cmd == "clear_working_set" ||
+               cmd == "changeset_status" ||
+               cmd == "changeset_preview" ||
+               cmd == "changeset_accept" ||
+               cmd == "changeset_reject" ||
+               cmd == "changeset_undo") {
         // AI-10: Agentic musical workflow orchestration.
         // AI-10.2: Conversational memory / working set.
         handleWorkflowCommand(cmd, rest);
@@ -1489,6 +1495,16 @@ void ControlInterface::handleWorkflowCommand(std::string_view cmd,
         handleRevertChange(rest);
     } else if (cmd == "clear_working_set") {
         handleClearWorkingSet(rest);
+    } else if (cmd == "changeset_status") {
+        handleChangeSetStatus(rest);
+    } else if (cmd == "changeset_preview") {
+        handleChangeSetPreview(rest);
+    } else if (cmd == "changeset_accept") {
+        handleChangeSetAccept(rest);
+    } else if (cmd == "changeset_reject") {
+        handleChangeSetReject(rest);
+    } else if (cmd == "changeset_undo") {
+        handleChangeSetUndo(rest);
     }
 }
 
@@ -1944,6 +1960,93 @@ void ControlInterface::handleClearWorkingSet(std::string_view /*rest*/)
         {"ok", true},
         {"cmd", "clear_working_set"}
     });
+}
+
+// ---------------------------------------------------------------------------
+// AI-10.3: First-class diff / preview / undo for AI changes
+// ---------------------------------------------------------------------------
+
+void ControlInterface::handleChangeSetStatus(std::string_view /*rest*/)
+{
+    if (!agenticWorkflow_) {
+        emitResponse({
+            {"ok", false},
+            {"cmd", "changeset_status"},
+            {"error", "no agentic workflow session active"}
+        });
+        return;
+    }
+    emitResponse(agenticWorkflow_->getChangeSet());
+}
+
+void ControlInterface::handleChangeSetPreview(std::string_view /*rest*/)
+{
+    if (!agenticWorkflow_) {
+        emitResponse({
+            {"ok", false},
+            {"cmd", "changeset_preview"},
+            {"error", "no agentic workflow session active"}
+        });
+        return;
+    }
+    emitResponse(agenticWorkflow_->previewChangeSet());
+}
+
+void ControlInterface::handleChangeSetAccept(std::string_view /*rest*/)
+{
+    if (!agenticWorkflow_) {
+        emitResponse({
+            {"ok", false},
+            {"cmd", "changeset_accept"},
+            {"error", "no agentic workflow session active"}
+        });
+        return;
+    }
+    emitResponse(agenticWorkflow_->acceptChangeSet());
+}
+
+void ControlInterface::handleChangeSetReject(std::string_view rest)
+{
+    if (!agenticWorkflow_) {
+        emitResponse({
+            {"ok", false},
+            {"cmd", "changeset_reject"},
+            {"error", "no agentic workflow session active"}
+        });
+        return;
+    }
+
+    // Format: changeset_reject [confirm]
+    const bool confirm = (trim(rest) == "confirm" || trim(rest) == "true");
+    emitResponse(agenticWorkflow_->rejectChangeSet(confirm));
+}
+
+void ControlInterface::handleChangeSetUndo(std::string_view rest)
+{
+    if (!agenticWorkflow_) {
+        emitResponse({
+            {"ok", false},
+            {"cmd", "changeset_undo"},
+            {"error", "no agentic workflow session active"}
+        });
+        return;
+    }
+
+    // Format: changeset_undo <change_set_id> [confirm]
+    std::istringstream iss(std::string(trim(rest)));
+    int changeSetId = 0;
+    std::string confirmTok;
+    iss >> changeSetId >> confirmTok;
+    const bool confirm = (confirmTok == "confirm" || confirmTok == "true");
+    if (changeSetId <= 0) {
+        emitResponse({
+            {"ok", false},
+            {"cmd", "changeset_undo"},
+            {"error", "missing or invalid change_set_id"}
+        });
+        return;
+    }
+    emitResponse(agenticWorkflow_->undoChangeSet(changeSetId, confirm));
 }
 
 } // namespace hathor::control

@@ -734,6 +734,76 @@ nlohmann::json RenderService::listRenderJobs() const
 }
 
 // ---------------------------------------------------------------------------
+// AI-10.3: remove a committed rendered asset (change-set rollback)
+// ---------------------------------------------------------------------------
+
+nlohmann::json RenderService::removeRenderedAsset(std::string_view assetName)
+{
+    const std::string safeName = hathor::sanitizeAssetName(assetName);
+
+    // Validate the name is safe (mirrors commit's guard).
+    if (!isAssetNameSafe(safeName)) {
+        auditCommit(0, safeName, "remove_invalid_name", false);
+        return {
+            {"ok",    false},
+            {"cmd",   "remove_rendered_asset"},
+            {"error", "asset name is unsafe"}
+        };
+    }
+
+    const auto projectDir = audio_.currentProjectDir();
+    if (projectDir.empty()) {
+        auditCommit(0, safeName, "remove_no_project", false);
+        return {
+            {"ok",    false},
+            {"cmd",   "remove_rendered_asset"},
+            {"error", "project directory is not set"}
+        };
+    }
+
+    hathor::AssetPathResolver resolver(projectDir);
+    auto wavResolve = resolver.resolveStudio(safeName);
+    if (!wavResolve.ok) {
+        return {
+            {"ok",    false},
+            {"cmd",   "remove_rendered_asset"},
+            {"error", "path resolution failed: " + wavResolve.error}
+        };
+    }
+
+    const auto finalWavPath = wavResolve.path;
+    auto finalCkPath = finalWavPath;
+    finalCkPath.replace_extension(".ck");
+
+    std::error_code ec;
+
+    // Unregister from the SampleBank first (same canonical removal AI-6 uses
+    // on commit-rollback).
+    bank_.removeEntry(safeName, 0);
+
+    bool removedCk  = false;
+    bool removedWav = false;
+    if (std::filesystem::exists(finalCkPath, ec)) {
+        removedCk = std::filesystem::remove(finalCkPath, ec);
+    }
+    if (std::filesystem::exists(finalWavPath, ec)) {
+        removedWav = std::filesystem::remove(finalWavPath, ec);
+    }
+
+    auditCommit(0, safeName, "remove_asset", removedCk || removedWav);
+
+    return {
+        {"ok",         true},
+        {"cmd",        "remove_rendered_asset"},
+        {"asset_name", safeName},
+        {"wav_path",   finalWavPath.string()},
+        {"ck_path",    finalCkPath.string()},
+        {"removed_ck",  removedCk},
+        {"removed_wav", removedWav}
+    };
+}
+
+// ---------------------------------------------------------------------------
 // Helper: cleanup temp file
 // ---------------------------------------------------------------------------
 

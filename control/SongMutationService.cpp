@@ -991,4 +991,83 @@ nlohmann::json SongMutationService::handleEditSong(std::string_view songFile,
     return editSong(songFile, ops);
 }
 
+// ---------------------------------------------------------------------------
+// AI-10.3: change-set restore support (reuses AI-7 transactional I/O)
+// ---------------------------------------------------------------------------
+
+nlohmann::json SongMutationService::readSongContent(std::string_view songFile) const
+{
+    const std::string songName = std::string(songFile);
+
+    auto [resolvedPath, pathErr] = resolveSongPath(songFile);
+    if (!pathErr.empty())
+        return {{"ok", false}, {"cmd", "read_song"}, {"error", pathErr},
+                {"code", "INVALID_PATH"}};
+
+    auto [contents, readErr] = readSongFile(resolvedPath);
+    if (!readErr.empty())
+        return {{"ok", false}, {"cmd", "read_song"}, {"error", readErr},
+                {"code", "FILE_NOT_FOUND"}};
+
+    return {{"ok", true}, {"cmd", "read_song"}, {"song", songName},
+            {"content", contents}};
+}
+
+nlohmann::json SongMutationService::restoreSongFile(std::string_view songFile,
+                                                    std::string_view content)
+{
+    const std::string songName = std::string(songFile);
+
+    auditLog("restore_song", songName, true, "change-set rollback");
+
+    // The restore content must itself parse — we never write a broken file
+    // back over a good one (same safety bar as the edit_song verification).
+    const auto parseResult = parseHathorFile(content);
+    if (std::holds_alternative<ParseFileError>(parseResult)) {
+        const auto* err = std::get_if<ParseFileError>(&parseResult);
+        auditLog("restore_song", songName, false, "restore content did not parse");
+        return {
+            {"ok", false},
+            {"cmd", "restore_song"},
+            {"error", "restore content did not parse: " +
+                      (err ? err->message : std::string("unknown error"))},
+            {"code", "PARSE_ERROR"}
+        };
+    }
+
+    auto [resolvedPath, pathErr] = resolveSongPath(songFile);
+    if (!pathErr.empty())
+        return {{"ok", false}, {"cmd", "restore_song"}, {"error", pathErr},
+                {"code", "INVALID_PATH"}};
+
+    // Reuse AI-7's own transactional atomic write with backup + rollback.
+    if (!atomicWriteHathorFile(resolvedPath, std::string(content))) {
+        auditLog("restore_song", songName, false, "atomic write failed");
+        return {
+            {"ok", false},
+            {"cmd", "restore_song"},
+            {"error", "failed to restore song file (rollback attempted)"},
+            {"code", "WRITE_FAILED"}
+        };
+    }
+
+    // Restore runtime state to match the restored content.
+    HathorFile restored;
+    if (const auto* hf = std::get_if<HathorFile>(&parseResult))
+        restored = *hf;
+
+    if (restored.front.bpm)
+        applyBpm(*restored.front.bpm);
+
+    if (restored.front.slot)
+        updateRuntimeSlot(restored);
+    else if (restored.body.empty() && !restored.front.slot) {
+        // No slot, no body — nothing to restore in runtime.
+    }
+
+    auditLog("restore_song", songName, true, "restored");
+    return {{"ok", true}, {"cmd", "restore_song"}, {"song", songName},
+            {"file", resolvedPath.string()}};
+}
+
 } // namespace hathor::control

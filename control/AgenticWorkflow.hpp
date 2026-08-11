@@ -66,6 +66,7 @@
 
 #include "IntentPlanner.hpp"
 #include "WorkingSet.hpp"
+#include "ChangeSet.hpp"
 
 namespace hathor::control {
 
@@ -331,6 +332,68 @@ public:
      */
     void reset();
 
+    // -----------------------------------------------------------------------
+    // AI-10.3: First-class diff / preview / undo for AI changes
+    // -----------------------------------------------------------------------
+
+    /**
+     * Get the active change-set as a JSON snapshot (thread-safe).
+     *
+     * Requirement: AI-10.3 — a complete AI change-set the composer can review.
+     *
+     * @return JSON with change_set_id, intent, status, operations (with
+     *         human-readable summaries and before/after state), reversible
+     *         flag, validation, and checkpoint.  null change-set if none.
+     */
+    nlohmann::json getChangeSet() const;
+
+    /**
+     * Get a human-readable structured preview of the active change-set.
+     *
+     * Requirement: AI-10.3 — the composer can see what the agent changed.
+     */
+    nlohmann::json previewChangeSet() const;
+
+    /**
+     * Accept the active pending change-set.
+     *
+     * Finalises the reviewed change-set according to the underlying canonical
+     * mutation semantics.  Performs NO reapplication of operations — the
+     * mutations were already applied by the workflow through AI-7.  Refuses to
+     * accept a change-set from a workflow that did not reach Completed (a
+     * failed/cancelled run is never presented as accepted).
+     *
+     * @return JSON {ok:true, status:"accepted", change_set_id} or an error.
+     */
+    nlohmann::json acceptChangeSet();
+
+    /**
+     * Reject the active pending change-set: revert the ENTIRE change-set to
+     * pre-change state.
+     *
+     * Reversion is executed through the canonical AI-7 restore path (song
+     * files) and AI-6 asset removal.  Destructive revert actions require
+     * @p confirm == true (AI-1 authorization) — a preview does not itself
+     * grant authorization to execute a destructive operation.
+     *
+     * @param confirm  true to authorize execution of destructive reverts.
+     * @return JSON {ok:true, status:"rejected", reverted:[...]} or, when
+     *         confirmation is required, {requires_confirmation:true,
+     *         preview:...} describing what would be reverted.
+     */
+    nlohmann::json rejectChangeSet(bool confirm = false);
+
+    /**
+     * Undo an already-accepted change-set: revert it to pre-change state.
+     *
+     * @param changeSetId  The id of the accepted change-set to undo.
+     * @param confirm      true to authorize execution of destructive reverts.
+     * @return JSON {ok:true, status:"undone", reverted:[...]} or, when
+     *         confirmation is required, {requires_confirmation:true,
+     *         preview:...}.
+     */
+    nlohmann::json undoChangeSet(int changeSetId, bool confirm = false);
+
 private:
     // -----------------------------------------------------------------------
     // Workflow execution (runs on workflowThread_)
@@ -371,6 +434,13 @@ private:
     /// Emit the current state as a progress event.
     void emitProgress();
 
+    /// Execute a change-set revert plan via AI-7 (restore_song) / AI-6
+    /// (remove_asset).  Returns {ok, executed:[...]}.  Destructive actions are
+    /// only executed when @p confirm is true.
+    nlohmann::json executeRevertPlan(
+        const std::vector<ChangeSetManager::RevertAction>& plan,
+        bool confirm);
+
     /// Pause execution and wait for user confirmation of a destructive op.
     /// Returns true if approved, false if rejected.  Emits a ConfirmationRequest
     /// via the confirmation callback before blocking.
@@ -407,6 +477,10 @@ private:
     // persists across workflow runs for multi-turn continuity.  NOT cleared
     // by reset() (only by clearWorkingSet()).
     WorkingSet                   workingSet_;
+
+    // AI-10.3: Change-set manager — groups the current workflow's persistent
+    // mutations into one coherent, reviewable change-set (diff/preview/undo).
+    ChangeSetManager             changeSetManager_;
 
     // Thread management
     std::thread      workflowThread_;

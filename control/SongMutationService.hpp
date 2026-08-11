@@ -120,6 +120,37 @@ public:
     nlohmann::json handleEditSong(std::string_view songFile,
                                   std::string_view rest);
 
+    // -----------------------------------------------------------------------
+    // AI-10.3: change-set restore support (reuses AI-7 transactional I/O)
+    // -----------------------------------------------------------------------
+
+    /**
+     * Read the raw content of a .hathor song file (canonical read path).
+     *
+     * Used by the agentic workflow to capture before/after content for an
+     * AI change-set so a whole change-set can be previewed and reverted.
+     *
+     * @param songFile  Song file name or path (resolved like edit_song).
+     * @return JSON {ok:true, content} on success, {ok:false, error} otherwise.
+     */
+    nlohmann::json readSongContent(std::string_view songFile) const;
+
+    /**
+     * Restore a .hathor song file to a known-good original content.
+     *
+     * This is the AI-10.3 rollback path for a whole change-set.  It REUSES
+     * AI-7's own transactional atomic-write-with-rollback mechanism
+     * (atomicWriteHathorFile) — it is NOT a second rollback implementation.
+     * The content is re-verified by parsing before it replaces the file, and
+     * runtime slot / BPM state is restored to match the restored content.
+     *
+     * @param songFile  Song file name or path.
+     * @param content   The original file content to restore.
+     * @return JSON {ok:true, ...} on success, {ok:false, error} otherwise.
+     */
+    nlohmann::json restoreSongFile(std::string_view songFile,
+                                   std::string_view content);
+
 private:
     // -----------------------------------------------------------------------
     // Operation handlers (validate + apply to in-memory model)

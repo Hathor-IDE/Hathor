@@ -112,6 +112,26 @@ static void auditLog(std::string_view action,
     std::fprintf(stderr, "%s\n", log.str().c_str());
 }
 
+/// Serialise a change-set revert plan to a human-readable JSON preview
+/// (does NOT grant authorization to execute destructive actions).
+static nlohmann::json revertPlanToJson(
+    const std::vector<ChangeSetManager::RevertAction>& plan)
+{
+    nlohmann::json arr = nlohmann::json::array();
+    for (const auto& a : plan) {
+        nlohmann::json j;
+        j["action"] = a.kind;
+        j["resource_id"] = a.resourceId;
+        j["destructive"] = a.destructive;
+        if (a.kind == "restore_song")
+            j["song_file"] = a.songFile;
+        if (a.kind == "remove_asset")
+            j["asset_name"] = a.assetName;
+        arr.push_back(std::move(j));
+    }
+    return arr;
+}
+
 // ---------------------------------------------------------------------------
 // Construction / destruction
 // ---------------------------------------------------------------------------
@@ -170,6 +190,10 @@ bool AgenticWorkflow::start(Request request,
     // AI-10.2: Record the user intent in the working set so that aliases
     // (e.g. "the bass") can be derived from intent keywords.
     workingSet_.setLastIntent(currentRequest_.intent);
+
+    // AI-10.3: Begin a fresh, pending change-set for this workflow run so that
+    // every persistent mutation is grouped into one coherent, reviewable unit.
+    changeSetManager_.beginChangeSet(currentRequest_.intent);
 
     // Emit the initial queued state.
     if (progressCallback_) {
@@ -1414,6 +1438,30 @@ AgenticWorkflow::StepResult AgenticWorkflow::stepBindAsset()
         if (!assetName.empty()) {
             auto* entry = bank_.find(assetName, 0);
             sr.data["bound_to_sample_bank"] = (entry != nullptr);
+
+            // AI-10.3: record this persistent mutation in the change-set.
+            // Determine whether the asset existed before this commit.
+            const auto projectDir = audio_.currentProjectDir();
+            hathor::AssetPathResolver resolver(projectDir);
+            auto wavResolve = resolver.resolveStudio(
+                hathor::sanitizeAssetName(assetName));
+            auto ckPath = wavResolve.path;
+            ckPath.replace_extension(".ck");
+            std::error_code ec;
+            const bool existed = std::filesystem::exists(wavResolve.path, ec)
+                || std::filesystem::exists(ckPath, ec);
+
+            ChangeSetOperation csOp;
+            csOp.op = "commit_rendered_asset";
+            csOp.resourceId = "instrument:" + assetName;
+            csOp.slotName = currentRequest_.targetSlot;
+            csOp.assetName = assetName;
+            csOp.assetExistedBefore = existed;
+            csOp.before = nlohmann::json{{"existed", existed}};
+            csOp.after = result;
+            csOp.reversible = true;
+            csOp.revertAction = "remove baked asset '" + assetName + "'";
+            changeSetManager_.addOperation(std::move(csOp));
         }
     } else {
         sr.ok = false;
@@ -1495,6 +1543,14 @@ AgenticWorkflow::StepResult AgenticWorkflow::stepUpdateSong()
     // Determine the song file to edit.
     const std::string songFile = currentRequest_.targetSlot + ".hathor";
 
+    // AI-10.3: capture the before-content for the change-set (canonical read).
+    std::string beforeContent;
+    {
+        auto beforeResult = songService_.readSongContent(songFile);
+        if (beforeResult.value("ok", false))
+            beforeContent = beforeResult.value("content", std::string{});
+    }
+
     // Apply the mutation through the canonical SongMutationService (AI-7).
     nlohmann::json result = songService_.editSong(songFile, ops);
 
@@ -1504,6 +1560,48 @@ AgenticWorkflow::StepResult AgenticWorkflow::stepUpdateSong()
         sr.ok = true;
         sr.message = "song updated successfully";
         sr.data["song"] = songFile;
+
+        // AI-10.3: capture the after-content and record the change-set op.
+        std::string afterContent;
+        {
+            auto afterResult = songService_.readSongContent(songFile);
+            if (afterResult.value("ok", false))
+                afterContent = afterResult.value("content", std::string{});
+        }
+
+        // Build a structured before/after snapshot for the human diff by
+        // parsing the captured file content (pre- and post-mutation).
+        auto snapshotOf = [](const std::string& content) {
+            nlohmann::json snap = nlohmann::json{
+                {"bpm", nullptr}, {"label", nullptr}, {"color", nullptr},
+                {"slot", nullptr}, {"bank", nullptr}, {"body", ""}
+            };
+            const auto parsed = hathor::ui::parseHathorFile(content);
+            if (const auto* hf = std::get_if<hathor::ui::HathorFile>(&parsed)) {
+                if (hf->front.bpm)   snap["bpm"]   = *hf->front.bpm;
+                if (hf->front.label) snap["label"] = *hf->front.label;
+                if (hf->front.color) snap["color"] = *hf->front.color;
+                if (hf->front.slot)  snap["slot"]  = *hf->front.slot;
+                if (hf->front.bank)  snap["bank"]  = *hf->front.bank;
+                snap["body"] = hf->body;
+            } else {
+                snap["body"] = content;
+            }
+            return snap;
+        };
+
+        ChangeSetOperation csOp;
+        csOp.op = "edit_song";
+        csOp.resourceId = "song:" + songFile;
+        csOp.slotName = currentRequest_.targetSlot;
+        csOp.songFile = songFile;
+        csOp.originalContent = beforeContent;
+        csOp.newContent = afterContent;
+        csOp.before = snapshotOf(beforeContent);
+        csOp.after = snapshotOf(afterContent);
+        csOp.reversible = true;
+        csOp.revertAction = "restore song '" + songFile + "' to pre-change content";
+        changeSetManager_.addOperation(std::move(csOp));
     } else {
         sr.ok = false;
         sr.message = result.value("error", std::string("song mutation failed"));
@@ -1522,6 +1620,11 @@ void AgenticWorkflow::setState(State s)
         std::lock_guard<std::mutex> lock(stateMtx_);
         state_ = s;
     }
+    // AI-10.3: A failed or cancelled workflow never presents its (possibly
+    // partial) change-set as accepted.  Mark any pending change-set cancelled
+    // so the composer cannot mistake a failed run for a clean, reviewable one.
+    if (s == State::Failed || s == State::Cancelled)
+        changeSetManager_.cancelCurrent();
     auditLog("state_change", "workflow", true, stateName(s));
     emitProgress();
 }
@@ -1758,6 +1861,198 @@ void AgenticWorkflow::clearWorkingSet()
 void AgenticWorkflow::reconcileWorkingSet(const nlohmann::json& projectState)
 {
     workingSet_.reconcile(projectState);
+}
+
+// ---------------------------------------------------------------------------
+// AI-10.3: First-class diff / preview / undo for AI changes
+// ---------------------------------------------------------------------------
+
+nlohmann::json AgenticWorkflow::getChangeSet() const
+{
+    nlohmann::json j = changeSetManager_.toJsonActive();
+    if (!j.value("ok", false))
+        return j;  // {ok:false, error:"no change-set"}
+    j["cmd"] = "changeset_status";
+    return j;
+}
+
+nlohmann::json AgenticWorkflow::previewChangeSet() const
+{
+    nlohmann::json j = changeSetManager_.previewCurrent();
+    return j;
+}
+
+nlohmann::json AgenticWorkflow::acceptChangeSet()
+{
+    // A change-set may only be accepted when the workflow actually completed.
+    // A failed/cancelled run is never presented as accepted (test #10).
+    {
+        std::lock_guard<std::mutex> lock(stateMtx_);
+        if (state_ != State::Completed) {
+            return {
+                {"ok", false},
+                {"cmd", "changeset_accept"},
+                {"error", "workflow has not completed; cannot accept change-set"}
+            };
+        }
+    }
+
+    if (!changeSetManager_.hasPending()) {
+        return {
+            {"ok", false},
+            {"cmd", "changeset_accept"},
+            {"error", "no pending change-set to accept"}
+        };
+    }
+
+    const int id = changeSetManager_.currentChangeSetId();
+    if (!changeSetManager_.acceptCurrent()) {
+        return {
+            {"ok", false},
+            {"cmd", "changeset_accept"},
+            {"error", "failed to accept change-set"}
+        };
+    }
+
+    auditLog("changeset_accept", "agentic", true,
+             "change_set_id=" + std::to_string(id));
+    return {
+        {"ok", true},
+        {"cmd", "changeset_accept"},
+        {"change_set_id", id},
+        {"status", "accepted"}
+    };
+}
+
+nlohmann::json AgenticWorkflow::rejectChangeSet(bool confirm)
+{
+    auto plan = changeSetManager_.rejectCurrent();
+    if (!plan) {
+        return {
+            {"ok", false},
+            {"cmd", "changeset_reject"},
+            {"error", "no reversible pending change-set to reject"}
+        };
+    }
+
+    const int id = changeSetManager_.currentChangeSetId();
+
+    // Preview what would be reverted.  A preview does not grant authorization.
+    if (!confirm) {
+        return {
+            {"ok", false},
+            {"cmd", "changeset_reject"},
+            {"requires_confirmation", true},
+            {"change_set_id", id},
+            {"preview", revertPlanToJson(*plan)},
+            {"message", "rejecting reverts the ENTIRE change-set; pass confirm=true to authorize"}
+        };
+    }
+
+    nlohmann::json executed = executeRevertPlan(*plan, confirm);
+
+    if (executed.value("ok", false))
+        changeSetManager_.markRejected();
+
+    return {
+        {"ok", executed.value("ok", false)},
+        {"cmd", "changeset_reject"},
+        {"change_set_id", id},
+        {"status", executed.value("ok", false) ? "rejected" : "reject_failed"},
+        {"executed", executed.value("executed", nlohmann::json::array())},
+        {"error", executed.value("error", nlohmann::json(nullptr))}
+    };
+}
+
+nlohmann::json AgenticWorkflow::undoChangeSet(int changeSetId, bool confirm)
+{
+    auto plan = changeSetManager_.undoAccepted(changeSetId);
+    if (!plan) {
+        return {
+            {"ok", false},
+            {"cmd", "changeset_undo"},
+            {"error", "no accepted, reversible change-set with that id"}
+        };
+    }
+
+    if (!confirm) {
+        return {
+            {"ok", false},
+            {"cmd", "changeset_undo"},
+            {"requires_confirmation", true},
+            {"change_set_id", changeSetId},
+            {"preview", revertPlanToJson(*plan)},
+            {"message", "undoing reverts the ENTIRE change-set; pass confirm=true to authorize"}
+        };
+    }
+
+    nlohmann::json executed = executeRevertPlan(*plan, confirm);
+
+    if (executed.value("ok", false))
+        changeSetManager_.markUndone();
+
+    return {
+        {"ok", executed.value("ok", false)},
+        {"cmd", "changeset_undo"},
+        {"change_set_id", changeSetId},
+        {"status", executed.value("ok", false) ? "undone" : "undo_failed"},
+        {"executed", executed.value("executed", nlohmann::json::array())},
+        {"error", executed.value("error", nlohmann::json(nullptr))}
+    };
+}
+
+nlohmann::json AgenticWorkflow::executeRevertPlan(
+    const std::vector<ChangeSetManager::RevertAction>& plan,
+    bool confirm)
+{
+    nlohmann::json executed = nlohmann::json::array();
+    nlohmann::json failure;
+
+    for (const auto& action : plan) {
+        // Destructive actions require authorization (AI-1).  The caller must
+        // have passed confirm=true — a preview never grants authorization.
+        if (action.destructive && !confirm) {
+            failure = {
+                {"action", action.kind},
+                {"resource_id", action.resourceId},
+                {"error", "destructive revert requires confirmation"}
+            };
+            break;
+        }
+
+        if (action.kind == "restore_song") {
+            nlohmann::json r = songService_.restoreSongFile(
+                action.songFile, action.content);
+            r["action"] = "restore_song";
+            r["resource_id"] = action.resourceId;
+            executed.push_back(std::move(r));
+            if (!r.value("ok", false)) {
+                failure = r;
+                break;
+            }
+        } else if (action.kind == "remove_asset") {
+            nlohmann::json r = renderService_.removeRenderedAsset(
+                action.assetName);
+            r["action"] = "remove_asset";
+            r["resource_id"] = action.resourceId;
+            executed.push_back(std::move(r));
+            if (!r.value("ok", false)) {
+                failure = r;
+                break;
+            }
+        } else {
+            failure = {
+                {"action", action.kind},
+                {"resource_id", action.resourceId},
+                {"error", "unknown revert action"}
+            };
+            break;
+        }
+    }
+
+    if (!failure.is_null())
+        return {{"ok", false}, {"executed", executed}, {"error", failure}};
+    return {{"ok", true}, {"executed", executed}};
 }
 
 } // namespace hathor::control
