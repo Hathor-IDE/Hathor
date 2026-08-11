@@ -243,7 +243,7 @@ TEST_CASE("J-2: Tab accepts exactly the selected candidate", "[j-2][accept]")
     REQUIRE(logic.selectedCandidateIndex() == 1);
 
     // Accept
-    auto params = logic.onAccept();
+    auto params = logic.onAccept(10);
     REQUIRE(params.has_value());
 
     // The accepted completion index should be 1 (the second candidate)
@@ -286,7 +286,7 @@ TEST_CASE("J-2: Esc dismisses candidates without changing document state", "[j-2
     std::string beforeDoc = beforeCtx.documentText;
 
     // Dismiss (Esc)
-    auto params = logic.onReject();
+    auto params = logic.onReject(10);
     REQUIRE(params.has_value());
 
     // Context unchanged
@@ -403,7 +403,7 @@ TEST_CASE("J-2: accepting one candidate discards the remaining candidates", "[j-
     REQUIRE(logic.selectedCandidateIndex() == 2);
 
     // Accept the selected candidate
-    auto params = logic.onAccept();
+    auto params = logic.onAccept(10);
     REQUIRE(params.has_value());
     REQUIRE(params->acceptedCompletion == 2);
 
@@ -664,7 +664,7 @@ TEST_CASE("J-2: after accept, cycling has no candidates", "[j-2][post-accept]")
     logic.onGhostResponse(req.value().second, resp, 10);
     REQUIRE(logic.candidateCount() == 3);
 
-    logic.onAccept();
+    logic.onAccept(10);
 
     REQUIRE_FALSE(logic.hasActiveGhost());
     REQUIRE(logic.candidateCount() == 0);

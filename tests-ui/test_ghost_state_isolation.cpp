@@ -106,7 +106,7 @@ TEST_CASE("AI-G6.2: onAccept returns notification params, not document content",
     REQUIRE(logic.hasActiveGhost());
 
     // onAccept returns notification params only — GhostResult is not exposed
-    auto params = logic.onAccept();
+    auto params = logic.onAccept(10);
     REQUIRE(params.has_value());
     REQUIRE(params->requestId == req.value().second);
     REQUIRE(params->acceptedCompletion == 0);
@@ -137,7 +137,7 @@ TEST_CASE("AI-G6.3: onReject clears ghost state without document modification", 
     REQUIRE(ghost.has_value());
     REQUIRE(logic.hasActiveGhost());
 
-    auto rejectParams = logic.onReject();
+    auto rejectParams = logic.onReject(10);
     REQUIRE(rejectParams.has_value());
     REQUIRE(rejectParams->requestId == req.value().second);
 
@@ -472,7 +472,7 @@ TEST_CASE("AI-G6.14: after accept, coordinator returns to Idle with no ghost sta
     REQUIRE(coord.isGhostActive());
 
     // Accept
-    auto params = coord.onGhostAccepted();
+    auto params = coord.onGhostAccepted(10);
     REQUIRE(params.has_value());
 
     // State fully cleared
@@ -500,7 +500,7 @@ TEST_CASE("AI-G6: after reject, coordinator returns to Idle with no ghost state"
     REQUIRE(ghost.has_value());
     REQUIRE(coord.isGhostActive());
 
-    auto params = coord.onGhostRejected();
+    auto params = coord.onGhostRejected(10);
     REQUIRE(params.has_value());
 
     REQUIRE(coord.mode() == CompletionCoordinator::Mode::Idle);

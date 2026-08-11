@@ -307,6 +307,7 @@ std::optional<GhostResult> GhostCompletionLogic::onGhostResponse(
             TelemetryEvent evt;
             evt.type = GhostEventType::StaleRejected;
             evt.languageId = currentCtx_.languageId;
+            evt.timestampMs = nowMs;
             evt.requestId = requestId;
             evt.revision = pending.revision;
             evt.isStale = true;
@@ -416,7 +417,7 @@ std::optional<GhostResult> GhostCompletionLogic::onProviderFailure()
     return std::nullopt;
 }
 
-std::optional<AcceptCompletionParams> GhostCompletionLogic::onAccept()
+std::optional<AcceptCompletionParams> GhostCompletionLogic::onAccept(int64_t nowMs)
 {
     if (!activeGhost_.has_value())
         return std::nullopt;
@@ -442,6 +443,7 @@ std::optional<AcceptCompletionParams> GhostCompletionLogic::onAccept()
         TelemetryEvent evt;
         evt.type = GhostEventType::Accepted;
         evt.languageId = currentCtx_.languageId;
+        evt.timestampMs = nowMs;
         evt.requestId = activeGhost_->requestId;
         evt.revision = activeGhost_->revision;
         telemetry_->recordEvent(evt);
@@ -454,7 +456,7 @@ std::optional<AcceptCompletionParams> GhostCompletionLogic::onAccept()
     return params;
 }
 
-std::optional<PartialAcceptResult> GhostCompletionLogic::onPartialAccept(size_t acceptLen)
+std::optional<PartialAcceptResult> GhostCompletionLogic::onPartialAccept(size_t acceptLen, int64_t nowMs)
 {
     if (!activeGhost_.has_value())
         return std::nullopt;
@@ -511,6 +513,7 @@ std::optional<PartialAcceptResult> GhostCompletionLogic::onPartialAccept(size_t 
         TelemetryEvent evt;
         evt.type = GhostEventType::PartiallyAccepted;
         evt.languageId = currentCtx_.languageId;
+        evt.timestampMs = nowMs;
         evt.requestId = activeGhost_->requestId;
         evt.revision = activeGhost_->revision;
         evt.acceptLength = static_cast<int>(acceptLen);
@@ -542,7 +545,7 @@ size_t GhostCompletionLogic::findNextTokenBoundary(std::string_view text) noexce
     return text.size();
 }
 
-std::optional<RejectCompletionParams> GhostCompletionLogic::onReject()
+std::optional<RejectCompletionParams> GhostCompletionLogic::onReject(int64_t nowMs)
 {
     if (!activeGhost_.has_value())
         return std::nullopt;
@@ -561,6 +564,7 @@ std::optional<RejectCompletionParams> GhostCompletionLogic::onReject()
         TelemetryEvent evt;
         evt.type = GhostEventType::Rejected;
         evt.languageId = currentCtx_.languageId;
+        evt.timestampMs = nowMs;
         evt.requestId = activeGhost_->requestId;
         evt.revision = activeGhost_->revision;
         telemetry_->recordEvent(evt);

@@ -154,18 +154,18 @@ CompletionCoordinator::onGhostResponse(const std::string& requestId,
 }
 
 std::optional<lsp::AcceptCompletionParams>
-CompletionCoordinator::onGhostAccepted()
+CompletionCoordinator::onGhostAccepted(int64_t nowMs)
 {
-    auto params = ghostLogic_->onAccept();
+    auto params = ghostLogic_->onAccept(nowMs);
     if (params.has_value())
         mode_ = Mode::Idle;
     return params;
 }
 
 std::optional<lsp::RejectCompletionParams>
-CompletionCoordinator::onGhostRejected()
+CompletionCoordinator::onGhostRejected(int64_t nowMs)
 {
-    auto params = ghostLogic_->onReject();
+    auto params = ghostLogic_->onReject(nowMs);
     if (params.has_value())
         mode_ = Mode::Idle;
     return params;
@@ -176,9 +176,9 @@ CompletionCoordinator::onGhostRejected()
 // ---------------------------------------------------------------------------
 
 std::optional<lsp::PartialAcceptResult>
-CompletionCoordinator::onGhostPartialAccepted(size_t acceptLen)
+CompletionCoordinator::onGhostPartialAccepted(size_t acceptLen, int64_t nowMs)
 {
-    auto result = ghostLogic_->onPartialAccept(acceptLen);
+    auto result = ghostLogic_->onPartialAccept(acceptLen, nowMs);
     // Mode stays GhostActive — the remaining suffix is still displayed.
     // No notification is sent to llm-ls (partial accept is UI-only state).
     // ghostRevision_ stays in sync with docRevision_ (it was set when the
@@ -260,7 +260,7 @@ void CompletionCoordinator::requestLspCompletion()
     // If ghost is currently displayed, send reject notification to llm-ls
     // (but don't re-query the ghost logic — it already processed the response).
     if (mode_ == Mode::GhostActive)
-        ghostLogic_->onReject();
+        ghostLogic_->onReject(0);  // nowMs not available in this path; TTA not needed for LSP cancel
 
     // Cancel any pending ghost request — no point waiting if the user
     // explicitly invoked LSP completion.

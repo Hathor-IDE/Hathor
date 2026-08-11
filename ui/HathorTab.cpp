@@ -113,6 +113,14 @@ HathorTab::HathorTab(int slotIndex, const juce::File& file)
       coordinator_->setGhostDebounceMs(300);
       coordinator_->setGhostTimeoutMs(5000);
 
+#ifdef HATHOR_ENABLE_GHOST_TELEMETRY
+      // J-6: Install per-tab telemetry sink on the coordinator.
+      // The coordinator forwards this to GhostCompletionLogic, which records
+      // DISPLAYED, ACCEPTED, PARTIALLY_ACCEPTED, REJECTED, and STALE_REJECTED events.
+      telemetry_ = std::make_unique<lsp::GhostCompletionTelemetry>();
+      coordinator_->setTelemetry(telemetry_.get());
+#endif
+
       ghostOverlay_ = std::make_unique<GhostTextOverlay>();
       ghostOverlay_->setInterceptsMouseClicks(false, false);
       addAndMakeVisible(*ghostOverlay_);
@@ -477,15 +485,75 @@ void HathorTab::codeDocumentTextInserted(const juce::String& /*newText*/,
     if (coordinator_)
         coordinator_->onDocumentChanged();
 
-    // AI-G6: Clear ghost text on any edit — the ghost is context-sensitive
-    // and must be recomputed for the new document state. Also clear the
-    // stored result so acceptance verification will fail if the cursor
-    // hasn't moved but the document has changed.
-     if (ghostOverlay_)
-         ghostOverlay_->clearGhost();
-     activeGhostResult_.reset();
-     if (useChuckTokeniser_)
-         triggerChuckDiagnostics();
+     // AI-G6: Clear ghost text on any edit — the ghost is context-sensitive
+     // and must be recomputed for the new document state. Also clear the
+     // stored result so acceptance verification will fail if the cursor
+     // hasn't moved but the document has changed.
+      if (ghostOverlay_)
+          ghostOverlay_->clearGhost();
+      activeGhostResult_.reset();
+
+      // J-6: Detect immediate deletion of accepted ghost text.
+      // If the user pasted/accepted ghost text and then immediately deleted it
+      // (within the grace window), record IMMEDIATE_DELETION.
+      // Also detect heavy modification (edits that substantially change the
+      // accepted text — more than 50% of the original length).
+#ifdef HATHOR_ENABLE_GHOST_TELEMETRY
+      if (telemetry_ && ghostAccepted_)
+      {
+          int64_t nowMs = static_cast<int64_t>(
+              std::chrono::duration_cast<std::chrono::milliseconds>(
+                  std::chrono::steady_clock::now().time_since_epoch())
+              .count());
+
+          // Immediate deletion: deletion occurred within 2000ms of acceptance
+          // and the deleted text matches the accepted ghost text.
+          // (We can't inspect the exact deleted text here without the startIndex/endIndex,
+          // so we use a heuristic: if the current document no longer contains
+          // the accepted text and the deletion is quick, it's likely immediate deletion.)
+          static constexpr int64_t kImmediateDeletionWindowMs = 2000;
+          if (nowMs - acceptedAtMs_ <= kImmediateDeletionWindowMs)
+          {
+              // Check if the accepted text is no longer in the document
+              juce::String docText = document_.getAllContent();
+              if (!acceptedGhostText_.empty() &&
+                  docText.toStdString().find(acceptedGhostText_) == std::string::npos)
+              {
+                  telemetry_->recordImmediateDeletion(coordinator_->ghostLogic().currentContext().uri, nowMs);
+              }
+          }
+
+          // Heavy modification: the accepted text has been substantially edited.
+          // Heuristic: more than 50% of the accepted text has been modified
+          // (we can't compute the exact diff here, so we use a time-based
+          // approach: if more than kImmediateDeletionWindowMs has passed and
+          // the accepted text is partially present but modified).
+          // For simplicity, we record heavy modification when the document
+          // no longer contains the exact accepted text AND some time has passed
+          // (beyond the immediate deletion window).
+          if (nowMs - acceptedAtMs_ > kImmediateDeletionWindowMs)
+          {
+              juce::String docText = document_.getAllContent();
+              if (!acceptedGhostText_.empty() &&
+                  docText.toStdString().find(acceptedGhostText_) == std::string::npos)
+              {
+                  // The accepted text was modified (not just deleted) —
+                  // check if there's replacement text of similar position
+                  // by looking for partial matches.
+                  // Simple heuristic: accepted text is gone but cursor is nearby.
+                  telemetry_->recordHeavyModification(
+                      coordinator_->ghostLogic().currentContext().uri, nowMs);
+              }
+          }
+      }
+#endif
+
+      ghostAccepted_ = false;
+      acceptedGhostText_.clear();
+      acceptedAtMs_ = 0;
+
+      if (useChuckTokeniser_)
+          triggerChuckDiagnostics();
      else
          notifyLspDidChange();
 }
@@ -521,15 +589,52 @@ void HathorTab::codeDocumentTextDeleted(int /*startIndex*/,
     if (ghostOverlay_)
         ghostOverlay_->clearGhost();
     activeGhostResult_.reset();
+
+    // J-6: Detect immediate deletion of accepted ghost text.
+    // A deletion event immediately after acceptance likely means the
+    // user undid or rejected the ghost completion.
+#ifdef HATHOR_ENABLE_GHOST_TELEMETRY
+    if (telemetry_ && ghostAccepted_)
+    {
+        int64_t nowMs = static_cast<int64_t>(
+            std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now().time_since_epoch())
+            .count());
+
+        static constexpr int64_t kImmediateDeletionWindowMs = 2000;
+        if (nowMs - acceptedAtMs_ <= kImmediateDeletionWindowMs)
+        {
+            juce::String docText = document_.getAllContent();
+            if (!acceptedGhostText_.empty() &&
+                docText.toStdString().find(acceptedGhostText_) == std::string::npos)
+            {
+                telemetry_->recordImmediateDeletion(
+                    coordinator_->ghostLogic().currentContext().uri, nowMs);
+            }
+        }
+        else
+        {
+            // Beyond the immediate-deletion window: check for heavy modification
+            juce::String docText = document_.getAllContent();
+            if (!acceptedGhostText_.empty() &&
+                docText.toStdString().find(acceptedGhostText_) == std::string::npos)
+            {
+                telemetry_->recordHeavyModification(
+                    coordinator_->ghostLogic().currentContext().uri, nowMs);
+            }
+        }
+    }
+#endif
+
+    ghostAccepted_ = false;
+    acceptedGhostText_.clear();
+    acceptedAtMs_ = 0;
+
     if (useChuckTokeniser_)
         triggerChuckDiagnostics();
     else
         notifyLspDidChange();
 }
-
-// ---------------------------------------------------------------------------
-// Internal helpers
-// ---------------------------------------------------------------------------
 
 void HathorTab::markUnsaved()
 {
@@ -1228,8 +1333,28 @@ void HathorTab::notifyChuckDiagnostics(const std::string& uri,
     auto diags = lsp::chuckDiagnostics(cd, metadata, compat,
                                       docText.toStdString());
 
-    // Reuse the same display path as LSP diagnostics.
+     // Reuse the same display path as LSP diagnostics.
     notifyLspDiagnostics(uri, diags);
+
+    // J-6: Record compile result for telemetry quality tracking.
+    // The compile result is correlated to the most recent accepted ghost
+    // completion's requestId (if telemetry is active).
+#ifdef HATHOR_ENABLE_GHOST_TELEMETRY
+    if (telemetry_)
+    {
+        int64_t nowMs = static_cast<int64_t>(
+            std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now().time_since_epoch())
+            .count());
+        // Use the coordinator's current context URI as the requestId
+        // correlation key. In a more sophisticated implementation, we would
+        // track the last accepted requestId, but for now we use the URI.
+        telemetry_->recordCompileResult(
+            coordinator_->ghostLogic().currentContext().uri,
+            nowMs,
+            diag.ok);
+    }
+#endif
 
     // AI-8: Forward ChucK diagnostics to the LspContextBridge so they
     // can be included in the authoring context payload for .ck files.
@@ -1378,7 +1503,11 @@ void HathorTab::acceptGhostCompletion()
 
     // AI-G3: Accept through the coordinator — it handles mode transition
     // and returns the accept notification params.
-    auto acceptParams = coordinator_->onGhostAccepted();
+    int64_t acceptTime = static_cast<int64_t>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now().time_since_epoch())
+        .count());
+    auto acceptParams = coordinator_->onGhostAccepted(acceptTime);
     if (acceptParams.has_value() && ghostClient_)
         ghostClient_->sendAccept(*acceptParams);
 
@@ -1386,6 +1515,30 @@ void HathorTab::acceptGhostCompletion()
     // using the editor's normal document-edit mechanism. This creates a
     // proper, undoable edit — the ghost text becomes a normal document edit.
     int caretAbs = editor_.getCaretPosition();
+
+    // J-6: Track accepted ghost text for outcome monitoring (immediate deletion,
+    // heavy modification, compile result). Also snapshot diagnostics before
+    // insertion to detect newly introduced diagnostics after acceptance.
+#ifdef HATHOR_ENABLE_GHOST_TELEMETRY
+    if (telemetry_)
+    {
+        acceptedGhostText_ = text;
+        acceptedAtMs_ = acceptTime;
+        ghostAccepted_ = true;
+
+        // Record compile result for .ck files (ChucK compilation).
+        // For .hathor files, compilation is not applicable (no compiler),
+        // so we skip the compile-result event.
+        if (useChuckTokeniser_)
+        {
+            // Trigger async ChucK validation — the callback will record
+            // COMPILE_RESULT. We store the requestId on the coordinator
+            // for correlation.
+            // TODO: wire the compile-result callback to telemetry
+        }
+    }
+#endif
+
     document_.insertText(caretAbs, juce::String(text));
 }
 
@@ -1403,7 +1556,11 @@ void HathorTab::partialAcceptGhostCompletion()
             static_cast<int>(caretPos.getIndexInLine()) != gr.character)
         {
             // Cursor moved — dismiss the stale ghost instead.
-            coordinator_->onGhostRejected();
+            int64_t rejectTime = static_cast<int64_t>(
+                std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::steady_clock::now().time_since_epoch())
+                .count());
+            coordinator_->onGhostRejected(rejectTime);
             ghostOverlay_->clearGhost();
             activeGhostResult_.reset();
             return;
@@ -1429,7 +1586,11 @@ void HathorTab::partialAcceptGhostCompletion()
     // J-3: Ask the coordinator to split the ghost — the accepted prefix is
     // returned for insertion; the remaining suffix stays as ghost state.
     // No LLM request is issued; no notification is sent to llm-ls.
-    auto partialResult = coordinator_->onGhostPartialAccepted(acceptLen);
+    int64_t nowMs = static_cast<int64_t>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now().time_since_epoch())
+        .count());
+    auto partialResult = coordinator_->onGhostPartialAccepted(acceptLen, nowMs);
     if (!partialResult.has_value())
         return;
 
@@ -1484,7 +1645,11 @@ void HathorTab::dismissGhostCompletion()
         return;
 
     // AI-G3: Reject through the coordinator
-    auto rejectParams = coordinator_->onGhostRejected();
+    int64_t rejectTime = static_cast<int64_t>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now().time_since_epoch())
+        .count());
+    auto rejectParams = coordinator_->onGhostRejected(rejectTime);
     if (rejectParams.has_value() && ghostClient_)
         ghostClient_->sendReject(*rejectParams);
 
@@ -1674,8 +1839,26 @@ void HathorTab::ghostTick()
                  // hide the ghost overlay.
                  ghostOverlay_->hideGhost();
              }
-        });
+         });
 }
+
+// ---------------------------------------------------------------------------
+// J-6: Telemetry accessors
+// ---------------------------------------------------------------------------
+
+#ifdef HATHOR_ENABLE_GHOST_TELEMETRY
+juce::String HathorTab::ghostQualityReport() const noexcept
+{
+    if (!telemetry_)
+        return juce::String();
+    return juce::String(telemetry_->generateReport());
+}
+
+lsp::GhostCompletionTelemetry* HathorTab::ghostTelemetry() const noexcept
+{
+    return telemetry_.get();
+}
+#endif
 
 // ---------------------------------------------------------------------------
 // DiagnosticsOverlay implementation

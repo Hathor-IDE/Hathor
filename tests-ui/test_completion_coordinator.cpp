@@ -219,7 +219,7 @@ TEST_CASE("CompletionCoordinator onGhostAccepted clears mode and returns params"
     REQUIRE(coord.isGhostActive());
 
     // Accept
-    auto params = coord.onGhostAccepted();
+    auto params = coord.onGhostAccepted(10);
     REQUIRE(params.has_value());
     REQUIRE(params->requestId == req->second);
 
@@ -248,7 +248,7 @@ TEST_CASE("CompletionCoordinator onGhostRejected clears mode and returns params"
     REQUIRE(coord.isGhostActive());
 
     // Reject
-    auto params = coord.onGhostRejected();
+    auto params = coord.onGhostRejected(10);
     REQUIRE(params.has_value());
     REQUIRE(params->requestId == req->second);
 

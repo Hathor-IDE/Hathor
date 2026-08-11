@@ -160,39 +160,47 @@ public:
                     const lsp::GhostCompletionResponse& response,
                     int64_t nowMs);
 
-     /**
-      * Called when the user accepts the ghost text (Tab / Ctrl+.).
-      * Returns AcceptCompletionParams for the notification to llm-ls.
-      */
-     std::optional<lsp::AcceptCompletionParams> onGhostAccepted();
+      /**
+        * Called when the user accepts the ghost text (Tab / Ctrl+.).
+        *
+        * @param nowMs  Current time in milliseconds (steady clock epoch) —
+        *               used for telemetry time-to-accept.
+        * @return AcceptCompletionParams for the notification to llm-ls.
+        */
+      std::optional<lsp::AcceptCompletionParams> onGhostAccepted(int64_t nowMs);
 
-     /**
-      * Called when the user rejects the ghost text (Escape / any edit).
-      * Returns RejectCompletionParams for the notification to llm-ls.
-      */
-     std::optional<lsp::RejectCompletionParams> onGhostRejected();
+      /**
+        * Called when the user rejects the ghost text (Escape / any edit).
+        *
+        * @param nowMs  Current time in milliseconds (steady clock epoch) —
+        *               used for telemetry timestamping.
+        * @return RejectCompletionParams for the notification to llm-ls.
+        */
+      std::optional<lsp::RejectCompletionParams> onGhostRejected(int64_t nowMs);
 
      // -----------------------------------------------------------------------
      // J-3: Partial / multi-token acceptance
      // -----------------------------------------------------------------------
 
-     /**
-      * Called when the user partially accepts the ghost text (Ctrl+→).
-      *
-      * Splits the currently selected candidate at `acceptLen` characters.
-      * The prefix is returned for document insertion; the suffix remains as
-      * ghost state. The coordinator stays in GhostActive mode.
-      *
-      * Does NOT issue an LLM request. Does NOT send a notification to llm-ls
-      * (partial accept is pure UI state — the accept/reject notification is
-      * only sent when the ghost is fully accepted or dismissed).
-      *
-      * @param acceptLen  Number of characters of the selected candidate to accept.
-      * @return PartialAcceptResult with the accepted prefix and updated
-      *         GhostResult for the remaining suffix.
-      */
-     std::optional<lsp::PartialAcceptResult>
-     onGhostPartialAccepted(size_t acceptLen);
+      /**
+       * Called when the user partially accepts the ghost text (Ctrl+→).
+       *
+       * Splits the currently selected candidate at `acceptLen` characters.
+       * The prefix is returned for document insertion; the remaining suffix
+       * remains as ghost state. The coordinator stays in GhostActive mode.
+       *
+       * Does NOT issue an LLM request. Does NOT send a notification to llm-ls
+       * (partial accept is pure UI state — the accept/reject notification is
+       * only sent when the ghost is fully accepted or dismissed).
+       *
+       * @param acceptLen  Number of characters of the selected candidate to accept.
+       * @param nowMs  Current time in milliseconds (steady clock epoch) —
+       *               used for telemetry timestamping.
+       * @return PartialAcceptResult with the accepted prefix and updated
+       *         GhostResult for the remaining suffix.
+       */
+      std::optional<lsp::PartialAcceptResult>
+      onGhostPartialAccepted(size_t acceptLen, int64_t nowMs);
 
      /**
       * Called by HathorTab when a partial-accept document insert has been
@@ -244,12 +252,31 @@ public:
      */
     std::optional<lsp::GhostResult> selectedGhostResult() const noexcept;
 
-    /**
-      * Notify the coordinator that a deterministic completion popup has
-      * become active or was dismissed. Delegates to GhostCompletionLogic
-      * to suppress / resume ghost completion (AI-G5 precedence).
-      */
-    void setGhostDeterministicPopupActive(bool active) noexcept;
+     /**
+       * Notify the coordinator that a deterministic completion popup has
+       * become active or was dismissed. Delegates to GhostCompletionLogic
+       * to suppress / resume ghost completion (AI-G5 precedence).
+       */
+     void setGhostDeterministicPopupActive(bool active) noexcept;
+
+#ifdef HATHOR_ENABLE_GHOST_TELEMETRY
+     /**
+       * Install a telemetry sink for ghost completion quality tracking (J-6).
+       * Non-owning pointer — forwarded to GhostCompletionLogic. When null
+       * (default), no telemetry is recorded. Must be called before
+       * triggering ghost completion for events to be captured.
+       */
+     void setTelemetry(lsp::GhostCompletionTelemetry* telemetry) noexcept
+     {
+         ghostLogic_->setTelemetry(telemetry);
+     }
+
+     /** Get the telemetry sink (forwarded from GhostCompletionLogic). */
+     lsp::GhostCompletionTelemetry* telemetry() const noexcept
+     {
+         return ghostLogic_->telemetry();
+     }
+#endif
 
     // -----------------------------------------------------------------------
     // LSP completion control

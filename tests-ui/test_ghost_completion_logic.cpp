@@ -315,7 +315,7 @@ TEST_CASE("GhostCompletionLogic onAccept returns params and clears ghost", "[gho
     REQUIRE(ghostResult.has_value());
     REQUIRE(logic.hasActiveGhost());
 
-    auto acceptParams = logic.onAccept();
+    auto acceptParams = logic.onAccept(10);
     REQUIRE(acceptParams.has_value());
     REQUIRE(acceptParams->requestId == requestId);
     REQUIRE(acceptParams->acceptedCompletion == 0);
@@ -349,7 +349,7 @@ TEST_CASE("GhostCompletionLogic onReject returns params and clears ghost", "[gho
     REQUIRE(ghostResult.has_value());
     REQUIRE(logic.hasActiveGhost());
 
-    auto rejectParams = logic.onReject();
+    auto rejectParams = logic.onReject(10);
     REQUIRE(rejectParams.has_value());
     REQUIRE(rejectParams->requestId == requestId);
     REQUIRE(rejectParams->shownCompletions.size() == 1);

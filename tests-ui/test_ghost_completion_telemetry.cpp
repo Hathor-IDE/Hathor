@@ -315,19 +315,11 @@ TEST_CASE("J-6: all rates are in [0, 1]", "[j-6][rates-bounded]")
 {
     GhostCompletionTelemetry telemetry;
 
-    // Edge case: accept with no prior display → rate should be 0
-    telemetry.recordAccepted("orphan", 1000, 1);
-    telemetry.recordRejected("orphan2", 1010, 1);
-
-    auto allMetrics = telemetry.computeMetrics();
-
-    // With no Displayed events, there are no languages to report
-    REQUIRE(allMetrics.empty());
-
-    // Now add displays
+    // Start with a clean slate: one displayed, one accepted, compile success,
+    // one diagnostic, one immediate deletion, one heavy modification.
     telemetry.recordDisplayed("hathor", "r1", 1000, 1);
     telemetry.recordAccepted("r1", 1050, 1);
-    telemetry.recordCompileResult("r1", 1100, true);
+    telemetry.recordCompileResult("r1", 1075, true);
     telemetry.recordDiagnosticAdded("r1", 1100, 1);
     telemetry.recordImmediateDeletion("r1", 1100);
     telemetry.recordHeavyModification("r1", 1100);
@@ -343,6 +335,21 @@ TEST_CASE("J-6: all rates are in [0, 1]", "[j-6][rates-bounded]")
     REQUIRE(metrics.immediateDeletionRate <= 1.0);
     REQUIRE(metrics.heavyModificationRate >= 0.0);
     REQUIRE(metrics.heavyModificationRate <= 1.0);
+
+    // Edge case: 100% rejection → acceptance rate 0
+    telemetry.clear();
+    telemetry.recordDisplayed("hathor", "r2", 1000, 1);
+    telemetry.recordRejected("r2", 1010, 1);
+    auto metrics2 = telemetry.computeMetricsForLanguage("hathor");
+    REQUIRE(metrics2.acceptanceRate == 0.0);
+    REQUIRE(metrics2.acceptedCount == 0);
+
+    // Edge case: 100% acceptance → acceptance rate 1.0
+    telemetry.clear();
+    telemetry.recordDisplayed("hathor", "r3", 1000, 1);
+    telemetry.recordAccepted("r3", 1050, 1);
+    auto metrics3 = telemetry.computeMetricsForLanguage("hathor");
+    REQUIRE(metrics3.acceptanceRate == 1.0);
 }
 
 // ===========================================================================

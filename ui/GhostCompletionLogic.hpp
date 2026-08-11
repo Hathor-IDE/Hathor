@@ -169,16 +169,6 @@ public:
         policy_.setConfig(cfg);
     }
 
-    /**
-       * Set the trigger policy configuration (tunables for the ghost completion
-       * triggering rules — J-1). Allows callers to configure which contexts
-       * should trigger ghost completion without restructuring the lifecycle.
-       */
-    void setTriggerPolicyConfig(const GhostTriggerPolicyConfig& cfg) noexcept
-    {
-        policy_.setConfig(cfg);
-    }
-
     /** Read the current trigger policy configuration. */
     const GhostTriggerPolicyConfig& triggerPolicyConfig() const noexcept
     {
@@ -276,44 +266,50 @@ public:
     std::optional<GhostResult> onProviderFailure();
 
      /**
-      * Called when the user accepts the ghost text.
-      * Sends an accept notification (caller is responsible for sending it
-      * via the LSP client) and clears the active ghost.
-      *
-      * Returns AcceptCompletionParams with acceptedCompletion set to the
-      * currently selected candidate index and shownCompletions listing all
-      * candidate indices that were presented (for llm-ls feedback).
-      */
-     std::optional<AcceptCompletionParams> onAccept();
+       * Called when the user accepts the ghost text.
+       * Sends an accept notification (caller is responsible for sending it
+       * via the LSP client) and clears the active ghost.
+       *
+       * @param nowMs  Current time in milliseconds (steady clock epoch) —
+       *               used for telemetry time-to-accept computation.
+       * @return AcceptCompletionParams with acceptedCompletion set to the
+       *         currently selected candidate index and shownCompletions listing all
+       *         candidate indices that were presented (for llm-ls feedback).
+       */
+     std::optional<AcceptCompletionParams> onAccept(int64_t nowMs);
 
      /**
-      * Called when the user partially accepts the ghost text (J-3).
-      *
-      * Splits the currently selected candidate at `acceptLen` characters:
-      * the prefix (0..acceptLen) is the accepted text, the suffix
-      * (acceptLen..end) remains as ghost text.
-      *
-      * The active ghost is NOT cleared — the remaining suffix is updated
-      * in-place and stays active for further partial accepts or full accept.
-      * No llm-ls notification is sent (partial accept is pure UI state).
-      *
-      * @param acceptLen  Number of characters of the selected candidate to
-      *                   accept (must be > 0 and ≤ candidate text length).
-      * @return PartialAcceptResult with the accepted prefix and the updated
-      *         GhostResult for the remaining suffix. nullopt if no ghost is
-      *         active, acceptLen is invalid, or the remaining suffix is empty
-      *         (in which case the caller should use onAccept() for full accept).
-      */
-     std::optional<PartialAcceptResult> onPartialAccept(size_t acceptLen);
+       * Called when the user partially accepts the ghost text (J-3).
+       *
+       * Splits the currently selected candidate at `acceptLen` characters:
+       * the prefix (0..acceptLen) is the accepted text, the suffix
+       * (acceptLen..end) remains as ghost text.
+       *
+       * The active ghost is NOT cleared — the remaining suffix is updated
+       * in-place and stays active for further partial accepts or full accept.
+       * No llm-ls notification is sent (partial accept is pure UI state).
+       *
+       * @param acceptLen  Number of characters of the selected candidate to
+       *                   accept (must be > 0 and ≤ candidate text length).
+       * @param nowMs  Current time in milliseconds (steady clock epoch) —
+       *               used for telemetry time-to-accept computation.
+       * @return PartialAcceptResult with the accepted prefix and the updated
+       *         GhostResult for the remaining suffix. nullopt if no ghost is
+       *         active, acceptLen is invalid, or the remaining suffix is empty
+       *         (in which case the caller should use onAccept() for full accept).
+       */
+     std::optional<PartialAcceptResult> onPartialAccept(size_t acceptLen, int64_t nowMs);
 
-    /**
-      * Called when the user dismisses or modifies the ghost text.
-      * Clears the active ghost and sends a reject notification.
-      *
-      * Returns RejectCompletionParams with shownCompletions listing all
-      * candidate indices that were presented.
-      */
-    std::optional<RejectCompletionParams> onReject();
+     /**
+       * Called when the user dismisses or modifies the ghost text.
+       * Clears the active ghost and sends a reject notification.
+       *
+       * @param nowMs  Current time in milliseconds (steady clock epoch) —
+       *               used for telemetry timestamping.
+       * @return RejectCompletionParams with shownCompletions listing all
+       *         candidate indices that were presented.
+       */
+    std::optional<RejectCompletionParams> onReject(int64_t nowMs);
 
     /**
      * Clear the active ghost without sending accept/reject notifications.
@@ -451,9 +447,9 @@ private:
     };
     std::optional<PendingRequest> pendingRequest_;
 
-     /// The currently displayed ghost candidates (cleared on cursor move, accept,
-     * reject, or timeout).  J-2: caches all candidates returned by the LLM
-     * so the user can cycle through them locally without re-requesting.
+    /// The currently displayed ghost candidates (cleared on cursor move, accept,
+    /// reject, or timeout).  J-2: caches all candidates returned by the LLM
+    /// so the user can cycle through them locally without re-requesting.
     // AI-G2: each GhostResult carries docPrefix/docSuffix for editor-side verification.
     struct ActiveGhost {
         std::vector<GhostResult> candidates;   ///< all cached, trimmed candidates
@@ -468,8 +464,6 @@ private:
     /// Null by default — callers opt in by calling setTelemetry().
     GhostCompletionTelemetry* telemetry_ = nullptr;
 #endif
-};
-    std::optional<ActiveGhost> activeGhost_;
 };
 
 } // namespace hathor::lsp

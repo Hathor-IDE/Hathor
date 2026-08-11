@@ -32,6 +32,10 @@
 #include "CompletionCoordinator.hpp"
 #include "audio-worker/ChuckDiagnostics.hpp"
 
+#ifdef HATHOR_ENABLE_GHOST_TELEMETRY
+#include "GhostCompletionTelemetry.hpp"
+#endif
+
 #include <chrono>
 #include <optional>
 #include <functional>
@@ -346,9 +350,20 @@ public:
       /// Select the previous ghost candidate (wraps). No LLM request.
       void cycleGhostPrev();
 
-      /// Check for ghost text timeout / tick — called by EditorArea's
-      /// UITimer.
-      void ghostTick();
+       /// Check for ghost text timeout / tick — called by EditorArea's
+       /// UITimer.
+       void ghostTick();
+
+#ifdef HATHOR_ENABLE_GHOST_TELEMETRY
+       /// Get a human-readable per-language quality report (J-6).
+       /// Returns an empty string if telemetry is disabled.
+       juce::String ghostQualityReport() const noexcept;
+
+       /// Access the telemetry object for direct event recording (J-6).
+       /// Non-owning pointer — the telemetry object is owned by this tab.
+       /// Returns nullptr if telemetry is not compiled in.
+       lsp::GhostCompletionTelemetry* ghostTelemetry() const noexcept;
+#endif
 
      /// Callback fired by the LspHoverHandler when it's dismissed
     /// (used to clear hover state).
@@ -522,21 +537,38 @@ private:
       //     when LSP popup is visible; cancels ghost on Ctrl+Space.
       // GhostTextOverlay is a child component for rendering.
       // -----------------------------------------------------------------------
-       class GhostLlmClient*             ghostClient_{ nullptr };
-       std::unique_ptr<CompletionCoordinator> coordinator_;
-       std::unique_ptr<GhostTextOverlay>     ghostOverlay_;
+        class GhostLlmClient*             ghostClient_{ nullptr };
+        std::unique_ptr<CompletionCoordinator> coordinator_;
+        std::unique_ptr<GhostTextOverlay>     ghostOverlay_;
 
-       /// AI-G6: The active ghost result (if any) — stored so that
-       // acceptGhostCompletion() can verify the cursor hasn't moved since
-       // the ghost was generated. Stale ghost results (cursor moved,
-       // document changed) are rejected before text is inserted.
-       std::optional<lsp::GhostResult>      activeGhostResult_;
+#ifdef HATHOR_ENABLE_GHOST_TELEMETRY
+        /// Per-tab telemetry sink for ghost completion quality tracking (J-6).
+        /// Installed on the coordinator so the JUCE-free logic layer can record
+        /// display/accept/reject/stale events. The JUCE layer records the
+        /// compile-result, diagnostic-added, immediate-deletion, and
+        /// heavy-modification events.
+        std::unique_ptr<lsp::GhostCompletionTelemetry> telemetry_;
+#endif
 
-       // J-3: Flag set during partial-accept document insertion. While true,
-       // codeDocumentTextInserted / caretPositionMoved skip ghost-clearing so
-       // the remaining suffix survives the document edit. Cleared after the
-       // overlay is re-displayed with the remaining text.
-       bool partialAcceptInProgress_ = false;
+        /// AI-G6: The active ghost result (if any) — stored so that
+        // acceptGhostCompletion() can verify the cursor hasn't moved since
+        // the ghost was generated. Stale ghost results (cursor moved,
+        // document changed) are rejected before text is inserted.
+        std::optional<lsp::GhostResult>      activeGhostResult_;
+
+        // J-3: Flag set during partial-accept document insertion. While true,
+        // codeDocumentTextInserted / caretPositionMoved skip ghost-clearing so
+        // the remaining suffix survives the document edit. Cleared after the
+        // overlay is re-displayed with the remaining text.
+        bool partialAcceptInProgress_ = false;
+
+       // J-6: Telemetry state for tracking accepted ghost text outcomes.
+       // These are used to detect immediate deletion and heavy modification
+       // of accepted ghost text — NOT stored for any other purpose, and NOT
+       // the full source code (only the accepted ghost text snippet).
+       std::string acceptedGhostText_;     ///< text inserted from last ghost accept
+       int64_t     acceptedAtMs_{ 0 };     ///< steady-clock ms when ghost was accepted
+       bool        ghostAccepted_{ false }; ///< true while accepted ghost text is being tracked
 
       // AI-G7: ChucK diagnostics debounce timestamp.
       int64_t chuckLastDiagTimeMs_{ 0 };

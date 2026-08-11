@@ -128,7 +128,7 @@ TEST_CASE("J-3: multi-token completion can be partially accepted", "[j-3][partia
     REQUIRE(boundary == 5); // "kick " — up to and including first space
 
     // Perform partial accept
-    auto partial = h.logic.onPartialAccept(boundary);
+    auto partial = h.logic.onPartialAccept(boundary, 10);
     REQUIRE(partial.has_value());
     REQUIRE(partial->acceptedText == "kick ");
     REQUIRE(partial->remainingResult.text == "snare hat clap");
@@ -154,7 +154,7 @@ TEST_CASE("J-3: only accepted prefix is returned; remaining stays as ghost", "[j
     REQUIRE(sel.has_value());
 
     size_t boundary = GhostCompletionLogic::findNextTokenBoundary(sel->text);
-    auto partial = h.logic.onPartialAccept(boundary);
+    auto partial = h.logic.onPartialAccept(boundary, 10);
     REQUIRE(partial.has_value());
 
     // The accepted text is ONLY the prefix — the suffix is NOT in it
@@ -180,7 +180,7 @@ TEST_CASE("J-3: remaining suffix stays visible as ghost text after partial accep
 
     auto sel = h.logic.selectedCandidate();
     size_t boundary = GhostCompletionLogic::findNextTokenBoundary(sel->text);
-    auto partial = h.logic.onPartialAccept(boundary);
+    auto partial = h.logic.onPartialAccept(boundary, 10);
     REQUIRE(partial.has_value());
 
     // After partial accept, the selected candidate IS the remaining suffix
@@ -209,7 +209,7 @@ TEST_CASE("J-3: accepted prefix is returned as insertable text for undoable edit
 
     auto sel = h.logic.selectedCandidate();
     size_t boundary = GhostCompletionLogic::findNextTokenBoundary(sel->text);
-    auto partial = h.logic.onPartialAccept(boundary);
+    auto partial = h.logic.onPartialAccept(boundary, 10);
     REQUIRE(partial.has_value());
 
     // The acceptedText is non-empty and ready for insertion via
@@ -235,7 +235,7 @@ TEST_CASE("J-3: unaccepted suffix is absent from accepted text", "[j-3][suffix-a
 
     auto sel = h.logic.selectedCandidate();
     size_t boundary = GhostCompletionLogic::findNextTokenBoundary(sel->text);
-    auto partial = h.logic.onPartialAccept(boundary);
+    auto partial = h.logic.onPartialAccept(boundary, 10);
     REQUIRE(partial.has_value());
 
     // The accepted text does not contain any of the suffix tokens
@@ -268,14 +268,14 @@ TEST_CASE("J-3: remaining suffix is not exposed as document text", "[j-3][diagno
     // After two partial accepts:
     auto sel1 = h.logic.selectedCandidate();
     auto boundary1 = GhostCompletionLogic::findNextTokenBoundary(sel1->text);
-    auto partial1 = h.logic.onPartialAccept(boundary1);
+    auto partial1 = h.logic.onPartialAccept(boundary1, 10);
     REQUIRE(partial1.has_value());
     REQUIRE(partial1->acceptedText == "kick ");
 
     // Second partial accept
     auto sel2 = h.logic.selectedCandidate();
     auto boundary2 = GhostCompletionLogic::findNextTokenBoundary(sel2->text);
-    auto partial2 = h.logic.onPartialAccept(boundary2);
+    auto partial2 = h.logic.onPartialAccept(boundary2, 10);
     REQUIRE(partial2.has_value());
     REQUIRE(partial2->acceptedText == "snare ");
 
@@ -321,7 +321,7 @@ TEST_CASE("J-3: remaining ghost remains valid after document revision update", "
     REQUIRE(ghostRevBefore == revisionBefore);
 
     // Partial accept at the coordinator level
-    auto partial = coord.onGhostPartialAccepted(5); // accept "kick "
+    auto partial = coord.onGhostPartialAccepted(5, 10); // accept "kick "
     REQUIRE(partial.has_value());
     REQUIRE(partial->acceptedText == "kick ");
     REQUIRE(partial->remainingResult.text == "snare hat clap");
@@ -356,7 +356,7 @@ TEST_CASE("J-3: further partial acceptance works without a new LLM request", "[j
     // First partial accept
     auto sel0 = h.logic.selectedCandidate();
     size_t b0 = GhostCompletionLogic::findNextTokenBoundary(sel0->text);
-    auto p0 = h.logic.onPartialAccept(b0);
+    auto p0 = h.logic.onPartialAccept(b0, 10);
     REQUIRE(p0.has_value());
     REQUIRE(p0->acceptedText == "kick ");
 
@@ -367,7 +367,7 @@ TEST_CASE("J-3: further partial acceptance works without a new LLM request", "[j
     auto sel1 = h.logic.selectedCandidate();
     REQUIRE(sel1->text == "snare hat clap");
     size_t b1 = GhostCompletionLogic::findNextTokenBoundary(sel1->text);
-    auto p1 = h.logic.onPartialAccept(b1);
+    auto p1 = h.logic.onPartialAccept(b1, 10);
     REQUIRE(p1.has_value());
     REQUIRE(p1->acceptedText == "snare ");
     REQUIRE(p1->remainingResult.text == "hat clap");
@@ -379,7 +379,7 @@ TEST_CASE("J-3: further partial acceptance works without a new LLM request", "[j
     auto sel2 = h.logic.selectedCandidate();
     REQUIRE(sel2->text == "hat clap");
     size_t b2 = GhostCompletionLogic::findNextTokenBoundary(sel2->text);
-    auto p2 = h.logic.onPartialAccept(b2);
+    auto p2 = h.logic.onPartialAccept(b2, 10);
     REQUIRE(p2.has_value());
     REQUIRE(p2->acceptedText == "hat ");
     REQUIRE(p2->remainingResult.text == "clap");
@@ -401,12 +401,12 @@ TEST_CASE("J-3: full accept after partial accept commits remaining suffix and cl
 
     // Partial accept "kick "
     auto sel0 = h.logic.selectedCandidate();
-    auto p0 = h.logic.onPartialAccept(GhostCompletionLogic::findNextTokenBoundary(sel0->text));
+    auto p0 = h.logic.onPartialAccept(GhostCompletionLogic::findNextTokenBoundary(sel0->text), 10);
     REQUIRE(p0.has_value());
     REQUIRE(h.logic.hasActiveGhost());
 
     // Full accept (onAccept) — commits the remaining "snare hat clap"
-    auto params = h.logic.onAccept();
+    auto params = h.logic.onAccept(10);
     REQUIRE(params.has_value());
 
     // Ghost state is fully cleared
@@ -427,13 +427,13 @@ TEST_CASE("J-3: dismissing remainder after partial accept clears ghost", "[j-3][
 
     // Partial accept "kick "
     auto sel0 = h.logic.selectedCandidate();
-    auto p0 = h.logic.onPartialAccept(GhostCompletionLogic::findNextTokenBoundary(sel0->text));
+    auto p0 = h.logic.onPartialAccept(GhostCompletionLogic::findNextTokenBoundary(sel0->text), 10);
     REQUIRE(p0.has_value());
     REQUIRE(h.logic.hasActiveGhost());
     REQUIRE(p0->remainingResult.text == "snare hat clap");
 
     // Dismiss (reject) the remaining suffix
-    auto rejectParams = h.logic.onReject();
+    auto rejectParams = h.logic.onReject(10);
     REQUIRE(rejectParams.has_value());
 
     // Ghost fully cleared — only the previously accepted "kick " would remain
@@ -467,7 +467,7 @@ TEST_CASE("J-3: document change after partial accept invalidates ghost", "[j-3][
     REQUIRE(coord.isGhostActive());
 
     // Partial accept "kick "
-    auto partial = coord.onGhostPartialAccepted(5);
+    auto partial = coord.onGhostPartialAccepted(5, 10);
     REQUIRE(partial.has_value());
     REQUIRE(coord.isGhostActive());
 
@@ -513,7 +513,7 @@ TEST_CASE("J-3: candidate cycling works before partial acceptance", "[j-3][cycle
     size_t boundary = GhostCompletionLogic::findNextTokenBoundary(sel->text);
     REQUIRE(boundary == 5); // "boom " (4 chars + space)
 
-    auto partial = logic.onPartialAccept(boundary);
+    auto partial = logic.onPartialAccept(boundary, 10);
     REQUIRE(partial.has_value());
     REQUIRE(partial->acceptedText == "boom ");
     REQUIRE(partial->remainingResult.text == "clash snap");
@@ -552,7 +552,7 @@ TEST_CASE("J-3: partial accept is JUCE-free and non-blocking", "[j-3][thread-saf
     h.triggerAndRespond(ctx, "kick snare hat clap");
 
     auto sel = h.logic.selectedCandidate();
-    auto partial = h.logic.onPartialAccept(5);
+    auto partial = h.logic.onPartialAccept(5, 10);
 
     REQUIRE(partial.has_value());
     REQUIRE(partial->acceptedText == "kick ");
@@ -594,16 +594,16 @@ TEST_CASE("J-3: onPartialAccept with invalid acceptLen returns nullopt", "[j-3][
     h.triggerAndRespond(ctx, "kick snare hat clap");
 
     // acceptLen = 0 → nullopt
-    REQUIRE_FALSE(h.logic.onPartialAccept(0).has_value());
+    REQUIRE_FALSE(h.logic.onPartialAccept(0, 10).has_value());
 
     // acceptLen > text.size() → nullopt
-    REQUIRE_FALSE(h.logic.onPartialAccept(100).has_value());
+    REQUIRE_FALSE(h.logic.onPartialAccept(100, 10).has_value());
 
     // Accept entire text → nullopt (caller should use onAccept instead)
-    REQUIRE_FALSE(h.logic.onPartialAccept(19).has_value());
+    REQUIRE_FALSE(h.logic.onPartialAccept(19, 10).has_value());
 
     // Valid partial accept still works
-    auto result = h.logic.onPartialAccept(5);
+    auto result = h.logic.onPartialAccept(5, 10);
     REQUIRE(result.has_value());
     REQUIRE(result->acceptedText == "kick ");
 }
@@ -618,7 +618,7 @@ TEST_CASE("J-3: onPartialAccept with no active ghost returns nullopt", "[j-3][no
     logic.setEnabled(true);
     logic.setDebounceMs(0);
 
-    REQUIRE_FALSE(logic.onPartialAccept(5).has_value());
+    REQUIRE_FALSE(logic.onPartialAccept(5, 10).has_value());
 }
 
 // ===========================================================================
@@ -641,7 +641,7 @@ TEST_CASE("J-3: partial accept updates docPrefix to include accepted text", "[j-
     size_t boundary = GhostCompletionLogic::findNextTokenBoundary(sel->text);
     REQUIRE(boundary == 7); // "middle "
 
-    auto partial = h.logic.onPartialAccept(boundary);
+    auto partial = h.logic.onPartialAccept(boundary, 10);
     REQUIRE(partial.has_value());
 
     // docPrefix is updated to include the accepted text
@@ -677,7 +677,7 @@ TEST_CASE("J-3: partial accept at coordinator level preserves mode and state", "
     REQUIRE(coord.mode() == CompletionCoordinator::Mode::GhostActive);
 
     // Partial accept
-    auto partial = coord.onGhostPartialAccepted(5);
+    auto partial = coord.onGhostPartialAccepted(5, 10);
     REQUIRE(partial.has_value());
 
     // Mode stays GhostActive — ghost is still displayed
@@ -718,7 +718,7 @@ TEST_CASE("J-3: coordinator stale-check passes for remaining ghost after revisio
     REQUIRE(revBefore == 0);
 
     // Partial accept + document change simulation
-    auto partial = coord.onGhostPartialAccepted(5);
+    auto partial = coord.onGhostPartialAccepted(5, 10);
     REQUIRE(partial.has_value());
     coord.onPartialAcceptDocumentChange();
 
@@ -767,7 +767,7 @@ TEST_CASE("J-3: partial accept works with multiple candidates on selected one", 
     REQUIRE(sel->text == "boom crash");
 
     // Partial accept "boom " from the second candidate
-    auto partial = logic.onPartialAccept(5);
+    auto partial = logic.onPartialAccept(5, 10);
     REQUIRE(partial.has_value());
     REQUIRE(partial->acceptedText == "boom ");
     REQUIRE(partial->remainingResult.text == "crash");
@@ -791,7 +791,7 @@ TEST_CASE("J-3: full accept of remaining single-token suffix clears ghost", "[j-
 
     // Partial accept "kick "
     auto sel0 = h.logic.selectedCandidate();
-    auto p0 = h.logic.onPartialAccept(GhostCompletionLogic::findNextTokenBoundary(sel0->text));
+    auto p0 = h.logic.onPartialAccept(GhostCompletionLogic::findNextTokenBoundary(sel0->text), 10);
     REQUIRE(p0.has_value());
     REQUIRE(p0->acceptedText == "kick ");
     REQUIRE(h.logic.hasActiveGhost());
@@ -801,7 +801,7 @@ TEST_CASE("J-3: full accept of remaining single-token suffix clears ghost", "[j-
     REQUIRE(sel1->text == "snare");
 
     // Full accept
-    auto params = h.logic.onAccept();
+    auto params = h.logic.onAccept(10);
     REQUIRE(params.has_value());
 
     REQUIRE_FALSE(h.logic.hasActiveGhost());
@@ -822,7 +822,7 @@ TEST_CASE("J-3: onPartialAccept off-by-one at exact boundary", "[j-3][off-by-one
     // "hello world" → boundary at 6 (after "hello ")
     REQUIRE(GhostCompletionLogic::findNextTokenBoundary(sel->text) == 6);
 
-    auto partial = h.logic.onPartialAccept(6); // accept "hello "
+    auto partial = h.logic.onPartialAccept(6, 10); // accept "hello "
     REQUIRE(partial.has_value());
     REQUIRE(partial->acceptedText == "hello ");
     REQUIRE(partial->remainingResult.text == "world");
@@ -832,10 +832,10 @@ TEST_CASE("J-3: onPartialAccept off-by-one at exact boundary", "[j-3][off-by-one
     REQUIRE(sel2->text == "world");
     REQUIRE(GhostCompletionLogic::findNextTokenBoundary(sel2->text) == 5); // full length
     // acceptLen == full length → returns nullopt (should use onAccept)
-    REQUIRE_FALSE(h.logic.onPartialAccept(5).has_value());
+    REQUIRE_FALSE(h.logic.onPartialAccept(5, 10).has_value());
 
     // But a smaller acceptLen still works (accept "wor" from "world")
-    auto partial2 = h.logic.onPartialAccept(3);
+    auto partial2 = h.logic.onPartialAccept(3, 10);
     REQUIRE(partial2.has_value());
     REQUIRE(partial2->acceptedText == "wor");
     REQUIRE(partial2->remainingResult.text == "ld");
