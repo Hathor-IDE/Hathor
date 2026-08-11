@@ -5,9 +5,17 @@
  * GhostTextOverlay.cpp — implementation of the ghost-text overlay.
  *
  * Renders semi-transparent completion text at the cursor position,
- * matching the existing DiagnosticsOverlay/HighlightOverlay pattern.
+ * following the existing HighlightOverlay / DiagnosticsOverlay pattern.
  *
- * Requirement references: AI-4
+ * AI-G6 (Ghost Text Is UI State, Not Document State):
+ *   - paint() only reads ghostText_ / caretBounds_ / insertionLen_ — it never
+ *     writes to juce::CodeDocument. The document model is untouched.
+ *   - The overlay shares the same bounds as the editor (set by
+ *     HathorTab::resized), so editor-local caret coordinates map directly
+ *     to overlay-local coordinates. This is the same mechanism used by
+ *     HighlightOverlay — no setTopLeftPosition() repositioning.
+ *
+ * Requirement references: AI-4, AI-G6
  */
 
 #include "GhostTextOverlay.hpp"
@@ -38,7 +46,9 @@ GhostTextOverlay::GhostTextOverlay()
 void GhostTextOverlay::resized()
 {
     // Size follows the editor content area (set by HathorTab::resized).
-    // No internal layout needed — paint() positions the ghost text.
+    // No internal layout needed — paint() positions the ghost text at
+    // the stored caretBounds_ which is in editor-local (== overlay-local)
+    // coordinates.
 }
 
 void GhostTextOverlay::paint(juce::Graphics& g)
@@ -53,30 +63,70 @@ void GhostTextOverlay::paint(juce::Graphics& g)
     g.setFont(ghostFont_);
     g.setColour(ghostColour_);
 
-    // The parent (HathorTab) will set our bounds to cover the editor area.
-    // We need the CodeEditorComponent to map (cursorLine, cursorChar) to
-    // pixel coordinates. Since we're a sibling of the editor in HathorTab,
-    // we need the editor to provide us with the pixel position.
-    //
-    // Actually, the parent (HathorTab) calls setGhostText with the
-    // pixel coordinates already resolved via CodeEditorComponent.
-    // The cursorScreenPos_ field stores the resolved pixel position.
-    //
-    // But wait — we don't have cursorScreenPos_. Let me use a different
-    // approach: the parent will call setBounds on us and we'll compute
-    // the position from cursorLine/cursorChar using the editor's metrics.
-    //
-    // Since we don't have a reference to the editor, the parent (HathorTab)
-    // will set our position via setTopLeftPosition() before calling repaint().
-    // We just need to paint at offset (0, 0) relative to ourselves.
+    // Draw the ghost text starting at the caret's right edge, same baseline.
+    // caretBounds_ is in editor-local coordinates, which map directly to
+    // overlay-local coordinates because both share the same bounds in
+    // HathorTab::resized (both at origin (0, editorTop) within HathorTab
+    // with identical width/height).
+    const int startX = caretBounds_.getRight();
+    const int startY = caretBounds_.getY();
+    const int rowHeight = caretBounds_.getHeight();
 
-    // Paint the ghost text at (0, 0) — the parent positions us at the cursor.
-    g.drawText(ghostText_,
-               0, 0,
-               ghostText_.empty() ? 1 : static_cast<int>(ghostText_.length()) * 8,
-               ghostFont_.getHeight(),
-               juce::Justification::topLeft,
-               false);
+    if (rowHeight <= 0)
+        return;
+
+    // -----------------------------------------------------------------------
+    // AI-G6: Render the ghost text, dimming characters that overlap with
+    // already-present document text (insertionLen).
+    //
+    // The first `insertionLen_` characters of the ghost text represent text
+    // that already exists in the document at the cursor position. We render
+    // those with a lower alpha (dimmed) to visually distinguish them from
+    // the genuinely new completion text that follows.
+    // -----------------------------------------------------------------------
+
+    // Measure the full ghost text width for layout.
+    juce::String ghostStr(ghostText_);
+    const juce::Font& font = ghostFont_;
+
+    // Render in two parts if insertionLen > 0:
+    //   1. Dimmed part: first insertionLen_ characters (existing text)
+    //   2. Normal part: remaining characters (new completion)
+    if (insertionLen_ > 0 && insertionLen_ < static_cast<int>(ghostText_.length()))
+    {
+        juce::String dimmedPart = ghostStr.substring(0, insertionLen_);
+        juce::String normalPart = ghostStr.substring(insertionLen_);
+
+         // Dimmed part — lower opacity to indicate it's existing text
+         g.setColour(ghostColour_.withAlpha(0.2f));
+
+         // Measure the dimmed part to know where the normal part starts
+         float dimmedWidth = font.getStringWidthFloat(dimmedPart);
+
+        g.drawText(dimmedPart,
+                   startX, startY,
+                   static_cast<int>(dimmedWidth), rowHeight,
+                   juce::Justification::topLeft,
+                   false);
+
+        // Normal part — standard ghost opacity
+        g.setColour(ghostColour_);
+        float normalWidth = font.getStringWidthFloat(normalPart);
+        g.drawText(normalPart,
+                   startX + static_cast<int>(dimmedWidth), startY,
+                   static_cast<int>(normalWidth), rowHeight,
+                   juce::Justification::topLeft,
+                   false);
+    }
+    else
+    {
+        // No dimming needed — draw the entire ghost text at standard opacity
+        g.drawText(ghostStr,
+                   startX, startY,
+                   ghostStr.length() * 8, rowHeight,
+                   juce::Justification::topLeft,
+                   false);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -84,25 +134,26 @@ void GhostTextOverlay::paint(juce::Graphics& g)
 // ---------------------------------------------------------------------------
 
 void GhostTextOverlay::setGhostText(const std::string& text,
-                                     int cursorLine,
-                                     int cursorChar,
-                                     int insertionLen)
+                                    const juce::Rectangle<int>& caretBounds,
+                                    int insertionLen)
 {
     ghostText_ = text;
-    cursorLine_ = cursorLine;
-    cursorChar_ = cursorChar;
+    caretBounds_ = caretBounds;
     insertionLen_ = insertionLen;
     visible_ = !text.empty();
     setVisible(visible_);
-    repaint();
+    if (visible_)
+        repaint();
 }
 
 void GhostTextOverlay::clearGhost() noexcept
 {
-    if (visible_)
+    if (visible_ || !ghostText_.empty())
     {
         visible_ = false;
         ghostText_.clear();
+        caretBounds_ = {};
+        insertionLen_ = 0;
         setVisible(false);
         repaint();
     }
@@ -110,8 +161,9 @@ void GhostTextOverlay::clearGhost() noexcept
 
 void GhostTextOverlay::hideGhost() noexcept
 {
-    if (isVisible())
+    if (visible_)
     {
+        visible_ = false;
         setVisible(false);
         repaint();
     }
@@ -119,8 +171,9 @@ void GhostTextOverlay::hideGhost() noexcept
 
 void GhostTextOverlay::showGhost() noexcept
 {
-    if (!ghostText_.empty() && !isVisible())
+    if (!ghostText_.empty() && !visible_)
     {
+        visible_ = true;
         setVisible(true);
         repaint();
     }

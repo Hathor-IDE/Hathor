@@ -369,41 +369,43 @@ bool EditorArea::openUntitledTab()
      tab->installLspClient(lspClient_.get());
      tab->notifyLspDidOpen();
 
-     // AI-4: Install ghost-text client on the tab (for both .hathor and .ck)
-     tab->installGhostClient(ghostClient_.get());
+      // AI-4: Install ghost-text client on the tab (for both .hathor and .ck)
+      tab->installGhostClient(ghostClient_.get());
 
-      // AI-G3: Wire the Hathor-specific authoring-context callback for llm-ls FIM.
-      // The callback assembles a compact, location-aware, bounded context
-      // (AI-G3) reusing AI-8's providers + AI-3 metadata + AI-4 LSP, and injects
-      // it as additional FIM context (fim.prefix) for the ghost completion.
-      tab->getAuthoringContext = [this, tab]() -> nlohmann::json {
-          auto caretPos = tab->editor().getCaretPos();
-          hathor::control::CompletionRequest req;
-          req.file = tab->lspDocumentUri().toStdString();
-          req.uri = tab->lspDocumentUri().toStdString();
-          req.line = caretPos.getLineNumber();
-          req.character = caretPos.getIndexInLine();
-          req.language = tab->isChuckTab() ? "chuck" : "mininotation";
-          req.documentText = tab->document().getAllContent().toStdString();
-          // Selection (selection-aware retrieval — AI-G3)
-          const auto region = tab->editor().getHighlightedRegion();
-          if (!region.isEmpty())
-          {
-              const auto selStart = tab->editor().getSelectionStart();
-              const auto selEnd   = tab->editor().getSelectionEnd();
-              req.selection = hathor::control::CompletionRequest::Range{
-                  selStart.getLineNumber(), selStart.getIndexInLine(),
-                  selEnd.getLineNumber(),   selEnd.getIndexInLine()};
-              req.selectedText = tab->editor().getTextInRange(region).toStdString();
-          }
-          return ci_.assembleCompletionContext(req);
-      };
+       // AI-G3: Wire the Hathor-specific authoring-context callback for llm-ls FIM.
+       // The callback assembles a compact, location-aware, bounded context
+       // (AI-G3) reusing AI-8's providers + AI-3 metadata + AI-4 LSP, and injects
+       // it as additional FIM context (fim.prefix) for the ghost completion.
+       // Capture a raw pointer (tab is owned by tabs_, pushed below).
+       HathorTab* tabPtr = tab.get();
+       tab->getAuthoringContext = [this, tabPtr]() -> nlohmann::json {
+           auto caretPos = tabPtr->editor().getCaretPos();
+           hathor::control::CompletionRequest req;
+           req.file = tabPtr->lspDocumentUri().toStdString();
+           req.uri = tabPtr->lspDocumentUri().toStdString();
+           req.line = caretPos.getLineNumber();
+           req.character = caretPos.getIndexInLine();
+           req.language = tabPtr->isChuckTab() ? "chuck" : "mininotation";
+           req.documentText = tabPtr->document().getAllContent().toStdString();
+           // Selection (selection-aware retrieval — AI-G3)
+           const auto region = tabPtr->editor().getHighlightedRegion();
+           if (!region.isEmpty())
+           {
+               const auto selStart = tabPtr->editor().getSelectionStart();
+               const auto selEnd   = tabPtr->editor().getSelectionEnd();
+               req.selection = hathor::control::CompletionRequest::Range{
+                   selStart.getLineNumber(), selStart.getIndexInLine(),
+                   selEnd.getLineNumber(),   selEnd.getIndexInLine()};
+               req.selectedText = tabPtr->editor().getTextInRange(region).toStdString();
+           }
+           return ci_.assembleCompletionContext(req);
+       };
 
-    addAndMakeVisible(*tab);
-    tabs_.push_back(std::move(tab));
+     addAndMakeVisible(*tab);
+     tabs_.push_back(std::move(tab));
 
-    activateTab(static_cast<int>(tabs_.size()) - 1);
-    return true;
+     activateTab(static_cast<int>(tabs_.size()) - 1);
+     return true;
 }
 
 bool EditorArea::openFile(const juce::File& file)
@@ -493,31 +495,33 @@ bool EditorArea::openFile(const juce::File& file)
      tab->installLspClient(lspClient_.get());
      tab->notifyLspDidOpen();
 
-      // AI-4: Install ghost-text client on the tab (for both .hathor and .ck)
-      tab->installGhostClient(ghostClient_.get());
+       // AI-4: Install ghost-text client on the tab (for both .hathor and .ck)
+       tab->installGhostClient(ghostClient_.get());
 
-      // AI-G3: Wire the Hathor-specific authoring-context callback for llm-ls FIM.
-      tab->getAuthoringContext = [this, tab]() -> nlohmann::json {
-          auto caretPos = tab->editor().getCaretPos();
-          hathor::control::CompletionRequest req;
-          req.file = tab->lspDocumentUri().toStdString();
-          req.uri = tab->lspDocumentUri().toStdString();
-          req.line = caretPos.getLineNumber();
-          req.character = caretPos.getIndexInLine();
-          req.language = tab->isChuckTab() ? "chuck" : "mininotation";
-          req.documentText = tab->document().getAllContent().toStdString();
-          const auto region = tab->editor().getHighlightedRegion();
-          if (!region.isEmpty())
-          {
-              const auto selStart = tab->editor().getSelectionStart();
-              const auto selEnd   = tab->editor().getSelectionEnd();
-              req.selection = hathor::control::CompletionRequest::Range{
-                  selStart.getLineNumber(), selStart.getIndexInLine(),
-                  selEnd.getLineNumber(),   selEnd.getIndexInLine()};
-              req.selectedText = tab->editor().getTextInRange(region).toStdString();
-          }
-          return ci_.assembleCompletionContext(req);
-      };
+       // AI-G3: Wire the Hathor-specific authoring-context callback for llm-ls FIM.
+       // Capture a raw pointer (tab is owned by tabs_, pushed below).
+       HathorTab* tabPtr = tab.get();
+       tab->getAuthoringContext = [this, tabPtr]() -> nlohmann::json {
+           auto caretPos = tabPtr->editor().getCaretPos();
+           hathor::control::CompletionRequest req;
+           req.file = tabPtr->lspDocumentUri().toStdString();
+           req.uri = tabPtr->lspDocumentUri().toStdString();
+           req.line = caretPos.getLineNumber();
+           req.character = caretPos.getIndexInLine();
+           req.language = tabPtr->isChuckTab() ? "chuck" : "mininotation";
+           req.documentText = tabPtr->document().getAllContent().toStdString();
+           const auto region = tabPtr->editor().getHighlightedRegion();
+           if (!region.isEmpty())
+           {
+               const auto selStart = tabPtr->editor().getSelectionStart();
+               const auto selEnd   = tabPtr->editor().getSelectionEnd();
+               req.selection = hathor::control::CompletionRequest::Range{
+                   selStart.getLineNumber(), selStart.getIndexInLine(),
+                   selEnd.getLineNumber(),   selEnd.getIndexInLine()};
+               req.selectedText = tabPtr->editor().getTextInRange(region).toStdString();
+           }
+           return ci_.assembleCompletionContext(req);
+       };
 
      addAndMakeVisible(*tab);
      tabs_.push_back(std::move(tab));

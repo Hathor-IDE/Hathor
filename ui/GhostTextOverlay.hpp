@@ -16,12 +16,34 @@
  * continuation of the current line. It uses the editor's font and
  * palette-derived muted colour (e.g. 40% opacity textSecondary).
  *
- * Requirement references: AI-4
+ * AI-G6 (Ghost Text Is UI State, Not Document State):
+ *   - The overlay ONLY renders temporary visual state. It does NOT modify the
+ *     juce::CodeDocument, never enters the undo history, and is never seen by
+ *     compilation or diagnostics.
+ *   - setGhostText() stores ghost text + resolved pixel bounds — it does NOT
+ *     touch the document.
+ *   - clearGhost() / hideGhost() only clear the overlay's internal visual
+ *     state; the document is never touched.
+ *   - acceptGhost() returns the stored text; the INSERTION into the document
+ *     is performed entirely by HathorTab via document_::insertText(), which is
+ *     a normal, undoable edit.
+ *
+ * Rendering approach (AI-G6 rendering constraint):
+ *   The overlay follows the same pattern as HighlightOverlay and
+ *   DiagnosticsOverlay: it is a child component of HathorTab with identical
+ *   bounds to the editor_ (set in HathorTab::resized()). Because the overlay
+ *   and editor share the same origin within HathorTab, editor-local
+ *   coordinates (from CodeEditorComponent::getCaretRectangleForCharIndex or
+ *   getCharacterBounds) map directly to overlay-local coordinates. The
+ *   paint() method draws the ghost text at the stored caret pixel position
+ *   within its own coordinate space — NO setTopLeftPosition() is used to move
+ *   the whole component, which would break alignment with the editor's
+ *   scroll offset and button-area Y offset.
+ *
+ * Requirement references: AI-4, AI-G6
  */
 
 #include <juce_gui_basics/juce_gui_basics.h>
-
-#include "LspProtocol.hpp"
 
 #include <string>
 
@@ -35,10 +57,9 @@ namespace hathor::ui {
  * handles keystrokes; the overlay only renders.
  *
  * Usage:
- *   - setGhostText(): set the text to display (cleared on any edit/cursor move)
- *   - setCursorPosition(): update the cursor position so text is re-laid-out
- *   - clearGhost(): hide the ghost text
- *   - acceptGhost(): retrieve the text before clearing (for insertion)
+ *   - setGhostText(): set the text to display + resolved pixel caret bounds
+ *   - clearGhost(): hide the ghost text and clear all internal state
+ *   - acceptGhost(): retrieve the text for insertion, then clears
  */
 class GhostTextOverlay : public juce::Component
 {
@@ -59,33 +80,57 @@ public:
 
     /**
      * Set the ghost completion text to display.
-     * @param text  The completion text (appears after the cursor on the current line).
-     * @param cursorLine  0-based line number in the document.
-     * @param cursorChar  0-based character offset on the line.
-     * @param insertionLen  Number of characters at the cursor position already
-     *                      present in the document that the ghost text extends.
-     *                      This is used to dim the ghost text that matches
-     *                      the existing text (so the user sees only the new part).
+     *
+     * @param text           The completion text to show at the cursor.
+     * @param caretBounds    Resolved pixel rectangle of the caret cursor in
+     *                       editor-local coordinates (== overlay-local since
+     *                       they share the same bounds in HathorTab::resized).
+     *                       The ghost text is drawn starting at caretBounds.getRight().
+     * @param insertionLen   Number of characters at the cursor position that
+     *                       are already present in the document and are covered
+     *                       (dimmed) by the ghost text. This is used to visually
+     *                       distinguish the new completion from the existing
+     *                       text it extends.
+     *
+     * This method ONLY stores rendering state. It does NOT modify the
+     * CodeDocument, undo history, compiler input, or diagnostics.
      */
     void setGhostText(const std::string& text,
-                      int cursorLine,
-                      int cursorChar,
+                      const juce::Rectangle<int>& caretBounds,
                       int insertionLen = 0);
 
-    /** Clear the ghost text. */
+    /**
+     * Clear the ghost text and hide the overlay.
+     * This does NOT modify the document, undo history, compiler, or diagnostics.
+     * Does NOT create an undo entry.
+     */
     void clearGhost() noexcept;
 
-    /** Hide the overlay component visually without clearing the stored ghost text. */
+    /**
+     * Hide the overlay visually without clearing the stored ghost text.
+     * The stored state (text, caretBounds, insertionLen) is preserved so the
+     * overlay can be shown again without re-setting.
+     */
     void hideGhost() noexcept;
 
-    /** Show the overlay component if ghost text is present. */
+    /**
+     * Show the overlay if ghost text is present.
+     */
     void showGhost() noexcept;
 
-    /** Accept the ghost text — returns the text to insert, then clears. */
+    /**
+     * Accept the ghost text — returns the text to insert, then clears.
+     * The caller (HathorTab) is responsible for inserting this text into
+     * the document via the normal document edit mechanism (which creates
+     * a proper undo entry).
+     */
     std::string acceptGhost();
 
-    /** True if ghost text is currently visible. */
+    /** True if ghost text is currently stored (regardless of visibility). */
     bool hasGhost() const noexcept { return !ghostText_.empty(); }
+
+    /** True if the overlay is currently visible (ghost shown). */
+    bool isGhostVisible() const noexcept { return visible_; }
 
     /** Get the current ghost text (for display/preview). */
     std::string getGhostText() const noexcept { return ghostText_; }
@@ -97,10 +142,9 @@ private:
     friend class HathorTab;
 
     std::string ghostText_;
-    int         cursorLine_    = 0;
-    int         cursorChar_    = 0;
-    int         insertionLen_  = 0;
-    bool        visible_       = false;
+    juce::Rectangle<int> caretBounds_;    ///< caret pixel position (editor-local = overlay-local)
+    int insertionLen_       = 0;
+    bool visible_          = false;
 
     juce::Font ghostFont_;
     juce::Colour ghostColour_;

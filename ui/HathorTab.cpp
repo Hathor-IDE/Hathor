@@ -53,10 +53,15 @@ HathorTab::HathorTab(int slotIndex, const juce::File& file)
     editor_.setColour(juce::CodeEditorComponent::lineNumberTextId,
                       palette.codeLineNum);
 
-     // -----------------------------------------------------------------------
-     // Register as a CodeDocument listener so we can detect edits (Req 22.5)
-     // -----------------------------------------------------------------------
+    // -----------------------------------------------------------------------
+    // Register as a CodeDocument listener so we can detect edits (Req 22.5)
+    // -----------------------------------------------------------------------
      document_.addListener(this);
+
+     // AI-G6: Wire caret-moved callback so ghost text is invalidated
+     // when the cursor moves (arrow keys, mouse clicks, etc.) without
+     // the document changing — a core AI-G6 requirement.
+     editor_.onCaretMoved = [this]() { handleCursorMove(); };
 
      addAndMakeVisible(highlightOverlay_);
      highlightOverlay_.setInterceptsMouseClicks(false, false);
@@ -447,10 +452,13 @@ void HathorTab::codeDocumentTextInserted(const juce::String& /*newText*/,
     if (coordinator_)
         coordinator_->onDocumentChanged();
 
-    // AI-4: Clear ghost text on any edit — the ghost is context-sensitive
-    // and must be recomputed for the new document state.
+    // AI-G6: Clear ghost text on any edit — the ghost is context-sensitive
+    // and must be recomputed for the new document state. Also clear the
+    // stored result so acceptance verification will fail if the cursor
+    // hasn't moved but the document has changed.
     if (ghostOverlay_)
         ghostOverlay_->clearGhost();
+    activeGhostResult_.reset();
     notifyLspDidChange();
 }
 
@@ -466,6 +474,7 @@ void HathorTab::codeDocumentTextDeleted(int /*startIndex*/,
     // AI-4: Clear ghost text on any edit.
     if (ghostOverlay_)
         ghostOverlay_->clearGhost();
+    activeGhostResult_.reset();
     notifyLspDidChange();
 }
 
@@ -939,9 +948,12 @@ void HathorTab::triggerGhostCompletion()
         .count());
     coordinator_->triggerGhostCompletion(ctx, nowMs);
 
-    // Clear any existing ghost — a new request cycle has started
+    // AI-G6: Clear any existing ghost — a new request cycle has started.
+    // This clears the overlay AND the stored result so acceptance verification
+    // will fail if a response arrives for a stale context.
     if (ghostOverlay_)
         ghostOverlay_->clearGhost();
+    activeGhostResult_.reset();
 }
 
 void HathorTab::acceptGhostCompletion()
@@ -949,10 +961,31 @@ void HathorTab::acceptGhostCompletion()
     if (!ghostOverlay_ || !coordinator_)
         return;
 
+    // AI-G6: Verify the cursor hasn't moved since the ghost was generated.
+    // If the cursor moved, dismiss instead of accepting — the ghost text
+    // was generated for a different context and must not be inserted.
+    if (activeGhostResult_.has_value())
+    {
+        const auto& gr = activeGhostResult_.value();
+        const auto caretPos = editor_.getCaretPos();
+        if (static_cast<int>(caretPos.getLineNumber()) != gr.cursorLine ||
+            static_cast<int>(caretPos.getIndexInLine()) != gr.character)
+        {
+            // Cursor moved — dismiss, don't accept
+            activeGhostResult_.reset();
+            ghostOverlay_->clearGhost();
+            return;
+        }
+    }
+
     // Get the text to insert
     std::string text = ghostOverlay_->acceptGhost();
     if (text.empty())
         return;
+
+    // AI-G6: Clear the stored result BEFORE inserting — the ghost is now
+    // being materialized into the document.
+    activeGhostResult_.reset();
 
     // AI-G3: Accept through the coordinator — it handles mode transition
     // and returns the accept notification params.
@@ -960,7 +993,9 @@ void HathorTab::acceptGhostCompletion()
     if (acceptParams.has_value() && ghostClient_)
         ghostClient_->sendAccept(*acceptParams);
 
-    // Insert the text at the cursor position
+    // AI-G6: Insert the EXACT generated text at the current cursor position
+    // using the editor's normal document-edit mechanism. This creates a
+    // proper, undoable edit — the ghost text becomes a normal document edit.
     int caretAbs = editor_.getCaretPosition();
     document_.insertText(caretAbs, juce::String(text));
 }
@@ -975,8 +1010,9 @@ void HathorTab::dismissGhostCompletion()
     if (rejectParams.has_value() && ghostClient_)
         ghostClient_->sendReject(*rejectParams);
 
-    // Clear the ghost overlay
+    // Clear the ghost overlay and stored result
     ghostOverlay_->clearGhost();
+    activeGhostResult_.reset();
 }
 
 void HathorTab::ghostTick()
@@ -1040,32 +1076,55 @@ void HathorTab::ghostTick()
                 return;
             }
 
-            // Display the ghost text at the cursor position from the result
-            auto ghostResult = result.value();
+             // AI-G6: Verify the cursor hasn't moved since the response was
+             // generated. The coordinator's revision check already ensures
+             // the document hasn't changed, but we also check that the cursor
+             // is still at the expected position. If the cursor moved, the
+             // ghost was already cleared by codeEditorCaretMoved → but
+             // defense-in-depth: reject if positions don't match.
+             if (result.has_value())
+             {
+                 const auto& gr = result.value();
+                 const auto caretPos = editor_.getCaretPos();
+                 if (static_cast<int>(caretPos.getLineNumber()) != gr.cursorLine ||
+                     static_cast<int>(caretPos.getIndexInLine()) != gr.character)
+                 {
+                     // Cursor moved — discard the stale ghost
+                     ghostOverlay_->clearGhost();
+                     activeGhostResult_.reset();
+                     return;
+                 }
+             }
 
-            juce::Rectangle<int> caretRect = editor_.getCaretRectangleForCharIndex(
-                editor_.getCaretPosition());
+             // Display the ghost text at the cursor position from the result
+             auto ghostResult = result.value();
 
-            ghostOverlay_->setGhostText(
-                ghostResult.text,
-                ghostResult.cursorLine,
-                ghostResult.character,
-                0);
+             // AI-G6: Resolve the caret pixel rectangle in editor-local
+             // coordinates. Since GhostTextOverlay shares the same bounds
+             // as the editor (set in HathorTab::resized), editor-local
+             // coordinates map directly to overlay-local coordinates.
+             // This follows the same pattern as HighlightOverlay — no
+             // setTopLeftPosition() which would break alignment.
+             juce::Rectangle<int> caretRect = editor_.getCaretRectangleForCharIndex(
+                 editor_.getCaretPosition());
 
-            // AI-G3: Only show the ghost overlay if the coordinator
-            // hasn't entered LspPopupActive mode (no late ghost-behind-popup).
-            if (!coordinator_->isLspPopupActive())
-            {
-                ghostOverlay_->showGhost();
-                ghostOverlay_->setTopLeftPosition(caretRect.getRight(), caretRect.getY());
-                ghostOverlay_->toFront(false);
-            }
-            else
-            {
-                // LSP popup took over while the response was in flight —
-                // hide the ghost overlay.
-                ghostOverlay_->hideGhost();
-            }
+             ghostOverlay_->setGhostText(ghostResult.text, caretRect, 0);
+
+             // Store the result for cursor verification on accept
+             activeGhostResult_ = ghostResult;
+
+             // AI-G3: Only show the ghost overlay if the coordinator
+             // hasn't entered LspPopupActive mode (no late ghost-behind-popup).
+             if (!coordinator_->isLspPopupActive())
+             {
+                 ghostOverlay_->showGhost();
+             }
+             else
+             {
+                 // LSP popup took over while the response was in flight —
+                 // hide the ghost overlay.
+                 ghostOverlay_->hideGhost();
+             }
         });
 }
 

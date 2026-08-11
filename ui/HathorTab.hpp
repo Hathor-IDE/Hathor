@@ -38,6 +38,31 @@
 namespace hathor::ui {
 
 /**
+ * GhostAwareEditor
+ *
+ * A thin CodeEditorComponent subclass that fires a callback whenever the
+ * caret position changes (arrow keys, mouse clicks, programmatic moves).
+ * In JUCE 8.0.4 CodeEditorComponent has no Listener interface; instead it
+ * has a virtual caretPositionMoved() that must be overridden by a subclass.
+ */
+class GhostAwareEditor : public juce::CodeEditorComponent
+{
+public:
+    GhostAwareEditor(juce::CodeDocument& doc, juce::CodeTokeniser* ts)
+        : juce::CodeEditorComponent(doc, ts) {}
+
+    std::function<void()> onCaretMoved;
+
+    void caretPositionMoved() override
+    {
+        if (onCaretMoved)
+            onCaretMoved();
+    }
+
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(GhostAwareEditor)
+};
+
+/**
  * HathorTab
  *
  * A juce::Component that wraps:
@@ -57,7 +82,7 @@ namespace hathor::ui {
  * Requirements: 22.1, 22.2, 22.5, 22.7
  */
 class HathorTab : public juce::Component,
-                  private juce::CodeDocument::Listener
+                   private juce::CodeDocument::Listener
 {
 public:
     /**
@@ -379,13 +404,13 @@ private:
     // juce::CodeDocument::Listener
     // -----------------------------------------------------------------------
     void codeDocumentTextInserted(const juce::String& newText,
-                                  int insertIndex) override;
+                                   int insertIndex) override;
     void codeDocumentTextDeleted(int startIndex,
                                  int endIndex) override;
 
-    // -----------------------------------------------------------------------
-    // Internal helpers
-    // -----------------------------------------------------------------------
+     // -----------------------------------------------------------------------
+     // Internal helpers
+     // -----------------------------------------------------------------------
     void markUnsaved();
 
     /// Paint the Play/Stop button icon onto the editor header area.
@@ -452,12 +477,18 @@ private:
       //     when LSP popup is visible; cancels ghost on Ctrl+Space.
       // GhostTextOverlay is a child component for rendering.
       // -----------------------------------------------------------------------
-      class GhostLlmClient*             ghostClient_{ nullptr };
-      std::unique_ptr<CompletionCoordinator> coordinator_;
-      std::unique_ptr<GhostTextOverlay>     ghostOverlay_;
+       class GhostLlmClient*             ghostClient_{ nullptr };
+       std::unique_ptr<CompletionCoordinator> coordinator_;
+       std::unique_ptr<GhostTextOverlay>     ghostOverlay_;
+
+      // AI-G6: The active ghost result (if any) — stored so that
+      // acceptGhostCompletion() can verify the cursor hasn't moved since
+      // the ghost was generated. Stale ghost results (cursor moved,
+      // document changed) are rejected before text is inserted.
+      std::optional<lsp::GhostResult>      activeGhostResult_;
 
      juce::CodeDocument          document_;
-     juce::CodeEditorComponent   editor_;
+      GhostAwareEditor           editor_;
 
     // Per-slot Play/Stop button (B1). Renders as a small icon button in the
     // editor header. Visual state reflects SlotState::running, not an
