@@ -259,6 +259,24 @@ private:
         const std::vector<ReuseFinding>& findings,
         const ReuseDecision& reuse);
 
+    /**
+     * Generate starter ChucK source from intent keywords.
+     * Selects a template based on instrument-type and style keywords.
+     */
+    static std::string generateChuckSource(
+        const std::string& intentKeywords,
+        const std::string& assetName);
+
+    /**
+     * Generate starter mini-notation from intent keywords.
+     * Produces a pattern on the specified slot based on instrument type.
+     */
+    static std::string generateMiniNotation(
+        const std::string& intentKeywords,
+        const std::string& targetSlot,
+        int durationBars,
+        const std::string& assetName);
+
     ProjectReadFacade&   readFacade_;
     ChuckSessionService& chuckService_;
     RenderService&       renderService_;

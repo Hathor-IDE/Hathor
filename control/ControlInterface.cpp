@@ -1542,18 +1542,12 @@ void ControlInterface::handleWorkflowStart(std::string_view rest)
 
     // If neither notation nor ck_source is provided, use IntentPlanner (AI-10.1)
     // to interpret the natural-language intent and generate the appropriate
-    // content.  This allows "workflow_start {"intent":"dark 8-bar acid bassline"}"
-    // without requiring the caller to specify notation or ck_source.
-    if (request.notation.empty() && request.ckSource.empty() && !request.plan.is_null()) {
-        // Plan was provided but no content — nothing to do, AgenticWorkflow
-        // will use the plan during its Planning phase.
-    } else if (request.notation.empty() && request.ckSource.empty()) {
-        // No explicit content — interpret the intent.
+    // content + structured plan.  This allows "workflow_start {"intent":"dark
+    // 8-bar acid bassline","asset_name":"acid_bass"}" without requiring the
+    // caller to specify notation or ck_source explicitly.
+    if (request.notation.empty() && request.ckSource.empty()) {
         IntentPlanner planner(*readFacade_, *chuckSessionService_, *renderService_);
 
-        // If a plan was provided, use planFromRequestWithOverride to fill in
-        // any missing fields from the override plan.  Otherwise, generate
-        // from scratch.
         PlanModel planModel = request.plan.is_null()
             ? planner.planFromRequest(request.intent,
                                       request.targetSlot,
@@ -1567,29 +1561,21 @@ void ControlInterface::handleWorkflowStart(std::string_view rest)
                                                    request.dryRun,
                                                    request.plan);
 
-        // Populate the plan on the request.
+        // Populate the plan on the request for AgenticWorkflow to use.
         request.plan = planModel.toJson();
 
-        // Extract content from the plan steps.
-        if (!planModel.steps.empty()) {
-            for (const auto& step : planModel.steps) {
-                if (step.name == "generate_pattern" && !request.notation.empty() == false) {
-                    request.notation = "auto";  // signal to use plan's notation
-                } else if (step.name == "create_chuck_session" && request.ckSource.empty()) {
-                    request.ckSource = "auto";  // signal to use plan's ck_source
-                }
-            }
+        // Extract generated content from the plan.
+        if (planModel.mode == "chuck") {
+            request.ckSource = planModel.ckSource;
+        } else {
+            request.notation = planModel.notation;
         }
 
-        // If we still have no explicit content, generate from intent.
-        // The AgenticWorkflow will handle "auto" or empty content during execution.
-        if (request.notation == "auto" || request.notation.empty()) {
-            if (planModel.mode == "chuck") {
-                request.ckSource = "auto";
-            } else {
-                request.notation = "auto";
-            }
-        }
+        // Ensure target slot defaults are set.
+        if (request.targetSlot.empty())
+            request.targetSlot = planModel.targetSlot;
+        if (request.assetName.empty())
+            request.assetName = planModel.assetName;
     }
 
     // Start the workflow with progress + confirmation callbacks.

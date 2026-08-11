@@ -205,16 +205,17 @@ ReuseDecision IntentPlanner::decideReuse(
     const std::vector<ReuseFinding>& findings,
     const std::string& assetName)
 {
-    // Look for a fully-baked ChucK instrument matching the asset name.
+    // Look for a ChucK instrument matching the asset name.
     for (const auto& f : findings) {
         if (f.type == "chuck_instrument" && f.name == assetName) {
+            const bool sourceCk = f.details.value("source_ck_exists", false);
             const bool rendered = f.details.value("rendered_wav_exists", false);
             const bool bound = f.details.value("bound_to_sample_bank", false);
             if (rendered && bound) {
                 return ReuseDecision::Reuse;  // fully baked and registered
             }
-            if (rendered || bound) {
-                return ReuseDecision::Modify;  // partially complete, needs work
+            if (rendered || bound || sourceCk) {
+                return ReuseDecision::Modify;  // exists but needs work
             }
         }
     }
@@ -617,10 +618,6 @@ PlanModel IntentPlanner::planFromRequest(
 
     return model;
 }
-    }
-
-    return model;
-}
 
 // ---------------------------------------------------------------------------
 // planFromRequestWithOverride
@@ -651,6 +648,10 @@ PlanModel IntentPlanner::planFromRequestWithOverride(
             else model.reuseDecision = ReuseDecision::Create;
         }
 
+        // Carry through generated content if present in the override.
+        model.notation = overridePlan.value("notation", std::string{});
+        model.ckSource = overridePlan.value("ck_source", std::string{});
+
         for (const auto& stepJson : overridePlan["steps"]) {
             PlanStep step;
             step.name = stepJson.value("name", std::string{});
@@ -669,6 +670,18 @@ PlanModel IntentPlanner::planFromRequestWithOverride(
                 step.capabilityClass = CapabilityClass::PersistentMutation;
 
             model.steps.push_back(std::move(step));
+        }
+
+        // If override didn't include generated content, generate from intent.
+        if (model.notation.empty() && model.ckSource.empty()) {
+            std::string kw = model.intent;
+            std::transform(kw.begin(), kw.end(), kw.begin(), ::tolower);
+            if (model.mode == "chuck") {
+                model.ckSource = generateChuckSource(kw, model.assetName);
+            } else {
+                model.notation = generateMiniNotation(kw, model.targetSlot,
+                                                      model.durationBars, model.assetName);
+            }
         }
 
         return model;
@@ -757,7 +770,7 @@ std::string IntentPlanner::generateChuckSource(
                "1000 => lpf.freq;\n"
                "Std.mtof(48) => osc.freq;\n"
                "2::second => now;";
- }
+    }
 
     // Generic default.
     return "SinOsc osc => Gain g => dac;\n"
@@ -809,75 +822,6 @@ std::string IntentPlanner::generateMiniNotation(
         return targetSlot + "([c1 e1 g1 b1] * " + std::to_string(durationBars) + ")";
     }
     return targetSlot + "([c1 g1 c1 g1] * " + std::to_string(durationBars) + ")";
-}
-
-// Also populate notation/ckSource for override plans.
-PlanModel IntentPlanner::planFromRequestWithOverrideImpl(
-    std::string_view intent,
-    std::string_view targetSlot,
-    std::string_view assetName,
-    int              durationBars,
-    bool             dryRun,
-    const nlohmann::json& overridePlan)
-{
-    // If the caller provided a pre-determined plan, validate it is well-formed.
-    if (overridePlan.contains("steps") && overridePlan["steps"].is_array()) {
-        PlanModel model;
-        model.intent = std::string(intent);
-        model.targetSlot = std::string(targetSlot);
-        model.assetName = std::string(assetName);
-        model.durationBars = durationBars;
-        model.isDryRun = dryRun;
-        model.mode = overridePlan.value("mode", std::string{"pattern"});
-
-        if (overridePlan.contains("reuse_decision")) {
-            const std::string rd = overridePlan["reuse_decision"];
-            if (rd == "reuse") model.reuseDecision = ReuseDecision::Reuse;
-            else if (rd == "modify") model.reuseDecision = ReuseDecision::Modify;
-            else model.reuseDecision = ReuseDecision::Create;
-        }
-
-        // Carry through generated content if present in the override.
-        model.notation = overridePlan.value("notation", std::string{});
-        model.ckSource = overridePlan.value("ck_source", std::string{});
-
-        for (const auto& stepJson : overridePlan["steps"]) {
-            PlanStep step;
-            step.name = stepJson.value("name", std::string{});
-            step.service = stepJson.value("service", std::string{});
-            step.method = stepJson.value("method", std::string{});
-            step.description = stepJson.value("description", std::string{});
-            step.params = stepJson.value("params", nlohmann::json::object());
-            step.requiresConfirmation = stepJson.value("requires_confirmation", false);
-
-            const std::string cc = stepJson.value("capability_class", std::string{"read_only"});
-            if (cc == "read_only") step.capabilityClass = CapabilityClass::ReadOnly;
-            else if (cc == "non_destructive") step.capabilityClass = CapabilityClass::NonDestructive;
-            else step.capabilityClass = CapabilityClass::PersistentMutation;
-
-            if (step.requiresConfirmation)
-                step.capabilityClass = CapabilityClass::PersistentMutation;
-
-            model.steps.push_back(std::move(step));
-        }
-
-        // If override didn't include generated content, generate from intent.
-        if (model.notation.empty() && model.ckSource.empty()) {
-            std::string kw = model.intent;
-            std::transform(kw.begin(), kw.end(), kw.begin(), ::tolower);
-            if (model.mode == "chuck") {
-                model.ckSource = generateChuckSource(kw, model.assetName);
-            } else {
-                model.notation = generateMiniNotation(kw, model.targetSlot,
-                                                      model.durationBars, model.assetName);
-            }
-        }
-
-        return model;
-    }
-
-    // No usable override — fall back to a fresh plan.
-    return planFromRequest(intent, targetSlot, assetName, durationBars, dryRun);
 }
 
 } // namespace hathor::control
