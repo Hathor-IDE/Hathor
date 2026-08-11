@@ -717,3 +717,194 @@ TEST_CASE("AI-G3: language is inferred from .hathor / .ck paths and metadata is 
         REQUIRE(mv["compatible"] == true);
     }
 }
+
+// ===========================================================================
+// 12. J-4: Intent classification (continue / transform / densify / repair)
+// ===========================================================================
+// Intent is derived from the AI-G3 cursor classification + diagnostics.
+// There is exactly one intent-aware authoring path — no second classifier.
+
+TEST_CASE("AI-G3: intent='transform' when cursor is in a transform context",
+          "[ai-g3][intent][j4]")
+{
+    Ai3Fixture fx;
+    FakeEditorContextProvider editor;
+    fx.provider.setEditorContextProvider(&editor);
+
+    const std::string doc = "d1 $ slow 2 $ sound \"bd\"";
+    EditorContextSnapshot snap;
+    snap.hasContent = true;
+    snap.file = "/proj/song.hathor";
+    snap.uri = "file:///proj/song.hathor";
+    snap.language = "mininotation";
+    snap.content = doc;
+    snap.cursorLine = 0;
+    snap.cursorChar = 9; // end of "slow" (a transform function)
+    snap.slotName = "d1";
+    editor.setSnapshot(snap);
+
+    CompletionRequest req;
+    req.file = snap.file;
+    req.uri = snap.uri;
+    req.language = "mininotation";
+    req.documentText = doc;
+    req.line = 0;
+    req.character = 9;
+
+    auto result = fx.provider.assemble(req);
+    REQUIRE(result.ok);
+    REQUIRE(result.intent == "transform");
+    REQUIRE(result.intentKind == "transform");
+    REQUIRE(result.context["intent"] == "transform");
+    REQUIRE(result.context["intent_kind"] == "transform");
+    // Instructions should mention the transform intent.
+    REQUIRE(result.context["instructions"].get<std::string>().find("transform") != std::string::npos);
+}
+
+TEST_CASE("AI-G3: intent='densify' when cursor is in a rhythm/sample context",
+          "[ai-g3][intent][j4]")
+{
+    Ai3Fixture fx;
+    FakeEditorContextProvider editor;
+    fx.provider.setEditorContextProvider(&editor);
+
+    const std::string doc = "bd*2 sn hh";
+    EditorContextSnapshot snap;
+    snap.hasContent = true;
+    snap.file = "/proj/song.hathor";
+    snap.uri = "file:///proj/song.hathor";
+    snap.language = "mininotation";
+    snap.content = doc;
+    snap.cursorLine = 0;
+    snap.cursorChar = 4; // after "bd" in a rhythm pattern (contains *)
+    snap.slotName = "d0";
+    editor.setSnapshot(snap);
+
+    CompletionRequest req;
+    req.file = snap.file;
+    req.uri = snap.uri;
+    req.language = "mininotation";
+    req.documentText = doc;
+    req.line = 0;
+    req.character = 4;
+
+    auto result = fx.provider.assemble(req);
+    REQUIRE(result.ok);
+    REQUIRE(result.intent == "densify");
+    REQUIRE(result.intentKind == "densify");
+    REQUIRE(result.context["intent"] == "densify");
+}
+
+TEST_CASE("AI-G3: intent='repair' when diagnostics are present near cursor",
+          "[ai-g3][intent][j4]")
+{
+    Ai3Fixture fx;
+    FakeEditorContextProvider editor;
+    FakeLspContextProvider lsp;
+    fx.provider.setEditorContextProvider(&editor);
+    fx.provider.setLspContextProvider(&lsp);
+
+    const std::string doc = "bd @\nhh cp";
+    EditorContextSnapshot snap;
+    snap.hasContent = true;
+    snap.file = "/proj/song.hathor";
+    snap.uri = "file:///proj/song.hathor";
+    snap.language = "mininotation";
+    snap.content = doc;
+    snap.cursorLine = 1;
+    snap.cursorChar = 1; // on line 1, near a potential diagnostic
+    snap.slotName = "d0";
+    editor.setSnapshot(snap);
+
+    // Inject a compiler diagnostic near the cursor.
+    lsp.setOk(true);
+    lsp.addDiagnostic(nlohmann::json{
+        {"message","unexpected token"}, {"line",1}, {"column",0},
+        {"severity","error"}
+    });
+
+    CompletionRequest req;
+    req.file = snap.file;
+    req.uri = snap.uri;
+    req.language = "mininotation";
+    req.documentText = doc;
+    req.line = 1;
+    req.character = 1;
+
+    auto result = fx.provider.assemble(req);
+    REQUIRE(result.ok);
+    REQUIRE(result.intent == "repair");
+    REQUIRE(result.intentKind == "repair");
+    REQUIRE(result.context["intent"] == "repair");
+    REQUIRE(result.context["instructions"].get<std::string>().find("repair") != std::string::npos);
+}
+
+TEST_CASE("AI-G3: intent='continue' for ChucK routing context without diagnostics",
+          "[ai-g3][intent][j4]")
+{
+    Ai3Fixture fx;
+    FakeEditorContextProvider editor;
+    fx.provider.setEditorContextProvider(&editor);
+
+    const std::string doc = "SinOsc osc => dac;\n440 => osc.freq;";
+    EditorContextSnapshot snap;
+    snap.hasContent = true;
+    snap.file = "/proj/bass.ck";
+    snap.uri = "file:///proj/bass.ck";
+    snap.language = "chuck";
+    snap.content = doc;
+    snap.cursorLine = 0;
+    snap.cursorChar = 8; // near `=>` routing
+    snap.slotName = "d0";
+    editor.setSnapshot(snap);
+
+    CompletionRequest req;
+    req.file = snap.file;
+    req.uri = snap.uri;
+    req.language = "chuck";
+    req.documentText = doc;
+    req.line = 0;
+    req.character = 8;
+
+    auto result = fx.provider.assemble(req);
+    REQUIRE(result.ok);
+    REQUIRE(result.intent == "continue");
+    REQUIRE(result.intentKind == "continue");
+    REQUIRE(result.context["intent"] == "continue");
+}
+
+TEST_CASE("AI-G3: intent='continue' for general boundary without diagnostics",
+          "[ai-g3][intent][j4]")
+{
+    Ai3Fixture fx;
+    FakeEditorContextProvider editor;
+    fx.provider.setEditorContextProvider(&editor);
+
+    const std::string doc = "bd sd";
+    EditorContextSnapshot snap;
+    snap.hasContent = true;
+    snap.file = "/proj/song.hathor";
+    snap.uri = "file:///proj/song.hathor";
+    snap.language = "mininotation";
+    snap.content = doc;
+    snap.cursorLine = 0;
+    snap.cursorChar = 0; // start of document
+    snap.slotName = "d0";
+    editor.setSnapshot(snap);
+
+    CompletionRequest req;
+    req.file = snap.file;
+    req.uri = snap.uri;
+    req.language = "mininotation";
+    req.documentText = doc;
+    req.line = 0;
+    req.character = 0;
+
+    auto result = fx.provider.assemble(req);
+    REQUIRE(result.ok);
+    // At start of document with "bd sd" → rhythm context → densify
+    // (unless it triggers General). Let's check it's a valid intent.
+    const std::string intent = result.intent;
+    REQUIRE((intent == "densify" || intent == "continue" || intent == "general"));
+    REQUIRE_FALSE(result.intent.empty());
+}

@@ -24,18 +24,26 @@
   *   - The editor state has not changed since the last request (duplicate)
   *   - The cursor is not at a meaningful completion boundary
   *
-  * Trigger conditions (the policy returns shouldTrigger=true; actual request
-  * is still debounced by GhostCompletionLogic):
-  *   - After '('
-  *   - After '.'
-  *   - After the pattern patching arrow operator (Unicode arrow)
-  *   - After '=>' (ChucK chucking operator)
-  *   - After a space following a completed word/token
-  *   - At the end of a token
-  *   - At the start of the document (empty file)
-  *   - After delimiters: '{'; '}', '[', ']', ';', ',', ')'
-  *
-  * Requirement references: J-1, AI-G1, AI-G5, AI-G6
+     * Trigger conditions (the policy returns shouldTrigger=true; actual request
+     * is still debounced by GhostCompletionLogic):
+     *   - After '('
+     *   - After '.'
+     *   - After the pattern patching arrow operator (Unicode arrow)
+     *   - After '=>' (ChucK chucking operator)
+     *   - After a space following a completed word/token
+     *   - At the end of a token
+     *   - At the start of the document (empty file)
+     *   - After delimiters: '{'; '}', '[', ']', ';', ',', ')'
+     *
+     * Suppression when a non-empty selection is active (J-4):
+     *   Ghost completion is a zero-width-insertion-point affordance. When the
+     *   user has a non-empty selection, the intent is to replace/move/copy
+     *   text, not to complete — so the policy suppresses. Selection state
+     *   arrives via GhostContext.hasSelection / selectedText, which is
+     *   populated from the same editor snapshot as the AI-8 authoring context
+     *   (no second context model).
+     *
+     * Requirement references: J-1, J-4, AI-G1, AI-G5, AI-G6
   */
 
 #include "GhostProtocol.hpp"

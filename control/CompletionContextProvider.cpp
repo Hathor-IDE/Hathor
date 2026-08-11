@@ -1257,7 +1257,70 @@ nlohmann::json CompletionContextProvider::assembleProject(const CompletionReques
 }
 
 // ---------------------------------------------------------------------------
-// assemble — main entry point
+// Intent classification (J-4) — single intent-aware path, no second classifier
+// ---------------------------------------------------------------------------
+
+std::string_view CompletionContextProvider::intentLabel(IntentKind intent) noexcept
+{
+    switch (intent)
+    {
+        case IntentKind::Continue:  return "continue";
+        case IntentKind::Transform: return "transform";
+        case IntentKind::Densify:   return "densify";
+        case IntentKind::Repair:    return "repair";
+        case IntentKind::General:   return "general";
+    }
+    return "general";
+}
+
+IntentKind CompletionContextProvider::classifyIntent(
+    const CursorContext& cursorCtx,
+    const nlohmann::json& diagnostics) const
+{
+    // Repair takes top priority: if there are any error or warning
+    // diagnostics near the cursor, the author's intent is most likely
+    // to fix/repair.  Info-level diagnostics (e.g. "parsed successfully")
+    // do NOT indicate a repair intent.
+    int problemCount = 0;
+    for (const auto& d : diagnostics.value("diagnostics", nlohmann::json::array()))
+    {
+        const auto severity = d.value("severity", std::string{});
+        if (severity == "error" || severity == "warning")
+            ++problemCount;
+    }
+    if (problemCount > 0)
+        return IntentKind::Repair;
+
+    // Cursor-context-driven intent mapping.
+    switch (cursorCtx.kind)
+    {
+        case CursorContextKind::Transform:
+            // Cursor after/inside a transformation function → transform intent.
+            return IntentKind::Transform;
+
+        case CursorContextKind::Rhythm:
+        case CursorContextKind::SampleExpr:
+            // In a pattern or sample expression, the author is likely building
+            // up density of events — densify intent.
+            return IntentKind::Densify;
+
+        case CursorContextKind::ScaleExpr:
+        case CursorContextKind::UgenDecl:
+        case CursorContextKind::Routing:
+        case CursorContextKind::Timing:
+        case CursorContextKind::SynthSection:
+            // These are all continuation contexts: the author is writing the
+            // next piece of code at a syntactically meaningful boundary.
+            return IntentKind::Continue;
+
+        case CursorContextKind::General:
+            // No specific classification — default to continue (the model
+            // should generate the next likely token/line).
+            return IntentKind::General;
+    }
+    return IntentKind::General;
+}
+
 // ---------------------------------------------------------------------------
 
 CompletionContext CompletionContextProvider::assemble(const CompletionRequest& req) const
@@ -1336,6 +1399,26 @@ CompletionContext CompletionContextProvider::assemble(const CompletionRequest& r
     // --- diagnostics (proximity-ordered, bounded) ---
     ctxJson["diagnostics"] = assembleDiagnostics(req, snap, language);
 
+    // --- J-4: classify authoring intent from cursor context + diagnostics ---
+    // Intent is derived from the existing AI-G3 cursor classification and
+    // the diagnostics just assembled — no second intent classifier.
+    {
+        const IntentKind intent = classifyIntent(ctx, ctxJson["diagnostics"]);
+        ctxJson["intent"] = intentLabel(intent);
+        ctxJson["intent_kind"] = [intent] {
+            switch (intent) {
+                case IntentKind::Continue:  return "continue";
+                case IntentKind::Transform: return "transform";
+                case IntentKind::Densify:   return "densify";
+                case IntentKind::Repair:    return "repair";
+                case IntentKind::General:   return "general";
+            }
+            return "general";
+        }();
+        out.intent = std::string(intentLabel(intent));
+        out.intentKind = ctxJson["intent_kind"].get<std::string>();
+    }
+
     // --- metadata (relevance-filtered, version-gated) ---
     ctxJson["metadata"] = assembleMetadata(req, language);
 
@@ -1353,12 +1436,32 @@ CompletionContext CompletionContextProvider::assemble(const CompletionRequest& r
 
     // --- project (compact overview) ---
     ctxJson["project"] = assembleProject(req);
-    ctxJson["instructions"] =
-        "You are a Hathor inline-completion (FIM) assistant. Complete only the "
-        "missing middle code at the cursor. Prefer Hathor-supported language "
-        "constructs and valid sample/UGen names. Respect the surrounding "
-        "prefix/suffix so your completion fits between them. Do not invent "
-        "syntax the supported surface does not include.";
+
+    // J-4: Intent-aware instructions — the intent (continue / transform /
+    // densify / repair) is derived from the AI-G3 cursor classification +
+    // diagnostics above. There is exactly one intent-aware authoring path.
+    ctxJson["instructions"] = [intent = out.intent] {
+        const std::string base =
+            "You are a Hathor inline-completion (FIM) assistant. Complete only the "
+            "missing middle code at the cursor. Prefer Hathor-supported language "
+            "constructs and valid sample/UGen names. Respect the surrounding "
+            "prefix/suffix so your completion fits between them. Do not invent "
+            "syntax the supported surface does not include.";
+        if (intent == "continue")
+            return base + " The author's intent is to continue: generate the next "
+                          "natural token(s) at this boundary.";
+        if (intent == "transform")
+            return base + " The author's intent is to transform: extend or apply "
+                          "the surrounding transformation construct.";
+        if (intent == "densify")
+            return base + " The author's intent is to densify: add more events or "
+                          "density to the current pattern/sample expression.";
+        if (intent == "repair")
+            return base + " The author's intent is to repair: the diagnostics "
+                          "near the cursor indicate an error — fix it or complete "
+                          "around it.";
+        return base + " The author's intent is general continuation.";
+    }();
 
       // --- final size budget enforcement ---
       out.fimPrefix = ctxJson.dump();

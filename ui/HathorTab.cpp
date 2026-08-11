@@ -1313,6 +1313,15 @@ void HathorTab::triggerGhostCompletion()
     ctx.line = cursorLine;
     ctx.character = cursorCol;
 
+    // J-4: Carry selection state through the existing authoring-context path
+    // (same snapshot source as AI-8) so J-1's trigger policy can suppress
+    // ghost completion when a non-empty selection is active — completion at
+    // a cursor over a selection is not meaningful.
+    const auto selRegion = editor_.getHighlightedRegion();
+    ctx.hasSelection = !selRegion.isEmpty();
+    if (ctx.hasSelection)
+        ctx.selectedText = editor_.getTextInRange(selRegion).toStdString();
+
     // AI-8: Inject dynamic authoring context (supported-surface, diagnostics)
     // as additional FIM context. The callback is installed by EditorArea
     // and delegates to ControlInterface's AuthoringContext.

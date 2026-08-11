@@ -77,6 +77,15 @@ struct GhostContext {
     // this JSON includes supported-surface info (AI-3), diagnostics, editor
     // state, and other relevant project/language information.
     nlohmann::json authoringContext;
+
+    // J-4: Selection state — flows through the existing authoring-context
+    // path so J-1's trigger policy (GhostTriggerPolicy) can suppress ghost
+    // completion when a non-empty selection is active. Ghost completion is
+    // only meaningful when the cursor is a zero-width insertion point; a
+    // selection typically signals an editing action (replace/copy) rather
+    // than a completion intent.
+    bool        hasSelection = false;
+    std::string selectedText;
 };
 
 // ---------------------------------------------------------------------------

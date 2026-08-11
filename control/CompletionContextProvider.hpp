@@ -121,6 +121,34 @@ struct CursorContext {
 };
 
 // ---------------------------------------------------------------------------
+// Authoring intent classification — J-4 (folded into AI-G3/AI-9/J-1)
+// ---------------------------------------------------------------------------
+
+/**
+ * The author's high-level intent at the cursor, derived from the cursor
+ * context (CursorContextKind) plus nearby diagnostics.  This is the single
+ * intent-aware path — there is no second intent classifier.  The intent
+ * is surfaced to the LLM via the assembled context JSON so the model knows
+ * whether to *continue*, *transform*, *densify*, or *repair*.
+ *
+ * Mapping (deterministic, inspectable):
+ *   - Repair   : diagnostics (errors/warnings) near the cursor
+ *   - Transform: cursor in a transformation-function context
+ *   - Densify  : cursor inside a pattern/rhythm or sample expression where
+ *                the user may want to add more events
+ *   - Continue : cursor at an end-of-token / end-of-line / delimiter boundary
+ *                where completion means "write the next thing"
+ *   - General  : no specific intent could be determined
+ */
+enum class IntentKind {
+    Continue,
+    Transform,
+    Densify,
+    Repair,
+    General,
+};
+
+// ---------------------------------------------------------------------------
 // Bounded context limits (configurable per request).
 // ---------------------------------------------------------------------------
 
@@ -196,6 +224,12 @@ struct CompletionContext {
     /// Resolved cursor-context label (see CursorContext::label).
     std::string cursorContextLabel;
 
+    /// Resolved authoring intent (J-4) — derived from cursor context + diagnostics.
+    std::string intent;
+
+    /// Resolved authoring intent kind (J-4) — machine-readable.
+    std::string intentKind;
+
     /// True if assembly succeeded with real data.
     bool ok = true;
 
@@ -270,6 +304,11 @@ private:
                                         int line, int character,
                                         std::string_view language) const;
 
+    /// Classify the author's intent at the cursor (J-4).
+    /// Derives intent from the cursor context kind + diagnostics presence.
+    IntentKind classifyIntent(const CursorContext& cursorCtx,
+                              const nlohmann::json& diagnostics) const;
+
     /// Bounded surrounding source region (lines around the cursor).
     nlohmann::json assembleRegion(const CompletionRequest& req,
                                   const EditorContextSnapshot& snap) const;
@@ -327,6 +366,9 @@ private:
 
     /// True if the loaded metadata is compatible with the running surface.
     bool metadataCompatible() const noexcept;
+
+    /// Static string label for IntentKind (J-4).
+    static std::string_view intentLabel(IntentKind intent) noexcept;
 
     /// Bounded helper: collect the first N elements of a vector<string> as JSON.
     static nlohmann::json boundedNames(const std::vector<std::string>& names,

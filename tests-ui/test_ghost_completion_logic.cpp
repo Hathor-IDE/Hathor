@@ -1833,3 +1833,118 @@ TEST_CASE("GhostCompletionLogic: trigger policy after ('(' triggers", "[ghost][t
     auto r = logic.onTimerTick(500);
     REQUIRE(r.has_value());
 }
+
+// ===========================================================================
+// J-4: Selection-aware triggering — ghost completion suppressed when a
+// non-empty selection is active.
+// ===========================================================================
+
+TEST_CASE("GhostCompletionLogic: non-empty selection suppresses ghost trigger (J-4)",
+          "[ghost][trigger][j4]")
+{
+    GhostCompletionLogic logic;
+    logic.setEnabled(true);
+    logic.setDebounceMs(300);
+
+    GhostContext ctx;
+    ctx.documentText = "bd sn hh";
+    ctx.uri = "file:///test.hathor";
+    ctx.languageId = "hathor";
+    ctx.line = 0;
+    ctx.character = 3;       // cursor after "bd"
+    ctx.hasSelection = true;
+    ctx.selectedText = "sn hh";
+
+    logic.onEditorChanged(ctx, 0);
+
+    // Even after debounce expires, no request should be produced.
+    auto r = logic.onTimerTick(500);
+    REQUIRE_FALSE(r.has_value());
+}
+
+TEST_CASE("GhostCompletionLogic: empty selection does NOT suppress trigger (J-4)",
+          "[ghost][trigger][j4]")
+{
+    GhostCompletionLogic logic;
+    logic.setEnabled(true);
+    logic.setDebounceMs(300);
+
+    GhostContext ctx;
+    ctx.documentText = "bd sn";
+    ctx.uri = "file:///test.hathor";
+    ctx.languageId = "hathor";
+    ctx.line = 0;
+    ctx.character = 3;         // end of "bd" — meaningful boundary
+    ctx.hasSelection = false;  // no selection
+    ctx.selectedText = "";
+
+    logic.onEditorChanged(ctx, 0);
+
+    auto r = logic.onTimerTick(500);
+    REQUIRE(r.has_value()); // boundary reached → trigger allowed
+}
+
+TEST_CASE("GhostCompletionLogic: selection is part of duplicate-context detection (J-4)",
+          "[ghost][trigger][j4]")
+{
+    GhostCompletionLogic logic;
+    logic.setEnabled(true);
+    logic.setDebounceMs(0);  // no debounce delay
+
+    // First request: no selection at cursor position 3.
+    GhostContext ctx;
+    ctx.documentText = "bd sn";
+    ctx.uri = "file:///test.hathor";
+    ctx.languageId = "hathor";
+    ctx.line = 0;
+    ctx.character = 3;
+    ctx.hasSelection = false;
+
+    logic.onEditorChanged(ctx, 0);
+    auto r1 = logic.onTimerTick(1);
+    REQUIRE(r1.has_value());
+
+    // Simulate response so lastRequestedCtx_ is set with hasSelection=false.
+    GhostCompletionResponse resp;
+    resp.request_id = r1.value().second;
+    resp.completions = {{.generatedText = " sn"}};
+    logic.onGhostResponse(r1.value().second, resp, 1);
+
+    // Now the same cursor position but WITH a selection → should NOT be
+    // treated as a duplicate (selection changed).
+    ctx.hasSelection = true;
+    ctx.selectedText = "sn";
+    logic.onEditorChanged(ctx, 2);
+    // Selection is active → suppressed regardless of duplicate detection.
+    auto r2 = logic.onTimerTick(3);
+    REQUIRE_FALSE(r2.has_value());
+}
+
+TEST_CASE("GhostCompletionLogic: selection cleared re-enables trigger at same position (J-4)",
+          "[ghost][trigger][j4]")
+{
+    GhostCompletionLogic logic;
+    logic.setEnabled(true);
+    logic.setDebounceMs(0);
+
+    GhostContext ctx;
+    ctx.documentText = "bd sn";
+    ctx.uri = "file:///test.hathor";
+    ctx.languageId = "hathor";
+    ctx.line = 0;
+    ctx.character = 3;
+
+    // With selection → suppressed
+    ctx.hasSelection = true;
+    ctx.selectedText = "sn";
+    logic.onEditorChanged(ctx, 0);
+    auto r1 = logic.onTimerTick(1);
+    REQUIRE_FALSE(r1.has_value());
+
+    // Selection cleared → trigger allowed at boundary
+    ctx.hasSelection = false;
+    ctx.selectedText = "";
+    logic.onEditorChanged(ctx, 2);
+    auto r2 = logic.onTimerTick(3);
+    REQUIRE(r2.has_value());
+}

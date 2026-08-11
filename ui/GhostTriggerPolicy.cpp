@@ -411,7 +411,12 @@ bool GhostTriggerPolicy::isDuplicateContext(
     if (ctx.documentText == last.documentText
         && ctx.line == last.line
         && ctx.character == last.character
-        && ctx.languageId == last.languageId)
+        && ctx.languageId == last.languageId
+        // J-4: selection state must also match — a changed selection (even at
+        // the same cursor) is a different editing context and should not be
+        // treated as a duplicate that suppresses a new request.
+        && ctx.hasSelection == last.hasSelection
+        && ctx.selectedText == last.selectedText)
     {
         return true;
     }
@@ -423,15 +428,23 @@ bool GhostTriggerPolicy::isDuplicateContext(
 // Main evaluation
 // ---------------------------------------------------------------------------
 
-TriggerDecision GhostTriggerPolicy::shouldTrigger(
-    const GhostContext& ctx,
-    const std::optional<GhostContext>& lastRequestedCtx,
-    bool deterministicPopupActive,
-    bool hasPendingRequest) const
-{
-    // 1. Deterministic popup active → suppress (AI-G5 precedence)
-    if (deterministicPopupActive)
-        return TriggerDecision::suppress("deterministic popup active");
+ TriggerDecision GhostTriggerPolicy::shouldTrigger(
+     const GhostContext& ctx,
+     const std::optional<GhostContext>& lastRequestedCtx,
+     bool deterministicPopupActive,
+     bool hasPendingRequest) const
+ {
+     // 0. J-4: Non-empty selection → suppress. Ghost completion is a
+     //    zero-width insertion-point affordance; a selection signals a
+     //    replace/move/copy intent, not a completion intent. Selection
+     //    state flows through GhostContext from the same editor snapshot
+     //    that feeds AI-8 (no second context model).
+     if (ctx.hasSelection && !ctx.selectedText.empty())
+         return TriggerDecision::suppress("non-empty selection active — completion not meaningful");
+
+     // 1. Deterministic popup active → suppress (AI-G5 precedence)
+     if (deterministicPopupActive)
+         return TriggerDecision::suppress("deterministic popup active");
 
     // 2. Already a request in-flight → suppress duplicate (AI-G6)
     if (hasPendingRequest)
