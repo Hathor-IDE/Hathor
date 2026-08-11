@@ -1296,6 +1296,7 @@ audition_chuck, stop_chuck), `Rendering` (render_chuck, get_job_status, commit_r
   without a documented reuse investigation.
 
 ### AI-G8 — Preserve the Existing Strudel LSP Decision (declaration)
+- Full decision record: `docs/design/ai-g8-strudel-lsp-decision.md`
 - `.hathor` is **standard Strudel mini-notation**, not a custom Hathor dialect/superset. Architecture:
   ```text
   .hathor ─► standard Strudel mini-notation
