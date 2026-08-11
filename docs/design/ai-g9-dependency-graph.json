@@ -1,0 +1,698 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hathor.dev/track-b-authoring-graph/v1",
+  "title": "Track B Authoring Intelligence Dependency Graph (AI-G9)",
+  "description": "Machine-readable representation of the complete Hathor Track B authoring-intelligence architecture. Encodes nodes (AI-1 through AI-9, AI-G1 through AI-G9), their dependency edges, canonical stack layers, layer-to-node mappings, architectural guarantees, and implementation references. This graph is the single source of truth for implementation order and architectural relationships. It exists to make it impossible to interpret LSP integration as a substitute for AI ghost writing.",
+  "schemaVersion": 1,
+  "generatedAt": "2026-08-10T19:52:00Z",
+  "source": "docs/PROGRAM.md §AI-G9 + docs/design/ai-g7-chuck-authoring.md + docs/design/ai-g8-strudel-lsp-decision.md + docs/llm-ls-integration-verification.md + reference/language-metadata/HathorLanguageMetadata.json",
+
+  "canonical_stack": {
+    "title": "TRACK B — AUTHORING INTELLIGENCE (Canonical Stack)",
+    "description": "The five canonical layers that every Track B component belongs to. Each layer has exactly one responsibility and is served by a distinct set of AI items. The layering enforces that LSP integration (deterministic) and ghost writing (probabilistic) are never collapsed.",
+    "layers": {
+      "language_knowledge": {
+        "label": "Language Knowledge",
+        "responsibility": "Provide authoritative language intelligence for each supported surface. Strudel LSP for .hathor; real libchuck compiler for .ck; versioned Hathor supported-surface metadata as the single shared knowledge source.",
+        "components": [
+          "Strudel LSP (strudel-lsp-server)",
+          "ChucK real-compiler diagnostics (validateChuckSource via libchuck)",
+          "Hathor supported-surface metadata (LanguageMetadata, versioned)",
+          "Metadata/schema/version compatibility (MetadataCompatibility)"
+        ],
+        "authoritative_source": "External: strudel-lsp-server; vendored libchuck; HathorLanguageMetadata.json",
+        "never_the_authority_for": ["AI generation", "editor ghost rendering", "MCP capabilities"]
+      },
+      "deterministic_completion": {
+        "label": "Deterministic Completion",
+        "responsibility": "Provide exact, predictable editor completions, hover, and diagnostics from the language knowledge layer. Never invokes an LLM. Covers Strudel/Tidal functions, mini-notation constructs, samples, scales, project assets, ChucK constructs, and hover/documentation.",
+        "components": [
+          "Strudel/Tidal functions",
+          "mini-notation constructs",
+          "samples",
+          "scales",
+          "project assets",
+          "ChucK constructs",
+          "hover/documentation"
+        ],
+        "authoritative_source": "Strudel LSP (via LspCompletionLogic) + LanguageMetadata fallback",
+        "never_the_authority_for": ["AI generation", "ghost text rendering"]
+      },
+      "project_aware_context": {
+        "label": "Project-Aware Context",
+        "responsibility": "Assemble a compact, location-specific, bounded context payload for AI generation requests. Retrieves current file, cursor/selection, surrounding code, project structure, samples, rendered instruments, patterns, BPM, scales, and diagnostics. Never performs generation.",
+        "components": [
+          "current file",
+          "cursor / selection",
+          "surrounding code",
+          "project structure",
+          "samples",
+          "rendered instruments",
+          "patterns",
+          "BPM",
+          "scales",
+          "diagnostics"
+        ],
+        "authoritative_source": "EditorContextProvider + LspContextProvider + ProjectReadFacade + LanguageMetadata",
+        "never_the_authority_for": ["AI generation", "document-state manipulation", "ghost rendering"]
+      },
+      "ai_ghost_writing": {
+        "label": "AI Ghost Writing",
+        "responsibility": "Probabilistic, Cursor-style inline completion on top of the deterministic foundation. Uses llm-ls/FIM (prefix/suffix/middle), Hathor authoring context, versioned few-shot examples, ChucK context, Strudel context, and inline ghost rendering. Ghost text is UI state only.",
+        "components": [
+          "llm-ls",
+          "FIM prefix/suffix/middle",
+          "Hathor authoring context",
+          "few-shot examples",
+          "ChucK context",
+          "Strudel context",
+          "inline ghost rendering"
+        ],
+        "authoritative_source": "External LLM provider via llm-ls FIM protocol",
+        "never_the_authority_for": ["deterministic completion", "runtime interpretation", "compiler diagnostics"]
+      },
+      "ai_repair": {
+        "label": "AI Repair",
+        "responsibility": "Iterative repair loop: generate → validate → diagnose → repair → validate again → audition. Combines AI generation with the authority of real compilers and the runtime engine for safe, auditable repair.",
+        "components": [
+          "generate",
+          "validate (real ChucK compiler / Hathor engine)",
+          "diagnose (diagnostics from language knowledge layer)",
+          "repair (safe structured mutation via AI-7)",
+          "validate again",
+          "audition (ChucK session via B4)"
+        ],
+        "authoritative_source": "ChucK compiler (AI-5) + Hathor C++ engine (runtime)",
+        "never_the_authority_for": ["deterministic completion", "ghost text rendering", "context assembly"]
+      }
+    }
+  },
+
+  "architectural_guarantees": {
+    "mandatory": {
+      "lsp_ne_ghost_writing": {
+        "statement": "LSP integration MUST NEVER be treated as equivalent to ghost writing.",
+        "rationale": "The LSP provides deterministic language intelligence (completion, hover, diagnostics). Ghost writing provides probabilistic, multi-token, multi-line AI generation via llm-ls/FIM. They are complementary systems, not interchangeable (PROGRAM.md decision #19).",
+        "enforced_by": "Distinct layers (deterministic_completion vs ai_ghost_writing), distinct code paths (LspCompletionLogic vs GhostCompletionLogic), explicit coexistence rules (AI-G5), and the dependency graph (AI-4 and AI-G1 are siblings, not replacements)."
+      },
+      "no_duplicate_language_knowledge": {
+        "statement": "Do not create duplicate language-knowledge stores.",
+        "rationale": "One authoritative language-intelligence source per language. For .hathor: strudel-lsp-server. For .ck: vendored libchuck. AI-3 versioned metadata supplements, never duplicates. AI-G8 and AI-G7 documents enforce this.",
+        "enforced_by": "AI-3 node is the single metadata source; AI-G8 and AI-G7 documents are guardrails; the dependency graph shows AI-3 feeding both AI-4 (LSP) and AI-G3/AI-G4 (context + few-shot) from the same source."
+      },
+      "no_second_ai_completion": {
+        "statement": "Do not create a second AI completion architecture.",
+        "rationale": "All ghost writing routes through llm-ls/FIM (AI-G1). There is one probabilistic path. AI-G1 is the single integration point.",
+        "enforced_by": "AI-G9 is the final consolidator; the dependency graph shows all AI ghost-writing nodes (AI-G1 through AI-G6) feeding into AI-G9 as one system."
+      },
+      "no_ghost_through_deterministic": {
+        "statement": "Do not route ghost writing through the deterministic completion system.",
+        "rationale": "Ghost text (AI-G6) is UI state, never document state, and never flows through the LSP completion path. The two paths are explicitly separated by CompletionCoordinator.",
+        "enforced_by": "AI-G5 + AI-G6 produce safe coexistence; CompletionCoordinator.hpp enforces precedence; the graph shows AI-G1 → AI-G5/G6 as separate from AI-4 → deterministic."
+      },
+      "no_lsp_for_ai_generation": {
+        "statement": "Do not make the LSP responsible for AI generation.",
+        "rationale": "The LSP is a deterministic language-intelligence service. AI generation is handled exclusively by llm-ls/FIM (AI-G1).",
+        "enforced_by": "AI-4 (LSP integration) and AI-G1 (llm-ls ghost writing) are separate nodes with no generation edge from AI-4 to AI-G; the architectural separation data flow shows them as parallel paths."
+      },
+      "no_mcp_language_authority": {
+        "statement": "Do not make MCP the language-intelligence authority.",
+        "rationale": "MCP is the agent capability/interface layer, not the language intelligence source. Language intelligence comes from the Strudel LSP and the real libchuck compiler.",
+        "enforced_by": "AI-1 capability model separates service layers; AI-8 routes LSP → MCP bridge (decision #17) but MCP does not own language knowledge; AI-3 is the metadata authority, AI-5 is the ChucK diagnostics authority."
+      },
+      "no_metadata_compiler_diagnostics": {
+        "statement": "Do not make metadata the the authoritative source for compiler diagnostics.",
+        "rationale": "AI-3 metadata is a compatibility/version manifest, not a diagnostic engine. ChucK diagnostics come from the real compiler (AI-5). Strudel diagnostics come from the LSP (AI-4).",
+        "enforced_by": "AI-5 node explicitly depends on 'real-compiler diagnostics' and is the authoritative source; AI-3 metadata_version is a compatibility check, not a parser."
+      },
+      "service_boundary_separation": {
+        "statement": "Keep editor, AI, runtime, compiler, and MCP responsibilities separated through the shared application/service boundaries established by AI-1.",
+        "rationale": "AI-1 defines the canonical service interface (Project / Pattern / ChucK / Assets / Playback / Diagnostics) consumed by all four callers: UI, MCP, AI authoring, tests.",
+        "enforced_by": "AI-1 node is the root dependency; all nodes depend on AI-1 transitively; the capability model classifies every operation."
+      }
+    }
+  },
+
+  "external_nodes": {
+    "H0": {
+      "id": "H0",
+      "label": "Socket accept loop (runtime foundation)",
+      "description": "The foundational socket accept loop that all Phase H and Phase I AI items depend on. From Phase H of PROGRAM.md.",
+      "track": "H"
+    },
+    "B4": {
+      "id": "B4",
+      "label": "Audio worker / VM isolation",
+      "description": "Isolated per-tab ChucK runtime architecture (B4-K3). AI-5 maps its abstract surface onto this. Also provides the sandbox for AI repair auditioning.",
+      "track": "B4"
+    },
+    "B8": {
+      "id": "B8",
+      "label": "Asset bake pipeline",
+      "description": "B8-managed asset pipeline. AI-6 render_chuck produces B8-managed assets (.hathor_assets/).",
+      "track": "B8"
+    }
+  },
+
+  "nodes": {
+    "AI-1": {
+      "id": "AI-1",
+      "phase": "H",
+      "track": "A+B",
+      "item": "Canonical AI/application contract + authorization/safety capability model",
+      "size": "large",
+      "depends_on": [],
+      "external_dependencies": ["H0"],
+      "layer": "architectural_foundation",
+      "responsibility": "Define the canonical internal command/service boundaries and the safety capability model. The service interface (Project / Pattern / ChucK / Assets / Playback / Diagnostics) consumed by UI, MCP, AI authoring, and tests. Every operation is tagged with a capability class (read-only, non-destructive execution, persistent mutation).",
+      "implementation": [
+        "control/ControlInterface.hpp",
+        "control/ControlInterface.cpp",
+        "control/Commands.hpp"
+      ]
+    },
+    "AI-2": {
+      "id": "AI-2",
+      "phase": "H",
+      "track": "A",
+      "item": "Read-only project intelligence",
+      "size": "large",
+      "depends_on": ["AI-1"],
+      "external_dependencies": [],
+      "layer": "project_aware_context",
+      "responsibility": "Give the AI eyes first: inspect_project, get_current_song, list_assets, list_samples, list_chuck_instruments, get_diagnostics, get_audio_status. No destructive tools. Diagnostics come from the real parser/compiler, not inferred.",
+      "implementation": [
+        "control/ProjectReadFacade.hpp",
+        "control/ProjectReadFacade.cpp"
+      ]
+    },
+    "AI-3": {
+      "id": "AI-3",
+      "phase": "H",
+      "track": "B",
+      "item": "Language intelligence foundation: existing Strudel LSP + versioned supported-surface metadata",
+      "size": "large",
+      "depends_on": ["AI-1"],
+      "external_dependencies": [],
+      "layer": "language_knowledge",
+      "responsibility": "The single source of language knowledge. .hathor = standard Strudel mini-notation (not a custom dialect). Reuses strudel-lsp-server for completion/hover/diagnostics. Owns the versioned LanguageMetadata model (schemaVersion, hathorEngineCompat, strudelMiniNotationCompat, chuckLibVersion, definitions[]) for version/compat traceability. No duplicate language-knowledge stores (decision #18).",
+      "feeds_into": ["AI-4", "AI-8", "AI-G3", "AI-G4", "AI-G7", "AI-G8"],
+      "implementation": [
+        "engine/include/hathor/LanguageMetadata.hpp",
+        "engine/src/LanguageMetadata.cpp",
+        "reference/strudel-lsp/strudel-lsp-server.cjs",
+        "reference/language-metadata/HathorLanguageMetadata.json"
+      ]
+    },
+    "AI-4": {
+      "id": "AI-4",
+      "phase": "H",
+      "track": "B",
+      "item": "LSP-powered editor language integration (completion L1-L3, hover, diagnostics)",
+      "size": "medium",
+      "depends_on": ["AI-3"],
+      "external_dependencies": [],
+      "layer": "deterministic_completion",
+      "responsibility": "Non-AI editor interaction driven by the integrated Strudel LSP. L1 sample/level completion, L2 signature-aware completion, L3 context-aware completion, hover docs, and basic diagnostics from the LSP native capabilities. Hathor layers on versioned metadata only where the LSP does not cover the supported surface. L4 (inline AI) is AI-9, NOT here. Never makes the LSP responsible for AI generation.",
+      "realizes": ["deterministic editor intelligence"],
+      "implementation": [
+        "ui/HathorLspClient.hpp",
+        "ui/HathorLspClient.cpp",
+        "ui/LspCompletionLogic.hpp",
+        "ui/LspCompletionLogic.cpp",
+        "ui/LspHoverHandler.hpp",
+        "ui/LspHoverHandler.cpp",
+        "ui/LspDiagnosticsDisplay.hpp",
+        "ui/LspDiagnosticsDisplay.cpp"
+      ]
+    },
+    "AI-5": {
+      "id": "AI-5",
+      "phase": "H",
+      "track": "A+B",
+      "item": "ChucK lifecycle + real-compiler diagnostics (async jobs)",
+      "size": "large",
+      "depends_on": ["AI-2"],
+      "external_dependencies": ["B4"],
+      "layer": "language_knowledge",
+      "responsibility": "Abstract surface mapped onto the isolated per-tab ChucK architecture. create_chuck_session, get_chuck_session, compile_chuck (async job), audition_chuck, stop_chuck. ChucK diagnostics authority = the actual vendored libchuck compiler via validateChuckSource(). Never uses an approximate re-parser for diagnostics (decision #18). Metadata is NOT the authoritative source for compiler diagnostics.",
+      "realizes": ["authoritative ChucK diagnostics"],
+      "feeds_into": ["AI-6", "AI-G7"],
+      "implementation": [
+        "control/ChuckSessionService.hpp",
+        "control/ChuckSessionService.cpp",
+        "control/ChuckSession.hpp",
+        "control/JobTracker.hpp",
+        "control/JobTracker.cpp"
+      ]
+    },
+    "AI-6": {
+      "id": "AI-6",
+      "phase": "H",
+      "track": "A",
+      "item": "Rendering / asset lifecycle (with commit & overwrite safety)",
+      "size": "medium",
+      "depends_on": ["AI-5"],
+      "external_dependencies": ["B8"],
+      "layer": "ai_repair",
+      "responsibility": "render_chuck (session_id, duration_bars, asset_name -> async job), get_job_status, commit_rendered_asset or auto-commit on success. Render is non-destructive (a job); persistence only on confirmed commit. Overwriting an existing asset requires confirmation. Failed/partial renders leave the project clean.",
+      "implementation": [
+        "control/RenderService.hpp",
+        "control/RenderService.cpp"
+      ]
+    },
+    "AI-7": {
+      "id": "AI-7",
+      "phase": "H",
+      "track": "A",
+      "item": "Safe song mutation (edit_song, transactional + validated)",
+      "size": "medium",
+      "depends_on": ["AI-2"],
+      "external_dependencies": [],
+      "layer": "ai_repair",
+      "responsibility": "Structured editing (replace_pattern, insert), not arbitrary filesystem writes. Transactional + validated — on failure prior state is retained and diagnostics returned. Persistent mutation classified + confirmed + audited per AI-1 capability model. Powers the 'repair' step of the AI repair loop.",
+      "realizes": ["safe structured mutation"],
+      "implementation": [
+        "control/SongMutationService.hpp",
+        "control/SongMutationService.cpp"
+      ]
+    },
+    "AI-8": {
+      "id": "AI-8",
+      "phase": "H",
+      "track": "B",
+      "item": "Project-aware AI context provider (targeted, not full-project; LSP->MCP bridge)",
+      "size": "medium",
+      "depends_on": ["AI-3", "AI-2"],
+      "external_dependencies": [],
+      "layer": "project_aware_context",
+      "responsibility": "Dynamically wire the authoring layer: current file, cursor region, current pattern, available samples/instruments/scales, current bpm, relevant API definitions, current diagnostics. Targeted per-request assembly from shared models / LSP / metadata. Language intelligence reaches AI through the LSP->MCP bridge (decision #17); AI-3 metadata supplies Hathor-specific facts the LSP does not carry. AI-8 supplies editor/language context; AI-G3 supplies edit-location-specific authoring context for FIM. No duplicated language knowledge.",
+      "realizes": ["shared editor/language context"],
+      "feeds_into": ["AI-9"],
+      "implementation": [
+        "control/AuthoringContext.hpp",
+        "control/AuthoringContext.cpp",
+        "control/LspContextProvider.hpp",
+        "control/EditorContextProvider.hpp"
+      ]
+    },
+    "AI-9": {
+      "id": "AI-9",
+      "phase": "I",
+      "track": "B",
+      "item": "Inline AI completion (Cursor-like; on top of LSP+metadata+context)",
+      "size": "large",
+      "depends_on": ["AI-8", "AI-4"],
+      "external_dependencies": [],
+      "layer": "ai_ghost_writing",
+      "responsibility": "The Cursor-style probabilistic ghost layer on top of Phase H deterministic foundation (Strudel LSP + AI-3 metadata + AI-8 context + AI-2 diagnostics/assets). Inline suggestions + high-level transformation. The LLM expands/transforms against facts, never invents syntax. AI-9 starts the probabilistic ghost layer; full system is AI-G1...AI-G9.",
+      "feeds_into": ["AI-G1"],
+      "implementation": [
+        "ui/GhostCompletionLogic.hpp"
+      ]
+    },
+    "AI-G1": {
+      "id": "AI-G1",
+      "phase": "I",
+      "track": "B",
+      "item": "Evaluate & integrate an existing generic LLM-LSP/FIM server (llm-ls) for ghost writing",
+      "size": "large",
+      "depends_on": ["AI-9", "AI-3"],
+      "external_dependencies": [],
+      "layer": "ai_ghost_writing",
+      "responsibility": "Reuse llm-ls (HuggingFace) for Cursor-style ghost text, NOT a custom LLM server (decision #20). Establishes launch, communication, cancellation, stale-response discard, debounce, latency control, provider configuration, FIM prefix/suffix/middle mapping, languageId identification, custom context injection, and result return to the JUCE editor. LLM path stays off the JUCE real-time audio thread. The single integration point for all ghost-writing generation.",
+      "feeds_into": ["AI-G2", "AI-G3", "AI-G5", "AI-G6", "AI-G9"],
+      "implementation": [
+        "ui/GhostLlmClient.hpp",
+        "ui/GhostLlmClient.cpp",
+        "ui/GhostJsonRpc.hpp",
+        "ui/GhostJsonRpc.cpp",
+        "ui/GhostProviderConfig.hpp",
+        "ui/GhostProviderConfig.cpp",
+        "docs/llm-ls-integration-verification.md"
+      ]
+    },
+    "AI-G2": {
+      "id": "AI-G2",
+      "phase": "I",
+      "track": "B",
+      "item": "Fill-in-the-Middle as a first-class design requirement (prefix/suffix/middle)",
+      "size": "medium",
+      "depends_on": ["AI-G1"],
+      "external_dependencies": [],
+      "layer": "ai_ghost_writing",
+      "responsibility": "Ghost-writing uses FIM, not whole-document continuation. Document text before/after cursor is explicitly computed as prefix/suffix and the missing middle is generated. Critical because users place the cursor inside a pattern/synthesis graph and expect completion of the missing portion, not a blind append.",
+      "implementation": [
+        "ui/GhostCompletionLogic.hpp",
+        "ui/GhostCompletionLogic.cpp"
+      ]
+    },
+    "AI-G3": {
+      "id": "AI-G3",
+      "phase": "I",
+      "track": "B",
+      "item": "Hathor-specific authoring-context provider on top of llm-ls (retrieval/relevance, not repo dump)",
+      "size": "medium",
+      "depends_on": ["AI-G1", "AI-3"],
+      "external_dependencies": [],
+      "layer": "project_aware_context",
+      "responsibility": "llm-ls knows nothing about Hathor. Assembles a compact, relevant, bounded context per editing location for llm-ls FIM requests. Reuses AI-8 providers (EditorContextProvider, LspContextProvider, ProjectReadFacade, LanguageMetadata). Relevance strategy: cursor proximity, syntactic context, selected text, active language, current pattern/slot, project assets, diagnostics, version gate, semantic similarity. Never dumps the whole repository.",
+      "realizes": ["location-specific Hathor context for ghost writing"],
+      "feeds_into": ["AI-G4", "AI-G7", "AI-G9"],
+      "implementation": [
+        "control/CompletionContextProvider.hpp",
+        "control/CompletionContextProvider.cpp"
+      ]
+    },
+    "AI-G4": {
+      "id": "AI-G4",
+      "phase": "I",
+      "track": "B",
+      "item": "Few-shot / domain-specific completion context (.hathor + ChucK, versioned)",
+      "size": "medium",
+      "depends_on": ["AI-G3", "AI-3", "AI-G1"],
+      "external_dependencies": [],
+      "layer": "ai_ghost_writing",
+      "responsibility": "Both domains are niche. Provides versioned Hathor-specific few-shot examples tied to the supported surface. .hathor: valid Strudel mini-notation, pattern structures, transformations, scales, rhythmic structures. ChucK: valid UGen routing, audio graph construction, time advancement, synthesis patterns, envelopes, filters, oscillators, DAC routing. Examples are version-gated against AI-3 metadata.",
+      "realizes": ["versioned few-shot/domain examples"],
+      "implementation": [
+        "engine/src/FewShotCorpus.cpp",
+        "reference/language-metadata/HathorFewShotExamples.json"
+      ]
+    },
+    "AI-G5": {
+      "id": "AI-G5",
+      "phase": "I",
+      "track": "B",
+      "item": "Deterministic completion and ghost completion coexist (explicit UI precedence/cancel/invalidate rules)",
+      "size": "medium",
+      "depends_on": ["AI-4", "AI-G1"],
+      "external_dependencies": [],
+      "layer": "ai_ghost_writing",
+      "responsibility": "Explicit coexistence rules: LSP completion popup active -> ghost is lower priority/temporarily hidden; no deterministic popup -> ghost may render; user continues typing -> cancel stale ghost; user accepts completion -> commit only generated text; document changes -> invalidate stale completion results. Behavior follows JUCE existing editor architecture, but the concurrency/state rules are explicit.",
+      "realizes": ["safe deterministic/ghost coexistence"],
+      "feeds_into": ["AI-G6", "AI-G9"],
+      "implementation": [
+        "ui/CompletionCoordinator.hpp",
+        "ui/CompletionCoordinator.cpp",
+        "ui/GhostCompletionLogic.hpp"
+      ]
+    },
+    "AI-G6": {
+      "id": "AI-G6",
+      "phase": "I",
+      "track": "B",
+      "item": "Ghost text is UI state, not document state (never inserted until accepted)",
+      "size": "medium",
+      "depends_on": ["AI-G1", "AI-G5"],
+      "external_dependencies": [],
+      "layer": "ai_ghost_writing",
+      "responsibility": "AI completion is never inserted into the underlying document until explicitly accepted. Document text + temporary completion state (ghost text) kept separate. Ghost text does not affect file contents, undo, compilation, or diagnostics. Disappears on cursor/context change, cancellable, replaceable by newer completion, becomes doc content only on acceptance.",
+      "realizes": ["document-state separation"],
+      "implementation": [
+        "ui/GhostTextOverlay.hpp",
+        "ui/GhostTextOverlay.cpp"
+      ]
+    },
+    "AI-G7": {
+      "id": "AI-G7",
+      "phase": "I",
+      "track": "B",
+      "item": "ChucK authoring assistance (deterministic + AI; reuse-or-minimal; no bespoke full ChucK LSP without reuse study)",
+      "size": "large",
+      "depends_on": ["AI-G3", "AI-5", "AI-3"],
+      "external_dependencies": [],
+      "layer": "deterministic_completion",
+      "responsibility": "ChucK authoring gets the full stack, not just diagnostics. No reusable ChucK LSP exists (investigated: docs/design/ai-g7-chuck-authoring.md). Uses versioned Hathor-supported ChucK surface metadata (LanguageMetadata::chuckApi + ChuckKeywords) for deterministic completion. Real libchuck compiler (AI-5) for authoritative diagnostics. llm-ls/FIM with 'chuck' languageId for ghost writing. No bespoke full ChucK LSP built.",
+      "realizes": ["ChucK deterministic + AI authoring"],
+      "implementation": [
+        "ui/ChuckTokeniser.hpp",
+        "ui/ChuckTokeniser.cpp",
+        "ui/ChuckKeywords.hpp",
+        "ui/ChuckKeywords.cpp",
+        "docs/design/ai-g7-chuck-authoring.md"
+      ]
+    },
+    "AI-G8": {
+      "id": "AI-G8",
+      "phase": "I",
+      "track": "B",
+      "item": "Preserve the existing Strudel LSP decision; .hathor = standard Strudel mini-notation",
+      "size": "ack",
+      "depends_on": ["AI-3"],
+      "external_dependencies": [],
+      "layer": "language_knowledge",
+      "responsibility": "Declaration document that freezes the architectural decision: .hathor files use standard Strudel mini-notation, not a custom dialect. Strudel LSP (strudel-lsp-server) is reused as-is. Hathor C++ parser is the runtime source of truth (validated against Strudel golden fixtures). LSP provides deterministic intelligence; llm-ls/FIM provides AI ghost writing — separate, complementary systems (decision #19). No implementation required.",
+      "realizes": ["preserves standard Strudel/LSP architecture"],
+      "implementation": [
+        "docs/design/ai-g8-strudel-lsp-decision.md"
+      ]
+    },
+    "AI-G9": {
+      "id": "AI-G9",
+      "phase": "I",
+      "track": "B",
+      "item": "Final Track B authoring stack (dependency graph + diagram)",
+      "size": "small",
+      "depends_on": ["AI-G1", "AI-G2", "AI-G3", "AI-G4", "AI-G5", "AI-G6", "AI-G7", "AI-G8"],
+      "external_dependencies": [],
+      "layer": "architectural_foundation",
+      "responsibility": "Close Track B by representing the complete authoring-intelligence architecture and its dependencies in a machine-readable dependency graph + design doc. Makes it impossible to interpret LSP integration as a substitute for AI ghost writing. This is the single source of truth for implementation order and architectural relationships.",
+      "realizes": ["final Track B architecture"],
+      "implementation": [
+        "docs/design/ai-g9-final-authoring-stack.md",
+        "docs/design/ai-g9-dependency-graph.json"
+      ]
+    }
+  },
+
+  "edges": [
+    { "from": "AI-1", "to": "AI-2", "type": "depends_on", "rationale": "AI-2 read-only project intelligence depends on AI-1 canonical contract" },
+    { "from": "AI-1", "to": "AI-3", "type": "depends_on", "rationale": "AI-3 language intelligence foundation depends on AI-1 canonical contract" },
+    { "from": "AI-2", "to": "AI-5", "type": "depends_on", "rationale": "AI-5 ChucK diagnostics depend on AI-2 read-only project intelligence for session/project state" },
+    { "from": "AI-2", "to": "AI-7", "type": "depends_on", "rationale": "AI-7 safe song mutation depends on AI-2 read-only project intelligence for validation" },
+    { "from": "AI-2", "to": "AI-8", "type": "depends_on", "rationale": "AI-8 context provider depends on AI-2 read-only project intelligence" },
+    { "from": "AI-3", "to": "AI-4", "type": "depends_on", "rationale": "AI-4 LSP editor integration consumes AI-3 language intelligence foundation" },
+    { "from": "AI-3", "to": "AI-8", "type": "depends_on", "rationale": "AI-8 context provider consumes AI-3 versioned metadata" },
+    { "from": "AI-3", "to": "AI-G3", "type": "depends_on", "rationale": "AI-G3 location-specific context reuses AI-3 versioned metadata + version gate" },
+    { "from": "AI-3", "to": "AI-G4", "type": "depends_on", "rationale": "AI-G4 few-shot examples are version-gated against AI-3 supported-surface metadata" },
+    { "from": "AI-3", "to": "AI-G7", "type": "depends_on", "rationale": "AI-G7 ChucK metadata depends on AI-3's versioned metadata model for ChucK API" },
+    { "from": "AI-3", "to": "AI-G8", "type": "depends_on", "rationale": "AI-G8 preserves the Strudel LSP decision defined by AI-3" },
+    { "from": "AI-4", "to": "AI-9", "type": "depends_on", "rationale": "AI-9 inline AI completion sits on top of AI-4 deterministic editor integration" },
+    { "from": "AI-4", "to": "AI-G5", "type": "depends_on", "rationale": "AI-G5 coexistence rules need to know deterministic completion state (AI-4)" },
+    { "from": "AI-5", "to": "AI-6", "type": "depends_on", "rationale": "AI-6 rendering reuse AI-5 job infrastructure and ChucK session" },
+    { "from": "AI-5", "to": "AI-G7", "type": "depends_on", "rationale": "AI-G7 ChucK diagnostics come from the same real libchuck compiler (AI-5)" },
+    { "from": "AI-8", "to": "AI-9", "type": "depends_on", "rationale": "AI-9 inline completion is driven by AI-8 project-aware context" },
+    { "from": "AI-9", "to": "AI-G1", "type": "depends_on", "rationale": "AI-G1 llm-ls ghost writing is the AI layer on top of AI-9 entry point" },
+    { "from": "AI-G1", "to": "AI-G2", "type": "depends_on", "rationale": "AI-G2 FIM design is realized through the llm-ls FIM protocol integrated by AI-G1" },
+    { "from": "AI-G1", "to": "AI-G3", "type": "depends_on", "rationale": "AI-G3 context provider feeds llm-ls requests (AI-G1 integration point)" },
+    { "from": "AI-G1", "to": "AI-G4", "type": "depends_on", "rationale": "AI-G1 integration enables few-shot context to flow into llm-ls FIM requests" },
+    { "from": "AI-G1", "to": "AI-G5", "type": "depends_on", "rationale": "AI-G5 coexistence rules depend on the ghost lifecycle managed by AI-G1" },
+    { "from": "AI-G1", "to": "AI-G6", "type": "depends_on", "rationale": "AI-G6 ghost-text UI state is driven by the ghost lifecycle from AI-G1" },
+    { "from": "AI-G3", "to": "AI-G4", "type": "depends_on", "rationale": "AI-G4 few-shot selection uses AI-G3 context retrieval/relevance strategy" },
+    { "from": "AI-G3", "to": "AI-G7", "type": "depends_on", "rationale": "AI-G7 ChucK authoring reuses AI-G3 context provider for ChucK-specific context" },
+    { "from": "AI-G5", "to": "AI-G6", "type": "depends_on", "rationale": "AI-G6 coexistence rules depend on AI-G5 precedence/cancel/invalidate rules" },
+
+    { "from": "AI-1", "to": "AI-3", "type": "external_dependency", "target": "H0", "rationale": "AI-1 foundational service depends on H0 socket accept loop" },
+    { "from": "AI-5", "to": "B4", "type": "external_dependency", "rationale": "AI-5 ChucK lifecycle maps onto B4 isolated per-tab VM architecture" },
+    { "from": "AI-6", "to": "B8", "type": "external_dependency", "rationale": "AI-6 rendering produces B8-managed assets" },
+
+    { "from": "AI-3", "to": "AI-G1", "type": "depends_on", "rationale": "AI-G1 llm-ls ghost writing relies on AI-3 versioned metadata for Hathor-specific knowledge injection" },
+
+    { "from": "AI-G1", "to": "AI-G9", "type": "depends_on", "rationale": "AI-G9 closes Track B, incorporating the llm-ls ghost-writing integration" },
+    { "from": "AI-G2", "to": "AI-G9", "type": "depends_on", "rationale": "AI-G9 incorporates the FIM prefix/suffix/middle design" },
+    { "from": "AI-G3", "to": "AI-G9", "type": "depends_on", "rationale": "AI-G9 incorporates the location-specific context provider" },
+    { "from": "AI-G4", "to": "AI-G9", "type": "depends_on", "rationale": "AI-G9 incorporates the versioned few-shot examples" },
+    { "from": "AI-G5", "to": "AI-G9", "type": "depends_on", "rationale": "AI-G9 incorporates the deterministic/ghost coexistence rules" },
+    { "from": "AI-G6", "to": "AI-G9", "type": "depends_on", "rationale": "AI-G9 incorporates the ghost-text-as-UI-state guarantee" },
+    { "from": "AI-G7", "to": "AI-G9", "type": "depends_on", "rationale": "AI-G9 incorporates the ChucK deterministic + AI authoring stack" },
+    { "from": "AI-G8", "to": "AI-G9", "type": "depends_on", "rationale": "AI-G9 incorporates the Strudel LSP preservation decision as a foundational constraint" },
+
+    { "from": "AI-4", "to": "deterministic_editor_intelligence", "type": "realizes", "rationale": "AI-4 realizes the deterministic completion layer for .hathor" },
+    { "from": "AI-5", "to": "authoritative_chuck_diagnostics", "type": "realizes", "rationale": "AI-5 is the authoritative ChucK diagnostics source (real libchuck compiler)" },
+    { "from": "AI-7", "to": "safe_structured_mutation", "type": "realizes", "rationale": "AI-7 realizes safe structured song mutation for the repair loop" },
+    { "from": "AI-8", "to": "shared_editor_language_context", "type": "realizes", "rationale": "AI-8 realizes the shared editor/language context layer" },
+    { "from": "AI-G3", "to": "location_specific_hathor_context", "type": "realizes", "rationale": "AI-G3 realizes location-specific Hathor context for ghost writing" },
+    { "from": "AI-G4", "to": "versioned_few_shot_examples", "type": "realizes", "rationale": "AI-G4 realizes versioned few-shot/domain examples" },
+    { "from": "AI-G5", "to": "deterministic_ghost_coexistence", "type": "realizes", "rationale": "AI-G5 realizes safe deterministic/ghost coexistence" },
+    { "from": "AI-G6", "to": "document_state_separation", "type": "realizes", "rationale": "AI-G6 realizes ghost text as UI state, not document state" },
+    { "from": "AI-G7", "to": "chuck_deterministic_ai_authoring", "type": "realizes", "rationale": "AI-G7 realizes ChucK deterministic + AI authoring" },
+    { "from": "AI-G8", "to": "standard_strudel_lsp_architecture", "type": "realizes", "rationale": "AI-G8 preserves the standard Strudel/LSP architecture" },
+    { "from": "AI-G9", "to": "final_track_b_architecture", "type": "realizes", "rationale": "AI-G9 realizes the final Track B architecture" }
+  ],
+
+  "layer_mapping": {
+    "language_knowledge": {
+      "label": "Language Knowledge",
+      "nodes": ["AI-3", "AI-5", "AI-G8"],
+      "external_sources": ["Strudel LSP (strudel-lsp-server)", "vendored libchuck compiler", "HathorLanguageMetadata.json"]
+    },
+    "deterministic_completion": {
+      "label": "Deterministic Completion",
+      "nodes": ["AI-4", "AI-G7"],
+      "external_sources": ["Strudel LSP completions", "libchuck compiler diagnostics", "LanguageMetadata fallback", "ChuckKeywords"]
+    },
+    "project_aware_context": {
+      "label": "Project-Aware Context",
+      "nodes": ["AI-2", "AI-8", "AI-G3"],
+      "external_sources": ["EditorContextProvider", "LspContextProvider", "ProjectReadFacade"]
+    },
+    "ai_ghost_writing": {
+      "label": "AI Ghost Writing",
+      "nodes": ["AI-9", "AI-G1", "AI-G2", "AI-G4", "AI-G6"],
+      "external_sources": ["llm-ls", "FIM backend", "HathorFewShotExamples.json"]
+    },
+    "ai_repair": {
+      "label": "AI Repair",
+      "nodes": ["AI-7", "AI-6"],
+      "external_sources": ["SongMutationService", "RenderService", "libchuck compiler", "Hathor C++ engine"]
+    },
+    "architectural_foundation": {
+      "label": "Architectural Foundation",
+      "nodes": ["AI-1", "AI-G9"],
+      "external_sources": ["AGENTS.md", "CLAUDE.md"]
+    },
+    "ghost_deterministic_coexistence": {
+      "label": "Ghost/Deterministic Coexistence (cross-layer)",
+      "nodes": ["AI-G5", "AI-G6"],
+      "external_sources": ["CompletionCoordinator", "GhostTextOverlay"]
+    }
+  },
+
+  "architectural_separation": {
+    "description": "The canonical architectural data-flow that enforces: LSP integration is never a substitute for ghost writing. Each stage is a distinct service boundary connected through the shared AI-1 application contract.",
+    "stages": [
+      {
+        "stage": "language_intelligence",
+        "label": "Language intelligence",
+        "description": "Authoritative language facts for each supported surface.",
+        "sources": [
+          {"node": "AI-3", "component": "Strudel LSP (strudel-lsp-server)", "language": ".hathor"},
+          {"node": "AI-5", "component": "ChucK real-compiler diagnostics (libchuck)", "language": ".ck"},
+          {"node": "AI-3", "component": "Hathor supported-surface metadata (LanguageMetadata, versioned)", "scope": "both"}
+        ],
+        "next_stage": "deterministic_authoring"
+      },
+      {
+        "stage": "deterministic_authoring",
+        "label": "Deterministic authoring",
+        "description": "Exact, predictable editor completions, hover, and diagnostics. Never invokes an LLM. Consumes language intelligence.",
+        "sources": [
+          {"node": "AI-4", "component": "LspCompletionLogic / HathorLspClient", "language": ".hathor"},
+          {"node": "AI-G7", "component": "ChuckKeywords / ChuckTokeniser", "language": ".ck"}
+        ],
+        "next_stage": "project_context_retrieval"
+      },
+      {
+        "stage": "project_context_retrieval",
+        "label": "Project/context retrieval",
+        "description": "Assemble compact, location-specific, bounded context for AI generation requests. Never performs generation.",
+        "sources": [
+          {"node": "AI-8", "component": "AuthoringContext (shared editor/language/runtime context)"},
+          {"node": "AI-G3", "component": "CompletionContextProvider (location-specific Hathor context for FIM)"}
+        ],
+        "next_stage": "compact_location_context"
+      },
+      {
+        "stage": "compact_location_context",
+        "label": "Compact location-specific context",
+        "description": "The bounded, retrieval-based context payload (prefix/suffix/middle + authoring context + few-shots) ready for the FIM model.",
+        "sources": [
+          {"node": "AI-G3", "component": "assembled completion context JSON"},
+          {"node": "AI-G4", "component": "versioned few-shot examples"}
+        ],
+        "next_stage": "llm_ls_fim"
+      },
+      {
+        "stage": "llm_ls_fim",
+        "label": "llm-ls / FIM",
+        "description": "Probabilistic generation via Fill-in-the-Middle. The ONLY path for AI generation. Stays off the JUCE audio thread.",
+        "sources": [
+          {"node": "AI-G1", "component": "GhostLlmClient (llm-ls lifecycle)"},
+          {"node": "AI-G2", "component": "FIM prefix/suffix/middle computation"}
+        ],
+        "next_stage": "ai_ghost_writing"
+      },
+      {
+        "stage": "ai_ghost_writing",
+        "label": "AI ghost writing",
+        "description": "Inline ghost-text rendering as UI state only. Never inserted into the document until explicitly accepted.",
+        "sources": [
+          {"node": "AI-9", "component": "Inline AI completion entry point"},
+          {"node": "AI-G5", "component": "deterministic/ghost coexistence rules"},
+          {"node": "AI-G6", "component": "GhostTextOverlay (UI state, not document state)"}
+        ],
+        "next_stage": "generated_code"
+      },
+      {
+        "stage": "generated_code",
+        "label": "Generated code",
+        "description": "Only when ghost text is explicitly accepted does it materialize into the document via the normal edit mechanism.",
+        "sources": [
+          {"node": "AI-G6", "component": "acceptGhost() → HathorTab document insert (undoable edit)"}
+        ],
+        "next_stage": "real_validation"
+      },
+      {
+        "stage": "real_validation",
+        "label": "Real validation / diagnostics",
+        "description": "Authoritative validation from the real compilers and the runtime engine — not from metadata or an approximate parser.",
+        "sources": [
+          {"node": "AI-4", "component": "Strudel LSP parse diagnostics (.hathor)"},
+          {"node": "AI-5", "component": "Real libchuck compiler (validateChuckSource) (.ck)"},
+          {"node": "AI-3", "component": "Hathor C++ engine runtime validation against golden fixtures"}
+        ],
+        "next_stage": "repair_loop"
+      },
+      {
+        "stage": "repair_loop",
+        "label": "Repair loop",
+        "description": "Iterative: generate -> validate -> diagnose -> repair -> validate again -> audition.",
+        "sources": [
+          {"node": "AI-7", "component": "SongMutationService (safe structured mutation - the repair step)"},
+          {"node": "AI-5", "component": "compile_chuck + audition_chuck (validate + audition)"},
+          {"node": "AI-6", "component": "render_chuck + commit (asset lifecycle for repair)"}
+        ],
+        "next_stage": "audition"
+      },
+      {
+        "stage": "audition",
+        "label": "Audition",
+        "description": "Play the repaired/generated code through the isolated ChucK VM (B4-K3) to verify musical correctness.",
+        "sources": [
+          {"node": "AI-5", "component": "audition_chuck (isolated per-tab VM)"}
+        ],
+        "next_stage": null
+      }
+    ],
+    "separation_guarantees": [
+      "Language intelligence (Strudel LSP + libchuck + metadata) is a distinct layer from AI generation (llm-ls/FIM).",
+      "Deterministic authoring (exact completions) is a distinct layer from AI ghost writing (probabilistic generation).",
+      "Project/context retrieval is a distinct layer that feeds AI generation, never replaces it.",
+      "The LSP does not produce ghost text; llm-ls does not produce deterministic completions.",
+      "Generated code is validated by the real compilers and runtime engine, not by metadata or an approximate parser.",
+      "Ghost text is UI state (AI-G6) — it never touches the CodeDocument, undo history, compiler input, or diagnostics until explicitly accepted."
+    ]
+  },
+
+  "implementation_order": [
+    { "order": 1, "node": "AI-1", "phase": "H", "rationale": "Canonical contract - everything sits on this foundation" },
+    { "order": 2, "node": "AI-2", "phase": "H", "rationale": "Give AI eyes first (read-only project intelligence)" },
+    { "order": 3, "node": "AI-3", "phase": "H", "rationale": "Language intelligence foundation - versioned metadata + Strudel LSP confirmed" },
+    { "order": 4, "node": "AI-4", "phase": "H", "rationale": "LSP-powered deterministic editor integration (depends on AI-3)" },
+    { "order": 5, "node": "AI-5", "phase": "H", "rationale": "ChucK lifecycle + real-compiler diagnostics (depends on AI-2 + B4)" },
+    { "order": 6, "node": "AI-8", "phase": "H", "rationale": "Project-aware AI context provider (depends on AI-3 + AI-2)" },
+    { "order": 7, "node": "AI-7", "phase": "H", "rationale": "Safe song mutation (depends on AI-2)" },
+    { "order": 8, "node": "AI-6", "phase": "H", "rationale": "Rendering/asset lifecycle (depends on AI-5 + B8)" },
+    { "order": 9, "node": "AI-9", "phase": "I", "rationale": "Inline AI completion entry point (depends on AI-8 + AI-4)" },
+    { "order": 10, "node": "AI-G1", "phase": "I", "rationale": "Integrate llm-ls/FIM for ghost writing (depends on AI-9 + AI-3)" },
+    { "order": 11, "node": "AI-G2", "phase": "I", "rationale": "FIM prefix/suffix/middle (depends on AI-G1)" },
+    { "order": 12, "node": "AI-G3", "phase": "I", "rationale": "Location-specific context provider (depends on AI-G1)" },
+    { "order": 13, "node": "AI-G4", "phase": "I", "rationale": "Versioned few-shot examples (depends on AI-G3)" },
+    { "order": 14, "node": "AI-G5", "phase": "I", "rationale": "Deterministic + ghost coexistence (depends on AI-4 + AI-G1)" },
+    { "order": 15, "node": "AI-G6", "phase": "I", "rationale": "Ghost text as UI state (depends on AI-G1 + AI-G5)" },
+    { "order": 16, "node": "AI-G8", "phase": "I", "rationale": "Preserve Strudel LSP decision (depends on AI-3) - ack" },
+    { "order": 17, "node": "AI-G7", "phase": "I", "rationale": "ChucK authoring assistance (depends on AI-G3 + AI-5)" },
+    { "order": 18, "node": "AI-G9", "phase": "I", "rationale": "Final Track B architecture + dependency graph (depends on AI-G1...AI-G8)" }
+  ]
+}
