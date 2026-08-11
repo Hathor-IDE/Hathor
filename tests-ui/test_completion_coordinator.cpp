@@ -36,14 +36,14 @@ using namespace hathor::lsp;
 // ===========================================================================
 
 static GhostContext makeCtx(const std::string& text = "bd",
-                            int line = 0, int character = 2)
+                            int line = 0, int character = -1)
 {
     GhostContext ctx;
     ctx.documentText = text;
     ctx.uri = "file:///test.hathor";
     ctx.languageId = "hathor";
     ctx.line = line;
-    ctx.character = character;
+    ctx.character = (character < 0) ? static_cast<int>(text.size()) : character;
     return ctx;
 }
 
@@ -433,11 +433,11 @@ TEST_CASE("Coordinator trigger policy respects configurable allowInStrings", "[c
     ctx.languageId = "hathor";
 
     // With allowInStrings=true, the in-string check is bypassed.
-    // However isSyntacticallyUnreliable also checks for unclosed strings,
-    // so this should still be suppressed.
+    // The cursor is at end of line (a meaningful boundary), so the policy
+    // should allow the trigger.
     coord.triggerGhostCompletion(ctx, 0);
     auto req = coord.onGhostTick(0);
-    REQUIRE_FALSE(req.has_value());
+    REQUIRE(req.has_value());
 }
 
 TEST_CASE("Coordinator: after LspPopupDismissed, ghost resumes", "[coordinator][trigger]")

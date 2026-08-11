@@ -226,7 +226,8 @@ TEST_CASE("GhostTriggerPolicy: suppress at non-meaningful boundary", "[ghost-tri
 TEST_CASE("GhostTriggerPolicy: allow after => in ChucK", "[ghost-trigger-policy]")
 {
     GhostTriggerPolicy policy;
-    auto ctx = chuckCtx("bd =>", 0, 4);  // cursor after '=>'
+    auto ctx = chuckCtx("bd =>", 0, 5);  // cursor after '=' '>'
+
     auto decision = policy.shouldTrigger(ctx, std::nullopt, false, false);
     REQUIRE(decision.shouldTrigger);
 }
@@ -275,7 +276,7 @@ TEST_CASE("GhostTriggerPolicy: allow in ChucK comment when configured", "[ghost-
 {
     GhostTriggerPolicy policy;
     policy.setConfig({ .allowInComments = true });
-    auto ctx = chuckCtx("// my comment", 0, 12);  // inside comment
+    auto ctx = chuckCtx("// my comment", 0, 13);  // cursor at end of line
     auto decision = policy.shouldTrigger(ctx, std::nullopt, false, false);
     // When allowInComments is true, we skip the comment check.
     // Then isMidToken: prev='t' (word), next='' (end of string) → not mid-token.
@@ -301,14 +302,14 @@ TEST_CASE("GhostTriggerPolicy: not duplicate when cursor moved", "[ghost-trigger
 TEST_CASE("GhostTriggerPolicy: not duplicate when document changed", "[ghost-trigger-policy]")
 {
     GhostTriggerPolicy policy;
-    auto ctx = miniCtx("bd sd sn", 0, 7);  // cursor at end
-    GhostContext last = miniCtx("bd sd", 0, 5);  // same cursor relative pos but diff text
+    auto ctx = miniCtx("bd sd sn", 0, 8);  // cursor at end of line
+    GhostContext last = miniCtx("bd sd", 0, 5);  // different document text
     auto decision = policy.shouldTrigger(ctx, last, false, false);
     REQUIRE(decision.shouldTrigger);
 }
 
 // ---------------------------------------------------------------------------
-// Test 21 — Syntactically unreliable: unclosed string on line
+// Test 21 — Unclosed string on line → suppressed (covered by isInStringLiteral)
 // ---------------------------------------------------------------------------
 TEST_CASE("GhostTriggerPolicy: suppress for unclosed string on line", "[ghost-trigger-policy]")
 {
@@ -316,7 +317,7 @@ TEST_CASE("GhostTriggerPolicy: suppress for unclosed string on line", "[ghost-tr
     auto ctx = miniCtx("bd \"sd sn", 0, 10);  // unclosed string
     auto decision = policy.shouldTrigger(ctx, std::nullopt, false, false);
     REQUIRE_FALSE(decision.shouldTrigger);
-    REQUIRE_THAT(decision.reason, ContainsSubstring("syntactically"));
+    REQUIRE_THAT(decision.reason, ContainsSubstring("string"));
 }
 
 // ---------------------------------------------------------------------------

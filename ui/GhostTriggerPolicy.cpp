@@ -27,11 +27,13 @@ std::size_t GhostTriggerPolicy::cursorToOffset(
 
     std::size_t offset = 0;
     int currentLine = 0;
+    bool found = false;
     for (std::size_t i = 0; i < documentText.size(); ++i)
     {
         if (currentLine == line)
         {
             offset += static_cast<std::size_t>(character);
+            found = true;
             break;
         }
         if (documentText[i] == '\n')
@@ -40,8 +42,13 @@ std::size_t GhostTriggerPolicy::cursorToOffset(
             offset = i + 1;
         }
     }
-    if (currentLine == line)
-        offset += static_cast<std::size_t>(character);
+    if (!found)
+    {
+        if (currentLine == line)
+            offset += static_cast<std::size_t>(character);
+        else
+            offset = documentText.size();
+    }
     if (offset > documentText.size())
         offset = documentText.size();
     return offset;
@@ -430,31 +437,19 @@ TriggerDecision GhostTriggerPolicy::shouldTrigger(
     if (hasPendingRequest)
         return TriggerDecision::suppress("request already in-flight");
 
-    // 3. Inside a string literal → suppress
+    // 5. Inside a string literal → suppress (unless allowInStrings)
     if (isInStringLiteral(ctx))
     {
-        if (config_.allowInStrings)
-        {
-            // Allowed, but still check if syntactically reliable
-        }
-        else
+        if (!config_.allowInStrings)
             return TriggerDecision::suppress("cursor inside string literal");
     }
 
-    // 4. Inside a comment → suppress
+    // 6. Inside a comment → suppress (unless allowInComments)
     if (isInComment(ctx))
     {
-        if (config_.allowInComments)
-        {
-            // Allowed
-        }
-        else
+        if (!config_.allowInComments)
             return TriggerDecision::suppress("cursor inside comment");
     }
-
-    // 5. Syntactically unreliable (unclosed string/comment on the line)
-    if (isSyntacticallyUnreliable(ctx))
-        return TriggerDecision::suppress("syntactically unreliable context");
 
     // 6. Mid-token / actively typing → suppress
     if (isMidToken(ctx))

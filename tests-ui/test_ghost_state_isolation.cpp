@@ -28,14 +28,14 @@ using namespace hathor::lsp;
 // ===========================================================================
 
 static GhostContext makeCtx(const std::string& text = "bd",
-                            int line = 0, int character = 2)
+                            int line = 0, int character = -1)
 {
     GhostContext ctx;
     ctx.documentText = text;
     ctx.uri = "file:///test.hathor";
     ctx.languageId = "hathor";
     ctx.line = line;
-    ctx.character = character;
+    ctx.character = (character < 0) ? static_cast<int>(text.size()) : character;
     return ctx;
 }
 
@@ -67,7 +67,7 @@ TEST_CASE("AI-G6.1: GhostCompletionLogic never modifies the editor document", "[
     const auto& stored = logic.currentContext();
     REQUIRE(stored.documentText == "bd sn");
     REQUIRE(stored.line == 0);
-    REQUIRE(stored.character == 2);
+    REQUIRE(stored.character == 5);
 
     // Fire a request + response
     auto req = logic.onTimerTick(0);
@@ -80,7 +80,7 @@ TEST_CASE("AI-G6.1: GhostCompletionLogic never modifies the editor document", "[
     const auto& stored2 = logic.currentContext();
     REQUIRE(stored2.documentText == "bd sn");
     REQUIRE(stored2.line == 0);
-    REQUIRE(stored2.character == 2);
+    REQUIRE(stored2.character == 5);
 }
 
 // ===========================================================================
@@ -304,8 +304,8 @@ TEST_CASE("AI-G6.9: FIM suffix trimming removes suffix overlap from ghost text",
     logic.setDebounceMs(0);
     logic.setTimeoutMs(5000);
 
-    // Document: "foo" + cursor + "bar" → docPrefix="foo", docSuffix="bar"
-    auto ctx = makeCtx("foobar", 0, 3);
+    // Document: "foo " + cursor + "bar" → docPrefix="foo ", docSuffix="bar"
+    auto ctx = makeCtx("foo bar", 0, 4);
     logic.onEditorChanged(ctx, 0);
     auto req = logic.onTimerTick(0);
     REQUIRE(req.has_value());
@@ -574,6 +574,12 @@ TEST_CASE("AI-G6: GhostResult preserves FIM context for editor verification", "[
     logic.setEnabled(true);
     logic.setDebounceMs(0);
     logic.setTimeoutMs(5000);
+
+    // Cursor inside a string — configure policy to allow it (FIM test, not
+    // trigger-policy test)
+    GhostTriggerPolicyConfig cfg;
+    cfg.allowInStrings = true;
+    logic.setTriggerPolicyConfig(cfg);
 
     // Document with non-trivial prefix and suffix
     // "s(\"bd  " + cursor + "sd hh\")\n"

@@ -1100,6 +1100,12 @@ TEST_CASE("onGhostResponse trims suffix overlap from generated text", "[ghost][f
     logic.setDebounceMs(0);
     logic.setTimeoutMs(5000);
 
+    // Allow ghost in strings — this FIM test exercises cursor inside a string
+    // to verify suffix-trimming behavior; we bypass the trigger policy check.
+    GhostTriggerPolicyConfig cfg;
+    cfg.allowInStrings = true;
+    logic.setTriggerPolicyConfig(cfg);
+
     // Document: "s(\"bd  sd hh\")\n" (two spaces between bd and sd)
     // docPrefix = "s(\"bd  ", docSuffix = "sd hh\")\n"
     GhostContext ctx;
@@ -1506,7 +1512,9 @@ TEST_CASE("onGhostResponse rejects stale response with correct revision check", 
     REQUIRE(r1.has_value());
     std::string requestId1 = r1.value().second;
 
-    // Editor changed during flight — revision increments, makes response stale
+    // Editor changed during flight — in the real flow, onDocumentChanged()
+    // would call cancelPendingRequest() before onEditorChanged. Simulate that.
+    logic.cancelPendingRequest();
     ctx.documentText = "bd sn";
     ctx.character = 5;
     logic.onEditorChanged(ctx, 10);
@@ -1782,11 +1790,12 @@ TEST_CASE("GhostCompletionLogic: configurable trigger policy via setTriggerPolic
     ctx.line = 0;
     ctx.character = 4;  // right after the quote
 
-    // With allowInStrings=true, the string suppression should be bypassed
-    // But isSyntacticallyUnreliable also checks for unclosed strings → still suppress
+    // With allowInStrings=true, the string suppression is bypassed.
+    // The cursor is at end of line (a meaningful boundary), so the
+    // policy should allow the trigger.
     logic.onEditorChanged(ctx, 0);
     auto r = logic.onTimerTick(500);
-    REQUIRE_FALSE(r.has_value());
+    REQUIRE(r.has_value());
 }
 
 TEST_CASE("GhostCompletionLogic: ChucK cursor after => triggers", "[ghost][trigger]")
