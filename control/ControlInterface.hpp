@@ -27,6 +27,7 @@
 #include "SongMutationService.hpp"
 #include "AuthoringContext.hpp"
 #include "CompletionContextProvider.hpp"
+#include "IntentPlanner.hpp"
 
 // Forward declarations — full headers are only needed in the .cpp.
 class AudioEngineFacade;
@@ -313,6 +314,13 @@ public:
     /// Dispatch an AI-10 workflow command.
     /// Routes to the appropriate handle*Workflow* method.
     void handleWorkflowCommand(std::string_view cmd, std::string_view rest);
+
+    /// Handle a workflow_plan command (AI-10.1: generate a structured plan
+    /// from a natural-language request BEFORE heavy execution).
+    /// Format: workflow_plan <intent> [json-kwargs]
+    ///   intent:  natural-language request (e.g. "dark 8-bar acid bassline")
+    ///   json-kwargs: {"target_slot":"d1","asset_name":"acid_bass"}
+    void handleWorkflowPlan(std::string_view rest);
 
     /// Handle a workflow_start command (async — starts the agentic workflow).
     /// Format: workflow_start <json-args>

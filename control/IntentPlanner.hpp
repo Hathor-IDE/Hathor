@@ -134,6 +134,8 @@ inline const char* toString(ReuseDecision d) noexcept
  *   - steps: ordered list of actionable steps with capability tags
  *   - parameters: target slot, asset name, duration, etc.
  *   - is_dry_run: whether this plan avoids all persistent mutations
+ *   - notation: generated mini-notation (pattern mode only)
+ *   - ckSource: generated ChucK source (chuck mode only)
  */
 struct PlanModel {
     std::string  mode;              ///< "pattern" or "chuck"
@@ -142,6 +144,8 @@ struct PlanModel {
     std::string  assetName;         ///< e.g. "acid_bass" (if applicable)
     int          durationBars = 8;  ///< render/audition duration
     bool         isDryRun = false;  ///< skip all persistent mutations
+    std::string  notation;          ///< generated mini-notation (pattern mode)
+    std::string  ckSource;          ///< generated ChucK source (chuck mode)
     ReuseDecision reuseDecision = ReuseDecision::Create;
     std::vector<ReuseFinding> reuseFindings;
     std::vector<PlanStep> steps;

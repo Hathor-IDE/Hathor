@@ -70,6 +70,12 @@ nlohmann::json PlanModel::toJson() const
     j["is_dry_run"]      = isDryRun;
     j["reuse_decision"]  = toString(reuseDecision);
 
+    // Include generated content when available (AI-10.1).
+    if (!notation.empty())
+        j["notation"] = notation;
+    if (!ckSource.empty())
+        j["ck_source"] = ckSource;
+
     nlohmann::json findings = nlohmann::json::array();
     for (const auto& f : reuseFindings)
         findings.push_back(f.toJson());
@@ -587,9 +593,7 @@ PlanModel IntentPlanner::planFromRequest(
     model.reuseDecision = decideReuse(
         model.reuseFindings, model.assetName);
 
-    // Determine mode: ChucK if an asset name is provided and the intent
-    // suggests an instrument; pattern otherwise.
-    // The intent keywords are extracted for future keyword-based matching.
+    // Determine mode: ChucK if an asset name is provided; pattern otherwise.
     std::string intentKeywords = model.intent;
     std::transform(intentKeywords.begin(), intentKeywords.end(),
                    intentKeywords.begin(), ::tolower);
@@ -597,10 +601,22 @@ PlanModel IntentPlanner::planFromRequest(
     const bool isChuckWorkflow = !model.assetName.empty();
     model.mode = isChuckWorkflow ? "chuck" : "pattern";
 
+    // Generate starter content from the intent (AI-10.1).
+    if (isChuckWorkflow) {
+        model.ckSource = generateChuckSource(intentKeywords, model.assetName);
+    } else {
+        model.notation = generateMiniNotation(intentKeywords, model.targetSlot,
+                                              model.durationBars, model.assetName);
+    }
+
     if (isChuckWorkflow) {
         model.steps = buildChuckSteps(model, model.reuseFindings, model.reuseDecision);
     } else {
         model.steps = buildPatternSteps(model, model.reuseFindings, intentKeywords);
+    }
+
+    return model;
+}
     }
 
     return model;
@@ -653,6 +669,208 @@ PlanModel IntentPlanner::planFromRequestWithOverride(
                 step.capabilityClass = CapabilityClass::PersistentMutation;
 
             model.steps.push_back(std::move(step));
+        }
+
+        return model;
+    }
+
+    // No usable override — fall back to a fresh plan.
+    return planFromRequest(intent, targetSlot, assetName, durationBars, dryRun);
+}
+
+// ---------------------------------------------------------------------------
+// Content generation (AI-10.1)
+// ---------------------------------------------------------------------------
+
+std::string IntentPlanner::generateChuckSource(
+    const std::string& intentKeywords,
+    const std::string& assetName)
+{
+    (void)assetName; // reserved for future per-instrument templates
+
+    // Acid bass: TB-303-style resonant low-pass filtered saw/square.
+    if (intentKeywords.find("acid") != std::string::npos &&
+        (intentKeywords.find("bass") != std::string::npos ||
+         intentKeywords.find("sub") != std::string::npos)) {
+        return "SqrOsc osc => LPF lpf => Gain g => dac;\n"
+               "0.4 => g.gain;\n"
+               "Std.mtof(36) => osc.freq;\n"
+               "200 => lpf.freq;\n"
+               "0.8 => lpf.Q;\n"
+               "1::second => now;";
+    }
+
+    // House bass: warm sine/sub.
+    if (intentKeywords.find("bass") != std::string::npos &&
+        intentKeywords.find("house") != std::string::npos) {
+        return "SinOsc osc => Gain g => dac;\n"
+               "0.5 => g.gain;\n"
+               "Std.mtof(36) => osc.freq;\n"
+               "1::second => now;";
+    }
+
+    // Kick/BD: sine sub with pitch envelope.
+    if (intentKeywords.find("kick") != std::string::npos ||
+        intentKeywords.find("bd") != std::string::npos) {
+        return "SinOsc osc => Gain g => dac;\n"
+               "0.8 => g.gain;\n"
+               "40 => osc.freq;\n"
+               "500::ms => now;\n"
+               "0 => osc.freq;\n"
+               "500::ms => now;";
+    }
+
+    // Snare: noise burst.
+    if (intentKeywords.find("snare") != std::string::npos ||
+        intentKeywords.find("sn") != std::string::npos) {
+        return "NoiseOsc osc => LPF lpf => Gain g => dac;\n"
+               "0.3 => g.gain;\n"
+               "2000 => lpf.freq;\n"
+               "100::ms => now;";
+    }
+
+    // Hi-hat: filtered noise.
+    if (intentKeywords.find("hi-hat") != std::string::npos ||
+        intentKeywords.find("hihat") != std::string::npos ||
+        intentKeywords.find("hh") != std::string::npos) {
+        return "NoiseOsc osc => HPF hpf => Gain g => dac;\n"
+               "0.15 => g.gain;\n"
+               "8000 => hpf.freq;\n"
+               "50::ms => now;";
+    }
+
+    // Lead: saw/square lead.
+    if (intentKeywords.find("lead") != std::string::npos ||
+        intentKeywords.find("saw") != std::string::npos) {
+        return "SawOsc osc => LPF lpf => Gain g => dac;\n"
+               "0.3 => g.gain;\n"
+               "1500 => lpf.freq;\n"
+               "Std.mtof(60) => osc.freq;\n"
+               "1::second => now;";
+    }
+
+    // Pad/chord: soft saw pad.
+    if (intentKeywords.find("pad") != std::string::npos ||
+        intentKeywords.find("chord") != std::string::npos) {
+        return "SawOsc osc => LPF lpf => Gain g => dac;\n"
+               "0.2 => g.gain;\n"
+               "1000 => lpf.freq;\n"
+               "Std.mtof(48) => osc.freq;\n"
+               "2::second => now;";
+ }
+
+    // Generic default.
+    return "SinOsc osc => Gain g => dac;\n"
+           "0.3 => g.gain;\n"
+           "Std.mtof(48) => osc.freq;\n"
+           "1::second => now;";
+}
+
+std::string IntentPlanner::generateMiniNotation(
+    const std::string& intentKeywords,
+    const std::string& targetSlot,
+    int durationBars,
+    const std::string& assetName)
+{
+    // If the user already provided a slot reference, use s "name" on that slot.
+    if (!assetName.empty()) {
+        return targetSlot + "(s \"" + assetName + "\")";
+    }
+
+    // Kick/BD.
+    if (intentKeywords.find("kick") != std::string::npos ||
+        intentKeywords.find("bd") != std::string::npos) {
+        return targetSlot + "([bd ~ bd ~] * " + std::to_string(durationBars) + ")";
+    }
+
+    // Snare.
+    if (intentKeywords.find("snare") != std::string::npos ||
+        intentKeywords.find("sn") != std::string::npos) {
+        return targetSlot + "([sn ~] * " + std::to_string(durationBars * 2) + ")";
+    }
+
+    // Hi-hat.
+    if (intentKeywords.find("hi-hat") != std::string::npos ||
+        intentKeywords.find("hihat") != std::string::npos ||
+        intentKeywords.find("hh") != std::string::npos) {
+        return targetSlot + "([hh hh ~ hh ~] * " + std::to_string(durationBars * 2) + ")";
+    }
+
+    // Chord/pad.
+    if (intentKeywords.find("chord") != std::string::npos ||
+        intentKeywords.find("pad") != std::string::npos) {
+        if (intentKeywords.find("dark") != std::string::npos)
+            return targetSlot + "(m1 * " + std::to_string(durationBars) + ")";
+        return targetSlot + "(c1 * " + std::to_string(durationBars) + ")";
+    }
+
+    // Default: bassline pattern using the target slot.
+    if (intentKeywords.find("acid") != std::string::npos) {
+        return targetSlot + "([c1 e1 g1 b1] * " + std::to_string(durationBars) + ")";
+    }
+    return targetSlot + "([c1 g1 c1 g1] * " + std::to_string(durationBars) + ")";
+}
+
+// Also populate notation/ckSource for override plans.
+PlanModel IntentPlanner::planFromRequestWithOverrideImpl(
+    std::string_view intent,
+    std::string_view targetSlot,
+    std::string_view assetName,
+    int              durationBars,
+    bool             dryRun,
+    const nlohmann::json& overridePlan)
+{
+    // If the caller provided a pre-determined plan, validate it is well-formed.
+    if (overridePlan.contains("steps") && overridePlan["steps"].is_array()) {
+        PlanModel model;
+        model.intent = std::string(intent);
+        model.targetSlot = std::string(targetSlot);
+        model.assetName = std::string(assetName);
+        model.durationBars = durationBars;
+        model.isDryRun = dryRun;
+        model.mode = overridePlan.value("mode", std::string{"pattern"});
+
+        if (overridePlan.contains("reuse_decision")) {
+            const std::string rd = overridePlan["reuse_decision"];
+            if (rd == "reuse") model.reuseDecision = ReuseDecision::Reuse;
+            else if (rd == "modify") model.reuseDecision = ReuseDecision::Modify;
+            else model.reuseDecision = ReuseDecision::Create;
+        }
+
+        // Carry through generated content if present in the override.
+        model.notation = overridePlan.value("notation", std::string{});
+        model.ckSource = overridePlan.value("ck_source", std::string{});
+
+        for (const auto& stepJson : overridePlan["steps"]) {
+            PlanStep step;
+            step.name = stepJson.value("name", std::string{});
+            step.service = stepJson.value("service", std::string{});
+            step.method = stepJson.value("method", std::string{});
+            step.description = stepJson.value("description", std::string{});
+            step.params = stepJson.value("params", nlohmann::json::object());
+            step.requiresConfirmation = stepJson.value("requires_confirmation", false);
+
+            const std::string cc = stepJson.value("capability_class", std::string{"read_only"});
+            if (cc == "read_only") step.capabilityClass = CapabilityClass::ReadOnly;
+            else if (cc == "non_destructive") step.capabilityClass = CapabilityClass::NonDestructive;
+            else step.capabilityClass = CapabilityClass::PersistentMutation;
+
+            if (step.requiresConfirmation)
+                step.capabilityClass = CapabilityClass::PersistentMutation;
+
+            model.steps.push_back(std::move(step));
+        }
+
+        // If override didn't include generated content, generate from intent.
+        if (model.notation.empty() && model.ckSource.empty()) {
+            std::string kw = model.intent;
+            std::transform(kw.begin(), kw.end(), kw.begin(), ::tolower);
+            if (model.mode == "chuck") {
+                model.ckSource = generateChuckSource(kw, model.assetName);
+            } else {
+                model.notation = generateMiniNotation(kw, model.targetSlot,
+                                                      model.durationBars, model.assetName);
+            }
         }
 
         return model;

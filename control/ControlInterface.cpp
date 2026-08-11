@@ -384,7 +384,8 @@ void ControlInterface::dispatch(std::string_view rawLine)
                cmd == "workflow_cancel" ||
                cmd == "workflow_status" ||
                cmd == "workflow_approve" ||
-               cmd == "workflow_reject") {
+               cmd == "workflow_reject" ||
+               cmd == "workflow_plan") {
         // AI-10: Agentic musical workflow orchestration.
         handleWorkflowCommand(cmd, rest);
     } else {
@@ -1473,6 +1474,8 @@ void ControlInterface::handleWorkflowCommand(std::string_view cmd,
         handleWorkflowApprove(rest, true);
     } else if (cmd == "workflow_reject") {
         handleWorkflowApprove(rest, false);
+    } else if (cmd == "workflow_plan") {
+        handleWorkflowPlan(rest);
     }
 }
 
@@ -1537,6 +1540,58 @@ void ControlInterface::handleWorkflowStart(std::string_view rest)
         return;
     }
 
+    // If neither notation nor ck_source is provided, use IntentPlanner (AI-10.1)
+    // to interpret the natural-language intent and generate the appropriate
+    // content.  This allows "workflow_start {"intent":"dark 8-bar acid bassline"}"
+    // without requiring the caller to specify notation or ck_source.
+    if (request.notation.empty() && request.ckSource.empty() && !request.plan.is_null()) {
+        // Plan was provided but no content — nothing to do, AgenticWorkflow
+        // will use the plan during its Planning phase.
+    } else if (request.notation.empty() && request.ckSource.empty()) {
+        // No explicit content — interpret the intent.
+        IntentPlanner planner(*readFacade_, *chuckSessionService_, *renderService_);
+
+        // If a plan was provided, use planFromRequestWithOverride to fill in
+        // any missing fields from the override plan.  Otherwise, generate
+        // from scratch.
+        PlanModel planModel = request.plan.is_null()
+            ? planner.planFromRequest(request.intent,
+                                      request.targetSlot,
+                                      request.assetName,
+                                      request.durationBars,
+                                      request.dryRun)
+            : planner.planFromRequestWithOverride(request.intent,
+                                                   request.targetSlot,
+                                                   request.assetName,
+                                                   request.durationBars,
+                                                   request.dryRun,
+                                                   request.plan);
+
+        // Populate the plan on the request.
+        request.plan = planModel.toJson();
+
+        // Extract content from the plan steps.
+        if (!planModel.steps.empty()) {
+            for (const auto& step : planModel.steps) {
+                if (step.name == "generate_pattern" && !request.notation.empty() == false) {
+                    request.notation = "auto";  // signal to use plan's notation
+                } else if (step.name == "create_chuck_session" && request.ckSource.empty()) {
+                    request.ckSource = "auto";  // signal to use plan's ck_source
+                }
+            }
+        }
+
+        // If we still have no explicit content, generate from intent.
+        // The AgenticWorkflow will handle "auto" or empty content during execution.
+        if (request.notation == "auto" || request.notation.empty()) {
+            if (planModel.mode == "chuck") {
+                request.ckSource = "auto";
+            } else {
+                request.notation = "auto";
+            }
+        }
+    }
+
     // Start the workflow with progress + confirmation callbacks.
     bool started = agenticWorkflow_->start(
         std::move(request),
@@ -1594,6 +1649,71 @@ void ControlInterface::handleWorkflowCancel(std::string_view /*rest*/)
         {"ok", true},
         {"cmd", "workflow_cancel"},
         {"state", agenticWorkflow_->getState()}
+    });
+}
+
+void ControlInterface::handleWorkflowPlan(std::string_view rest)
+{
+    // Format: workflow_plan <intent> [json-kwargs]
+    // The intent is everything up to the first '{' if json-kwargs are present,
+    // or the entire string otherwise.
+    std::string_view intentStr = trim(rest);
+    std::string_view jsonStr;
+
+    // Find the start of JSON args (if any).
+    size_t jsonPos = intentStr.find('{');
+    if (jsonPos != std::string_view::npos) {
+        jsonStr = intentStr.substr(jsonPos);
+        intentStr = trim(intentStr.substr(0, jsonPos));
+    }
+
+    if (intentStr.empty()) {
+        emitResponse({
+            {"ok", false},
+            {"cmd", "workflow_plan"},
+            {"error", "missing intent"}
+        });
+        return;
+    }
+
+    // Parse optional JSON kwargs.
+    std::string targetSlot;
+    std::string assetName;
+
+    if (!jsonStr.empty()) {
+        try {
+            auto args = nlohmann::json::parse(jsonStr);
+            targetSlot = args.value("target_slot", std::string{});
+            assetName  = args.value("asset_name", std::string{});
+        } catch (const std::exception&) {
+            emitResponse({
+                {"ok", false},
+                {"cmd", "workflow_plan"},
+                {"error", "invalid JSON arguments"}
+            });
+            return;
+        }
+    }
+
+    // Ensure ChuckSessionService and RenderService are initialized for the planner.
+    if (!chuckSessionService_)
+        chuckSessionService_ = std::make_unique<ChuckSessionService>(audio_);
+    if (!renderService_)
+        renderService_ = std::make_unique<RenderService>(audio_, bank_, *chuckSessionService_);
+
+    // Construct the IntentPlanner (AI-10.1) and generate the plan.
+    IntentPlanner planner(*readFacade_, *chuckSessionService_, *renderService_);
+
+    const int durationBars = 8;
+    const bool dryRun = false;
+
+    PlanModel plan = planner.planFromRequest(intentStr, targetSlot, assetName,
+                                             durationBars, dryRun);
+
+    emitResponse({
+        {"ok", true},
+        {"cmd", "workflow_plan"},
+        {"plan", plan.toJson()}
     });
 }
 

@@ -145,6 +145,9 @@ public:
     std::vector<SlotInfo> listSlots() const noexcept override { return {}; }
     SlotInfo getSlotInfo(int) const noexcept override { return {}; }
     VmStatus getVmStatus(int) const noexcept override { return {}; }
+    AudioStatus getAudioStatus() const noexcept override {
+        return AudioStatus{true, bpm_, 44100, 1.0f, "flat", 0, true, 0};
+    }
     std::vector<SlotPlayback> listSlotPlayback() const noexcept override { return {}; }
 
     std::vector<InstrumentInfo> listChuckInstruments(
@@ -586,9 +589,9 @@ TEST_CASE("AI-10.1: all steps have valid capability class",
 
         for (const auto& s : plan.steps) {
             // capabilityClass must be one of the three valid values.
-            REQUIRE(s.capabilityClass == CapabilityClass::ReadOnly ||
-                    s.capabilityClass == CapabilityClass::NonDestructive ||
-                    s.capabilityClass == CapabilityClass::PersistentMutation);
+            REQUIRE((s.capabilityClass == CapabilityClass::ReadOnly ||
+                     s.capabilityClass == CapabilityClass::NonDestructive ||
+                     s.capabilityClass == CapabilityClass::PersistentMutation));
             // requiresConfirmation must be true ONLY for persistent mutation.
             if (s.capabilityClass == CapabilityClass::PersistentMutation && !plan.isDryRun)
                 REQUIRE(s.requiresConfirmation);
@@ -603,9 +606,9 @@ TEST_CASE("AI-10.1: all steps have valid capability class",
             "acid bass", "d1", "acid_bass", 8, false);
 
         for (const auto& s : plan.steps) {
-            REQUIRE(s.capabilityClass == CapabilityClass::ReadOnly ||
-                    s.capabilityClass == CapabilityClass::NonDestructive ||
-                    s.capabilityClass == CapabilityClass::PersistentMutation);
+            REQUIRE((s.capabilityClass == CapabilityClass::ReadOnly ||
+                     s.capabilityClass == CapabilityClass::NonDestructive ||
+                     s.capabilityClass == CapabilityClass::PersistentMutation));
             if (s.capabilityClass == CapabilityClass::PersistentMutation && !plan.isDryRun)
                 REQUIRE(s.requiresConfirmation);
             else if (!plan.isDryRun)
