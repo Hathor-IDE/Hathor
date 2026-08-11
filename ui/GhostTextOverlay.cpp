@@ -105,7 +105,7 @@ void GhostTextOverlay::paint(juce::Graphics& g)
         g.drawText(normalPart,
                    textEndX, startY,
                    static_cast<int>(normalWidth), rowHeight,
-                   juce::Justification::top_left,
+                   juce::Justification::topLeft,
                    false);
         textEndX += static_cast<int>(normalWidth);
     }
@@ -116,7 +116,7 @@ void GhostTextOverlay::paint(juce::Graphics& g)
         g.drawText(ghostStr,
                    startX, startY,
                    static_cast<int>(fullWidth), rowHeight,
-                   juce::Justification::top_left,
+                   juce::Justification::topLeft,
                    false);
         textEndX = startX + static_cast<int>(fullWidth);
     }
@@ -132,47 +132,46 @@ void GhostTextOverlay::paint(juce::Graphics& g)
         g.drawText(badge,
                    textEndX + 4, startY,
                    static_cast<int>(badgeWidth), rowHeight,
-                   juce::Justification::top_left,
+                   juce::Justification::topLeft,
                    false);
     }
 }
+
+// -----------------------------------------------------------------------
+// Ghost text management
+// -----------------------------------------------------------------------
+
+void GhostTextOverlay::setGhostText(const std::string& text,
+                                    const juce::Rectangle<int>& caretBounds,
+                                    int insertionLen)
+{
+    ghostText_ = text;
+    caretBounds_ = caretBounds;
+    insertionLen_ = insertionLen;
+    visible_ = !text.empty();
+    setVisible(visible_);
+    if (visible_)
+        repaint();
 }
 
-    // -----------------------------------------------------------------------
-    // Ghost text management
-    // -----------------------------------------------------------------------
-
-    void GhostTextOverlay::setGhostText(const std::string& text,
-                                         const juce::Rectangle<int>& caretBounds,
-                                         int insertionLen)
+void GhostTextOverlay::setCandidateIndicator(size_t count, size_t selectedIndex) noexcept
+{
+    candidateCount_ = count;
+    selectedCandidate_ = selectedIndex;
+    if (visible_)
     {
-        ghostText_ = text;
-        caretBounds_ = caretBounds;
-        insertionLen_ = insertionLen;
-        visible_ = !text.empty();
-        setVisible(visible_);
-        if (visible_)
-            repaint();
+        setVisible(true);
+        repaint();
     }
+}
 
-    void GhostTextOverlay::setCandidateIndicator(size_t count, size_t selectedIndex) noexcept
-    {
-        candidateCount_ = count;
-        selectedCandidate_ = selectedIndex;
-        if (visible_)
-        {
-            setVisible(true);
-            repaint();
-        }
-    }
-
-    void GhostTextOverlay::clearCandidateIndicator() noexcept
-    {
-        candidateCount_ = 0;
-        selectedCandidate_ = 0;
-        if (visible_)
-            repaint();
-    }
+void GhostTextOverlay::clearCandidateIndicator() noexcept
+{
+    candidateCount_ = 0;
+    selectedCandidate_ = 0;
+    if (visible_)
+        repaint();
+}
 
 void GhostTextOverlay::clearGhost() noexcept
 {

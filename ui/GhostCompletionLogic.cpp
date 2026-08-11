@@ -421,15 +421,32 @@ std::optional<PartialAcceptResult> GhostCompletionLogic::onPartialAccept(size_t 
     if (remainingText.empty())
         return std::nullopt;
 
-    // Update the candidate in-place to be the remaining suffix.
+     // Update the candidate in-place to be the remaining suffix.
     // docPrefix is extended to include the accepted text (AI-G2: the prefix
     // now reflects the new document state after insertion).
-    // cursorLine/character stay the same — the remaining ghost is displayed
-    // at the new cursor position which the UI resolves from the editor.
+    // cursorLine/character are updated to reflect the new cursor position
+    // after the accepted text is inserted at the cursor.
     candidate.text = remainingText;
     candidate.displayText = remainingText;
     candidate.insertText = remainingText;
     candidate.docPrefix += acceptedText;
+
+    // Update cursor position: after inserting acceptedText, the cursor moves
+    // forward by the length of the accepted text. If the accepted text
+    // contains newlines, the cursor line increases accordingly.
+    {
+        size_t newlines = std::count(acceptedText.begin(), acceptedText.end(), '\n');
+        if (newlines == 0)
+        {
+            candidate.character += static_cast<int>(acceptLen);
+        }
+        else
+        {
+            candidate.cursorLine += static_cast<int>(newlines);
+            auto lastNl = acceptedText.rfind('\n');
+            candidate.character = static_cast<int>(acceptLen - lastNl - 1);
+        }
+    }
 
     PartialAcceptResult result;
     result.acceptedText = std::move(acceptedText);
