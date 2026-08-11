@@ -289,7 +289,8 @@ void WorkingSet::updateAfterStep(const std::string& stepName,
                 bool found = false;
                 for (auto& existing : items_) {
                     if (existing.id == item.id) {
-                        existing.state = item.state;
+                        for (auto& [k, v] : item.state.items())
+                        existing.state[k] = v;
                         existing.lastTouched = now;
                         found = true;
                         break;
@@ -313,7 +314,8 @@ void WorkingSet::updateAfterStep(const std::string& stepName,
                 bool found = false;
                 for (auto& existing : items_) {
                     if (existing.id == item.id) {
-                        existing.state = item.state;
+                        for (auto& [k, v] : item.state.items())
+                        existing.state[k] = v;
                         existing.lastTouched = now;
                         found = true;
                         break;
@@ -363,7 +365,8 @@ void WorkingSet::updateAfterStep(const std::string& stepName,
             bool found = false;
             for (auto& existing : items_) {
                 if (existing.id == item.id && existing.type == ItemType::Session) {
-                    existing.state = item.state;
+                    for (auto& [k, v] : item.state.items())
+                        existing.state[k] = v;
                     existing.lastTouched = now;
                     found = true;
                     break;
@@ -387,7 +390,8 @@ void WorkingSet::updateAfterStep(const std::string& stepName,
             bool found = false;
             for (auto& existing : items_) {
                 if (existing.id == item.id && existing.type == ItemType::Session) {
-                    existing.state = item.state;
+                    for (auto& [k, v] : item.state.items())
+                        existing.state[k] = v;
                     existing.lastTouched = now;
                     found = true;
                     break;
@@ -404,7 +408,8 @@ void WorkingSet::updateAfterStep(const std::string& stepName,
             bool found = false;
             for (auto& existing : items_) {
                 if (existing.id == item.id && existing.type == ItemType::Pattern) {
-                    existing.state = item.state;
+                    for (auto& [k, v] : item.state.items())
+                        existing.state[k] = v;
                     existing.lastTouched = now;
                     found = true;
                     break;
@@ -437,7 +442,8 @@ void WorkingSet::updateAfterStep(const std::string& stepName,
             bool found = false;
             for (auto& existing : items_) {
                 if (existing.id == item.id) {
-                    existing.state = item.state;
+                    for (auto& [k, v] : item.state.items())
+                        existing.state[k] = v;
                     existing.lastTouched = now;
                     found = true;
                     break;

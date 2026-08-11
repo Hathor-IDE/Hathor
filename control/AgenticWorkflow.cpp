@@ -284,9 +284,10 @@ bool AgenticWorkflow::start(Request request,
 // ---------------------------------------------------------------------------
 
 bool AgenticWorkflow::startCreativeRepair(std::string_view feedback,
-                                          std::string_view intentContext,
-                                          ProgressCallback onProgress,
-                                          ConfirmationCallback onConfirmation)
+                                           std::string_view intentContext,
+                                           ProgressCallback onProgress,
+                                           ConfirmationCallback onConfirmation,
+                                           bool dryRun)
 {
     if (feedback.empty()) {
         return false;
@@ -298,6 +299,7 @@ bool AgenticWorkflow::startCreativeRepair(std::string_view feedback,
     req.intent = "creative repair: " + std::string(feedback);
     if (!intentContext.empty())
         req.intent += " (" + std::string(intentContext) + ")";
+    req.dryRun = dryRun;
 
     return start(std::move(req),
                  std::move(onProgress),

@@ -10,8 +10,8 @@
  *   2.  classifyFeedback is case-insensitive.
  *   3.  resolveTarget delegates to WorkingSet::resolveReference and returns
  *       structured JSON.
- *   4.  Pattern density repair wraps existing notation in slow(2) for "too busy".
- *   5.  Pattern density repair wraps existing notation in degradeBy(0.3) for
+ *   4.  Pattern density repair wraps existing notation in /2 for "too busy".
+ *   5.  Pattern density repair wraps existing notation in /2 for "simplify".
  *       "simplify the rhythm".
  *   6.  ChucK darkness repair lowers filter cutoff frequency in source text.
  *   7.  ChucK brightness repair raises filter cutoff frequency in source text.
@@ -350,7 +350,7 @@ TEST_CASE("AI-10.5: resolveTarget delegates to WorkingSet::resolveReference",
 // 4. Pattern density repair: "too busy" → slow(2)
 // ===========================================================================
 
-TEST_CASE("AI-10.5: 'too busy' wraps pattern in slow(2)",
+TEST_CASE("AI-10.5: 'too busy' slows pattern in /2",
           "[ai10][ai10_5][pattern][density][slow]")
 {
     std::string original = "bd sn hh cp";
@@ -382,19 +382,18 @@ TEST_CASE("AI-10.5: 'too busy' wraps pattern in slow(2)",
     REQUIRE(plan.ops[0].requiresConfirmation == true);
     REQUIRE(plan.needsConfirmation == true);
 
-    // The notation should be wrapped in slow(2, ...)
-    REQUIRE(plan.targetNotation.find("slow(2,") != std::string::npos);
+    // The notation should be wrapped in /2 (mini-notation slow combinator)
+    REQUIRE(plan.targetNotation.find("/2") != std::string::npos);
     REQUIRE(plan.targetNotation.find("bd sn hh cp") != std::string::npos);
 
     fs::remove_all(audio.projectDir);
 }
 
 // ===========================================================================
-// 5. Pattern density repair: "simplify the rhythm" → degradeBy(0.3)
-// ===========================================================================
+// 5. Pattern density repair: "simplify the rhythm" → /2
 
-TEST_CASE("AI-10.5: 'simplify the rhythm' wraps pattern in degradeBy(0.3)",
-          "[ai10][ai10_5][pattern][density][degrade]")
+TEST_CASE("AI-10.5: 'simplify the rhythm' wraps pattern in /2",
+          "[ai10][ai10_5][pattern][density][simplify]")
 {
     FakeAudioForRepair audio;
     audio.projectDir = fs::temp_directory_path() / "hathor_repair_test_2";
@@ -412,7 +411,7 @@ TEST_CASE("AI-10.5: 'simplify the rhythm' wraps pattern in degradeBy(0.3)",
 
     REQUIRE(plan.property == CCR::Property::RhythmicDensity);
     REQUIRE(plan.targetDomain == CCR::TargetDomain::Pattern);
-    REQUIRE(plan.targetNotation.find("degradeBy(0.3,") != std::string::npos);
+    REQUIRE(plan.targetNotation.find("/2") != std::string::npos);
     REQUIRE(plan.targetNotation.find("bd sn hh cp") != std::string::npos);
 
     fs::remove_all(audio.projectDir);
@@ -687,7 +686,7 @@ TEST_CASE("AI-10.5: falls back to working-set notation when no song file",
     REQUIRE(plan.slotName == "d1");
     REQUIRE(plan.targetDomain == CCR::TargetDomain::Pattern);
     REQUIRE_FALSE(plan.ops.empty());
-    REQUIRE(plan.targetNotation.find("degradeBy(0.3,") != std::string::npos);
+    REQUIRE(plan.targetNotation.find("/2") != std::string::npos);
 
     fs::remove_all(audio.projectDir);
 }
@@ -840,7 +839,7 @@ TEST_CASE("AI-10.5: startCreativeRepair reaches terminal state in dry-run",
     };
 
     bool started = wf.startCreativeRepair("too busy", "", progressCb,
-        [](AgenticWorkflow::ConfirmationRequest) {});
+        [](AgenticWorkflow::ConfirmationRequest) {}, true);
 
     REQUIRE(started);
 
@@ -927,7 +926,7 @@ TEST_CASE("AI-10.5: dry-run creative repair does not write song file",
     };
 
     bool started = wf.startCreativeRepair("too busy", "", progressCb,
-        [](AgenticWorkflow::ConfirmationRequest) {});
+        [](AgenticWorkflow::ConfirmationRequest) {}, true);
 
     REQUIRE(started);
 
@@ -949,4 +948,200 @@ TEST_CASE("AI-10.5: dry-run creative repair does not write song file",
     REQUIRE_FALSE(fs::exists(audio.projectDir / "d1.hathor"));
 
     fs::remove_all(audio.projectDir);
+}
+
+// ===========================================================================
+// 19. Repeated feedback does not create duplicate asset chains
+// ===========================================================================
+
+TEST_CASE("AI-10.5: repeated feedback modifies existing pattern, no duplicate chains",
+          "[ai10][ai10_5][reuse][no_duplicates]")
+{
+    FakeAudioForRepair audio;
+    audio.projectDir = fs::temp_directory_path() / "hathor_repair_test_9";
+    fs::create_directories(audio.projectDir);
+    SampleBank bank;
+    SongMutationService songSvc(audio, bank);
+    ChuckSessionService chuckSvc(audio);
+    WorkingSet ws;
+
+    const std::string original = "bd sn hh cp";
+    ws.recordItem(makePatternItem("d1", original));
+    ws.setActiveSlot("d1");
+
+    CCR engine(ws, songSvc, chuckSvc);
+
+    // First repair: slow down by /2 (mini-notation)
+    auto plan1 = engine.planRepair("too busy", "");
+    REQUIRE(plan1.targetNotation.find("/2") != std::string::npos);
+
+    // Second repair: same transformation, wraps again with /2
+    auto plan2 = engine.planRepair("too busy", "");
+    REQUIRE(plan2.targetNotation.find("/2") != std::string::npos);
+
+    // No new ops creating duplicates — both reuse the same pattern.
+    REQUIRE(plan1.ops.size() == 1);
+    REQUIRE(plan2.ops.size() == 1);
+    REQUIRE(plan1.ops[0].service == plan2.ops[0].service);
+    REQUIRE(plan1.slotName == plan2.slotName);
+    REQUIRE(plan1.resourceId == plan2.resourceId);
+
+    // The pattern item id should not change (no kick_1, kick_2 chains).
+    REQUIRE(plan1.resourceId == "slot:d1");
+    REQUIRE(plan2.resourceId == "slot:d1");
+
+    fs::remove_all(audio.projectDir);
+}
+
+// ===========================================================================
+// 20. Multi-turn working set continuity resolves "it" correctly
+// ===========================================================================
+
+TEST_CASE("AI-10.5: working set resolves 'it' across turns for pattern repair",
+          "[ai10][ai10_5][workingset][multi_turn][pronoun]")
+{
+    FakeAudioForRepair audio;
+    audio.projectDir = fs::temp_directory_path() / "hathor_repair_test_10";
+    fs::create_directories(audio.projectDir);
+    SampleBank bank;
+    SongMutationService songSvc(audio, bank);
+    ChuckSessionService chuckSvc(audio);
+    WorkingSet ws;
+
+    // Simulate: first workflow generated a bass pattern on d1.
+    ws.recordItem(makePatternItem("d1", "bd bd sn"));
+    ws.setActiveSlot("d1");
+
+    CCR engine(ws, songSvc, chuckSvc);
+
+    // Second turn: "make it darker" should resolve "it" to the active pattern.
+    // Since "darker" maps to TimbralDarkness → Instrument domain, and the
+    // working set only has a Pattern, the fallback to active slot gives us
+    // Pattern domain (the pattern item on d1).
+    auto plan = engine.planRepair("make it sparser", "");
+    REQUIRE(plan.targetDomain == CCR::TargetDomain::Pattern);
+    REQUIRE(plan.slotName == "d1");
+    REQUIRE_FALSE(plan.ops.empty());
+    REQUIRE(plan.targetNotation.find("/2") != std::string::npos);
+
+    fs::remove_all(audio.projectDir);
+}
+
+// ===========================================================================
+// 21. ChucK repair preserves instrument identity (same session, not new)
+// ===========================================================================
+
+TEST_CASE("AI-10.5: ChucK repair recompiles same session, not new instrument",
+          "[ai10][ai10_5][chuck][identity]")
+{
+    FakeAudioForRepair audio;
+    audio.projectDir = fs::temp_directory_path() / "hathor_repair_test_11";
+    fs::create_directories(audio.projectDir);
+    SampleBank bank;
+    SongMutationService songSvc(audio, bank);
+    ChuckSessionService chuckSvc(audio);
+    WorkingSet ws;
+
+    const std::string originalSource = "SinOsc s => LPF lpf => g; 440 => s.freq; 500 => lpf.freq;";
+    chuckSvc.createSession(1, originalSource);
+
+    ws.recordItem(WorkingSet::TrackedItem{
+        .id = "instrument:acid_bass",
+        .name = "acid_bass",
+        .type = WorkingSet::ItemType::Instrument,
+        .slotName = "d1",
+        .alias = "the bass",
+        .state = nlohmann::json{
+            {"session_id", "ck:1"},
+            {"source", originalSource},
+            {"lifecycle_state", "bound"}
+        }
+    });
+
+    CCR engine(ws, songSvc, chuckSvc);
+    auto plan = engine.planRepair("make it darker", "bass");
+
+    REQUIRE(plan.targetDomain == CCR::TargetDomain::Instrument);
+    // The session ID must be the SAME session (not a new one).
+    REQUIRE(plan.sessionId == "ck:1");
+    REQUIRE(plan.resourceId == "instrument:acid_bass");
+    // Only one op (recompile), no new asset creation.
+    REQUIRE(plan.ops.size() == 1);
+    REQUIRE(plan.ops[0].service == "ChuckSessionService");
+    REQUIRE(plan.ops[0].method == "compileChuck");
+    // The source should have changed (500 * 0.7 = 350), but oscillator freq (440) preserved.
+    REQUIRE(plan.targetSource != originalSource);
+    REQUIRE(plan.targetSource.find("350") != std::string::npos);
+    REQUIRE(plan.targetSource.find("440") != std::string::npos); // oscillator unchanged
+
+    fs::remove_all(audio.projectDir);
+}
+
+// ===========================================================================
+// 22. Creative repair produces a change-set op (AI-10.3 integration)
+// ===========================================================================
+
+TEST_CASE("AI-10.5: creative repair plan ops are capability-tagged",
+          "[ai10][ai10_5][plans][capability]")
+{
+    FakeAudioForRepair audio;
+    SampleBank bank;
+    SongMutationService songSvc(audio, bank);
+    ChuckSessionService chuckSvc(audio);
+    WorkingSet ws;
+
+    ws.recordItem(makePatternItem("d1", "bd sn"));
+    ws.setActiveSlot("d1");
+
+    CCR engine(ws, songSvc, chuckSvc);
+    auto plan = engine.planRepair("too busy", "");
+
+    REQUIRE(plan.ops.size() == 1);
+    REQUIRE(plan.ops[0].capabilityClass == CCR::CapabilityClass::PersistentMutation);
+    REQUIRE(plan.ops[0].requiresConfirmation == true);
+    REQUIRE(plan.needsConfirmation == true);
+
+    // Verify the plan JSON includes capability info for AI-1 routing.
+    nlohmann::json j = plan.toJson();
+    REQUIRE(j["ops"][0]["capability_class"] == "persistent_mutation");
+    REQUIRE(j["ops"][0]["requires_confirmation"] == true);
+    REQUIRE(j["needs_confirmation"] == true);
+}
+
+// ===========================================================================
+// 23. Pitch repair on ChucK transposes filter cutoff (not osc freq for dark)
+// ===========================================================================
+
+TEST_CASE("AI-10.5: 'lower' Pitch on ChucK adjusts pitch parameter, not filter",
+          "[ai10][ai10_5][chuck][pitch]")
+{
+    FakeAudioForRepair audio;
+    SampleBank bank;
+    SongMutationService songSvc(audio, bank);
+    ChuckSessionService chuckSvc(audio);
+    WorkingSet ws;
+
+    const std::string originalSource = "SinOsc s => LPF lpf => g; 440 => s.freq; 300 => lpf.freq;";
+    chuckSvc.createSession(1, originalSource);
+
+    ws.recordItem(WorkingSet::TrackedItem{
+        .id = "instrument:bass",
+        .name = "bass",
+        .type = WorkingSet::ItemType::Instrument,
+        .slotName = "d1",
+        .alias = "the bass",
+        .state = nlohmann::json{
+            {"session_id", "ck:1"},
+            {"source", originalSource},
+            {"lifecycle_state", "bound"}
+        }
+    });
+
+    CCR engine(ws, songSvc, chuckSvc);
+    auto plan = engine.planRepair("lower the pitch", "bass");
+
+    // Pitch is not yet handled in generateChuckRepair — should produce
+    // an empty plan with an explanation, not crash or modify unrelated params.
+    REQUIRE(plan.ops.empty());
+    REQUIRE_FALSE(plan.explanation.empty());
 }

@@ -234,17 +234,18 @@ std::string CreativeRepairEngine::generatePatternDensityRepair(
 
     const std::string lower = toLower(feedback);
 
-    // "keep the sound but simplify the rhythm" / "simplify" → degradeBy (random
-    // thinning preserves the sound character while reducing rhythmic density).
+    // "keep the sound but simplify the rhythm" / "simplify" → stretch the
+    // pattern to half its density by slowing it down (/2 = slow(2, child)
+    // in mini-notation).  This is the smallest change that halves event density
+    // per cycle while preserving the original rhythm pattern.
     if (containsKeyword(lower, "simplify") || containsKeyword(lower, "rhythm")) {
-        // Wrap in degradeBy(0.3) — drop 30% of events randomly.
-        return "degradeBy(0.3, " + std::string(currentNotation) + ")";
+        return std::string(currentNotation) + "/2";
     }
 
     // "too busy" / "simpler" / "cleaner" → slow(2) (halve the density by
     // stretching the pattern to twice its length).
-    // This is the smallest change that halves event density per cycle.
-    return "slow(2, " + std::string(currentNotation) + ")";
+    // In mini-notation: PATTERN/2 lowers to slow(2, PATTERN).
+    return std::string(currentNotation) + "/2";
 }
 
 // ---------------------------------------------------------------------------
@@ -254,7 +255,7 @@ std::string CreativeRepairEngine::generatePatternDensityRepair(
 std::string CreativeRepairEngine::generateChuckRepair(
     std::string_view currentSource,
     Property prop,
-    std::string_view /*feedback*/) const noexcept
+    std::string_view feedback) const noexcept
 {
     // Strategy: find and adjust specific parameter assignments in the ChucK
     // source text using a simple, robust scan.  If the parameter is not
@@ -342,12 +343,108 @@ std::string CreativeRepairEngine::generateChuckRepair(
         return found;
     };
 
+    static const std::vector<std::string> kFilterIndicators = {
+        "lpf", "hpf", "bpf", "filter", "lop", "hip", "bpr",
+        "reson", "biquad", "svf", "apf", "notch", "comb"
+    };
+
+    // Helper: adjust freq ONLY on filter-related variables (lpf.freq, hpf.freq,
+    // etc.).  Oscillator frequencies (s.freq) are left untouched so the
+    // musical identity is preserved.  Returns true if a filter freq was found.
+    auto adjustFilterFreq = [&source](double factor) -> bool {
+        bool found = false;
+        std::size_t searchFrom = 0;
+
+        while ((searchFrom = source.find("=>", searchFrom)) != std::string::npos) {
+            std::size_t afterArrow = searchFrom + 2;
+            while (afterArrow < source.size() &&
+                   std::isspace(static_cast<unsigned char>(source[afterArrow])))
+                ++afterArrow;
+
+            // Extract the target token up to whitespace/semicolon/newline.
+            std::size_t tokStart = afterArrow;
+            std::size_t tokEnd = tokStart;
+            while (tokEnd < source.size() &&
+                   !std::isspace(static_cast<unsigned char>(source[tokEnd])) &&
+                   source[tokEnd] != ';' &&
+                   source[tokEnd] != '\n')
+                ++tokEnd;
+
+            if (tokEnd == tokStart) { ++searchFrom; continue; }
+
+            // Target must be <varName>.<param>
+            std::size_t dotPos = source.find('.', tokStart);
+            if (dotPos == std::string::npos || dotPos >= tokEnd) {
+                ++searchFrom; continue;
+            }
+
+            std::string param = source.substr(dotPos + 1, tokEnd - dotPos - 1);
+            if (toLower(param) != "freq") {
+                ++searchFrom; continue;
+            }
+
+            std::string varName = source.substr(tokStart, dotPos - tokStart);
+            std::string varLower = toLower(varName);
+
+            bool isFilter = false;
+            for (const auto& ind : kFilterIndicators) {
+                if (varLower.find(ind) != std::string::npos) {
+                    isFilter = true; break;
+                }
+            }
+
+            if (!isFilter) {
+                ++searchFrom; continue;
+            }
+
+            // Find and adjust the number before =>
+            std::size_t numEnd = searchFrom;
+            while (numEnd > 0 &&
+                   std::isspace(static_cast<unsigned char>(source[numEnd - 1])))
+                --numEnd;
+            std::size_t numStart = numEnd;
+            bool foundDigit = false;
+            while (numStart > 0) {
+                char c = source[numStart - 1];
+                if (std::isdigit(static_cast<unsigned char>(c)) || c == '.' ||
+                    c == '-' || c == '+') {
+                    --numStart;
+                    if (std::isdigit(static_cast<unsigned char>(c)))
+                        foundDigit = true;
+                } else {
+                    break;
+                }
+            }
+            if (foundDigit && numStart < numEnd) {
+                std::string numStr = source.substr(numStart, numEnd - numStart);
+                try {
+                    double val = std::stod(numStr);
+                    double adjusted = val * factor;
+                    std::string adjustedStr;
+                    if (adjusted == static_cast<int>(adjusted))
+                        adjustedStr = std::to_string(static_cast<int>(adjusted));
+                    else
+                        adjustedStr = std::to_string(adjusted);
+                    source.replace(numStart, numEnd - numStart, adjustedStr);
+                    found = true;
+                    searchFrom = numStart + adjustedStr.size() +
+                                 (searchFrom - numEnd) + 2;
+                } catch (...) {}
+            }
+            ++searchFrom;
+        }
+        return found;
+    };
+
     bool adjusted = false;
 
     switch (prop) {
         case Property::TimbralDarkness:
-            // Lower the cutoff frequency of any filter.
-            if (adjustParam("freq", 0.7)) {
+            // Lower the cutoff frequency of FILTER variables only.
+            // Oscillator frequencies (s.freq) are left untouched — only
+            // filter-related .freq assignments (lpf.freq, hpf.freq, etc.)
+            // are adjusted to darken the timbre.
+            if (adjustFilterFreq(0.7)) {
                 adjusted = true;
             } else {
                 // No filter freq found — append a low-pass filter inline.
@@ -357,7 +454,7 @@ std::string CreativeRepairEngine::generateChuckRepair(
             break;
 
         case Property::TimbralBrightness:
-            if (adjustParam("freq", 1.4)) {
+            if (adjustFilterFreq(1.4)) {
                 adjusted = true;
             } else {
                 source += "\n8000 => LPF lpf => g;  // repair: brighten";
@@ -365,9 +462,36 @@ std::string CreativeRepairEngine::generateChuckRepair(
             }
             break;
 
+        case Property::Loudness: {
+            const std::string fb = toLower(std::string(feedback));
+            if (fb.find("quieter") != std::string::npos ||
+                fb.find("softer") != std::string::npos) {
+                if (adjustParam("gain", 0.5)) adjusted = true;
+                else { source += "\n0.5 => g.gain;  // repair: quieter"; adjusted = true; }
+            } else {
+                if (adjustParam("gain", 1.5)) adjusted = true;
+                else { source += "\n1.5 => g.gain;  // repair: louder"; adjusted = true; }
+            }
+            break;
+        }
+
+        case Property::StereoSpread: {
+            const std::string fb = toLower(std::string(feedback));
+            if (fb.find("narrow") != std::string::npos ||
+                fb.find("mono") != std::string::npos) {
+                if (adjustParam("pan", 0.5)) adjusted = true;
+                else { source += "\n0.0 => g.pan(0);  // repair: narrow"; adjusted = true; }
+            } else {
+                if (adjustParam("pan", 0.3)) adjusted = true;
+                else { source += "\n0.5 => g.pan(0.5);  // repair: wider"; adjusted = true; }
+            }
+            break;
+        }
+
         default:
-            // Other properties are not handled via ChucK source text in this
-            // initial implementation.  The plan will surface this to the user.
+            // Other properties (Timing, Pitch, TimbralCharacter) are not
+            // handled via ChucK source text in this initial implementation.
+            // The plan will surface this to the user.
             break;
     }
 

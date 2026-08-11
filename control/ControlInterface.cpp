@@ -1710,6 +1710,7 @@ void ControlInterface::handleWorkflowRepair(std::string_view rest)
 
     const std::string feedback = args.value("feedback", std::string{});
     const std::string intentContext = args.value("intent_context", std::string{});
+    const bool dryRun = args.value("dry_run", false);
 
     if (feedback.empty()) {
         emitResponse({
@@ -1740,7 +1741,6 @@ void ControlInterface::handleWorkflowRepair(std::string_view rest)
     bool started = agenticWorkflow_->startCreativeRepair(
         feedback,
         intentContext,
-        // Progress callback: stream events to stdout (AI-10.4/AI-10.5).
         [](const AgenticWorkflow::ProgressEvent& ev) {
             nlohmann::json state = ev.state;
             state["cmd"] = "workflow_progress";
@@ -1759,7 +1759,6 @@ void ControlInterface::handleWorkflowRepair(std::string_view rest)
                 state["details"] = ev.details;
             emitResponse(state);
         },
-        // Confirmation callback: emit a confirmation request.
         [](AgenticWorkflow::ConfirmationRequest req) {
             nlohmann::json j;
             j["cmd"] = "workflow_confirmation";
@@ -1772,7 +1771,8 @@ void ControlInterface::handleWorkflowRepair(std::string_view rest)
                 {"capability_class", req.capabilityClass}
             };
             emitResponse(j);
-        });
+        },
+        dryRun);
 
     if (!started) {
         emitResponse({

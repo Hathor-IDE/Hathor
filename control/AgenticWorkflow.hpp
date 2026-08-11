@@ -322,9 +322,10 @@ public:
       * @return true if the repair was queued successfully.
       */
      bool startCreativeRepair(std::string_view feedback,
-                              std::string_view intentContext,
-                              ProgressCallback     onProgress,
-                              ConfirmationCallback onConfirmation);
+                               std::string_view intentContext,
+                               ProgressCallback     onProgress,
+                               ConfirmationCallback onConfirmation,
+                               bool dryRun = false);
 
     /**
      * Cancel the currently running workflow.
