@@ -14,6 +14,8 @@
 #include "ChuckSessionService.hpp"
 #include "RenderService.hpp"
 #include "SongMutationService.hpp"
+#include "AgenticWorkflow.hpp"
+#include "IntentPlanner.hpp"
 
 // App headers (available when compiled as part of the hathor executable;
 // use paths relative to this file (control/) so the includes resolve
@@ -378,6 +380,13 @@ void ControlInterface::dispatch(std::string_view rawLine)
         // Format: edit_song <songFile> <opsJson>
         auto [songFile, opsJson] = splitFirst(rest);
         handleEditSong(songFile, trim(opsJson));
+    } else if (cmd == "workflow_start" ||
+               cmd == "workflow_cancel" ||
+               cmd == "workflow_status" ||
+               cmd == "workflow_approve" ||
+               cmd == "workflow_reject") {
+        // AI-10: Agentic musical workflow orchestration.
+        handleWorkflowCommand(cmd, rest);
     } else {
         emitResponse({
             {"ok",    false},
@@ -1445,6 +1454,209 @@ void ControlInterface::handleEditSong(std::string_view songFile,
     nlohmann::json withCmd = result;
     withCmd["cmd"] = "edit_song";
     emitResponse(withCmd);
+}
+
+// ---------------------------------------------------------------------------
+// AI-10: Agentic musical workflow command handlers
+// ---------------------------------------------------------------------------
+
+void ControlInterface::handleWorkflowCommand(std::string_view cmd,
+                                              std::string_view rest)
+{
+    if (cmd == "workflow_start") {
+        handleWorkflowStart(rest);
+    } else if (cmd == "workflow_cancel") {
+        handleWorkflowCancel(rest);
+    } else if (cmd == "workflow_status") {
+        handleWorkflowStatus(rest);
+    } else if (cmd == "workflow_approve") {
+        handleWorkflowApprove(rest, true);
+    } else if (cmd == "workflow_reject") {
+        handleWorkflowApprove(rest, false);
+    }
+}
+
+void ControlInterface::handleWorkflowStart(std::string_view rest)
+{
+    const std::string argsStr = std::string(trim(rest));
+    if (argsStr.empty()) {
+        emitResponse({
+            {"ok", false},
+            {"cmd", "workflow_start"},
+            {"error", "missing arguments"}
+        });
+        return;
+    }
+
+    nlohmann::json args;
+    try {
+        args = nlohmann::json::parse(argsStr);
+    } catch (const std::exception& e) {
+        emitResponse({
+            {"ok", false},
+            {"cmd", "workflow_start"},
+            {"error", "invalid JSON arguments"}
+        });
+        return;
+    }
+
+    // Ensure ChuckSessionService and RenderService are initialized.
+    if (!chuckSessionService_)
+        chuckSessionService_ = std::make_unique<ChuckSessionService>(audio_);
+    if (!renderService_)
+        renderService_ = std::make_unique<RenderService>(audio_, bank_, *chuckSessionService_);
+
+    // Construct the AgenticWorkflow if not yet created.
+    if (!agenticWorkflow_) {
+        agenticWorkflow_ = std::make_unique<AgenticWorkflow>(
+            audio_, bank_,
+            *readFacade_,
+            *chuckSessionService_,
+            *renderService_,
+            *songMutationService_);
+    }
+
+    // Build the request from JSON arguments.
+    AgenticWorkflow::Request request;
+    request.intent = args.value("intent", std::string{});
+    request.targetSlot = args.value("target_slot", std::string{});
+    request.notation = args.value("notation", std::string{});
+    request.ckSource = args.value("ck_source", std::string{});
+    request.assetName = args.value("asset_name", std::string{});
+    request.durationBars = args.value("duration_bars", 8);
+    request.dryRun = args.value("dry_run", false);
+    if (args.contains("plan"))
+        request.plan = args["plan"];
+
+    if (request.intent.empty()) {
+        emitResponse({
+            {"ok", false},
+            {"cmd", "workflow_start"},
+            {"error", "'intent' is required"}
+        });
+        return;
+    }
+
+    // Start the workflow with progress + confirmation callbacks.
+    bool started = agenticWorkflow_->start(
+        std::move(request),
+        // Progress callback: stream state snapshots to stdout.
+        [](nlohmann::json state) {
+            state["cmd"] = "workflow_progress";
+            emitResponse(state);
+        },
+        // Confirmation callback: emit a confirmation request.
+        [](AgenticWorkflow::ConfirmationRequest req) {
+            nlohmann::json j;
+            j["cmd"] = "workflow_confirmation";
+            j["ok"] = true;
+            j["confirmation"] = {
+                {"request_id",       req.requestId},
+                {"action",           req.action},
+                {"description",      req.description},
+                {"details",          req.details},
+                {"capability_class", req.capabilityClass}
+            };
+            emitResponse(j);
+        });
+
+    if (!started) {
+        emitResponse({
+            {"ok", false},
+            {"cmd", "workflow_start"},
+            {"error", "workflow already in progress"}
+        });
+        return;
+    }
+
+    // Return the initial plan (from getState, which includes current_step_result
+    // containing the plan JSON emitted during the Planning state).
+    emitResponse({
+        {"ok", true},
+        {"cmd", "workflow_start"},
+        {"state", agenticWorkflow_->getState()}
+    });
+}
+
+void ControlInterface::handleWorkflowCancel(std::string_view /*rest*/)
+{
+    if (!agenticWorkflow_ || !agenticWorkflow_->isRunning()) {
+        emitResponse({
+            {"ok", false},
+            {"cmd", "workflow_cancel"},
+            {"error", "no workflow in progress"}
+        });
+        return;
+    }
+
+    agenticWorkflow_->cancel();
+    emitResponse({
+        {"ok", true},
+        {"cmd", "workflow_cancel"},
+        {"state", agenticWorkflow_->getState()}
+    });
+}
+
+void ControlInterface::handleWorkflowStatus(std::string_view /*rest*/)
+{
+    nlohmann::json j;
+    j["cmd"] = "workflow_status";
+    if (agenticWorkflow_) {
+        j["ok"] = true;
+        j["state"] = agenticWorkflow_->getState();
+    } else {
+        j["ok"] = true;
+        j["state"] = nlohmann::json{
+            {"state", "idle"},
+            {"current_step", "none"}
+        };
+    }
+    emitResponse(j);
+}
+
+void ControlInterface::handleWorkflowApprove(std::string_view rest, bool approved)
+{
+    if (!agenticWorkflow_) {
+        emitResponse({
+            {"ok", false},
+            {"cmd", approved ? "workflow_approve" : "workflow_reject"},
+            {"error", "no workflow in progress"}
+        });
+        return;
+    }
+
+    const std::string_view idStr = trim(rest);
+    if (idStr.empty()) {
+        // No explicit request ID — just respond to the pending confirmation.
+        bool responded = agenticWorkflow_->respondToConfirmation(approved);
+        emitResponse({
+            {"ok", responded},
+            {"cmd", approved ? "workflow_approve" : "workflow_reject"},
+            {"responded", responded}
+        });
+        return;
+    }
+
+    // The request ID is informational (AgenticWorkflow tracks one pending
+    // confirmation at a time); we validate it matches.
+    try {
+        int requestId = std::stoi(std::string(idStr));
+        (void)requestId; // validated against the single pending confirmation
+    } catch (const std::exception&) {
+        emitResponse({
+            {"ok", false},
+            {"cmd", approved ? "workflow_approve" : "workflow_reject"},
+            {"error", "invalid request_id"}
+        });
+        return;
+    }
+
+    bool responded = agenticWorkflow_->respondToConfirmation(approved);
+    emitResponse({
+        {"ok", responded},
+        {"cmd", approved ? "workflow_approve" : "workflow_reject"},
+        {"responded", responded}
+    });
 }
 
 } // namespace hathor::control

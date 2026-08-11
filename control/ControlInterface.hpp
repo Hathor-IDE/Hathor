@@ -41,6 +41,7 @@ class ProjectSymbolIndex;
 namespace hathor::control {
 
 class ProjectReadFacade;
+class AgenticWorkflow;
 
 /**
  * ControlInterface — owns the WorkerThread and processes ACP commands.
@@ -296,14 +297,41 @@ public:
       /// Dispatch an AI-6 render command.
       void handleRenderCommand(std::string_view cmd, std::string_view rest);
 
-      // -----------------------------------------------------------------------
-      // AI-7: Song mutation service
-      // -----------------------------------------------------------------------
+    // -----------------------------------------------------------------------
+    // AI-7: Song mutation service
+    // -----------------------------------------------------------------------
 
-      /// Handle an edit_song command (persistent mutation — requires
-      /// confirmation for replace/delete/overwrite).
-      /// Format: edit_song <songFile> <opsJson>
-      void handleEditSong(std::string_view songFile, std::string_view rest);
+    /// Handle an edit_song command (persistent mutation — requires
+    /// confirmation for replace/delete/overwrite).
+    /// Format: edit_song <songFile> <opsJson>
+    void handleEditSong(std::string_view songFile, std::string_view rest);
+
+    // -----------------------------------------------------------------------
+    // AI-10: Agentic musical workflow
+    // -----------------------------------------------------------------------
+
+    /// Dispatch an AI-10 workflow command.
+    /// Routes to the appropriate handle*Workflow* method.
+    void handleWorkflowCommand(std::string_view cmd, std::string_view rest);
+
+    /// Handle a workflow_start command (async — starts the agentic workflow).
+    /// Format: workflow_start <json-args>
+    ///   json-args: {"intent":"...","target_slot":"d1","notation":"...",
+    ///               "ck_source":"...","asset_name":"...","duration_bars":8,
+    ///               "dry_run":false,"plan":{...}}
+    void handleWorkflowStart(std::string_view rest);
+
+    /// Handle a workflow_cancel command.
+    /// Format: workflow_cancel
+    void handleWorkflowCancel(std::string_view rest);
+
+    /// Handle a workflow_status command (read-only query).
+    /// Format: workflow_status
+    void handleWorkflowStatus(std::string_view rest);
+
+    /// Handle a workflow_approve command (respond to confirmation).
+    /// Format: workflow_approve <request_id>
+    void handleWorkflowApprove(std::string_view rest, bool approved);
 
 private:
     // --- Command handlers ---------------------------------------------------
@@ -374,6 +402,13 @@ private:
     // by the UI layer via setEditorContextProvider / setLspContextProvider /
     // setLanguageMetadata.  Null if not yet configured.
     std::unique_ptr<AuthoringContext> authoringContext_;
+
+    // AI-10: Agentic musical workflow orchestration.
+    // Lazily constructed on the first workflow_start command (after the
+    // ChuckSessionService and RenderService have been initialized).  Owns
+    // a background thread for the workflow; only one workflow may run at a
+    // time (start() returns false if already active).
+    std::unique_ptr<AgenticWorkflow> agenticWorkflow_;
 
     // AI-G3: Hathor-specific authoring-context provider for llm-ls FIM.
     // Created in the constructor with readFacade_; shares the same providers

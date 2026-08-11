@@ -71,6 +71,7 @@ add_executable(hathor-control-tests
      test_ai_g3_context.cpp
      test_ai_g4_fewshot.cpp
      test_j5_project_retrieval.cpp
+    test_ai10_1_intent_plan.cpp
     # AI-G3: ghost FIM sources (JUCE-free) so the llm-ls injection path is
     # exercised end-to-end in the FIM-reachability test.
     ../ui/HathorFileParser.cpp

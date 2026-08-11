@@ -64,6 +64,8 @@
 
 #include <nlohmann/json.hpp>
 
+#include "IntentPlanner.hpp"
+
 namespace hathor::control {
 
 // Forward declarations — full headers are only needed in the .cpp.
@@ -337,12 +339,16 @@ private:
     // Internal state (protected by stateMtx_)
     // -----------------------------------------------------------------------
 
-    AudioEngineFacade&             audio_;
+     AudioEngineFacade&             audio_;
     SampleBank&                    bank_;
     ProjectReadFacade&             readFacade_;
     ChuckSessionService&           chuckService_;
     RenderService&                 renderService_;
     SongMutationService&           songService_;
+
+    // AI-10.1: Intent planner — produces a structured, inspectable plan
+    // from the natural-language intent before any heavy/destructive step.
+    IntentPlanner                  planner_;
 
     // Thread management
     std::thread      workflowThread_;

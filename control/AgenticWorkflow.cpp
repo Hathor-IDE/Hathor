@@ -117,17 +117,18 @@ static void auditLog(std::string_view action,
 // ---------------------------------------------------------------------------
 
 AgenticWorkflow::AgenticWorkflow(AudioEngineFacade& audio,
-                                 SampleBank& bank,
-                                 ProjectReadFacade& readFacade,
-                                 ChuckSessionService& chuckService,
-                                 RenderService& renderService,
-                                 SongMutationService& songService)
+                                  SampleBank& bank,
+                                  ProjectReadFacade& readFacade,
+                                  ChuckSessionService& chuckService,
+                                  RenderService& renderService,
+                                  SongMutationService& songService)
     : audio_(audio)
     , bank_(bank)
     , readFacade_(readFacade)
     , chuckService_(chuckService)
     , renderService_(renderService)
     , songService_(songService)
+    , planner_(readFacade, chuckService, renderService)
 {}
 
 AgenticWorkflow::~AgenticWorkflow()
@@ -321,28 +322,19 @@ void AgenticWorkflow::runWorkflow()
     // Emit the plan for observability (AI-10.1, AI-10.4).
     {
         std::lock_guard<std::mutex> lock(stateMtx_);
-        nlohmann::json planData;
-        planData["mode"] = isChuckWorkflow ? "chuck" : "pattern";
-        planData["intent"] = currentRequest_.intent;
-        planData["steps"] = nlohmann::json::array();
-        planData["steps"].push_back("inspect_project");
-        planData["steps"].push_back("inspect_song");
-        planData["steps"].push_back("inspect_assets");
-        planData["steps"].push_back("generate_pattern");
-        planData["steps"].push_back("validate");
-        if (isChuckWorkflow) planData["steps"].push_back("compile");
-        planData["steps"].push_back("audition");
-        planData["steps"].push_back("inspect_diagnostics");
-        planData["steps"].push_back("repair_loop");
-        if (isChuckWorkflow) {
-            planData["steps"].push_back("render");
-            planData["steps"].push_back("bind_asset");
-        }
-        if (!currentRequest_.dryRun)
-            planData["steps"].push_back("update_song");
-        else
-            planData["steps"].push_back("update_song (dry_run)");
-        currentStepResult_ = planData;
+
+        // Use IntentPlanner to produce a structured, inspectable plan.
+        // If the request carries a pre-determined plan, it is validated
+        // and used; otherwise the planner derives one from the intent.
+        PlanModel plan = planner_.planFromRequestWithOverride(
+            currentRequest_.intent,
+            currentRequest_.targetSlot,
+            currentRequest_.assetName,
+            currentRequest_.durationBars,
+            currentRequest_.dryRun,
+            currentRequest_.plan);
+
+        currentStepResult_ = plan.toJson();
     }
     emitProgress();
 
