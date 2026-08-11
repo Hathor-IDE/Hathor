@@ -1298,12 +1298,24 @@ AgenticWorkflow::StepResult AgenticWorkflow::stepAudition()
         }
         return sr;
     } else {
-        // Audition a mini-notation pattern: set the pattern and play the slot.
+         // Audition a mini-notation pattern: set the pattern and play the slot.
         // This goes through the canonical set-pattern path (WorkerThread)
         // and then slot-play (non-destructive runtime mutation).
         // We use the slot API directly since the pattern was already validated.
 
-        const std::string slotName = currentRequest_.targetSlot;
+        // AI-10.5: In creative repair mode, use the plan's slotName
+        // instead of the request's targetSlot (which is empty for repairs).
+        std::string slotName;
+        {
+            std::lock_guard<std::mutex> lock(stateMtx_);
+            if (currentRepairPlan_.has_value() &&
+                currentRepairPlan_->targetDomain ==
+                    CreativeRepairEngine::TargetDomain::Pattern) {
+                slotName = currentRepairPlan_->slotName;
+            }
+        }
+        if (slotName.empty())
+            slotName = currentRequest_.targetSlot;
         if (slotName.empty()) {
             sr.ok = false;
             sr.message = "audition requires target_slot for pattern workflow";
@@ -1762,14 +1774,13 @@ AgenticWorkflow::StepResult AgenticWorkflow::stepCreativeRepair()
             } else {
                 // Compile the repaired source.
                 uint64_t jobId = 0;
-                {
-                    auto source = op.params.value("source", std::string{});
-                    auto jobHandle = chuckService_.compileChuck(
-                        sessionId, source,
-                        [](hathor::CompileResult cr) {
-                            (void)cr;
-                        });
-                    jobId = jobHandle.id();
+                auto source = op.params.value("source", std::string{});
+                auto jobHandle = chuckService_.compileChuck(
+                    sessionId, source,
+                    [](hathor::CompileResult cr) {
+                        (void)cr;
+                    });
+                jobId = jobHandle.id();
 
                 if (jobId == 0) {
                     sr.ok = false;
