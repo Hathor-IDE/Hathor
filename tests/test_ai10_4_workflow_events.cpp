@@ -18,7 +18,7 @@
  *      reflects the completed run's intent.
  *
  * Architecture: builds the REAL AgenticWorkflow against a fake
- * AudioEngineFacade (FakePlanFacade) + real ProjectReadFacade,
+ * AudioEngineFacade (FakePlanFacade4) + real ProjectReadFacade,
  * ChuckSessionService, RenderService, and SongMutationService — the same
  * JUCE-free pattern as test_ai10_1.  A pattern-mode DRY-RUN workflow is used
  * so the run completes deterministically (no confirmation pause, no file
@@ -57,10 +57,10 @@ using hathor::control::AgenticWorkflow;
 namespace fs = std::filesystem;
 
 // ===========================================================================
-// FakePlanFacade — JUCE-free AudioEngineFacade (mirrors test_ai10_1)
+// FakePlanFacade4 — JUCE-free AudioEngineFacade (mirrors test_ai10_1)
 // ===========================================================================
 
-class FakePlanFacade final : public AudioEngineFacade {
+class FakePlanFacade4 final : public AudioEngineFacade {
 public:
     fs::path projectDir;
 
@@ -170,14 +170,12 @@ struct EventCollector {
 std::string waitForTerminal(AgenticWorkflow& wf,
                             std::chrono::steady_clock::time_point deadline)
 {
-    FILE* dbg = std::fopen("/tmp/ai104_dbg.log", "a");
     for (;;) {
         const std::string s = wf.getState().value("state", std::string{});
-        if (dbg) { std::fprintf(dbg, "state=%s\n", s.c_str()); std::fflush(dbg); }
         if (s == "completed" || s == "failed" || s == "cancelled")
-            { if (dbg) std::fclose(dbg); return s; }
+            return s;
         if (std::chrono::steady_clock::now() > deadline)
-            { if (dbg) std::fclose(dbg); return wf.getState().value("state", std::string{}); }
+            return wf.getState().value("state", std::string{});
         std::this_thread::sleep_for(std::chrono::milliseconds(2));
     }
 }
@@ -192,7 +190,7 @@ std::string waitForTerminal(AgenticWorkflow& wf,
 TEST_CASE("AI-10.4: WorkflowStarted reports queued and stream ends Completed",
           "[ai10][ai10_4][events][queued][completed]")
 {
-    FakePlanFacade audio;
+    FakePlanFacade4 audio;
     audio.projectDir = fs::temp_directory_path() / "hathor_ai10_4_test";
 
     SampleBank bank;
@@ -280,7 +278,7 @@ TEST_CASE("AI-10.4: every EventType has a stable string name",
 TEST_CASE("AI-10.4: start() refuses a second concurrent workflow",
           "[ai10][ai10_4][events][gating]")
 {
-    FakePlanFacade audio;
+    FakePlanFacade4 audio;
     audio.projectDir = fs::temp_directory_path() / "hathor_ai10_4_gate_test";
 
     SampleBank bank;
@@ -314,7 +312,7 @@ TEST_CASE("AI-10.4: start() refuses a second concurrent workflow",
 TEST_CASE("AI-10.4: a completed run exposes its change-set (AI-10.3)",
           "[ai10][ai10_4][events][changeset]")
 {
-    FakePlanFacade audio;
+    FakePlanFacade4 audio;
     audio.projectDir = fs::temp_directory_path() / "hathor_ai10_4_cs_test";
 
     SampleBank bank;

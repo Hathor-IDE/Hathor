@@ -228,7 +228,6 @@ bool AgenticWorkflow::start(Request request,
 
     {
         std::lock_guard<std::mutex> lock(stateMtx_);
-        { FILE* d = std::fopen("/tmp/ai104_dbg.log","a"); std::fprintf(d,"[start] acquired stateMtx_\n"); std::fclose(d); }
 
         if (state_ != State::Idle) {
             return false;
@@ -272,7 +271,6 @@ bool AgenticWorkflow::start(Request request,
 
     // Launch the workflow thread.
     workflowThread_ = std::thread([this] { runWorkflow(); });
-    { FILE* d = std::fopen("/tmp/ai104_dbg.log","a"); std::fprintf(d,"[start] thread launched, returning\n"); std::fclose(d); }
 
     return true;
 }
@@ -443,7 +441,6 @@ void AgenticWorkflow::runWorkflow()
 
         currentStepResult_ = plan.toJson();
     }
-    { FILE* d = std::fopen("/tmp/ai104_dbg.log","a"); std::fprintf(d,"[wf] plan done, about to emit PlanCreated\n"); std::fclose(d); }
     // AI-10.4: The plan is now observable as a dedicated event.
     // (Emitted lock-free — emitEvent() calls getState(), which acquires
     // stateMtx_; it must not be called while that lock is held.)
@@ -456,7 +453,6 @@ void AgenticWorkflow::runWorkflow()
 
     // Phase 2: INSPECTION — inspect_project, inspect_song, inspect_assets.
     setState(State::Inspecting);
-    { FILE* d = std::fopen("/tmp/ai104_dbg.log","a"); std::fprintf(d,"[wf] Inspecting\n"); std::fclose(d); }
 
     for (const auto step : { Step::InspectProject, Step::InspectSong,
                              Step::InspectAssets }) {
