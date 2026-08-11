@@ -13,6 +13,7 @@
 
 #include "LspCompletionLogic.hpp"
 #include "hathor/LanguageMetadata.hpp"
+#include "ChuckKeywords.hpp"
 
 #include <cstdint>
 
@@ -390,8 +391,187 @@ std::vector<CompletionCandidate> metadataFallback(
     return candidates;
 }
 
-CompletionCandidate makeCandidate(const language::LanguageMetadata& /*metadata*/,
-                                  const language::MiniNotationFunction& fn)
+// ---------------------------------------------------------------------------
+// ChucK metadata fallback (AI-G7) — deterministic completion from versioned
+// supported-surface metadata (chuckApi) + built-in ChucK keyword sets.
+// No reusable ChucK LSP server exists — this is the sole deterministic
+// completion source for .ck files.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+/// Map a ChuckAPIDefinition::kind string to an LSP CompletionItemKind.
+CompletionItemKind chuckKindToLspKind(std::string_view kind) noexcept
+{
+    if (kind == "ugen")     return CompletionItemKind::Class;
+    if (kind == "constant") return CompletionItemKind::Value;
+    if (kind == "library")  return CompletionItemKind::Module;
+    if (kind == "class")    return CompletionItemKind::Class;
+    return CompletionItemKind::Text;
+}
+
+/// Match a ChucK identifier candidate against the prefix (case-sensitive,
+/// since ChucK is case-sensitive like C++).
+bool matchesChuckPrefix(std::string_view label, std::string_view prefix) noexcept
+{
+    if (prefix.empty()) return true;
+    if (label.size() < prefix.size()) return false;
+    return label.substr(0, prefix.size()) == prefix;
+}
+
+} // anonymous namespace
+
+std::vector<CompletionCandidate> chuckMetadataFallback(
+    const language::LanguageMetadata& metadata,
+    const language::MetadataCompatibility& compatibility,
+    const ContextAnalysis& context)
+{
+    // AI-3 decision #18: verify version compatibility before using metadata.
+    if (!compatibility.compatible)
+        return {};
+
+    std::vector<CompletionCandidate> candidates;
+
+    // --- L1a: ChucK API definitions from versioned metadata ---
+    // These are the canonical supported-surface ChucK APIs (UGens, constants,
+    // library classes). Only `supported` entries are offered.
+    for (const auto& ca : metadata.chuckApi)
+    {
+        if (!ca.supported) continue;
+        if (!matchesChuckPrefix(ca.name, context.fullPrefix)) continue;
+
+        CompletionCandidate c;
+        c.label = ca.name;
+        c.kind = chuckKindToLspKind(ca.kind);
+        c.detail = ca.signature;
+        c.documentation = ca.description;
+        if (ca.example)
+            c.documentation += "\n\nExample:\n" + truncateStr(*ca.example, 120);
+        c.insertText = ca.name;
+        c.source = "metadata";
+        candidates.push_back(std::move(c));
+    }
+
+    // --- L1b: ChucK built-in keywords and types ---
+    // From the vscode-chuck grammar (ChuckKeywords). These are always available
+    // regardless of metadata, but we gate on compatibility for consistency.
+    const auto& keywords = chuckKeywordSet();
+    for (const auto& kw : keywords)
+    {
+        if (!matchesChuckPrefix(kw, context.fullPrefix)) continue;
+        CompletionCandidate c;
+        c.label = std::string(kw);
+        c.kind = CompletionItemKind::Keyword;
+        c.detail = "ChucK keyword";
+        c.insertText = std::string(kw);
+        c.source = "builtin";
+        candidates.push_back(std::move(c));
+    }
+
+    const auto& modifiers = chuckModifierSet();
+    for (const auto& m : modifiers)
+    {
+        if (!matchesChuckPrefix(m, context.fullPrefix)) continue;
+        CompletionCandidate c;
+        c.label = std::string(m);
+        c.kind = CompletionItemKind::Keyword;
+        c.detail = "ChucK modifier";
+        c.insertText = std::string(m);
+        c.source = "builtin";
+        candidates.push_back(std::move(c));
+    }
+
+    const auto& types = chuckTypeSet();
+    for (const auto& t : types)
+    {
+        if (!matchesChuckPrefix(t, context.fullPrefix)) continue;
+        CompletionCandidate c;
+        c.label = std::string(t);
+        c.kind = CompletionItemKind::Class;
+        c.detail = "ChucK type";
+        c.insertText = std::string(t);
+        c.source = "builtin";
+        candidates.push_back(std::move(c));
+    }
+
+    const auto& typeKeywords = chuckTypeKeywordSet();
+    for (const auto& tk : typeKeywords)
+    {
+        if (!matchesChuckPrefix(tk, context.fullPrefix)) continue;
+        CompletionCandidate c;
+        c.label = std::string(tk);
+        c.kind = CompletionItemKind::Keyword;
+        c.detail = "ChucK type keyword";
+        c.insertText = std::string(tk);
+        c.source = "builtin";
+        candidates.push_back(std::move(c));
+    }
+
+    const auto& varLang = chuckVariableLanguageSet();
+    for (const auto& vl : varLang)
+    {
+        if (!matchesChuckPrefix(vl, context.fullPrefix)) continue;
+        CompletionCandidate c;
+        c.label = std::string(vl);
+        c.kind = CompletionItemKind::Variable;
+        c.detail = "ChucK variable";
+        c.insertText = std::string(vl);
+        c.source = "builtin";
+        candidates.push_back(std::move(c));
+    }
+
+    const auto& constants = chuckConstantSet();
+    for (const auto& constant : constants)
+    {
+        if (!matchesChuckPrefix(constant, context.fullPrefix)) continue;
+        CompletionCandidate c;
+        c.label = std::string(constant);
+        c.kind = CompletionItemKind::Value;
+        c.detail = "ChucK constant";
+        c.insertText = std::string(constant);
+        c.source = "builtin";
+        candidates.push_back(std::move(c));
+    }
+
+    const auto& ugens = chuckUgenSet();
+    for (const auto& ugen : ugens)
+    {
+        if (!matchesChuckPrefix(ugen, context.fullPrefix)) continue;
+        // Don't duplicate if already in metadata
+        bool alreadyListed = false;
+        for (const auto& existing : candidates)
+        {
+            if (existing.label == ugen && existing.source == "metadata")
+            {
+                alreadyListed = true;
+                break;
+            }
+        }
+        if (alreadyListed) continue;
+        CompletionCandidate c;
+        c.label = std::string(ugen);
+        c.kind = CompletionItemKind::Class;
+        c.detail = "UGen";
+        c.insertText = std::string(ugen);
+        c.source = "builtin";
+        candidates.push_back(std::move(c));
+    }
+
+    const auto& libs = chuckLibrarySet();
+    for (const auto& lib : libs)
+    {
+        if (!matchesChuckPrefix(lib, context.fullPrefix)) continue;
+        CompletionCandidate c;
+        c.label = std::string(lib);
+        c.kind = CompletionItemKind::Module;
+        c.detail = "ChucK library";
+        c.insertText = std::string(lib);
+        c.source = "builtin";
+        candidates.push_back(std::move(c));
+    }
+
+    return candidates;
+}
 {
     CompletionCandidate c;
     c.label = fn.name;
@@ -717,6 +897,101 @@ std::vector<Diagnostic> mergeDiagnostics(
             {
                 if (wordBegin == std::string::npos)
                     wordBegin = i;
+            }
+        }
+        ++lineNum;
+    }
+
+    return result;
+}
+
+// ---------------------------------------------------------------------------
+// ChucK diagnostics (AI-G7) — real compiler + metadata-aware checks
+// ---------------------------------------------------------------------------
+
+std::vector<Diagnostic> chuckDiagnostics(
+    const ChuckCompileDiagnostic& compileDiag,
+    const language::LanguageMetadata* metadata,
+    const language::MetadataCompatibility* compatibility,
+    std::string_view documentText)
+{
+    std::vector<Diagnostic> result;
+
+    // --- 1. Real compiler diagnostic (authoritative) ---
+    if (!compileDiag.ok)
+    {
+        Diagnostic d;
+        d.severity = DiagnosticSeverity::Error;
+        d.code = "CK_COMPILE_ERROR";
+        d.source = "chuck_compiler";
+        d.message = compileDiag.message;
+        // libchuck uses 1-based line/column; convert to 0-based LSP convention.
+        d.range.start.line = compileDiag.errorLine > 0 ? compileDiag.errorLine - 1 : 0;
+        d.range.start.character = compileDiag.errorColumn > 0 ? compileDiag.errorColumn - 1 : 0;
+        d.range.end = d.range.start;
+        d.range.end.character = d.range.start.character + 1;
+        result.push_back(std::move(d));
+        // If the compiler found an error, still run metadata checks for
+        // additional context (e.g. unsupported APIs that co-occur).
+    }
+
+    // --- 2. Metadata-aware checks (warnings for unsupported ChucK APIs) ---
+    if (!metadata || !compatibility || !compatibility->compatible)
+        return result;
+
+    // Tokenize the document by lines and scan for identifiers that
+    // correspond to unsupported ChuckAPI entries.
+    std::string docText(documentText);
+    std::size_t pos = 0;
+    int lineNum = 0;
+
+    while (pos <= docText.size())
+    {
+        std::size_t nextPos = docText.find('\n', pos);
+        std::string lineText = (nextPos == std::string::npos)
+                                   ? docText.substr(pos)
+                                   : docText.substr(pos, nextPos - pos);
+
+        if (!lineText.empty() && lineText.back() == '\r')
+            lineText.pop_back();
+
+        pos = (nextPos == std::string::npos) ? docText.size() + 1 : nextPos + 1;
+
+        // Extract identifiers from this line.
+        // An identifier starts with [a-zA-Z_] and continues with [a-zA-Z0-9_].
+        std::size_t i = 0;
+        while (i < lineText.size())
+        {
+            if (std::isalpha(static_cast<unsigned char>(lineText[i])) || lineText[i] == '_')
+            {
+                std::size_t start = i;
+                while (i < lineText.size() &&
+                       (std::isalnum(static_cast<unsigned char>(lineText[i])) || lineText[i] == '_'))
+                    ++i;
+                std::string word = lineText.substr(start, i - start);
+
+                // Check if this word is a ChucK API that is in metadata but unsupported.
+                const auto* ca = [&metadata, &word]() -> const language::ChuckAPIDefinition* {
+                    for (const auto& api : metadata->chuckApi)
+                        if (api.name == word) return &api;
+                    return nullptr;
+                }();
+
+                if (ca && !ca->supported)
+                {
+                    Diagnostic d;
+                    d.severity = DiagnosticSeverity::Warning;
+                    d.code = "UNSUPPORTED_CHUCK_API";
+                    d.source = "hathor-metadata";
+                    d.message = "ChucK API '" + word + "' is in the metadata but not yet supported by Hathor: " + ca->description;
+                    d.range.start = {lineNum, static_cast<int>(start)};
+                    d.range.end   = {lineNum, static_cast<int>(i)};
+                    result.push_back(std::move(d));
+                }
+            }
+            else
+            {
+                ++i;
             }
         }
         ++lineNum;

@@ -243,7 +243,7 @@ struct LanguageMetadata {
  * Result of validating loaded metadata against the running system.
  */
 struct MetadataCompatibility {
-    bool        compatible;         ///< true if all checks pass
+    bool        compatible  = false;  ///< true if all checks pass
     std::string schemaVersion;    ///< the schema version that was checked
     std::string engineVersion;     ///< the running engine version
     std::vector<std::string> errors; ///< human-readable error messages for each failure

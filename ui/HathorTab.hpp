@@ -30,7 +30,9 @@
 #include "GhostTextOverlay.hpp"
 #include "GhostCompletionLogic.hpp"
 #include "CompletionCoordinator.hpp"
+#include "audio-worker/ChuckDiagnostics.hpp"
 
+#include <chrono>
 #include <optional>
 #include <functional>
 #include <memory>
@@ -246,15 +248,24 @@ public:
      /// Called when the tab is destroyed or the file is closed.
      void notifyLspDidClose();
 
-     /// Request completions from the LSP at the current cursor position.
-     /// Shows the LspCompletionPopup.
-     void requestLspCompletion();
+      /// Request completions from the LSP at the current cursor position.
+      /// Shows the LspCompletionPopup.
+      void requestLspCompletion();
 
-     /// Request hover from the LSP at the given cursor position.
-     /// Shows the LspHoverHandler tooltip.
-     void requestLspHover(int cursorLine, int cursorCol);
+      /// AI-G7: Request deterministic ChucK completions from the versioned
+      /// supported-surface metadata (no LSP server exists for ChucK).
+      /// Uses the LanguageMetadata installed via installLspClient().
+      void requestChuckCompletion();
 
-      /// Request signature help from the LSP (when cursor is inside parens).
+      /// Request hover from the LSP at the given cursor position.
+      /// Shows the LspHoverHandler tooltip.
+      void requestLspHover(int cursorLine, int cursorCol);
+
+      /// AI-G7: Request ChucK hover from the versioned metadata.
+      /// Looks up the word under the cursor in LanguageMetadata::chuckApi.
+      void requestChuckHover(int cursorLine, int cursorCol);
+
+       /// Request signature help from the LSP (when cursor is inside parens).
       void requestLspSignatureHelp();
 
       /// Handle a key press for LSP + ghost features (Ctrl+Space, Ctrl+Shift+Space,
@@ -270,11 +281,22 @@ public:
       /// Handle a completion selection — applies the insert text.
       void onCompletionSelected(const lsp::CompletionCandidate& candidate);
 
-      /// Set/clear the LSP document diagnostics for this tab.
+       /// Set/clear the LSP document diagnostics for this tab.
       void notifyLspDiagnostics(const std::string& uri,
-                                 const std::vector<lsp::Diagnostic>& diagnostics);
+                                const std::vector<lsp::Diagnostic>& diagnostics);
 
-       /// Return the document URI for LSP messages (file:// URI or synthetic).
+      /// AI-G7: Notify ChucK compiler diagnostics for this tab.
+      /// Converts audio_worker::ChuckDiagnostic to lsp::Diagnostic and
+      /// displays via the diagnostics overlay (same visual path as LSP).
+      void notifyChuckDiagnostics(const std::string& uri,
+                                   const audio_worker::ChuckDiagnostic& diag);
+
+      /// AI-G7: Schedule a debounced ChucK diagnostics check.
+      /// Runs validateChuckSource() on a background thread and posts
+      /// results back to the message thread via notifyChuckDiagnostics.
+      void triggerChuckDiagnostics();
+
+        /// Return the document URI for LSP messages (file:// URI or synthetic).
        juce::String lspDocumentUri() const;
 
       // -----------------------------------------------------------------------
@@ -487,7 +509,10 @@ private:
       // document changed) are rejected before text is inserted.
       std::optional<lsp::GhostResult>      activeGhostResult_;
 
-     juce::CodeDocument          document_;
+      // AI-G7: ChucK diagnostics debounce timestamp.
+      int64_t chuckLastDiagTimeMs_{ 0 };
+
+      juce::CodeDocument          document_;
       GhostAwareEditor           editor_;
 
     // Per-slot Play/Stop button (B1). Renders as a small icon button in the

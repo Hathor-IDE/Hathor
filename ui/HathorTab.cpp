@@ -456,10 +456,13 @@ void HathorTab::codeDocumentTextInserted(const juce::String& /*newText*/,
     // and must be recomputed for the new document state. Also clear the
     // stored result so acceptance verification will fail if the cursor
     // hasn't moved but the document has changed.
-    if (ghostOverlay_)
-        ghostOverlay_->clearGhost();
-    activeGhostResult_.reset();
-    notifyLspDidChange();
+     if (ghostOverlay_)
+         ghostOverlay_->clearGhost();
+     activeGhostResult_.reset();
+     if (useChuckTokeniser_)
+         triggerChuckDiagnostics();
+     else
+         notifyLspDidChange();
 }
 
 void HathorTab::codeDocumentTextDeleted(int /*startIndex*/,
@@ -475,7 +478,10 @@ void HathorTab::codeDocumentTextDeleted(int /*startIndex*/,
     if (ghostOverlay_)
         ghostOverlay_->clearGhost();
     activeGhostResult_.reset();
-    notifyLspDidChange();
+    if (useChuckTokeniser_)
+        triggerChuckDiagnostics();
+    else
+        notifyLspDidChange();
 }
 
 // ---------------------------------------------------------------------------
@@ -510,14 +516,28 @@ juce::String HathorTab::lspDocumentUri() const
 
 void HathorTab::notifyLspDidOpen()
 {
-    if (!lspClient_ || useChuckTokeniser_)
-        return;
-
     juce::String uri = lspDocumentUri();
     juce::String text = document_.getAllContent();
+
+    if (useChuckTokeniser_)
+    {
+        // AI-G7: ChucK tabs don't use the Strudel LSP server.
+        // Open the document on the ghost-text client (llm-ls) so that
+        // FIM ghost writing works for .ck files.
+        if (ghostClient_ && coordinator_ && coordinator_->isGhostEnabled())
+            ghostClient_->didOpenDocument(uri.toStdString(), text.toStdString(), "chuck");
+
+        // Trigger initial ChucK compiler diagnostics.
+        triggerChuckDiagnostics();
+        return;
+    }
+
+    if (!lspClient_)
+        return;
+
     lspClient_->didOpenDocument(uri.toStdString(), text.toStdString(), "hathor");
 
-     // AI-4: Mirror document open to the ghost-text (llm-ls) client so that
+    // AI-4: Mirror document open to the ghost-text (llm-ls) client so that
     // llm-ls can resolve completion context from the synced document.
     // Supports both .hathor and .ck files with their respective languageId.
     if (ghostClient_ && coordinator_ && coordinator_->isGhostEnabled())
@@ -558,10 +578,19 @@ void HathorTab::notifyLspDidChange()
 
 void HathorTab::notifyLspDidClose()
 {
-    if (!lspClient_ || useChuckTokeniser_)
+    juce::String uri = lspDocumentUri();
+
+    if (useChuckTokeniser_)
+    {
+        // AI-G7: Chuck tabs — just close the ghost document.
+        if (ghostClient_ && coordinator_ && coordinator_->isGhostEnabled())
+            ghostClient_->didCloseDocument(uri.toStdString());
+        return;
+    }
+
+    if (!lspClient_)
         return;
 
-    juce::String uri = lspDocumentUri();
     lspClient_->didCloseDocument(uri.toStdString());
 
     // AI-4: Mirror document close to the ghost-text (llm-ls) client.
@@ -649,7 +678,185 @@ void HathorTab::requestLspHover(int cursorLine, int cursorCol)
                 editor_.getCaretPosition());
             lspHoverHandler_->showHover(hover.value(),
                                         {caretRect.getX(), caretRect.getBottom()});
-        });
+         });
+}
+
+void HathorTab::requestChuckCompletion()
+{
+    // AI-G7: Deterministic ChucK completion from versioned metadata.
+    // No ChucK LSP server exists — completion comes entirely from
+    // LanguageMetadata::chuckApi + built-in ChucK keyword sets.
+    if (!lspCompletionPopup_ || !lspClient_)
+        return;
+
+    // AI-G3: When completion is requested, the coordinator cancels
+    // any active ghost and suppresses further ghost display until the
+    // popup is dismissed.
+    if (coordinator_)
+        coordinator_->requestLspCompletion();
+
+    // Gather metadata + compatibility from the installed LSP client.
+    const auto* metadata = lspClient_->metadata();
+    const auto* compat = lspClient_->compatibility();
+    if (!metadata || !compat || !compat->compatible)
+    {
+        // Metadata not available — show empty popup.
+        lspCompletionPopup_->setCandidates({});
+        return;
+    }
+
+    auto caretPos = editor_.getCaretPos();
+    int cursorLine = caretPos.getLineNumber();
+    int cursorCol = caretPos.getCharacter();
+
+    juce::String docText = document_.getAllContent();
+
+    // Analyze context and produce ChucK-specific completions.
+    auto ctx = lsp::analyzeContext(docText.toStdString(), cursorLine, cursorCol);
+    auto candidates = lsp::chuckMetadataFallback(*metadata, *compat, ctx);
+
+    // Sort by kind priority (functions/classes first, then alphabetically).
+    std::sort(candidates.begin(), candidates.end(), [](const lsp::CompletionCandidate& a,
+                                                        const lsp::CompletionCandidate& b) {
+        auto kindPri = [](lsp::CompletionItemKind k) -> int {
+            switch (k) {
+                case lsp::CompletionItemKind::Class:   return 0;
+                case lsp::CompletionItemKind::Module:  return 1;
+                case lsp::CompletionItemKind::Function: return 2;
+                case lsp::CompletionItemKind::Field:   return 3;
+                case lsp::CompletionItemKind::Variable:return 4;
+                case lsp::CompletionItemKind::Value:   return 5;
+                case lsp::CompletionItemKind::Keyword: return 6;
+                default: return 7;
+            }
+        };
+        int pa = kindPri(a.kind);
+        int pb = kindPri(b.kind);
+        if (pa != pb) return pa < pb;
+        // Within same kind, sort by label (case-sensitive for ChucK).
+        std::string la = a.label;
+        std::string lb = b.label;
+        return la < lb;
+    });
+
+    if (!candidates.empty())
+    {
+        lspCompletionPopup_->setCandidates(candidates);
+
+        // Position the popup at the cursor.
+        juce::Rectangle<int> caretRect = editor_.getCaretRectangleForCharIndex(
+            editor_.getCaretPosition());
+        int popupX = caretRect.getX();
+        int popupY = caretRect.getBottom() + 2;
+
+        if (popupX < 0) popupX = 0;
+        if (popupY + lspCompletionPopup_->getHeight() > this->getHeight())
+            popupY = std::max(0, this->getHeight() - lspCompletionPopup_->getHeight());
+
+        lspCompletionPopup_->setTopLeftPosition(popupX, popupY);
+        lspCompletionPopup_->setVisible(true);
+        this->addAndMakeVisible(lspCompletionPopup_.get());
+        lspCompletionPopup_->toFront(false);
+    }
+    else
+    {
+        // No completions — dismiss popup.
+        if (lspCompletionPopup_->hasCandidates())
+            lspCompletionPopup_->dismiss();
+    }
+}
+
+void HathorTab::requestChuckHover(int cursorLine, int cursorCol)
+{
+    // AI-G7: ChucK hover from versioned metadata (no LSP server for ChucK).
+    if (!lspHoverHandler_ || !lspClient_)
+        return;
+
+    const auto* metadata = lspClient_->metadata();
+    const auto* compat = lspClient_->compatibility();
+    if (!metadata || !compat || !compat->compatible)
+        return;
+
+    // Debounce: skip if same position as last request and pending.
+    if (hoverPendingLine_ == cursorLine && hoverPendingCol_ == cursorCol && hoverPending_)
+        return;
+
+    hoverPendingLine_ = cursorLine;
+    hoverPendingCol_ = cursorCol;
+    hoverPending_ = true;
+
+    juce::String docText = document_.getAllContent();
+
+    // Extract the word at the cursor position.
+    int charIdx = editor_.getCaretPosition();
+    int wordStart = charIdx;
+    int wordEnd = charIdx;
+
+    while (wordStart > 0)
+    {
+        char c = docText[wordStart - 1];
+        if (std::isalnum(static_cast<unsigned char>(c)) || c == '_')
+            --wordStart;
+        else
+            break;
+    }
+
+    while (wordEnd < static_cast<int>(docText.length()))
+    {
+        char c = docText[wordEnd];
+        if (std::isalnum(static_cast<unsigned char>(c)) || c == '_')
+            ++wordEnd;
+        else
+            break;
+    }
+
+    juce::String word = docText.substring(wordStart, wordEnd - wordStart);
+    if (word.isEmpty())
+    {
+        hoverPending_ = false;
+        return;
+    }
+
+    // Look up the word in metadata::chuckApi.
+    std::string wordStr = word.toStdString();
+    for (const auto& api : metadata->chuckApi)
+    {
+        if (api.name == wordStr)
+        {
+            hoverPending_ = false;
+            lsp::Hover h;
+            h.contents.push_back({.kind = "markdown", .value = "**`" + api.name + "`** — " + api.kind});
+            h.contents.push_back({.kind = "markdown", .value = api.description});
+            if (!api.signature.empty())
+                h.contents.push_back({.kind = "markdown", .value = "```chuck\n" + api.signature + "\n```"});
+            if (api.example)
+                h.contents.push_back({.kind = "markdown", .value = "Example:\n```chuck\n" + *api.example + "\n```"});
+
+            juce::Rectangle<int> caretRect = editor_.getCaretRectangleForCharIndex(charIdx);
+            lspHoverHandler_->showHover(h, {caretRect.getX(), caretRect.getBottom()});
+            return;
+        }
+    }
+
+    // Also check built-in keyword sets.
+    if (chuckKeywordSet().count(wordStr) ||
+        chuckTypeSet().count(wordStr) ||
+        chuckConstantSet().count(wordStr) ||
+        chuckModifierSet().count(wordStr) ||
+        chuckTypeKeywordSet().count(wordStr) ||
+        chuckVariableLanguageSet().count(wordStr) ||
+        chuckUgenSet().count(wordStr) ||
+        chuckLibrarySet().count(wordStr))
+    {
+        hoverPending_ = false;
+        lsp::Hover h;
+        h.contents.push_back({.kind = "markdown", .value = "**`" + wordStr + "`** — ChucK built-in"});
+        juce::Rectangle<int> caretRect = editor_.getCaretRectangleForCharIndex(charIdx);
+        lspHoverHandler_->showHover(h, {caretRect.getX(), caretRect.getBottom()});
+        return;
+    }
+
+    hoverPending_ = false;
 }
 
 void HathorTab::requestLspSignatureHelp()
@@ -728,11 +935,16 @@ void HathorTab::onCompletionSelected(const lsp::CompletionCandidate& candidate)
 
 bool HathorTab::handleLspKeyPress(const juce::KeyPress& key)
 {
-    // AI-G3: Ctrl+Space → deterministic LSP completion only.
+    // AI-G3: Ctrl+Space → deterministic completion.
+    // For .hathor: LSP completion (Strudel LSP + metadata fallback).
+    // For .ck: deterministic ChucK completion from versioned metadata (AI-G7).
     // The ghost trigger is moved to Ctrl+Shift+Space to eliminate the conflict.
     if (key == juce::KeyPress(' ', juce::ModifierKeys::ctrlModifier, 0))
     {
-        requestLspCompletion();
+        if (useChuckTokeniser_)
+            requestChuckCompletion();
+        else
+            requestLspCompletion();
         return true;
     }
 
@@ -811,7 +1023,7 @@ void HathorTab::handleCursorMove()
     if (onCursorMoved)
         onCursorMoved();
 
-    if (!lspClient_ || !lspHoverHandler_ || useChuckTokeniser_)
+    if (!lspClient_ || !lspHoverHandler_)
         return;
 
     // AI-4 + AI-G3: Trigger ghost text on cursor movement.
@@ -835,14 +1047,18 @@ void HathorTab::handleCursorMove()
     hoverPending_ = true;
 
     // Request hover via async callback with debounce — only fire if cursor
-    // hasn't moved by the time the lambda runs
+    // hasn't moved by the time the lambda runs.
+    // AI-G7: For .ck tabs, use deterministic metadata hover (no LSP server).
     const int line = cursorLine;
     const int col = cursorCol;
     juce::MessageManager::callAsync([this, line, col]() {
         if (hoverPendingLine_ == line && hoverPendingCol_ == col && hoverPending_)
         {
             hoverPending_ = false;
-            requestLspHover(line, col);
+            if (useChuckTokeniser_)
+                requestChuckHover(line, col);
+            else
+                requestLspHover(line, col);
         }
     });
 }
@@ -898,7 +1114,76 @@ void HathorTab::notifyLspDiagnostics(const std::string& uri,
         }
     }
 
-    diagnosticsOverlay_.setDiagnostics(squiggles);
+     diagnosticsOverlay_.setDiagnostics(squiggles);
+}
+
+void HathorTab::notifyChuckDiagnostics(const std::string& uri,
+                                       const audio_worker::ChuckDiagnostic& diag)
+{
+    // AI-G7: Convert the real libchuck/validateChuckSource diagnostic
+    // to LSP Diagnostic format and display it via the same overlay as LSP.
+    if (!lspDiagnostics_)
+        return;
+
+    lsp::ChuckCompileDiagnostic cd;
+    cd.ok = diag.ok;
+    cd.errorLine = diag.errorLine;
+    cd.errorColumn = diag.errorColumn;
+    cd.message = diag.message;
+
+    const auto* metadata = lspClient_ ? lspClient_->metadata() : nullptr;
+    const auto* compat = lspClient_ ? lspClient_->compatibility() : nullptr;
+
+    juce::String docText = document_.getAllContent();
+    auto diags = lsp::chuckDiagnostics(cd, metadata, compat,
+                                      docText.toStdString());
+
+    // Reuse the same display path as LSP diagnostics.
+    notifyLspDiagnostics(uri, diags);
+}
+
+void HathorTab::triggerChuckDiagnostics()
+{
+    // AI-G7: Debounced ChucK compiler diagnostics.
+    // Runs validateChuckSource() on a background thread (serialized by
+    // the global chuckCompileMutex inside ChuckDiagnostics.cpp) and posts
+    // the result back to the message thread.
+    if (!useChuckTokeniser_)
+        return;
+
+    // Simple time-based debounce: skip if we ran diagnostics less than
+    // kDebounceMs ago.
+    static constexpr int kDebounceMs = 500;
+    const int64_t nowMs = static_cast<int64_t>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now().time_since_epoch()).count());
+
+    if (nowMs - chuckLastDiagTimeMs_ < kDebounceMs)
+        return;
+
+    chuckLastDiagTimeMs_ = nowMs;
+
+    // Capture the current document text and URI (stable snapshots).
+    juce::String docText = document_.getAllContent();
+    std::string sourceCopy = docText.toStdString();
+    std::string uriCopy = lspDocumentUri().toStdString();
+
+    // Capture raw pointer to self for the async callback.
+    // HathorTab is owned by EditorArea's tabs_ vector; it will not be
+    // destroyed while a diagnostic callback is in flight because the
+    // callback is processed on the message thread and the tab is only
+    // destroyed when the user closes it (which cancels async callbacks).
+    HathorTab* self = this;
+
+    // Run the (potentially slow) validation on a detached thread.
+    std::thread([self, sourceCopy, uriCopy]() {
+        auto diag = hathor::audio_worker::validateChuckSource(sourceCopy);
+
+        // Post back to the message thread for display.
+        juce::MessageManager::callAsync([self, uriCopy, diag]() {
+            self->notifyChuckDiagnostics(uriCopy, diag);
+        });
+    }).detach();
 }
 
 // ---------------------------------------------------------------------------

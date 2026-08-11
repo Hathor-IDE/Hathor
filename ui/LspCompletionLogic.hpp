@@ -107,7 +107,7 @@ void sortCompletionItems(std::vector<CompletionItem>& items) noexcept;
 // ---------------------------------------------------------------------------
 
 /**
- * Build completion candidates from LanguageMetadata for the given context.
+ * Build completion candidates from LanguageMetadata for mininotation context.
  * Only items marked as `supported` in the metadata are included.
  *
  * @param metadata    The validated LanguageMetadata (must pass compatibility check).
@@ -119,6 +119,28 @@ std::vector<CompletionCandidate> metadataFallback(
     const language::LanguageMetadata& metadata,
     const language::MetadataCompatibility& compatibility,
     const ContextAnalysis& context);
+
+/**
+ * Build ChucK completion candidates from LanguageMetadata chuck API entries.
+ *
+ * Unlike mininotation, ChucK has no reusable LSP server (AI-G7 investigation).
+ * Completion is therefore purely deterministic from the versioned Hathor
+ * supported-surface metadata (chuckApi array) plus the built-in ChucK keyword
+ * sets (ChuckKeywords). Only items marked as `supported` are included.
+ *
+ * @param metadata    The validated LanguageMetadata (must pass compatibility check).
+ * @param compatibility The result of loadAndValidate() — must be compatible.
+ * @param context     The analyzed completion context.
+ * @return CompletionCandidates derived from ChucK metadata + keywords.
+ */
+std::vector<CompletionCandidate> chuckMetadataFallback(
+    const language::LanguageMetadata& metadata,
+    const language::MetadataCompatibility& compatibility,
+    const ContextAnalysis& context);
+
+/**
+ * Build a CompletionCandidate from a LanguageMetadata MiniNotationFunction.
+ */
 
 /**
  * Build a CompletionCandidate from a LanguageMetadata MiniNotationFunction.
@@ -225,6 +247,45 @@ std::optional<Hover> mergeHover(
  */
 std::vector<Diagnostic> mergeDiagnostics(
     const std::vector<Diagnostic>& lspDiagnostics,
+    const language::LanguageMetadata* metadata,
+    const language::MetadataCompatibility* compatibility,
+    std::string_view documentText);
+
+// ---------------------------------------------------------------------------
+// ChucK diagnostics (AI-G7) — real compiler + metadata-aware checks
+// ---------------------------------------------------------------------------
+
+/**
+ * Result of ChucK source validation from the real compiler (AI-5).
+ * Mirrors audio_worker::ChuckDiagnostic but JUCE-free.
+ */
+struct ChuckCompileDiagnostic {
+    bool        ok;
+    int         errorLine;    ///< 1-based line (0 if not provided)
+    int         errorColumn;  ///< 1-based column (0 if not provided)
+    std::string message;
+};
+
+/**
+ * Produce LSP diagnostics for ChucK source text.
+ *
+ * This is the AI-G7 ChucK diagnostic pipeline:
+ *   1. Real compiler diagnostic (validateChuckSource / libchuck) — authoritative
+ *      for ChucK correctness.
+ *   2. Metadata-aware warnings for unsupported ChucK APIs used in the source.
+ *
+ * When the compiler reports an error, it is emitted as an Error diagnostic.
+ * When the compiler reports OK but metadata is available, unsupported API
+ * references are emitted as Warning diagnostics.
+ *
+ * @param compileDiag  The diagnostic from the real compiler (validateChuckSource).
+ * @param metadata     LanguageMetadata (may be nullptr if metadata failed to load).
+ * @param compatibility Metadata compatibility (may be nullptr if not loaded).
+ * @param documentText  The full .ck source text for API reference analysis.
+ * @return LSP diagnostics combining compiler + metadata-aware checks.
+ */
+std::vector<Diagnostic> chuckDiagnostics(
+    const ChuckCompileDiagnostic& compileDiag,
     const language::LanguageMetadata* metadata,
     const language::MetadataCompatibility* compatibility,
     std::string_view documentText);

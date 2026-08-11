@@ -21,6 +21,7 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <cstdio>
 #include <optional>
 #include <thread>
 #include <filesystem>
@@ -216,27 +217,40 @@ EditorArea::EditorArea(AudioEngine& audio,
     : audio_(audio)
     , ci_(ci)
 {
-    // AI-4: Load language metadata for LSP fallback (AI-3)
-    {
-        for (const char* p : {
-            "reference/language-metadata/HathorLanguageMetadata.json",
-            "./reference/language-metadata/HathorLanguageMetadata.json",
-        })
-        {
-            std::error_code ec;
-            if (std::filesystem::exists(p, ec))
-            {
-                auto result = hathor::language::loadAndValidate(p);
-                if (result.compatibility.compatible)
-                {
-                    metadata_ = std::move(result.metadata);
-                    metadataCompat_ = std::move(result.compatibility);
-                    hathor::language::assignToConsumer(metadata_, "hathor-editor");
-                    break;
-                }
-            }
-        }
-    }
+     // AI-4 / AI-G7: Load language metadata for LSP fallback (AI-3) and
+     // ChucK deterministic completion (AI-G7). Search multiple candidate paths
+     // since the binary may be run from a build directory or bundled app.
+     {
+         const char* candidates[] = {
+             "reference/language-metadata/HathorLanguageMetadata.json",
+             "./reference/language-metadata/HathorLanguageMetadata.json",
+             "../reference/language-metadata/HathorLanguageMetadata.json",
+             "../../reference/language-metadata/HathorLanguageMetadata.json",
+         };
+         for (const char* p : candidates)
+         {
+             std::error_code ec;
+             if (std::filesystem::exists(p, ec))
+             {
+                 auto result = hathor::language::loadAndValidate(p);
+                 if (result.compatibility.compatible)
+                 {
+                     metadata_ = std::move(result.metadata);
+                     metadataCompat_ = std::move(result.compatibility);
+                     hathor::language::assignToConsumer(metadata_, "hathor-editor");
+                     break;
+                 }
+                 else
+                 {
+                     // File was found but failed compatibility — log for debugging.
+                     for (const auto& e : result.compatibility.errors)
+                         std::fprintf(stderr, "AI-3 metadata compatibility error: %s\n", e.c_str());
+                 }
+             }
+         }
+         // If no compatible metadata was found after all candidates,
+         // metadata_ stays empty and metadataCompat_ stays default (compatible=false).
+     }
 
     // AI-4: Create the LSP client (manages the strudel-lsp-server process)
     // The server script is located at reference/strudel-lsp/strudel-lsp-server.cjs
@@ -859,10 +873,12 @@ void EditorArea::removeTabAt(int index)
         keyListeners_.erase(keyListeners_.begin() + index);
     }
 
-    // AI-4: Notify LSP that the document is closing.
-    HathorTab* closingTab = tabs_[static_cast<std::size_t>(index)].get();
-    if (closingTab && lspClient_ && !closingTab->isChuckTab())
-        closingTab->notifyLspDidClose();
+     // AI-4: Notify LSP/ghost that the document is closing.
+     // Now handles both .hathor and .ck tabs (notifyLspDidClose
+     // routes internally based on useChuckTokeniser_).
+     HathorTab* closingTab = tabs_[static_cast<std::size_t>(index)].get();
+     if (closingTab && lspClient_)
+         closingTab->notifyLspDidClose();
 
     // Remove the component from the hierarchy before erasing.
     removeChildComponent(tabs_[static_cast<std::size_t>(index)].get());
