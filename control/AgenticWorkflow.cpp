@@ -61,6 +61,7 @@ static const char* stepName(AgenticWorkflow::Step s) noexcept
         case AgenticWorkflow::Step::Audition:             return "audition";
         case AgenticWorkflow::Step::InspectDiagnostics:   return "inspect_diagnostics";
         case AgenticWorkflow::Step::Repair:               return "repair";
+        case AgenticWorkflow::Step::CreativeRepair:       return "creative_repair";
         case AgenticWorkflow::Step::Render:               return "render";
         case AgenticWorkflow::Step::BindAsset:            return "bind_asset";
         case AgenticWorkflow::Step::UpdateSong:           return "update_song";
@@ -81,7 +82,8 @@ static const char* stateName(AgenticWorkflow::State s) noexcept
         case AgenticWorkflow::State::Compiling:              return "compiling";
         case AgenticWorkflow::State::Auditioning:            return "auditioning";
         case AgenticWorkflow::State::InspectingDiagnostics:  return "inspecting_diagnostics";
-        case AgenticWorkflow::State::Repairing:              return "repairing";
+         case AgenticWorkflow::State::Repairing:              return "repairing";
+         case AgenticWorkflow::State::CreativeRepairing:      return "creative_repairing";
         case AgenticWorkflow::State::Rendering:              return "rendering";
         case AgenticWorkflow::State::Binding:                return "binding";
         case AgenticWorkflow::State::UpdatingSong:           return "updating_song";
@@ -137,6 +139,7 @@ static const char* stepExplain(AgenticWorkflow::Step s) noexcept
         case AgenticWorkflow::Step::Audition:             return "Auditioning the result";
         case AgenticWorkflow::Step::InspectDiagnostics:   return "Checking for errors";
         case AgenticWorkflow::Step::Repair:               return "Repairing the issue";
+        case AgenticWorkflow::Step::CreativeRepair:         return "Applying creative repair from feedback";
         case AgenticWorkflow::Step::Render:               return "Rendering the instrument to audio";
         case AgenticWorkflow::Step::BindAsset:            return "Committing the rendered asset";
         case AgenticWorkflow::Step::UpdateSong:           return "Updating the song file";
@@ -199,7 +202,8 @@ AgenticWorkflow::AgenticWorkflow(AudioEngineFacade& audio,
     , chuckService_(chuckService)
     , renderService_(renderService)
     , songService_(songService)
-    , planner_(readFacade, chuckService, renderService)
+     , planner_(readFacade, chuckService, renderService)
+     , creativeRepairEngine_(workingSet_, songService, chuckService)
 {}
 
 AgenticWorkflow::~AgenticWorkflow()
@@ -273,6 +277,31 @@ bool AgenticWorkflow::start(Request request,
     workflowThread_ = std::thread([this] { runWorkflow(); });
 
     return true;
+}
+
+// ---------------------------------------------------------------------------
+// AI-10.5: Creative repair entry point
+// ---------------------------------------------------------------------------
+
+bool AgenticWorkflow::startCreativeRepair(std::string_view feedback,
+                                          std::string_view intentContext,
+                                          ProgressCallback onProgress,
+                                          ConfirmationCallback onConfirmation)
+{
+    if (feedback.empty()) {
+        return false;
+    }
+
+    Request req;
+    req.feedback = std::string(feedback);
+    // Build a synthetic intent for plan/change-set labeling.
+    req.intent = "creative repair: " + std::string(feedback);
+    if (!intentContext.empty())
+        req.intent += " (" + std::string(intentContext) + ")";
+
+    return start(std::move(req),
+                 std::move(onProgress),
+                 std::move(onConfirmation));
 }
 
 bool AgenticWorkflow::cancel()
@@ -376,6 +405,7 @@ void AgenticWorkflow::reset()
     renderCompleted_ = false;
     renderJobId_ = 0;
     sessionId_.clear();
+    currentRepairPlan_.reset();
     // Note: projectInfo_/songInfo_/assetsInfo_ are cleared on the next start().
 
     // AI-10.2: The working set is NOT cleared here — it persists across
@@ -400,6 +430,13 @@ void AgenticWorkflow::runWorkflow()
     // resolution ("it", "that pattern") targets the correct slot.
     if (!currentRequest_.targetSlot.empty())
         workingSet_.setActiveSlot(currentRequest_.targetSlot);
+
+    // AI-10.5: If the request carries creative feedback, branch to the
+    // creative repair path instead of the full generation workflow.
+    if (!currentRequest_.feedback.empty()) {
+        runCreativeRepair();
+        return;
+    }
 
     // Phase 1: PLANNING — analyse the request and assemble a plan.
     {
@@ -1006,14 +1043,37 @@ AgenticWorkflow::StepResult AgenticWorkflow::stepValidate()
     StepResult sr;
     sr.stepName = "validate";
 
-    const bool isChuckWorkflow = !currentRequest_.ckSource.empty();
+    // AI-10.5: In creative repair mode, validate the repaired content
+    // (from the repair plan) rather than the original request content.
+    std::string validateNotation;
+    std::string validateCkSource;
+    bool isCreativeRepair = false;
+    {
+        std::lock_guard<std::mutex> lock(stateMtx_);
+        if (currentRepairPlan_.has_value()) {
+            isCreativeRepair = true;
+            if (currentRepairPlan_->targetDomain ==
+                CreativeRepairEngine::TargetDomain::Pattern) {
+                validateNotation = currentRepairPlan_->targetNotation;
+            } else if (currentRepairPlan_->targetDomain ==
+                       CreativeRepairEngine::TargetDomain::Instrument) {
+                validateCkSource = currentRepairPlan_->targetSource;
+            }
+        }
+    }
+
+    bool isChuckWorkflow = !currentRequest_.ckSource.empty() || isCreativeRepair;
+    // For creative repair on patterns, isChuckWorkflow should be false.
+    if (isCreativeRepair) {
+        isChuckWorkflow = !validateCkSource.empty();
+    }
 
     if (isChuckWorkflow) {
         // Validate ChucK source via the real compiler diagnostics path.
         // This is the same validateChuckSource() called by ChuckCompiler
         // on B4-K4 — never an approximate parser (AI-5/AI-18).
         const auto diag = hathor::audio_worker::validateChuckSource(
-            currentRequest_.ckSource);
+            isCreativeRepair ? validateCkSource : currentRequest_.ckSource);
 
         nlohmann::json diags = nlohmann::json::array();
         if (!diag.ok) {
@@ -1045,7 +1105,8 @@ AgenticWorkflow::StepResult AgenticWorkflow::stepValidate()
         return sr;
     } else {
         // Validate mini-notation via the real parseMini().
-        const auto parseResult = hathor::parseMini(currentRequest_.notation);
+        const auto parseResult = hathor::parseMini(
+            isCreativeRepair ? validateNotation : currentRequest_.notation);
 
         nlohmann::json diags = nlohmann::json::array();
         if (std::holds_alternative<hathor::ParseError>(parseResult)) {
@@ -1060,7 +1121,8 @@ AgenticWorkflow::StepResult AgenticWorkflow::stepValidate()
             sr.message = "mini-notation parse error";
         } else {
             // Check for TK_ERROR tokens (unrecognised characters).
-            const auto tokens = hathor::tokenise(currentRequest_.notation);
+            const auto tokens = hathor::tokenise(
+                isCreativeRepair ? validateNotation : currentRequest_.notation);
             bool hasError = false;
             for (const auto& tok : tokens) {
                 if (tok.kind == hathor::TokenKind::TK_ERROR) {
@@ -1115,13 +1177,24 @@ AgenticWorkflow::StepResult AgenticWorkflow::stepCompile()
     // It routes through the real libchuck compiler (validateChuckSource in
     // this JUCE-free build, or ck.compileCode in the worker process).
 
+    // AI-10.5: In creative repair mode, compile the repaired source.
+    std::string compileSource = currentRequest_.ckSource;
+    {
+        std::lock_guard<std::mutex> lock(stateMtx_);
+        if (currentRepairPlan_.has_value() &&
+            currentRepairPlan_->targetDomain ==
+                CreativeRepairEngine::TargetDomain::Instrument) {
+            compileSource = currentRepairPlan_->targetSource;
+        }
+    }
+
     // Use a promise to bridge the async callback and capture the CompileResult.
     auto promise = std::make_shared<std::promise<hathor::CompileResult>>();
     auto future = promise->get_future();
 
     auto jobHandle = chuckService_.compileChuck(
         sessionId,
-        currentRequest_.ckSource,
+        compileSource,
         [promise](CompileResult cr) {
             promise->set_value(std::move(cr));
         });
@@ -1385,6 +1458,423 @@ AgenticWorkflow::StepResult AgenticWorkflow::stepRepair()
         }
         return sr;
     }
+}
+
+// ---------------------------------------------------------------------------
+// AI-10.5: Creative repair workflow
+// ---------------------------------------------------------------------------
+
+void AgenticWorkflow::runCreativeRepair()
+{
+    // AI-10.5: Conversational creative repair workflow.
+    //
+    // This is a condensed workflow that:
+    //   1. Plans the repair via CreativeRepairEngine (classify + resolve + plan)
+    //   2. Executes the plan ops through canonical services
+    //   3. Re-validates / re-auditions
+    //   4. Records changes in the AI-10.3 change-set
+
+    // Phase 1: Planning
+    setState(State::Planning);
+    emitEvent(EventType::StepStarted, "Planning creative repair", true, "planning");
+
+    if (checkCancellation()) {
+        setState(State::Cancelled);
+        return;
+    }
+
+    // Use CreativeRepairEngine to classify feedback, resolve target, and plan.
+    const std::string intentContext = currentRequest_.targetSlot.empty()
+        ? std::string(currentRequest_.feedback)
+        : currentRequest_.targetSlot;
+
+    CreativeRepairEngine::RepairPlan plan =
+        creativeRepairEngine_.planRepair(currentRequest_.feedback, intentContext);
+
+    {
+        std::lock_guard<std::mutex> lock(stateMtx_);
+        currentRepairPlan_ = plan;
+    }
+
+    // Emit the plan for observability (AI-10.1, AI-10.4, AI-10.5).
+    emitEvent(EventType::PlanCreated,
+              "Planned creative repair: " + (plan.explanation.empty()
+                  ? std::string("no targeted change identified")
+                  : plan.explanation),
+              !plan.ops.empty(), "creative_repair", plan.toJson());
+
+    if (plan.ops.empty()) {
+        error_ = "creative repair: no actionable plan for feedback \"" +
+                 std::string(currentRequest_.feedback) + "\"";
+        setState(State::Failed);
+        auditLog("workflow_repair", "agentic", false, *error_);
+        return;
+    }
+
+    // AI-10.3: Begin a change-set for this repair.
+    changeSetManager_.beginChangeSet(currentRequest_.feedback);
+
+    // Phase 2: Execute the repair
+    if (checkCancellation()) {
+        setState(State::Cancelled);
+        changeSetManager_.cancelCurrent();
+        return;
+    }
+
+    setCurrentStep(Step::CreativeRepair);
+    setState(State::CreativeRepairing);
+
+    emitEvent(EventType::RepairStarted,
+              "Applying creative repair from feedback: \"" +
+                  currentRequest_.feedback + "\"",
+              true, "creative_repair");
+
+    if (checkCancellation()) {
+        setState(State::Cancelled);
+        changeSetManager_.cancelCurrent();
+        return;
+    }
+
+    {
+        StepResult result = stepCreativeRepair();
+        if (!result.ok) {
+            error_ = "creative repair: " + result.message;
+            setState(State::Failed);
+            changeSetManager_.cancelCurrent();
+            auditLog("step_creative_repair", "workflow", false, result.message);
+            emitEvent(EventType::StepFailed,
+                      "Creative repair failed: " + result.message,
+                      false, "creative_repair", result.data);
+            return;
+        }
+        completeStep("creative_repair", result);
+        emitEvent(EventType::RepairCompleted,
+                  "Creative repair applied successfully",
+                  true, "creative_repair", result.data);
+    }
+
+    // Phase 3: Re-validate (pattern mode) or re-compile + re-audition (ChucK mode)
+    if (plan.targetDomain == CreativeRepairEngine::TargetDomain::Pattern) {
+        setCurrentStep(Step::Validate);
+        setState(State::Validating);
+
+        StepResult valResult = stepValidate();
+        diagnostics_ = valResult.data;
+        if (!valResult.ok) {
+            completeStep("validate", valResult);
+            error_ = "creative repair re-validation failed: " + valResult.message;
+            setState(State::Failed);
+            auditLog("step_validate", "workflow", false, valResult.message);
+            return;
+        }
+        completeStep("validate", valResult);
+
+        // Re-audition the repaired pattern.
+        setCurrentStep(Step::Audition);
+        setState(State::Auditioning);
+
+        StepResult audResult = stepAudition();
+        if (!audResult.ok) {
+            completeStep("audition", audResult);
+            error_ = "creative repair re-audition failed: " + audResult.message;
+            setState(State::Failed);
+            auditLog("step_audition", "workflow", false, audResult.message);
+            return;
+        }
+        completeStep("audition", audResult);
+    } else if (plan.targetDomain == CreativeRepairEngine::TargetDomain::Instrument) {
+        // For ChucK repairs, compile + audition is handled in stepCreativeRepair.
+        // Re-validate the repaired source.
+        setCurrentStep(Step::Validate);
+        setState(State::Validating);
+
+        StepResult valResult = stepValidate();
+        diagnostics_ = valResult.data;
+        if (!valResult.ok) {
+            completeStep("validate", valResult);
+            error_ = "creative repair re-validation failed: " + valResult.message;
+            setState(State::Failed);
+            return;
+        }
+        completeStep("validate", valResult);
+    }
+
+    // Phase 4: Complete
+    setState(State::Completed);
+}
+
+AgenticWorkflow::StepResult AgenticWorkflow::stepCreativeRepair()
+{
+    StepResult sr;
+    sr.stepName = "creative_repair";
+
+    if (!currentRepairPlan_.has_value()) {
+        sr.ok = false;
+        sr.message = "no creative repair plan loaded";
+        return sr;
+    }
+
+    const auto& plan = *currentRepairPlan_;
+    nlohmann::json details;
+    details["feedback"] = plan.feedback;
+    details["property"] = hathor::control::propertyToString(plan.property);
+    details["target_domain"] = hathor::control::domainToString(plan.targetDomain);
+    details["slot_name"] = plan.slotName;
+
+    bool anyPersistent = false;
+
+    // Execute each operation in the plan through the canonical services.
+    for (const auto& op : plan.ops) {
+        if (op.capabilityClass == CreativeRepairEngine::CapabilityClass::PersistentMutation) {
+            if (op.requiresConfirmation && !currentRequest_.dryRun) {
+                // AI-1: persistent mutation crosses the confirmation boundary.
+                // Pause and wait for approval.
+                ConfirmationRequest req;
+                req.requestId = nextConfirmationId_.fetch_add(1, std::memory_order_relaxed);
+                req.action = op.op;
+                req.description = op.description;
+                req.details = op.params;
+                req.capabilityClass = "persistent_mutation";
+
+                pendingConfirmation_ = req;
+                confirmationCallback_(req);
+
+                // Wait for approval.
+                std::unique_lock<std::mutex> lk(confirmMtx_);
+                confirmCv_.wait(lk, [this] {
+                    return confirmationResponded_.load(std::memory_order_acquire);
+                });
+
+                if (checkCancellation()) {
+                    sr.ok = false;
+                    sr.message = "creative repair cancelled during confirmation";
+                    return sr;
+                }
+
+                if (!confirmationApproved_.load(std::memory_order_acquire)) {
+                    sr.ok = false;
+                    sr.message = "creative repair rejected by user";
+                    sr.data = details;
+                    return sr;
+                }
+
+                pendingConfirmation_.reset();
+            }
+            anyPersistent = true;
+        }
+    }
+
+    // Execute the actual mutations through canonical services.
+    nlohmann::json appliedOps = nlohmann::json::array();
+
+    for (const auto& op : plan.ops) {
+        if (op.service == "SongMutationService") {
+            // Pattern repair via SongMutationService::editSong
+            std::string songFile = op.params.value("song_file", std::string{});
+            if (songFile.empty())
+                songFile = plan.slotName + ".hathor";
+
+            // Capture before-content for AI-10.3 change-set.
+            std::string beforeContent;
+            if (!currentRequest_.dryRun) {
+                auto beforeResult = songService_.readSongContent(songFile);
+                if (beforeResult.value("ok", false))
+                    beforeContent = beforeResult.value("content", std::string{});
+            }
+
+            nlohmann::json editOps = nlohmann::json::array();
+            editOps.push_back(nlohmann::json{
+                {"op", op.op},
+                {"notation", op.params.value("notation", plan.targetNotation)},
+                {"position", op.params.value("position", "replace")},
+                {"confirm", true}
+            });
+
+            nlohmann::json result;
+            if (currentRequest_.dryRun) {
+                result = {{"ok", true}, {"cmd", "edit_song"},
+                          {"dry_run", true}, {"message", "dry-run: song edit simulated"}};
+            } else {
+                result = songService_.editSong(songFile, editOps);
+            }
+
+            appliedOps.push_back({
+                {"op", op.op},
+                {"service", "SongMutationService"},
+                {"result", result}
+            });
+
+            if (!result.value("ok", false)) {
+                sr.ok = false;
+                sr.message = "song mutation failed: " +
+                             result.value("error", std::string("unknown error"));
+                sr.data = {{"applied_ops", appliedOps}, {"details", details}};
+                return sr;
+            }
+
+            // AI-10.3: Record in change-set.
+            if (!currentRequest_.dryRun) {
+                std::string afterContent;
+                auto afterResult = songService_.readSongContent(songFile);
+                if (afterResult.value("ok", false))
+                    afterContent = afterResult.value("content", std::string{});
+
+                auto snapshotBody = [](const std::string& content) -> std::string {
+                    const auto parsed = hathor::ui::parseHathorFile(content);
+                    if (const auto* hf = std::get_if<hathor::ui::HathorFile>(&parsed))
+                        return hf->body;
+                    return content;
+                };
+
+                ChangeSetOperation csOp;
+                csOp.op = "edit_song";
+                csOp.resourceId = "song:" + songFile;
+                csOp.slotName = plan.slotName;
+                csOp.songFile = songFile;
+                csOp.originalContent = beforeContent;
+                csOp.newContent = afterContent;
+                csOp.before = nlohmann::json{{"body", snapshotBody(beforeContent)}};
+                csOp.after = nlohmann::json{{"body", plan.targetNotation}};
+                csOp.reversible = true;
+                csOp.revertAction = "restore song '" + songFile + "' to pre-repair content";
+                changeSetManager_.addOperation(std::move(csOp));
+            }
+
+        } else if (op.service == "ChuckSessionService") {
+            // ChucK instrument repair via compileChuck + audition
+            const std::string sessionId = op.params.value("session_id", std::string{});
+            const std::string newSource = op.params.value("source", std::string{});
+
+            if (sessionId.empty()) {
+                sr.ok = false;
+                sr.message = "no session_id for ChucK repair";
+                sr.data = {{"applied_ops", appliedOps}, {"details", details}};
+                return sr;
+            }
+
+            if (currentRequest_.dryRun) {
+                appliedOps.push_back({
+                    {"op", op.op},
+                    {"service", "ChuckSessionService"},
+                    {"session_id", sessionId},
+                    {"dry_run", true}
+                });
+            } else {
+                // Compile the repaired source.
+                uint64_t jobId = 0;
+                {
+                    auto source = op.params.value("source", std::string{});
+                    auto jobHandle = chuckService_.compileChuck(
+                        sessionId, source,
+                        [](hathor::CompileResult cr) {
+                            (void)cr;
+                        });
+                    jobId = jobHandle.id();
+
+                if (jobId == 0) {
+                    sr.ok = false;
+                    sr.message = "ChucK compile failed to start";
+                    sr.data = {{"applied_ops", appliedOps}, {"details", details}};
+                    return sr;
+                }
+
+                // Wait for compile to complete.
+                nlohmann::json compileResult;
+                if (!waitForAsyncJob(jobId, "chuck", compileResult)) {
+                    sr.ok = false;
+                    sr.message = "ChucK compile did not complete";
+                    sr.data = {{"applied_ops", appliedOps}, {"details", details}};
+                    return sr;
+                }
+
+                // Audition the repaired instrument.
+                chuckService_.auditionSession(sessionId);
+
+                appliedOps.push_back({
+                    {"op", op.op},
+                    {"service", "ChuckSessionService"},
+                    {"session_id", sessionId},
+                    {"job_id", jobId},
+                    {"compile_result", compileResult}
+                });
+            }
+
+            // AI-10.2: Update working set with the repaired session source.
+            if (!currentRequest_.dryRun) {
+                workingSet_.recordItem({
+                    .id = sessionId,
+                    .name = sessionId,
+                    .type = WorkingSet::ItemType::Session,
+                    .slotName = plan.slotName,
+                    .state = {{"source", plan.targetSource}, {"repaired", true}},
+                });
+            }
+        }
+    } // end for each op
+
+    // AI-10.5: Update runtime state for re-audition.
+    // For pattern repairs, store the repaired notation on the slot so
+    // stepAudition() can play it.  For ChucK repairs, ensure the session
+    // is current.
+    if (plan.targetDomain == CreativeRepairEngine::TargetDomain::Pattern &&
+        !plan.slotName.empty()) {
+        {
+            std::lock_guard<std::mutex> lock(stateMtx_);
+            generatedNotation_ = plan.targetNotation;
+        }
+
+        if (!currentRequest_.dryRun) {
+            // Validate + lower the repaired notation and store on the slot.
+            const auto parseResult = hathor::parseMini(plan.targetNotation);
+            if (std::holds_alternative<hathor::CompiledPattern>(parseResult)) {
+                const auto& compiled = std::get<hathor::CompiledPattern>(parseResult);
+                const std::string canonical = hathor::printMini(compiled);
+                auto paramPattern = hathor::lowerToParamMap(compiled.pattern);
+                const std::size_t maxEvents = paramPattern.maxEventsPerCycle();
+
+                int slotIdx = audio_.findOrAddSlot(plan.slotName);
+                if (slotIdx >= 0) {
+                    auto slotState = std::make_shared<SlotState>();
+                    slotState->pattern = std::make_shared<hathor::Pattern<hathor::ParamMap>>(
+                        std::move(paramPattern));
+                    {
+                        const hathor::Rational zero{0, 1};
+                        const hathor::Arc zeroArc{zero, zero};
+                        const hathor::Event<hathor::ParamMap> dummy{zeroArc, zeroArc, {}};
+                        slotState->eventBuffer.assign(maxEvents, dummy);
+                    }
+                    slotState->notation = canonical;
+                    audio_.storeSlot(slotIdx, std::move(slotState));
+                }
+            }
+        }
+    } else if (plan.targetDomain == CreativeRepairEngine::TargetDomain::Instrument) {
+        {
+            std::lock_guard<std::mutex> lock(stateMtx_);
+            generatedCkSource_ = plan.targetSource;
+            if (!plan.sessionId.empty())
+                sessionId_ = plan.sessionId;
+        }
+    }
+
+    sr.ok = true;
+    sr.message = anyPersistent
+        ? "creative repair applied (persistent mutation — requires confirmation)"
+        : "creative repair applied (non-destructive, auditioned)";
+    sr.data = {
+        {"feedback", plan.feedback},
+        {"property", hathor::control::propertyToString(plan.property)},
+        {"target_domain", hathor::control::domainToString(plan.targetDomain)},
+        {"slot_name", plan.slotName},
+        {"target_notation", plan.targetNotation},
+        {"target_source", plan.targetSource},
+        {"needs_confirmation", plan.needsConfirmation},
+        {"dry_run", currentRequest_.dryRun},
+        {"applied_ops", appliedOps},
+        {"explanation", plan.explanation}
+    };
+
+    return sr;
 }
 
 AgenticWorkflow::StepResult AgenticWorkflow::stepRender()

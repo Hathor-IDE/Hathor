@@ -387,6 +387,7 @@ void ControlInterface::dispatch(std::string_view rawLine)
                cmd == "workflow_approve" ||
                cmd == "workflow_reject" ||
                cmd == "workflow_plan" ||
+               cmd == "workflow_repair" ||
                cmd == "working_set" ||
                cmd == "resolve_reference" ||
                cmd == "revert_change" ||
@@ -1485,9 +1486,11 @@ void ControlInterface::handleWorkflowCommand(std::string_view cmd,
         handleWorkflowApprove(rest, true);
     } else if (cmd == "workflow_reject") {
         handleWorkflowApprove(rest, false);
-    } else if (cmd == "workflow_plan") {
-        handleWorkflowPlan(rest);
-    } else if (cmd == "working_set") {
+     } else if (cmd == "workflow_plan") {
+         handleWorkflowPlan(rest);
+     } else if (cmd == "workflow_repair") {
+         handleWorkflowRepair(rest);
+     } else if (cmd == "working_set") {
         handleWorkingSet(rest);
     } else if (cmd == "resolve_reference") {
         handleResolveReference(rest);
@@ -1674,6 +1677,115 @@ void ControlInterface::handleWorkflowStart(std::string_view rest)
     emitResponse({
         {"ok", true},
         {"cmd", "workflow_start"},
+        {"state", agenticWorkflow_->getState()}
+    });
+}
+
+void ControlInterface::handleWorkflowRepair(std::string_view rest)
+{
+    // AI-10.5: Conversational creative repair.
+    // Format: workflow_repair <json-args>
+    //   json-args: {"feedback":"make it darker","intent_context":"bass"}
+    const std::string argsStr = std::string(trim(rest));
+    if (argsStr.empty()) {
+        emitResponse({
+            {"ok", false},
+            {"cmd", "workflow_repair"},
+            {"error", "missing arguments"}
+        });
+        return;
+    }
+
+    nlohmann::json args;
+    try {
+        args = nlohmann::json::parse(argsStr);
+    } catch (const std::exception& e) {
+        emitResponse({
+            {"ok", false},
+            {"cmd", "workflow_repair"},
+            {"error", "invalid JSON arguments"}
+        });
+        return;
+    }
+
+    const std::string feedback = args.value("feedback", std::string{});
+    const std::string intentContext = args.value("intent_context", std::string{});
+
+    if (feedback.empty()) {
+        emitResponse({
+            {"ok", false},
+            {"cmd", "workflow_repair"},
+            {"error", "'feedback' is required"}
+        });
+        return;
+    }
+
+    // Ensure ChuckSessionService and RenderService are initialized.
+    if (!chuckSessionService_)
+        chuckSessionService_ = std::make_unique<ChuckSessionService>(audio_);
+    if (!renderService_)
+        renderService_ = std::make_unique<RenderService>(audio_, bank_, *chuckSessionService_);
+
+    // Construct the AgenticWorkflow if not yet created.
+    if (!agenticWorkflow_) {
+        agenticWorkflow_ = std::make_unique<AgenticWorkflow>(
+            audio_, bank_,
+            *readFacade_,
+            *chuckSessionService_,
+            *renderService_,
+            *songMutationService_);
+    }
+
+    // Start the creative repair workflow via the canonical entry point.
+    bool started = agenticWorkflow_->startCreativeRepair(
+        feedback,
+        intentContext,
+        // Progress callback: stream events to stdout (AI-10.4/AI-10.5).
+        [](const AgenticWorkflow::ProgressEvent& ev) {
+            nlohmann::json state = ev.state;
+            state["cmd"] = "workflow_progress";
+            state["event"] = AgenticWorkflow::eventTypeName(ev.type);
+            state["event_index"] = ev.workflowId;
+            state["workflow_id"] = ev.workflowId;
+            state["step"] = ev.stepName;
+            state["ok"] = ev.ok;
+            state["repair_planned"] = ev.repairPlanned;
+            if (ev.jobId != 0)
+                state["job_id"] = ev.jobId;
+            if (!ev.resource.empty())
+                state["resource"] = ev.resource;
+            state["message"] = ev.message;
+            if (!ev.details.is_null())
+                state["details"] = ev.details;
+            emitResponse(state);
+        },
+        // Confirmation callback: emit a confirmation request.
+        [](AgenticWorkflow::ConfirmationRequest req) {
+            nlohmann::json j;
+            j["cmd"] = "workflow_confirmation";
+            j["ok"] = true;
+            j["confirmation"] = {
+                {"request_id",       req.requestId},
+                {"action",           req.action},
+                {"description",      req.description},
+                {"details",          req.details},
+                {"capability_class", req.capabilityClass}
+            };
+            emitResponse(j);
+        });
+
+    if (!started) {
+        emitResponse({
+            {"ok", false},
+            {"cmd", "workflow_repair"},
+            {"error", "workflow already in progress"}
+        });
+        return;
+    }
+
+    emitResponse({
+        {"ok", true},
+        {"cmd", "workflow_repair"},
         {"state", agenticWorkflow_->getState()}
     });
 }

@@ -315,12 +315,18 @@ public:
     /// Routes to the appropriate handle*Workflow* method.
     void handleWorkflowCommand(std::string_view cmd, std::string_view rest);
 
-    /// Handle a workflow_plan command (AI-10.1: generate a structured plan
-    /// from a natural-language request BEFORE heavy execution).
-    /// Format: workflow_plan <intent> [json-kwargs]
-    ///   intent:  natural-language request (e.g. "dark 8-bar acid bassline")
-    ///   json-kwargs: {"target_slot":"d1","asset_name":"acid_bass"}
-    void handleWorkflowPlan(std::string_view rest);
+     /// Handle a workflow_plan command (AI-10.1: generate a structured plan
+     /// from a natural-language request BEFORE heavy execution).
+     /// Format: workflow_plan <intent> [json-kwargs]
+     ///   intent:  natural-language request (e.g. "dark 8-bar acid bassline")
+     ///   json-kwargs: {"target_slot":"d1","asset_name":"acid_bass"}
+     void handleWorkflowPlan(std::string_view rest);
+
+     /// Handle a workflow_repair command (AI-10.5: creative repair from
+     /// conversational feedback).
+     /// Format: workflow_repair <json-args>
+     ///   json-args: {"feedback":"make it darker","intent_context":"bass"}
+     void handleWorkflowRepair(std::string_view rest);
 
     /// Handle a workflow_start command (async — starts the agentic workflow).
     /// Format: workflow_start <json-args>

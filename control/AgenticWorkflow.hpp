@@ -67,6 +67,7 @@
 #include "IntentPlanner.hpp"
 #include "WorkingSet.hpp"
 #include "ChangeSet.hpp"
+#include "CreativeRepairEngine.hpp"
 
 namespace hathor::control {
 
@@ -115,6 +116,7 @@ public:
         Auditioning,     ///< Playing pattern / auditioning ChucK instrument.
         InspectingDiagnostics, ///< Checking diagnostics from compile/audition.
         Repairing,       ///< Attempting repair (re-generate / re-compile).
+        CreativeRepairing, ///< Applying creative repair (AI-10.5 feedback loop).
         Rendering,       ///< Rendering ChucK instrument to WAV (async job).
         Binding,         ///< Committing rendered asset (requires confirmation).
         UpdatingSong,    ///< Updating song file (requires confirmation).
@@ -139,6 +141,7 @@ public:
         Audition,
         InspectDiagnostics,
         Repair,
+        CreativeRepair,
         Render,
         BindAsset,
         UpdateSong,
@@ -215,6 +218,7 @@ public:
         int durationBars = 8;         ///< Render duration in bars
         nlohmann::json plan;          ///< Optional pre-determined plan steps
         bool dryRun = false;          ///< If true, skip all persistent mutations
+        std::string feedback;         ///< AI-10.5: conversational creative feedback (non-empty triggers creative repair mode)
     };
 
     // -----------------------------------------------------------------------
@@ -297,9 +301,30 @@ public:
      *
      * @return true if the workflow was queued successfully.
      */
-    bool start(Request request,
-               ProgressCallback     onProgress,
-               ConfirmationCallback onConfirmation);
+     bool start(Request request,
+                ProgressCallback     onProgress,
+                ConfirmationCallback onConfirmation);
+
+     /**
+      * Start a creative-repair workflow (AI-10.5).
+      *
+      * Takes conversational feedback (e.g. "too busy", "make it darker") and
+      * resolves the target against the WorkingSet, then applies the smallest
+      * targeted mutation through the canonical services.
+      *
+      * This is non-blocking — the repair runs on the workflow thread and emits
+      * progress events.  If a workflow is already running, returns false.
+      *
+      * @param feedback      Natural-language feedback (e.g. "make it darker").
+      * @param intentContext Optional context for disambiguation (e.g. "bass").
+      * @param onProgress    Progress callback.
+      * @param onConfirmation Confirmation callback for persistent mutations.
+      * @return true if the repair was queued successfully.
+      */
+     bool startCreativeRepair(std::string_view feedback,
+                              std::string_view intentContext,
+                              ProgressCallback     onProgress,
+                              ConfirmationCallback onConfirmation);
 
     /**
      * Cancel the currently running workflow.
@@ -461,6 +486,7 @@ private:
     // -----------------------------------------------------------------------
 
     void runWorkflow();
+    void runCreativeRepair();
 
     // --- Canonical step implementations ---
 
@@ -473,6 +499,7 @@ private:
     StepResult stepAudition();
     StepResult stepInspectDiagnostics();
     StepResult stepRepair();
+    StepResult stepCreativeRepair();
     StepResult stepRender();
     StepResult stepBindAsset();
     StepResult stepUpdateSong();
@@ -548,7 +575,7 @@ private:
     RenderService&                 renderService_;
     SongMutationService&           songService_;
 
-    // AI-10.1: Intent planner — produces a structured, inspectable plan
+     // AI-10.1: Intent planner — produces a structured, inspectable plan
     // from the natural-language intent before any heavy/destructive step.
     IntentPlanner                  planner_;
 
@@ -556,6 +583,11 @@ private:
     // persists across workflow runs for multi-turn continuity.  NOT cleared
     // by reset() (only by clearWorkingSet()).
     WorkingSet                   workingSet_;
+
+    // AI-10.5: Creative repair engine — classifies conversational feedback
+    // and produces targeted, smallest-mutation repair plans.
+    // Declared after workingSet_ because it references it.
+    CreativeRepairEngine           creativeRepairEngine_;
 
     // AI-10.3: Change-set manager — groups the current workflow's persistent
     // mutations into one coherent, reviewable change-set (diff/preview/undo).
@@ -602,6 +634,10 @@ private:
     // Repair loop tracking
     int             repairAttempts_ = 0;
     static constexpr int kMaxRepairAttempts = 3;
+
+    // AI-10.5: Current creative repair plan (populated in runCreativeRepair,
+    // consumed by stepCreativeRepair).
+    std::optional<CreativeRepairEngine::RepairPlan> currentRepairPlan_;
 
     // Confirmation tracking
     std::atomic<int>         nextConfirmationId_{1};
