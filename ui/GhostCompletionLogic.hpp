@@ -38,6 +38,10 @@
 #include "GhostProviderConfig.hpp"
 #include "GhostTriggerPolicy.hpp"
 
+#ifdef HATHOR_ENABLE_GHOST_TELEMETRY
+#include "GhostCompletionTelemetry.hpp"
+#endif
+
 #include <chrono>
 #include <optional>
 #include <string>
@@ -156,10 +160,20 @@ public:
     void setTimeoutMs(int ms) noexcept { timeoutMs_ = ms; }
 
     /**
-      * Set the trigger policy configuration (tunables for the ghost completion
-      * triggering rules — J-1). Allows callers to configure which contexts
-      * should trigger ghost completion without restructuring the lifecycle.
-      */
+       * Set the trigger policy configuration (tunables for the ghost completion
+       * triggering rules — J-1). Allows callers to configure which contexts
+       * should trigger ghost completion without restructuring the lifecycle.
+       */
+    void setTriggerPolicyConfig(const GhostTriggerPolicyConfig& cfg) noexcept
+    {
+        policy_.setConfig(cfg);
+    }
+
+    /**
+       * Set the trigger policy configuration (tunables for the ghost completion
+       * triggering rules — J-1). Allows callers to configure which contexts
+       * should trigger ghost completion without restructuring the lifecycle.
+       */
     void setTriggerPolicyConfig(const GhostTriggerPolicyConfig& cfg) noexcept
     {
         policy_.setConfig(cfg);
@@ -170,6 +184,23 @@ public:
     {
         return policy_.config();
     }
+
+#ifdef HATHOR_ENABLE_GHOST_TELEMETRY
+    /**
+       * Install a telemetry sink for ghost completion quality tracking (J-6).
+       * Non-owning pointer — the caller is responsible for the lifetime of
+       * the telemetry object. When null (default), no telemetry is recorded.
+       * Must be called before onEditorChanged/onGhostResponse for events
+       * to be captured.
+       */
+    void setTelemetry(GhostCompletionTelemetry* telemetry) noexcept
+    {
+        telemetry_ = telemetry;
+    }
+
+    /** Get the current telemetry sink, or nullptr if none is installed. */
+    GhostCompletionTelemetry* telemetry() const noexcept { return telemetry_; }
+#endif
 
     /**
       * Notify the ghost logic that a deterministic (LSP/metadata) completion
@@ -420,9 +451,9 @@ private:
     };
     std::optional<PendingRequest> pendingRequest_;
 
-    /// The currently displayed ghost candidates (cleared on cursor move, accept,
-    /// reject, or timeout).  J-2: caches all candidates returned by the LLM
-    /// so the user can cycle through them locally without re-requesting.
+     /// The currently displayed ghost candidates (cleared on cursor move, accept,
+     * reject, or timeout).  J-2: caches all candidates returned by the LLM
+     * so the user can cycle through them locally without re-requesting.
     // AI-G2: each GhostResult carries docPrefix/docSuffix for editor-side verification.
     struct ActiveGhost {
         std::vector<GhostResult> candidates;   ///< all cached, trimmed candidates
@@ -430,6 +461,14 @@ private:
         int                      revision;      ///< document revision at generation time
         size_t                   selectedIndex = 0;  ///< currently displayed candidate
     };
+    std::optional<ActiveGhost> activeGhost_;
+
+#ifdef HATHOR_ENABLE_GHOST_TELEMETRY
+    /// Non-owning telemetry sink for quality tracking (J-6).
+    /// Null by default — callers opt in by calling setTelemetry().
+    GhostCompletionTelemetry* telemetry_ = nullptr;
+#endif
+};
     std::optional<ActiveGhost> activeGhost_;
 };
 

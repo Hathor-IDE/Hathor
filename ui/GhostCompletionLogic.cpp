@@ -26,8 +26,13 @@
 #include "GhostCompletionLogic.hpp"
 #include "GhostJsonRpc.hpp"
 
+#ifdef HATHOR_ENABLE_GHOST_TELEMETRY
+#include "GhostCompletionTelemetry.hpp"
+#endif
+
 #include <algorithm>
 #include <cctype>
+#include <cstdint>
 
 namespace hathor::lsp {
 
@@ -295,6 +300,20 @@ std::optional<GhostResult> GhostCompletionLogic::onGhostResponse(
     if (pending.revision != revision_)
     {
         // Response is stale — the editor changed since this request was sent.
+        // Telemetry: record STALE_REJECTED event (excluded from quality stats).
+#ifdef HATHOR_ENABLE_GHOST_TELEMETRY
+        if (telemetry_)
+        {
+            TelemetryEvent evt;
+            evt.type = GhostEventType::StaleRejected;
+            evt.languageId = currentCtx_.languageId;
+            evt.requestId = requestId;
+            evt.revision = pending.revision;
+            evt.isStale = true;
+            telemetry_->recordEvent(evt);
+        }
+#endif
+
         // Clear the pending request so onTimerTick can send a fresh one.
         pendingRequest_.reset();
         return std::nullopt;
@@ -361,6 +380,22 @@ std::optional<GhostResult> GhostCompletionLogic::onGhostResponse(
         0  // selectedIndex starts at first candidate
     };
 
+    // Telemetry: record DISPLAYED event for the ghost result being shown.
+#ifdef HATHOR_ENABLE_GHOST_TELEMETRY
+    if (telemetry_)
+    {
+        TelemetryEvent evt;
+        evt.type = GhostEventType::Displayed;
+        evt.languageId = currentCtx_.languageId;
+        evt.timestampMs = nowMs;
+        evt.revision = revision_;
+        evt.requestId = respRequestId;
+        evt.ghostLabel = GhostCompletionTelemetry::truncateLabel(
+            activeGhost_->candidates[activeGhost_->selectedIndex].text);
+        telemetry_->recordEvent(evt);
+    }
+#endif
+
     // Return the currently selected candidate for display.
     return activeGhost_->candidates[activeGhost_->selectedIndex];
 }
@@ -396,6 +431,22 @@ std::optional<AcceptCompletionParams> GhostCompletionLogic::onAccept()
         activeGhost_->candidates[selected].candidateIndex);
     for (const auto& c : activeGhost_->candidates)
         params.shownCompletions.push_back(c.candidateIndex);
+
+    // Telemetry: record ACCEPTED event.
+    // The caller (HathorTab) will record time-to-accept by passing the
+    // accept timestamp; here we use the revision as a proxy for now and
+    // let the telemetry layer compute time-to-accept from the DISPLAYED event.
+#ifdef HATHOR_ENABLE_GHOST_TELEMETRY
+    if (telemetry_)
+    {
+        TelemetryEvent evt;
+        evt.type = GhostEventType::Accepted;
+        evt.languageId = currentCtx_.languageId;
+        evt.requestId = activeGhost_->requestId;
+        evt.revision = activeGhost_->revision;
+        telemetry_->recordEvent(evt);
+    }
+#endif
 
     activeGhost_.reset();
     pendingRequest_.reset();
@@ -452,6 +503,21 @@ std::optional<PartialAcceptResult> GhostCompletionLogic::onPartialAccept(size_t 
     result.acceptedText = std::move(acceptedText);
     result.remainingResult = candidate;  // copy the updated candidate
 
+    // Telemetry: record PARTIALLY_ACCEPTED event.
+    // acceptLen is the number of chars accepted (candidate.text.size() - remainingText.size()).
+#ifdef HATHOR_ENABLE_GHOST_TELEMETRY
+    if (telemetry_)
+    {
+        TelemetryEvent evt;
+        evt.type = GhostEventType::PartiallyAccepted;
+        evt.languageId = currentCtx_.languageId;
+        evt.requestId = activeGhost_->requestId;
+        evt.revision = activeGhost_->revision;
+        evt.acceptLength = static_cast<int>(acceptLen);
+        telemetry_->recordEvent(evt);
+    }
+#endif
+
     // Active ghost is NOT cleared — stays active for further partial accepts.
     // selectedIndex stays the same; the candidate text is now the remaining suffix.
     // No pending request to clear; no revision change (document hasn't changed
@@ -487,6 +553,19 @@ std::optional<RejectCompletionParams> GhostCompletionLogic::onReject()
     // J-2: Report all candidate indices that were shown to the user.
     for (const auto& c : activeGhost_->candidates)
         params.shownCompletions.push_back(c.candidateIndex);
+
+    // Telemetry: record REJECTED event.
+#ifdef HATHOR_ENABLE_GHOST_TELEMETRY
+    if (telemetry_)
+    {
+        TelemetryEvent evt;
+        evt.type = GhostEventType::Rejected;
+        evt.languageId = currentCtx_.languageId;
+        evt.requestId = activeGhost_->requestId;
+        evt.revision = activeGhost_->revision;
+        telemetry_->recordEvent(evt);
+    }
+#endif
 
     activeGhost_.reset();
     pendingRequest_.reset();

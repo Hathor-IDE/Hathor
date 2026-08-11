@@ -71,11 +71,13 @@ target_sources(hathor-ui
          # AI-4: Ghost text (llm-ls inline completion)
          GhostJsonRpc.cpp              # llm-ls JSON-RPC serialization
          GhostProviderConfig.cpp       # provider config (env-var credentials)
-           GhostCompletionLogic.cpp      # JUCE-free lifecycle logic
-           GhostTriggerPolicy.cpp        # J-1: trigger policy engine
-           GhostLlmClient.cpp            # JUCE process management for llm-ls
-          GhostTextOverlay.cpp          # ghost-text renderer overlay
-          CompletionCoordinator.cpp     # AI-G3: LSP + ghost coordination
+          GhostCompletionLogic.cpp      # JUCE-free lifecycle logic
+          GhostTriggerPolicy.cpp        # J-1: trigger policy engine
+          GhostLlmClient.cpp            # JUCE process management for llm-ls
+           GhostTextOverlay.cpp          # ghost-text renderer overlay
+           CompletionCoordinator.cpp     # AI-G3: LSP + ghost coordination
+          # J-6: Ghost completion telemetry (JUCE-free, quality feedback)
+          GhostCompletionTelemetry.cpp
          # App-layer sources (AudioEngine, SampleBank, VoicePool live in app/,
          # not in a linkable static lib — include them directly here)
           ${CMAKE_SOURCE_DIR}/app/AudioEngine.cpp
@@ -129,6 +131,7 @@ target_compile_definitions(hathor-ui
         JUCE_STANDALONE_APPLICATION=1
         JUCE_USE_CURL=0
         JUCE_WEB_BROWSER=0
+        HATHOR_ENABLE_GHOST_TELEMETRY=1
 )
 
 # ---------------------------------------------------------------------------

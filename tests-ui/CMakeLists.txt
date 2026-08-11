@@ -47,7 +47,8 @@ add_executable(hathor-ui-tests
          test_completion_coordinator.cpp
          test_ghost_state_isolation.cpp
          test_ghost_candidates.cpp
-         test_ghost_partial_accept.cpp
+          test_ghost_partial_accept.cpp
+          test_ghost_completion_telemetry.cpp
       ${CMAKE_SOURCE_DIR}/ui/HathorFileParser.cpp
      ${CMAKE_SOURCE_DIR}/ui/ExplorerFileTypes.cpp
      ${CMAKE_SOURCE_DIR}/ui/TreeBuilder.cpp
@@ -58,14 +59,19 @@ add_executable(hathor-ui-tests
       ${CMAKE_SOURCE_DIR}/ui/GhostJsonRpc.cpp
       ${CMAKE_SOURCE_DIR}/ui/GhostProviderConfig.cpp
        ${CMAKE_SOURCE_DIR}/ui/GhostCompletionLogic.cpp
-       ${CMAKE_SOURCE_DIR}/ui/GhostTriggerPolicy.cpp
-       ${CMAKE_SOURCE_DIR}/ui/CompletionCoordinator.cpp
-      ${CMAKE_SOURCE_DIR}/app/LiveJamSessionManager.cpp
+        ${CMAKE_SOURCE_DIR}/ui/GhostTriggerPolicy.cpp
+        ${CMAKE_SOURCE_DIR}/ui/CompletionCoordinator.cpp
+        ${CMAKE_SOURCE_DIR}/ui/GhostCompletionTelemetry.cpp
+       ${CMAKE_SOURCE_DIR}/app/LiveJamSessionManager.cpp
 )
 
 target_compile_features(hathor-ui-tests PRIVATE cxx_std_20)
 
 target_compile_options(hathor-ui-tests PRIVATE -Wall -Wextra -Werror)
+
+target_compile_definitions(hathor-ui-tests PRIVATE
+    HATHOR_ENABLE_GHOST_TELEMETRY=1
+)
 
 target_include_directories(hathor-ui-tests
     PRIVATE
