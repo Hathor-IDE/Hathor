@@ -25,6 +25,8 @@
 #include <string>
 #include <vector>
 
+#include <nlohmann/json.hpp>
+
 namespace hathor::lsp {
 
 // ---------------------------------------------------------------------------
@@ -255,6 +257,35 @@ public:
      * mean time-to-accept, compile success rate, and other key rates.
      */
     std::string generateReport() const;
+
+    // -----------------------------------------------------------------------
+    // Persistence (serialization for disk storage)
+    // -----------------------------------------------------------------------
+
+    /**
+     * Serialize all events to a JSON string for persistent storage.
+     * Uses nlohmann::json — JUCE-free, no JUCE dependencies.
+     */
+    std::string toJson() const;
+
+    /**
+     * Load events from a JSON string (e.g. restored from disk on startup).
+     * Merges with existing in-memory events. Clears existing state first.
+     */
+    void loadFromJson(const std::string& jsonStr);
+
+    /**
+     * Save all events to a file path (for testing / standalone use).
+     * Uses simple file I/O — no JUCE dependencies.
+     * Returns true on success.
+     */
+    bool saveToFile(const std::string& filePath) const;
+
+    /**
+     * Load events from a file path.
+     * Returns true on success (file existed and was parsed).
+     */
+    bool loadFromFile(const std::string& filePath);
 
     /**
      * Truncate a ghost text label to at most `maxLen` characters for

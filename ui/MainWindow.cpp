@@ -236,6 +236,21 @@ MainWindow::MainWindow(AudioEngine& audio,
     if (explorerPanel_->directory() == juce::File())
         explorerPanel_->setDirectory(juce::File(projectDir));
 
+    // J-6: Load persisted ghost completion telemetry (quality metrics) from disk.
+    // Restores per-tab event history so metrics accumulate across sessions.
+#ifdef HATHOR_ENABLE_GHOST_TELEMETRY
+    if (editorArea_)
+    {
+        juce::File telemetryFile = appProperties_.getStorageParameters()
+            ? juce::File(appProperties_.getStorageParameters()->getPath())
+            : juce::File();
+        if (!telemetryFile.isFile())
+            telemetryFile = telemetryFile.getParentDirectory();
+        telemetryFile = telemetryFile.getChildFile("ghost-telemetry.json");
+        editorArea_->loadTelemetry(telemetryFile.getFullPathName().toStdString());
+    }
+#endif
+
     // Add child components to the content component (DocumentWindow wraps one
     // content component; we use a plain Component as the layout host).
     auto* content = new juce::Component();
@@ -382,6 +397,20 @@ void MainWindow::closeButtonPressed()
                             explorerPanel_->directory().getFullPathName());
         props->saveIfNeeded();
     }
+
+    // J-6: Persist ghost completion telemetry (quality metrics) across sessions.
+#ifdef HATHOR_ENABLE_GHOST_TELEMETRY
+    if (editorArea_)
+    {
+        juce::File telemetryFile = appProperties_.getStorageParameters()
+            ? juce::File(appProperties_.getStorageParameters()->getPath())
+            : juce::File();
+        if (!telemetryFile.isFile())
+            telemetryFile = telemetryFile.getParentDirectory();
+        telemetryFile = telemetryFile.getChildFile("ghost-telemetry.json");
+        editorArea_->saveTelemetry(telemetryFile.getFullPathName().toStdString());
+    }
+#endif
 
     juce::JUCEApplication::getInstance()->systemRequestedQuit();
 }

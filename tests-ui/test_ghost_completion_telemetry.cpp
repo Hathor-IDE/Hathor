@@ -510,3 +510,113 @@ TEST_CASE("J-6: clear resets all state", "[j-6][clear]")
     REQUIRE(telemetry.events().empty());
     REQUIRE(telemetry.computeMetrics().empty());
 }
+
+// ===========================================================================
+// Bonus: toJson / loadFromJson round-trip preserves events.
+// ===========================================================================
+
+TEST_CASE("J-6: toJson/loadFromJson round-trip preserves events", "[j-6][persist]")
+{
+    GhostCompletionTelemetry telemetry;
+    telemetry.recordDisplayed("hathor", "r1", 1000, 1);
+    telemetry.recordAccepted("r1", 1050, 1);
+    telemetry.recordRejected("r1", 1100, 1);
+    telemetry.recordDisplayed("chuck", "c1", 2000, 2);
+    telemetry.recordStaleRejected("c1", 2010, 2);
+
+    std::string json = telemetry.toJson();
+    REQUIRE_FALSE(json.empty());
+
+    // Parse back and verify
+    GhostCompletionTelemetry restored;
+    restored.loadFromJson(json);
+
+    REQUIRE(restored.events().size() == telemetry.events().size());
+    REQUIRE(restored.events()[0].type == GhostEventType::Displayed);
+    REQUIRE(restored.events()[0].languageId == "hathor");
+    REQUIRE(restored.events()[1].type == GhostEventType::Accepted);
+    REQUIRE(restored.events()[2].type == GhostEventType::Rejected);
+    REQUIRE(restored.events()[3].type == GhostEventType::Displayed);
+    REQUIRE(restored.events()[3].languageId == "chuck");
+    REQUIRE(restored.events()[4].type == GhostEventType::StaleRejected);
+    REQUIRE(restored.events()[4].isStale == true);
+}
+
+// ===========================================================================
+// Bonus: loadFromJson from malformed JSON does not crash.
+// ===========================================================================
+
+TEST_CASE("J-6: loadFromJson handles malformed JSON gracefully", "[j-6][persist-malformed]")
+{
+    GhostCompletionTelemetry telemetry;
+    telemetry.recordDisplayed("hathor", "r1", 1000, 1);
+
+    // Malformed JSON — should not crash, should result in empty or cleared state
+    telemetry.loadFromJson("not valid json {{{");
+    REQUIRE(telemetry.events().empty());
+
+    // Empty string — should be safe
+    telemetry.loadFromJson("");
+    REQUIRE(telemetry.events().empty());
+
+    // Valid JSON but wrong structure
+    telemetry.loadFromJson("{\"foo\": \"bar\"}");
+    REQUIRE(telemetry.events().empty());
+}
+
+// ===========================================================================
+// Bonus: saveToFile / loadFromFile round-trip.
+// ===========================================================================
+
+TEST_CASE("J-6: saveToFile/loadFromFile round-trip", "[j-6][file-io]")
+{
+    GhostCompletionTelemetry telemetry;
+    telemetry.recordDisplayed("hathor", "r1", 1000, 1);
+    telemetry.recordAccepted("r1", 1050, 1);
+    telemetry.recordDisplayed("chuck", "c1", 2000, 2);
+    telemetry.recordRejected("c1", 2010, 2);
+
+    // Use a temp file
+    std::string tempFile = "/tmp/test_ghost_telemetry.json";
+
+    REQUIRE(telemetry.saveToFile(tempFile));
+
+    GhostCompletionTelemetry restored;
+    REQUIRE(restored.loadFromFile(tempFile));
+
+    REQUIRE(restored.events().size() == telemetry.events().size());
+    REQUIRE(restored.events()[0].type == GhostEventType::Displayed);
+    REQUIRE(restored.events()[0].languageId == "hathor");
+    REQUIRE(restored.events()[1].type == GhostEventType::Accepted);
+    REQUIRE(restored.events()[2].type == GhostEventType::Displayed);
+    REQUIRE(restored.events()[2].languageId == "chuck");
+    REQUIRE(restored.events()[3].type == GhostEventType::Rejected);
+
+    // Verify metrics are identical after round-trip
+    auto origMetrics = telemetry.computeMetrics();
+    auto restoredMetrics = restored.computeMetrics();
+    REQUIRE(origMetrics.size() == restoredMetrics.size());
+
+    for (size_t i = 0; i < origMetrics.size(); ++i)
+    {
+        REQUIRE(origMetrics[i].languageId == restoredMetrics[i].languageId);
+        REQUIRE(origMetrics[i].totalDisplayed == restoredMetrics[i].totalDisplayed);
+        REQUIRE(origMetrics[i].acceptedCount == restoredMetrics[i].acceptedCount);
+        REQUIRE(origMetrics[i].rejectedCount == restoredMetrics[i].rejectedCount);
+        REQUIRE(origMetrics[i].acceptanceRate == restoredMetrics[i].acceptanceRate);
+    }
+
+    // Clean up
+    std::remove(tempFile.c_str());
+}
+
+// ===========================================================================
+// Bonus: loadFromFile on nonexistent file returns false.
+// ===========================================================================
+
+TEST_CASE("J-6: loadFromFile on nonexistent file returns false", "[j-6][file-missing]")
+{
+    GhostCompletionTelemetry telemetry;
+    REQUIRE_FALSE(telemetry.loadFromFile("/nonexistent/path/to/telemetry.json"));
+    REQUIRE(telemetry.events().empty());
+}

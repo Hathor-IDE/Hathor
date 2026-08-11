@@ -260,19 +260,39 @@ public:
       */
     bool handleKeyPress(const juce::KeyPress& key, HathorTab* tab);
 
-     /**
-       * Sync all tabs' Play/Stop button visuals to the engine's slot state (B1).
-       * Called from UITimer at 60 Hz so the UI reflects engine state changes
-       * from any path, not only button clicks.
-       */
-      void syncSlotButtonStates();
+    /**
+        * Sync all tabs' Play/Stop button visuals to the engine's slot state (B1).
+        * Called from UITimer at 60 Hz so the UI reflects engine state changes
+        * from any path, not only button clicks.
+        */
+       void syncSlotButtonStates();
 
-      /**
-       * Tick all open tabs' ghost-text logic. Called from UITimer at 60 Hz
-       * (via onGhostTick callback) so that debounce timers and latency
-       * timeouts fire on schedule.
+       /**
+        * Tick all open tabs' ghost-text logic. Called from UITimer at 60 Hz
+        * (via onGhostTick callback) so that debounce timers and latency
+        * timeouts fire on schedule.
+        */
+       void ghostTick();
+
+#ifdef HATHOR_ENABLE_GHOST_TELEMETRY
+    /**
+       * Save ghost completion telemetry from all tabs to a single JSON file (J-6).
+       * Called on application shutdown to persist quality metrics across sessions.
+       *
+       * @param filePath  Path to the telemetry JSON file.
+       * @return true if all tabs were serialized successfully.
        */
-      void ghostTick();
+    bool saveTelemetry(const std::string& filePath) const;
+
+    /**
+       * Load ghost completion telemetry and distribute it to all tabs.
+       * Called on application startup to restore quality metrics.
+       * Merges per-tab telemetry by matching the URI stored in each event.
+       *
+       * @param filePath  Path to the telemetry JSON file.
+       */
+    void loadTelemetry(const std::string& filePath);
+#endif
 
      // -----------------------------------------------------------------------
      // C1: Now-playing highlight update path

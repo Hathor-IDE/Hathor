@@ -18,6 +18,11 @@
 #include "hathor/LanguageMetadata.hpp"
 #include "AudioEngine.hpp"
 
+#ifdef HATHOR_ENABLE_GHOST_TELEMETRY
+#include <fstream>
+#include <sstream>
+#endif
+
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
@@ -1520,5 +1525,79 @@ void EditorArea::evalCkOnWorkerThread(HathorTab* tab,
             });
     }).detach();
 }
+
+// ---------------------------------------------------------------------------
+// J-6: Telemetry persistence
+// ---------------------------------------------------------------------------
+
+#ifdef HATHOR_ENABLE_GHOST_TELEMETRY
+bool EditorArea::saveTelemetry(const std::string& filePath) const
+{
+    nlohmann::json allData;
+    allData["tabs"] = nlohmann::json::array();
+
+    for (const auto& tab : tabs_)
+    {
+        auto* telemetry = tab->ghostTelemetry();
+        if (telemetry == nullptr)
+            continue;
+
+        nlohmann::json tabData;
+        tabData["uri"] = tab->lspDocumentUri().toStdString();
+        tabData["languageId"] = tab->isChuckTab() ? "chuck" : "hathor";
+        tabData["telemetryJson"] = telemetry->toJson();
+        allData["tabs"].push_back(tabData);
+    }
+
+    std::ofstream file(filePath, std::ios::trunc | std::ios::out);
+    if (!file.is_open())
+        return false;
+
+    file << allData.dump(2);
+    return file.good();
+}
+
+void EditorArea::loadTelemetry(const std::string& filePath)
+{
+    std::ifstream file(filePath);
+    if (!file.is_open())
+        return;
+
+    std::stringstream ss;
+    ss << file.rdbuf();
+
+    try
+    {
+        auto allData = nlohmann::json::parse(ss.str());
+        if (!allData.contains("tabs") || !allData["tabs"].is_array())
+            return;
+
+        // Build a lookup of tab URI → HathorTab for efficient matching.
+        for (const auto& tabData : allData["tabs"])
+        {
+            if (!tabData.contains("uri") || !tabData.contains("telemetryJson"))
+                continue;
+
+            std::string uri = tabData["uri"].get<std::string>();
+
+            // Find the matching tab by URI.
+            for (auto& tab : tabs_)
+            {
+                if (tab->lspDocumentUri().toStdString() == uri)
+                {
+                    auto* telemetry = tab->ghostTelemetry();
+                    if (telemetry)
+                        telemetry->loadFromJson(tabData["telemetryJson"].get<std::string>());
+                    break;
+                }
+            }
+        }
+    }
+    catch (const nlohmann::json::exception&)
+    {
+        // Silently ignore malformed telemetry files.
+    }
+}
+#endif
 
 } // namespace hathor::ui

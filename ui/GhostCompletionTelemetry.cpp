@@ -11,8 +11,13 @@
 
 #include "GhostCompletionTelemetry.hpp"
 
+#ifdef HATHOR_ENABLE_GHOST_TELEMETRY
+#include "GhostCompletionTelemetry.hpp"
+#endif
+
 #include <algorithm>
 #include <cmath>
+#include <fstream>
 #include <sstream>
 
 namespace hathor::lsp {
@@ -463,6 +468,139 @@ std::string GhostCompletionTelemetry::generateReport() const
 
     report << "\n=== End of Report ===\n";
     return report.str();
+}
+
+// ---------------------------------------------------------------------------
+// Persistence (serialization for disk storage)
+// ---------------------------------------------------------------------------
+
+/** Helper: serialize a GhostEventType to its string name. */
+static const char* eventTypeToString(GhostEventType type)
+{
+    switch (type)
+    {
+        case GhostEventType::Displayed:            return "displayed";
+        case GhostEventType::Accepted:             return "accepted";
+        case GhostEventType::PartiallyAccepted:    return "partially_accepted";
+        case GhostEventType::Rejected:             return "rejected";
+        case GhostEventType::StaleRejected:        return "stale_rejected";
+        case GhostEventType::CompileResult:        return "compile_result";
+        case GhostEventType::DiagnosticAdded:      return "diagnostic_added";
+        case GhostEventType::ImmediateDeletion:    return "immediate_deletion";
+        case GhostEventType::HeavyModification:    return "heavy_modification";
+    }
+    return "unknown";
+}
+
+/** Helper: parse a GhostEventType from its string name. */
+static GhostEventType stringToEventType(const std::string& s)
+{
+    if (s == "displayed")            return GhostEventType::Displayed;
+    if (s == "accepted")             return GhostEventType::Accepted;
+    if (s == "partially_accepted")   return GhostEventType::PartiallyAccepted;
+    if (s == "rejected")             return GhostEventType::Rejected;
+    if (s == "stale_rejected")       return GhostEventType::StaleRejected;
+    if (s == "compile_result")       return GhostEventType::CompileResult;
+    if (s == "diagnostic_added")     return GhostEventType::DiagnosticAdded;
+    if (s == "immediate_deletion")   return GhostEventType::ImmediateDeletion;
+    if (s == "heavy_modification")   return GhostEventType::HeavyModification;
+    return GhostEventType::Displayed;
+}
+
+std::string GhostCompletionTelemetry::toJson() const
+{
+    nlohmann::json j;
+    j["events"] = nlohmann::json::array();
+
+    for (const auto& evt : events_)
+    {
+        nlohmann::json e;
+        e["type"] = eventTypeToString(evt.type);
+        e["languageId"] = evt.languageId;
+        e["timestampMs"] = evt.timestampMs;
+        e["revision"] = evt.revision;
+        e["requestId"] = evt.requestId;
+        e["acceptLength"] = evt.acceptLength;
+        e["compileSuccess"] = evt.compileSuccess;
+        e["diagnosticCount"] = evt.diagnosticCount;
+        e["isStale"] = evt.isStale;
+        e["ghostLabel"] = evt.ghostLabel;
+        j["events"].push_back(e);
+    }
+
+    return j.dump();
+}
+
+void GhostCompletionTelemetry::loadFromJson(const std::string& jsonStr)
+{
+    clear();
+
+    try
+    {
+        auto j = nlohmann::json::parse(jsonStr);
+
+        if (!j.is_object() || !j.contains("events") || !j["events"].is_array())
+            return;
+
+        for (const auto& e : j["events"])
+        {
+            TelemetryEvent evt;
+            if (e.contains("type"))
+                evt.type = stringToEventType(e["type"].get<std::string>());
+            if (e.contains("languageId"))
+                evt.languageId = e["languageId"].get<std::string>();
+            if (e.contains("timestampMs"))
+                evt.timestampMs = e["timestampMs"].get<int64_t>();
+            if (e.contains("revision"))
+                evt.revision = e["revision"].get<int>();
+            if (e.contains("requestId"))
+                evt.requestId = e["requestId"].get<std::string>();
+            if (e.contains("acceptLength"))
+                evt.acceptLength = e["acceptLength"].get<int>();
+            if (e.contains("compileSuccess"))
+                evt.compileSuccess = e["compileSuccess"].get<bool>();
+            if (e.contains("diagnosticCount"))
+                evt.diagnosticCount = e["diagnosticCount"].get<int>();
+            if (e.contains("isStale"))
+                evt.isStale = e["isStale"].get<bool>();
+            if (e.contains("ghostLabel"))
+                evt.ghostLabel = e["ghostLabel"].get<std::string>();
+
+            // Reconstruct requestStartTimes_ for time-to-accept computation.
+            if (evt.type == GhostEventType::Displayed && !evt.isStale)
+                requestStartTimes_[evt.requestId] = evt.timestampMs;
+
+            events_.push_back(std::move(evt));
+        }
+    }
+    catch (const nlohmann::json::exception&)
+    {
+        // JSON parse error — silently ignore (start fresh).
+        events_.clear();
+        requestStartTimes_.clear();
+    }
+}
+
+bool GhostCompletionTelemetry::saveToFile(const std::string& filePath) const
+{
+    std::ofstream file(filePath, std::ios::trunc | std::ios::out);
+    if (!file.is_open())
+        return false;
+
+    file << toJson();
+    return file.good();
+}
+
+bool GhostCompletionTelemetry::loadFromFile(const std::string& filePath)
+{
+    std::ifstream file(filePath);
+    if (!file.is_open())
+        return false;
+
+    std::stringstream ss;
+    ss << file.rdbuf();
+    loadFromJson(ss.str());
+    return true;
 }
 
 } // namespace hathor::lsp
