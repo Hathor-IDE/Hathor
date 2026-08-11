@@ -75,6 +75,12 @@ public:
     /** Clear the ghost text. */
     void clearGhost() noexcept;
 
+    /** Hide the overlay component visually without clearing the stored ghost text. */
+    void hideGhost() noexcept;
+
+    /** Show the overlay component if ghost text is present. */
+    void showGhost() noexcept;
+
     /** Accept the ghost text — returns the text to insert, then clears. */
     std::string acceptGhost();
 

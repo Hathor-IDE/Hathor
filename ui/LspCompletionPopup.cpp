@@ -294,6 +294,7 @@ void LspCompletionPopup::dismiss()
 {
     if (onDismiss_)
         onDismiss_();
+    setVisible(false);
 }
 
 const lsp::CompletionCandidate* LspCompletionPopup::selectedCandidate() const noexcept

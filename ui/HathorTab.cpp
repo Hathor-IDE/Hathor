@@ -66,9 +66,9 @@ HathorTab::HathorTab(int slotIndex, const juce::File& file)
      // AI-4: LSP language integration components
      if (!useChuckTokeniser_)
      {
-         lspCompletionPopup_ = std::make_unique<LspCompletionPopup>(
-              [this](const lsp::CompletionCandidate& c) { onCompletionSelected(c); },
-              []() { /* popup dismissed */ });
+          lspCompletionPopup_ = std::make_unique<LspCompletionPopup>(
+               [this](const lsp::CompletionCandidate& c) { onCompletionSelected(c); },
+               [this]() { if (coordinator_) coordinator_->onLspPopupDismissed(); });
 
          lspHoverHandler_ = std::make_unique<LspHoverHandler>(
              [this]() { hoverPending_ = false; });
@@ -92,10 +92,10 @@ HathorTab::HathorTab(int slotIndex, const juce::File& file)
       // AI-4: Ghost text overlay (llm-ls inline completion)
       // Supports both .hathor and .ck files — the languageId is set
       // from the active tokeniser in triggerGhostCompletion().
-      ghostLogic_ = std::make_unique<lsp::GhostCompletionLogic>();
-      ghostLogic_->setEnabled(lsp::GhostProviderResolver::isEnabled());
-      ghostLogic_->setDebounceMs(300);
-      ghostLogic_->setTimeoutMs(5000);
+      coordinator_ = std::make_unique<CompletionCoordinator>();
+      coordinator_->setGhostEnabled(lsp::GhostProviderResolver::isEnabled());
+      coordinator_->setGhostDebounceMs(300);
+      coordinator_->setGhostTimeoutMs(5000);
 
       ghostOverlay_ = std::make_unique<GhostTextOverlay>();
       ghostOverlay_->setInterceptsMouseClicks(false, false);
@@ -437,9 +437,16 @@ void HathorTab::lookAndFeelChanged()
 // ---------------------------------------------------------------------------
 
 void HathorTab::codeDocumentTextInserted(const juce::String& /*newText*/,
-                                          int /*insertIndex*/)
+                                         int /*insertIndex*/)
 {
     markUnsaved();
+
+    // AI-G3: Document change invalidates ghost state. The coordinator
+    // increments docRevision_, cancels pending ghost requests, and clears
+    // any active ghost.
+    if (coordinator_)
+        coordinator_->onDocumentChanged();
+
     // AI-4: Clear ghost text on any edit — the ghost is context-sensitive
     // and must be recomputed for the new document state.
     if (ghostOverlay_)
@@ -451,6 +458,11 @@ void HathorTab::codeDocumentTextDeleted(int /*startIndex*/,
                                          int /*endIndex*/)
 {
     markUnsaved();
+
+    // AI-G3: Document change invalidates ghost state.
+    if (coordinator_)
+        coordinator_->onDocumentChanged();
+
     // AI-4: Clear ghost text on any edit.
     if (ghostOverlay_)
         ghostOverlay_->clearGhost();
@@ -496,10 +508,10 @@ void HathorTab::notifyLspDidOpen()
     juce::String text = document_.getAllContent();
     lspClient_->didOpenDocument(uri.toStdString(), text.toStdString(), "hathor");
 
-    // AI-4: Mirror document open to the ghost-text (llm-ls) client so that
+     // AI-4: Mirror document open to the ghost-text (llm-ls) client so that
     // llm-ls can resolve completion context from the synced document.
     // Supports both .hathor and .ck files with their respective languageId.
-    if (ghostClient_ && ghostLogic_ && ghostLogic_->isEnabled())
+    if (ghostClient_ && coordinator_ && coordinator_->isGhostEnabled())
     {
         std::string ghostLangId = useChuckTokeniser_ ? "chuck" : "hathor";
         ghostClient_->didOpenDocument(uri.toStdString(), text.toStdString(), ghostLangId);
@@ -526,9 +538,9 @@ void HathorTab::notifyLspDidChange()
     ++changeVersion;
     lspClient_->didChangeDocument(uri.toStdString(), changeVersion, currentStr);
 
-    // AI-4: Mirror document change to the ghost-text (llm-ls) client.
+     // AI-4: Mirror document change to the ghost-text (llm-ls) client.
     // Supports both .hathor and .ck files.
-    if (ghostClient_ && ghostLogic_ && ghostLogic_->isEnabled())
+    if (ghostClient_ && coordinator_ && coordinator_->isGhostEnabled())
     {
         std::string ghostLangId = useChuckTokeniser_ ? "chuck" : "hathor";
         ghostClient_->didChangeDocument(uri.toStdString(), changeVersion, currentStr);
@@ -545,7 +557,7 @@ void HathorTab::notifyLspDidClose()
 
     // AI-4: Mirror document close to the ghost-text (llm-ls) client.
     // Supports both .hathor and .ck files.
-    if (ghostClient_ && ghostLogic_ && ghostLogic_->isEnabled())
+    if (ghostClient_ && coordinator_ && coordinator_->isGhostEnabled())
         ghostClient_->didCloseDocument(uri.toStdString());
 }
 
@@ -553,6 +565,12 @@ void HathorTab::requestLspCompletion()
 {
     if (!lspClient_ || !lspCompletionPopup_ || useChuckTokeniser_)
         return;
+
+    // AI-G3: When LSP completion is requested, the coordinator cancels
+    // any active ghost and suppresses further ghost display until the
+    // popup is dismissed.
+    if (coordinator_)
+        coordinator_->requestLspCompletion();
 
     auto caretPos = editor_.getCaretPos();
     int cursorLine = caretPos.getLineNumber();
@@ -701,23 +719,28 @@ void HathorTab::onCompletionSelected(const lsp::CompletionCandidate& candidate)
 
 bool HathorTab::handleLspKeyPress(const juce::KeyPress& key)
 {
-    // AI-4: Ghost text — Ctrl+Space forces a ghost completion request
-    // (overrides the normal debounce / idle trigger).
-    // Supports both .hathor and .ck files.
-    if (ghostLogic_ && ghostLogic_->isEnabled())
+    // AI-G3: Ctrl+Space → deterministic LSP completion only.
+    // The ghost trigger is moved to Ctrl+Shift+Space to eliminate the conflict.
+    if (key == juce::KeyPress(' ', juce::ModifierKeys::ctrlModifier, 0))
     {
-               if (key == juce::KeyPress(' ', juce::ModifierKeys::ctrlModifier, 0))
+        requestLspCompletion();
+        return true;
+    }
+
+    // Ctrl+Shift+Space: force a ghost completion request.
+    // Clears any pending ghost request and restarts the debounce cycle.
+    if (key == juce::KeyPress(' ', juce::ModifierKeys::ctrlModifier | juce::ModifierKeys::shiftModifier, 0))
+    {
+        if (coordinator_ && coordinator_->isGhostEnabled())
         {
-            // Force trigger — clear debounce and request immediately
-            ghostLogic_->cancelPendingRequest();
+            coordinator_->cancelPendingGhostRequest();
             triggerGhostCompletion();
             return true;
         }
     }
 
-    // Accept ghost — if ghost is visible, accept on Ctrl+. (Tab is consumed
-    // by the editor's key map for indentation, so we use Ctrl+. here.)
-    if (ghostLogic_ && ghostLogic_->isEnabled()
+    // Accept ghost — if ghost is visible, accept on Ctrl+.
+    if (coordinator_ && coordinator_->isGhostEnabled()
         && ghostOverlay_ && ghostOverlay_->hasGhost())
     {
         if (key.getModifiers().isCtrlDown() && key.getKeyCode() == '.')
@@ -727,22 +750,50 @@ bool HathorTab::handleLspKeyPress(const juce::KeyPress& key)
         }
     }
 
-    // Ctrl+Space: trigger manual LSP completion
-    if (key == juce::KeyPress(' ', juce::ModifierKeys::ctrlModifier, 0))
+    // Tab: accept ghost (if visible). If no ghost, let it fall through
+    // to the editor's default Tab handling (indentation).
+    if (key == juce::KeyPress::tabKey)
     {
-        requestLspCompletion();
-        return true;
+        if (coordinator_ && coordinator_->isGhostActive()
+            && ghostOverlay_ && ghostOverlay_->hasGhost())
+        {
+            acceptGhostCompletion();
+            return true;
+        }
     }
 
-    // Escape: dismiss completion popup (works when popup doesn't have focus)
-    if (key == juce::KeyPress::escapeKey &&
-        lspCompletionPopup_ && lspCompletionPopup_->hasCandidates())
+    // Escape: dismiss popup or ghost
+    if (key == juce::KeyPress::escapeKey)
     {
-        lspCompletionPopup_->dismiss();
-        return true;
+        if (lspCompletionPopup_ && lspCompletionPopup_->hasCandidates())
+        {
+            lspCompletionPopup_->dismiss();
+            if (coordinator_)
+                coordinator_->onLspPopupDismissed();
+            return true;
+        }
+        if (coordinator_ && coordinator_->isGhostActive())
+        {
+            dismissGhostCompletion();
+            return true;
+        }
     }
 
-    return false; // let other handlers process the key
+    // Up/Down: navigate LSP completion popup (if visible)
+    if (lspCompletionPopup_ && lspCompletionPopup_->hasCandidates())
+    {
+        if (key == juce::KeyPress::upKey)
+        {
+            // Let the popup handle it
+            return false;
+        }
+        if (key == juce::KeyPress::downKey)
+        {
+            return false;
+        }
+    }
+
+    return false;
 }
 
 void HathorTab::handleCursorMove()
@@ -754,9 +805,10 @@ void HathorTab::handleCursorMove()
     if (!lspClient_ || !lspHoverHandler_ || useChuckTokeniser_)
         return;
 
-    // AI-4: Trigger ghost text on cursor movement (debounced in GhostCompletionLogic).
-    // Supports both .hathor and .ck files.
-    if (ghostLogic_ && ghostLogic_->isEnabled())
+    // AI-4 + AI-G3: Trigger ghost text on cursor movement.
+    // The coordinator ensures ghost is suppressed when the LSP popup is
+    // visible. The ghost logic handles debounce internally.
+    if (coordinator_ && coordinator_->isGhostEnabled() && !coordinator_->isLspPopupActive())
     {
         triggerGhostCompletion();
     }
@@ -851,7 +903,11 @@ void HathorTab::installGhostClient(GhostLlmClient* client) noexcept
 
 void HathorTab::triggerGhostCompletion()
 {
-    if (!ghostLogic_ || !ghostLogic_->isEnabled())
+    if (!coordinator_ || !coordinator_->isGhostEnabled())
+        return;
+
+    // AI-G3: The coordinator suppresses ghost when the LSP popup is visible.
+    if (coordinator_->isLspPopupActive())
         return;
 
     // Build the current editor context
@@ -874,13 +930,14 @@ void HathorTab::triggerGhostCompletion()
     if (getAuthoringContext)
         ctx.authoringContext = getAuthoringContext();
 
-    // Feed context to the logic layer — it handles debounce and returns
-    // nullopt (the request is only sent when debounce expires via ghostTick).
+    // Feed context to the coordinator — it delegates to GhostCompletionLogic
+    // which handles debounce. The request is only sent when debounce expires
+    // via ghostTick().
     int64_t nowMs = static_cast<int64_t>(
         std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::steady_clock::now().time_since_epoch())
         .count());
-    ghostLogic_->onEditorChanged(ctx, nowMs);
+    coordinator_->triggerGhostCompletion(ctx, nowMs);
 
     // Clear any existing ghost — a new request cycle has started
     if (ghostOverlay_)
@@ -889,7 +946,7 @@ void HathorTab::triggerGhostCompletion()
 
 void HathorTab::acceptGhostCompletion()
 {
-    if (!ghostOverlay_ || !ghostLogic_)
+    if (!ghostOverlay_ || !coordinator_)
         return;
 
     // Get the text to insert
@@ -897,8 +954,9 @@ void HathorTab::acceptGhostCompletion()
     if (text.empty())
         return;
 
-    // Send accept notification to llm-ls
-    auto acceptParams = ghostLogic_->onAccept();
+    // AI-G3: Accept through the coordinator — it handles mode transition
+    // and returns the accept notification params.
+    auto acceptParams = coordinator_->onGhostAccepted();
     if (acceptParams.has_value() && ghostClient_)
         ghostClient_->sendAccept(*acceptParams);
 
@@ -909,34 +967,40 @@ void HathorTab::acceptGhostCompletion()
 
 void HathorTab::dismissGhostCompletion()
 {
-    if (!ghostLogic_ || !ghostOverlay_)
+    if (!coordinator_ || !ghostOverlay_)
         return;
 
-    // Send reject notification
-    auto rejectParams = ghostLogic_->onReject();
+    // AI-G3: Reject through the coordinator
+    auto rejectParams = coordinator_->onGhostRejected();
     if (rejectParams.has_value() && ghostClient_)
         ghostClient_->sendReject(*rejectParams);
 
-    // Clear the ghost
+    // Clear the ghost overlay
     ghostOverlay_->clearGhost();
 }
 
 void HathorTab::ghostTick()
 {
-    if (!ghostLogic_ || !ghostLogic_->isEnabled() || !ghostClient_ || !ghostOverlay_)
+    if (!coordinator_ || !coordinator_->isGhostEnabled()
+        || !ghostClient_ || !ghostOverlay_)
         return;
 
-    // Let the logic layer check debounce + timeout
+    // AI-G3: The coordinator suppresses ghost ticks when the LSP popup
+    // is visible.
+    if (coordinator_->isLspPopupActive())
+        return;
+
+    // Let the coordinator check debounce + timeout
     int64_t nowMs = static_cast<int64_t>(
         std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::steady_clock::now().time_since_epoch())
         .count());
 
-    auto opt = ghostLogic_->onTimerTick(nowMs);
+    auto opt = coordinator_->onGhostTick(nowMs);
     if (!opt.has_value())
         return;
 
-    // The logic returned a request + ID — send it via the client
+    // The coordinator returned a request + ID — send it via the client
     auto [req, requestId] = std::move(opt.value());
 
     // Resolve provider config from env
@@ -948,7 +1012,7 @@ void HathorTab::ghostTick()
     }
 
     // Rebuild the request with the resolved provider config
-    const auto& ctx = ghostLogic_->currentContext();
+    const auto& ctx = coordinator_->ghostLogic().currentContext();
     req = lsp::GhostCompletionLogic::buildRequest(ctx, *config);
 
     // Send the request via the llm-ls client
@@ -956,16 +1020,20 @@ void HathorTab::ghostTick()
         req,
         requestId,
         [this, requestId](const std::string& id,
-                          const lsp::GhostCompletionResponse& resp)
+                           const lsp::GhostCompletionResponse& resp)
         {
-            if (!ghostLogic_ || !ghostOverlay_)
+            if (!coordinator_ || !ghostOverlay_)
                 return;
 
             int64_t responseTime = static_cast<int64_t>(
                 std::chrono::duration_cast<std::chrono::milliseconds>(
                     std::chrono::steady_clock::now().time_since_epoch())
                 .count());
-            auto result = ghostLogic_->onGhostResponse(id, resp, responseTime);
+
+            // AI-G3: The coordinator handles LSP coexistence — it
+            // suppresses the ghost response if the LSP popup is visible.
+            auto result = coordinator_->onGhostResponse(id, resp, responseTime);
+
             if (!result.has_value() || result->isEmpty())
             {
                 ghostOverlay_->clearGhost();
@@ -984,8 +1052,20 @@ void HathorTab::ghostTick()
                 ghostResult.character,
                 0);
 
-            ghostOverlay_->setTopLeftPosition(caretRect.getRight(), caretRect.getY());
-            ghostOverlay_->toFront(false);
+            // AI-G3: Only show the ghost overlay if the coordinator
+            // hasn't entered LspPopupActive mode (no late ghost-behind-popup).
+            if (!coordinator_->isLspPopupActive())
+            {
+                ghostOverlay_->showGhost();
+                ghostOverlay_->setTopLeftPosition(caretRect.getRight(), caretRect.getY());
+                ghostOverlay_->toFront(false);
+            }
+            else
+            {
+                // LSP popup took over while the response was in flight —
+                // hide the ghost overlay.
+                ghostOverlay_->hideGhost();
+            }
         });
 }
 

@@ -29,6 +29,7 @@
 #include "GhostProtocol.hpp"
 #include "GhostTextOverlay.hpp"
 #include "GhostCompletionLogic.hpp"
+#include "CompletionCoordinator.hpp"
 
 #include <optional>
 #include <functional>
@@ -231,13 +232,14 @@ public:
       /// Request signature help from the LSP (when cursor is inside parens).
       void requestLspSignatureHelp();
 
-      /// Handle a key press for LSP features (Ctrl+Space, Tab, Escape, Up/Down).
-      /// Called by the LspKeyListener installed on the editor. Returns true
-      /// if the key was consumed by LSP logic.
+      /// Handle a key press for LSP + ghost features (Ctrl+Space, Ctrl+Shift+Space,
+      /// Tab, Escape, Up/Down). Called by the LspKeyListener installed on the editor.
+      /// Returns true if the key was consumed.
       bool handleLspKeyPress(const juce::KeyPress& key);
 
       /// Handle cursor movement for debounced hover requests.
       /// Called by EditorArea / UITimer when the cursor position changes.
+      /// Also triggers ghost completion debounce cycle.
       void handleCursorMove();
 
       /// Handle a completion selection — applies the insert text.
@@ -274,17 +276,11 @@ public:
       /// Dismiss the ghost text (Escape key or any edit).
       void dismissGhostCompletion();
 
-      /// Check for ghost text timeout / tick — called by EditorArea's
-      /// UITimer. Returns true if a new request should be sent.
-      void ghostTick();
+       /// Check for ghost text timeout / tick — called by EditorArea's
+       /// UITimer.
+       void ghostTick();
 
-      /// Handle a key press for ghost text features (Tab to accept, Escape
-      /// to dismiss, Ctrl+Shift+Space to force request).
-      /// Called by the LspKeyListener installed on the editor. Returns true
-      /// if the key was consumed by ghost logic.
-      bool handleGhostKeyPress(const juce::KeyPress& key);
-
-    /// Callback fired by the LspHoverHandler when it's dismissed
+     /// Callback fired by the LspHoverHandler when it's dismissed
     /// (used to clear hover state).
     std::function<void(const juce::String&)> onStatusMessage;
 
@@ -447,15 +443,18 @@ private:
       int                                   hoverPendingCol_{ -1 };
       bool                                  hoverPending_{ false };
 
-     // AI-4: Ghost text (llm-ls inline completion)
-     // -----------------------------------------------------------------------
-     // GhostLlmClient is non-owning (set by EditorArea, like lspClient_).
-     // GhostCompletionLogic is owned by this tab (JUCE-free, testable).
-     // GhostTextOverlay is a child component for rendering.
-     // -----------------------------------------------------------------------
-     class GhostLlmClient*                   ghostClient_{ nullptr };
-     std::unique_ptr<lsp::GhostCompletionLogic> ghostLogic_;
-     std::unique_ptr<GhostTextOverlay>          ghostOverlay_;
+      // AI-4: Ghost text (llm-ls inline completion)
+      // -----------------------------------------------------------------------
+      // GhostLlmClient is non-owning (set by EditorArea, like lspClient_).
+      // CompletionCoordinator is owned by this tab (JUCE-free, testable).
+      //   - Wraps GhostCompletionLogic for the ghost lifecycle.
+      //   - Coordinates LSP + ghost coexistence (AI-G3): suppresses ghost
+      //     when LSP popup is visible; cancels ghost on Ctrl+Space.
+      // GhostTextOverlay is a child component for rendering.
+      // -----------------------------------------------------------------------
+      class GhostLlmClient*             ghostClient_{ nullptr };
+      std::unique_ptr<CompletionCoordinator> coordinator_;
+      std::unique_ptr<GhostTextOverlay>     ghostOverlay_;
 
      juce::CodeDocument          document_;
      juce::CodeEditorComponent   editor_;

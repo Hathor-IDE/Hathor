@@ -108,6 +108,24 @@ void GhostTextOverlay::clearGhost() noexcept
     }
 }
 
+void GhostTextOverlay::hideGhost() noexcept
+{
+    if (isVisible())
+    {
+        setVisible(false);
+        repaint();
+    }
+}
+
+void GhostTextOverlay::showGhost() noexcept
+{
+    if (!ghostText_.empty() && !isVisible())
+    {
+        setVisible(true);
+        repaint();
+    }
+}
+
 std::string GhostTextOverlay::acceptGhost()
 {
     std::string text = ghostText_;
