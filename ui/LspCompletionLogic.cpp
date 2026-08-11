@@ -432,6 +432,13 @@ std::vector<CompletionCandidate> chuckMetadataFallback(
 
     std::vector<CompletionCandidate> candidates;
 
+    // Collect the set of names that appear in metadata::chuckApi (regardless
+    // of supported). This prevents unsupported APIs from leaking through
+    // the built-in sets and avoids duplicates.
+    std::unordered_set<std::string> metadataApiNames;
+    for (const auto& ca : metadata.chuckApi)
+        metadataApiNames.insert(ca.name);
+
     // --- L1a: ChucK API definitions from versioned metadata ---
     // These are the canonical supported-surface ChucK APIs (UGens, constants,
     // library classes). Only `supported` entries are offered.
@@ -446,7 +453,11 @@ std::vector<CompletionCandidate> chuckMetadataFallback(
         c.detail = ca.signature;
         c.documentation = ca.description;
         if (ca.example)
-            c.documentation += "\n\nExample:\n" + truncateStr(*ca.example, 120);
+        {
+            std::string ex = *ca.example;
+            if (ex.size() > 120) ex = ex.substr(0, 120) + "...";
+            c.documentation += "\n\nExample:\n" + ex;
+        }
         c.insertText = ca.name;
         c.source = "metadata";
         candidates.push_back(std::move(c));
@@ -455,6 +466,15 @@ std::vector<CompletionCandidate> chuckMetadataFallback(
     // --- L1b: ChucK built-in keywords and types ---
     // From the vscode-chuck grammar (ChuckKeywords). These are always available
     // regardless of metadata, but we gate on compatibility for consistency.
+    using hathor::ui::chuckKeywordSet;
+    using hathor::ui::chuckModifierSet;
+    using hathor::ui::chuckTypeSet;
+    using hathor::ui::chuckTypeKeywordSet;
+    using hathor::ui::chuckVariableLanguageSet;
+    using hathor::ui::chuckConstantSet;
+    using hathor::ui::chuckUgenSet;
+    using hathor::ui::chuckLibrarySet;
+
     const auto& keywords = chuckKeywordSet();
     for (const auto& kw : keywords)
     {
@@ -537,17 +557,10 @@ std::vector<CompletionCandidate> chuckMetadataFallback(
     for (const auto& ugen : ugens)
     {
         if (!matchesChuckPrefix(ugen, context.fullPrefix)) continue;
-        // Don't duplicate if already in metadata
-        bool alreadyListed = false;
-        for (const auto& existing : candidates)
-        {
-            if (existing.label == ugen && existing.source == "metadata")
-            {
-                alreadyListed = true;
-                break;
-            }
-        }
-        if (alreadyListed) continue;
+        // Skip if this UGen is already covered by metadata (whether
+        // supported or unsupported — unsupported ones are intentionally
+        // excluded so they don't leak as "builtin").
+        if (metadataApiNames.count(std::string(ugen))) continue;
         CompletionCandidate c;
         c.label = std::string(ugen);
         c.kind = CompletionItemKind::Class;
@@ -561,6 +574,8 @@ std::vector<CompletionCandidate> chuckMetadataFallback(
     for (const auto& lib : libs)
     {
         if (!matchesChuckPrefix(lib, context.fullPrefix)) continue;
+        // Skip if already covered by metadata (supported or unsupported).
+        if (metadataApiNames.count(std::string(lib))) continue;
         CompletionCandidate c;
         c.label = std::string(lib);
         c.kind = CompletionItemKind::Module;
@@ -572,6 +587,9 @@ std::vector<CompletionCandidate> chuckMetadataFallback(
 
     return candidates;
 }
+
+CompletionCandidate makeCandidate(const language::LanguageMetadata& /*metadata*/,
+                                  const language::MiniNotationFunction& fn)
 {
     CompletionCandidate c;
     c.label = fn.name;

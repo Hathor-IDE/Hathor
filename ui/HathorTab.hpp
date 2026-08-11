@@ -184,6 +184,14 @@ public:
     std::function<void()> onUnsavedDotChanged;
 
     // -----------------------------------------------------------------------
+    // AI-G7: ChucK diagnostics callback (installed by EditorArea)
+    // -----------------------------------------------------------------------
+    // Fired when ChucK compiler diagnostics are produced for this tab.
+    // EditorArea forwards these to the LspContextBridge for AI-8 context.
+    std::function<void(const std::string& uri,
+                       const std::vector<lsp::Diagnostic>&)> onChuckDiagnostics;
+
+    // -----------------------------------------------------------------------
     // Per-slot Play/Stop (B1)
     // -----------------------------------------------------------------------
 

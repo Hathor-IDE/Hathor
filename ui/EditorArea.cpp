@@ -929,11 +929,20 @@ void EditorArea::wireUnsavedCallback(HathorTab& tab)
             editorContextBridge_->refresh();
     };
 
-    // AI-8: Refresh the editor context snapshot when the cursor moves.
+     // AI-8: Refresh the editor context snapshot when the cursor moves.
     tab.onCursorMoved = [this]()
     {
         if (editorContextBridge_ != nullptr)
             editorContextBridge_->refresh();
+    };
+
+    // AI-G7: Forward ChucK compiler diagnostics to the LspContextBridge
+    // so they are included in the AI-8 authoring context for .ck files.
+    tab.onChuckDiagnostics = [this](const std::string& uri,
+                                    const std::vector<lsp::Diagnostic>& diags)
+    {
+        if (lspContextBridge_ != nullptr)
+            lspContextBridge_->setLspDiagnostics(uri, diags);
     };
 }
 

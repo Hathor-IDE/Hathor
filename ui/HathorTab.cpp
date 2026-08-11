@@ -549,10 +549,7 @@ void HathorTab::notifyLspDidOpen()
 
 void HathorTab::notifyLspDidChange()
 {
-    if (!lspClient_ || useChuckTokeniser_)
-        return;
-
-    // Debounce: only send if text actually changed since last send
+    // Debounce: only send if text actually changed since last send.
     static std::unordered_map<juce::Component*, std::string> lastText;
     juce::String currentText = document_.getAllContent();
     std::string currentStr = currentText.toStdString();
@@ -565,9 +562,15 @@ void HathorTab::notifyLspDidChange()
     juce::String uri = lspDocumentUri();
     static int changeVersion = 1;
     ++changeVersion;
-    lspClient_->didChangeDocument(uri.toStdString(), changeVersion, currentStr);
 
-     // AI-4: Mirror document change to the ghost-text (llm-ls) client.
+    if (!useChuckTokeniser_)
+    {
+        // .hathor: send change to the Strudel LSP server.
+        if (lspClient_)
+            lspClient_->didChangeDocument(uri.toStdString(), changeVersion, currentStr);
+    }
+
+    // AI-4 / AI-G7: Mirror document change to the ghost-text (llm-ls) client.
     // Supports both .hathor and .ck files.
     if (ghostClient_ && coordinator_ && coordinator_->isGhostEnabled())
     {
@@ -1140,6 +1143,11 @@ void HathorTab::notifyChuckDiagnostics(const std::string& uri,
 
     // Reuse the same display path as LSP diagnostics.
     notifyLspDiagnostics(uri, diags);
+
+    // AI-8: Forward ChucK diagnostics to the LspContextBridge so they
+    // can be included in the authoring context payload for .ck files.
+    if (onChuckDiagnostics)
+        onChuckDiagnostics(uri, diags);
 }
 
 void HathorTab::triggerChuckDiagnostics()

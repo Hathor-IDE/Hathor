@@ -564,3 +564,354 @@ TEST_CASE("LspDiagnosticsDisplay summary string", "[lsp][diagnostics]")
     REQUIRE(s.find("2 errors") != std::string::npos);
     REQUIRE(s.find("1 warning") != std::string::npos);
 }
+
+// ===========================================================================
+// AI-G7: ChucK deterministic completion (no LSP server exists)
+// ===========================================================================
+
+namespace {
+    language::LanguageMetadata makeChuckTestMetadata()
+    {
+        language::LanguageMetadata metadata;
+        metadata.schemaVersion = language::kSchemaVersion;
+        metadata.hathorEngineCompat = std::string(language::kHathorEngineCompat);
+        metadata.strudelMiniNotationCompat = std::string(language::kStrudelMiniNotationCompat);
+        metadata.chuckLibVersion = std::string(language::kChuckLibVersion);
+        metadata.chuckIntegrationSurface = std::string(language::kChuckIntegrationSurface);
+
+        metadata.chuckApi.push_back({
+            "SinOsc", "ugen", "SinOsc osc => dac",
+            "Sinusoidal oscillator UGen", true,
+            "SinOsc s => dac"
+        });
+        metadata.chuckApi.push_back({
+            "dac", "constant", "SinOsc s => dac",
+            "Digital-to-analog converter output", true,
+            std::nullopt
+        });
+        metadata.chuckApi.push_back({
+            "Phasor", "ugen", "Phasor p => dac",
+            "Sawtooth-wave phasor UGen", true,
+            std::nullopt
+        });
+        metadata.chuckApi.push_back({
+            "Shakers", "ugen", "Shakers s => dac",
+            "STK Shakers instrument", false,
+            std::nullopt
+        });
+        metadata.chuckApi.push_back({
+            "Machine", "library", "Machine.add(\"foo.ck\")",
+            "Runtime library for machine management", true,
+            std::nullopt
+        });
+
+        return metadata;
+    }
+}
+
+TEST_CASE("chuckMetadataFallback returns supported UGens matching prefix",
+          "[lsp][chuck][ai-g7]")
+{
+    auto metadata = makeChuckTestMetadata();
+    language::MetadataCompatibility compat;
+    compat.compatible = true;
+
+    auto ctx = lsp::analyzeContext("Sin", 0, 3);
+
+    auto candidates = lsp::chuckMetadataFallback(metadata, compat, ctx);
+
+    bool hasSinOsc = false;
+    bool hasPhasor = false;
+    bool hasShakers = false;
+    for (const auto& c : candidates)
+    {
+        if (c.label == "SinOsc")     hasSinOsc = true;
+        if (c.label == "Phasor")     hasPhasor = true;
+        if (c.label == "Shakers")    hasShakers = true;
+    }
+
+    // SinOsc matches prefix "Sin" and is supported.
+    REQUIRE(hasSinOsc);
+    // Phasor does NOT match prefix "Sin".
+    REQUIRE_FALSE(hasPhasor);
+    // Shakers is unsupported — should NOT appear even if prefix matched.
+    REQUIRE_FALSE(hasShakers);
+}
+
+TEST_CASE("chuckMetadataFallback excludes unsupported APIs",
+          "[lsp][chuck][ai-g7]")
+{
+    auto metadata = makeChuckTestMetadata();
+    language::MetadataCompatibility compat;
+    compat.compatible = true;
+
+    auto ctx = lsp::analyzeContext("Sha", 0, 3);
+
+    auto candidates = lsp::chuckMetadataFallback(metadata, compat, ctx);
+
+    // Shakers is in metadata but unsupported — must not appear.
+    bool hasShakers = false;
+    for (const auto& c : candidates)
+    {
+        if (c.label == "Shakers") hasShakers = true;
+    }
+    REQUIRE_FALSE(hasShakers);
+}
+
+TEST_CASE("chuckMetadataFallback includes built-in keywords",
+          "[lsp][chuck][ai-g7]")
+{
+    auto metadata = makeChuckTestMetadata();
+    language::MetadataCompatibility compat;
+    compat.compatible = true;
+
+    auto ctx = lsp::analyzeContext("wh", 0, 2);
+
+    auto candidates = lsp::chuckMetadataFallback(metadata, compat, ctx);
+
+    bool hasWhile = false;
+    for (const auto& c : candidates)
+    {
+        if (c.label == "while") hasWhile = true;
+    }
+    REQUIRE(hasWhile);
+}
+
+TEST_CASE("chuckMetadataFallback returns empty when metadata incompatible",
+          "[lsp][chuck][ai-g7]")
+{
+    auto metadata = makeChuckTestMetadata();
+    language::MetadataCompatibility compat;
+    compat.compatible = false;
+
+    auto ctx = lsp::analyzeContext("", 0, 0);
+
+    auto candidates = lsp::chuckMetadataFallback(metadata, compat, ctx);
+    REQUIRE(candidates.empty());
+}
+
+TEST_CASE("chuckMetadataFallback returns all supported APIs when prefix empty",
+          "[lsp][chuck][ai-g7]")
+{
+    auto metadata = makeChuckTestMetadata();
+    language::MetadataCompatibility compat;
+    compat.compatible = true;
+
+    // Empty prefix matches everything.
+    auto ctx = lsp::analyzeContext("", 0, 0);
+
+    auto candidates = lsp::chuckMetadataFallback(metadata, compat, ctx);
+
+    // Should include SinOsc, dac, Phasor, Machine (all supported metadata APIs)
+    // plus built-in keywords, types, constants, UGens, libraries.
+    bool hasSinOsc = false;
+    bool hasDac = false;
+    bool hasPhasor = false;
+    bool hasMachine = false;
+    for (const auto& c : candidates)
+    {
+        if (c.label == "SinOsc")     hasSinOsc = true;
+        if (c.label == "dac")        hasDac = true;
+        if (c.label == "Phasor")     hasPhasor = true;
+        if (c.label == "Machine")    hasMachine = true;
+    }
+    REQUIRE(hasSinOsc);
+    REQUIRE(hasDac);
+    REQUIRE(hasPhasor);
+    REQUIRE(hasMachine);
+}
+
+TEST_CASE("chuckMetadataFallback dedups metadata APIs with built-in UGens",
+          "[lsp][chuck][ai-g7]")
+{
+    auto metadata = makeChuckTestMetadata();
+    language::MetadataCompatibility compat;
+    compat.compatible = true;
+
+    // SinOsc is both in metadata.chuckApi and in chuckUgenSet().
+    auto ctx = lsp::analyzeContext("Sin", 0, 3);
+
+    auto candidates = lsp::chuckMetadataFallback(metadata, compat, ctx);
+
+    // Should appear only once.
+    int count = 0;
+    for (const auto& c : candidates)
+    {
+        if (c.label == "SinOsc")
+            ++count;
+    }
+    REQUIRE(count == 1);
+}
+
+// ===========================================================================
+// AI-G7: ChucK diagnostics
+// ===========================================================================
+
+TEST_CASE("chuckDiagnostics emits error diagnostic from compiler",
+          "[lsp][chuck][ai-g7]")
+{
+    auto metadata = makeChuckTestMetadata();
+    language::MetadataCompatibility compat;
+    compat.compatible = true;
+
+    lsp::ChuckCompileDiagnostic cd;
+    cd.ok = false;
+    cd.errorLine = 3;
+    cd.errorColumn = 10;
+    cd.message = "unexpected token '}'";
+
+    auto diags = lsp::chuckDiagnostics(cd, &metadata, &compat, "SinOsc s => dac\n");
+
+    REQUIRE(diags.size() == 1);
+    REQUIRE(diags[0].severity == lsp::DiagnosticSeverity::Error);
+    REQUIRE(diags[0].code == "CK_COMPILE_ERROR");
+    REQUIRE(diags[0].source == "chuck_compiler");
+    REQUIRE(diags[0].message == "unexpected token '}'");
+    // libchuck uses 1-based line/column; LSP uses 0-based.
+    REQUIRE(diags[0].range.start.line == 2);
+    REQUIRE(diags[0].range.start.character == 9);
+}
+
+TEST_CASE("chuckDiagnostics adds warning for unsupported ChucK API usage",
+          "[lsp][chuck][ai-g7]")
+{
+    auto metadata = makeChuckTestMetadata();
+    language::MetadataCompatibility compat;
+    compat.compatible = true;
+
+    // Compiler says OK (no error), but the source references Shakers (unsupported).
+    lsp::ChuckCompileDiagnostic cd;
+    cd.ok = true;
+    cd.errorLine = 0;
+    cd.errorColumn = 0;
+    cd.message = "";
+
+    std::string source = "Shakers s => dac\n";
+
+    auto diags = lsp::chuckDiagnostics(cd, &metadata, &compat, source);
+
+    // Should have at least one warning about Shakers being unsupported.
+    bool hasWarning = false;
+    for (const auto& d : diags)
+    {
+        if (d.severity == lsp::DiagnosticSeverity::Warning &&
+            d.code == "UNSUPPORTED_CHUCK_API" &&
+            d.message.find("Shakers") != std::string::npos)
+        {
+            hasWarning = true;
+        }
+    }
+    REQUIRE(hasWarning);
+}
+
+TEST_CASE("chuckDiagnostics does not warn for supported ChucK API usage",
+          "[lsp][chuck][ai-g7]")
+{
+    auto metadata = makeChuckTestMetadata();
+    language::MetadataCompatibility compat;
+    compat.compatible = true;
+
+    lsp::ChuckCompileDiagnostic cd;
+    cd.ok = true;
+    cd.errorLine = 0;
+    cd.errorColumn = 0;
+    cd.message = "";
+
+    std::string source = "SinOsc s => dac\n";
+
+    auto diags = lsp::chuckDiagnostics(cd, &metadata, &compat, source);
+
+    // No warnings — SinOsc and dac are both supported.
+    for (const auto& d : diags)
+    {
+        INFO("Unexpected diagnostic: " << d.message);
+        REQUIRE_FALSE(d.severity == lsp::DiagnosticSeverity::Warning);
+    }
+}
+
+TEST_CASE("chuckDiagnostics skips metadata checks when incompatible",
+          "[lsp][chuck][ai-g7]")
+{
+    auto metadata = makeChuckTestMetadata();
+    language::MetadataCompatibility compat;
+    compat.compatible = false;
+
+    // Even though source references an unsupported API, diagnostics should
+    // only contain compiler results (no metadata-aware warnings).
+    lsp::ChuckCompileDiagnostic cd;
+    cd.ok = true;
+    cd.errorLine = 0;
+    cd.errorColumn = 0;
+    cd.message = "";
+
+    std::string source = "Shakers s => dac\n";
+
+    auto diags = lsp::chuckDiagnostics(cd, &metadata, &compat, source);
+
+    REQUIRE(diags.empty());
+}
+
+TEST_CASE("chuckDiagnostics handles multi-line source for unsupported APIs",
+          "[lsp][chuck][ai-g7]")
+{
+    auto metadata = makeChuckTestMetadata();
+    language::MetadataCompatibility compat;
+    compat.compatible = true;
+
+    lsp::ChuckCompileDiagnostic cd;
+    cd.ok = true;
+    cd.errorLine = 0;
+    cd.errorColumn = 0;
+    cd.message = "";
+
+    std::string source = "SinOsc osc => dac\nShakers sh => Pan2 p => dac\n";
+
+    auto diags = lsp::chuckDiagnostics(cd, &metadata, &compat, source);
+
+    // Shakers on line 1 should trigger a warning with line=1.
+    bool hasWarning = false;
+    for (const auto& d : diags)
+    {
+        if (d.severity == lsp::DiagnosticSeverity::Warning)
+        {
+            REQUIRE(d.code == "UNSUPPORTED_CHUCK_API");
+            REQUIRE(d.range.start.line == 1);
+            hasWarning = true;
+        }
+    }
+    REQUIRE(hasWarning);
+}
+
+TEST_CASE("MetadataCompatibility defaults to compatible=false",
+          "[lsp][chuck][ai-g7]")
+{
+    language::MetadataCompatibility compat;
+    REQUIRE_FALSE(compat.compatible);
+    REQUIRE_FALSE(compat); // operator bool()
+}
+
+// ===========================================================================
+// AI-G7: Metadata version block for ChucK
+// ===========================================================================
+
+TEST_CASE("chuckMetadataFallback does not duplicate library classes",
+          "[lsp][chuck][ai-g7]")
+{
+    auto metadata = makeChuckTestMetadata();
+    language::MetadataCompatibility compat;
+    compat.compatible = true;
+
+    // "Machine" is in metadata.chuckApi (supported, library kind) and also
+    // in chuckLibrarySet().
+    auto ctx = lsp::analyzeContext("Mac", 0, 3);
+
+    auto candidates = lsp::chuckMetadataFallback(metadata, compat, ctx);
+
+    int count = 0;
+    for (const auto& c : candidates)
+    {
+        if (c.label == "Machine")
+            ++count;
+    }
+    REQUIRE(count == 1);
+}

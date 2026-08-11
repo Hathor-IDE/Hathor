@@ -295,6 +295,18 @@ nlohmann::json CompletionContextProvider::metadataVersionBlock() const
         mv["reason"] = "LanguageMetadata not loaded";
         return mv;
     }
+
+    // Detect empty/default metadata (file was not found or failed to load).
+    // A valid metadata has a non-zero schemaVersion.
+    if (metadata_->schemaVersion == 0)
+    {
+        mv["available"] = false;
+        mv["reason"] = "LanguageMetadata file not found or failed to load";
+        mv["schema"] = 0;
+        mv["compatible"] = false;
+        return mv;
+    }
+
     mv["schema"]      = metadata_->schemaVersion;
     mv["engine"]      = metadata_->hathorEngineCompat;
     mv["strudel"]     = metadata_->strudelMiniNotationCompat;
@@ -788,12 +800,25 @@ nlohmann::json CompletionContextProvider::assembleMetadata(
     const auto& bounds = resolveBounds(req);
     nlohmann::json result = metadataVersionBlock();
 
-    if (metadata_ == nullptr || !metadataCompatible())
+    if (metadata_ == nullptr)
     {
-        // metadataVersionBlock already carries the unavailable reason.
         result["available"] = false;
-        result["reason"] = metadata_ ? "metadata incompatible with running surface"
-                                    : "LanguageMetadata not loaded";
+        result["reason"] = "LanguageMetadata not loaded";
+        return result;
+    }
+
+    // Detect empty/default metadata (file not found or failed to load).
+    if (metadata_->schemaVersion == 0)
+    {
+        result["available"] = false;
+        result["reason"] = "LanguageMetadata file not found or failed to load";
+        return result;
+    }
+
+    if (!metadataCompatible())
+    {
+        result["available"] = false;
+        result["reason"] = "metadata incompatible with running surface";
         return result;
     }
 
