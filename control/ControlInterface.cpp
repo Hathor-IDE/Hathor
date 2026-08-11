@@ -1945,3 +1945,5 @@ void ControlInterface::handleClearWorkingSet(std::string_view /*rest*/)
         {"cmd", "clear_working_set"}
     });
 }
+
+} // namespace hathor::control

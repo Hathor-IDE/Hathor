@@ -446,11 +446,12 @@ void WorkingSet::updateAfterStep(const std::string& stepName,
             if (!found)
                 items_.push_back(std::move(item));
 
-            // Record the change
+            // Record the change (resourceId captured BEFORE item is moved
+            // into the vector below, otherwise it reads a moved-from string).
             RecordedChange change;
             change.changeId = nextChangeId_++;
             change.operation = "commit_rendered_asset";
-            change.resourceId = item.id;
+            change.resourceId = "instrument:" + assetName;
             change.slotName = activeSlot_;
             change.after = stepResult;
             change.before = nlohmann::json::object();
@@ -508,171 +509,303 @@ void WorkingSet::updateAfterStep(const std::string& stepName,
 // Reference resolution
 // ---------------------------------------------------------------------------
 
-WorkingSet::ResolveResult WorkingSet::resolvePronoun(
-    std::string_view pronoun,
-    const std::string& intentContext) const
+std::optional<WorkingSet::ItemType> WorkingSet::typeHintFromText(
+    std::string_view text) noexcept
+{
+    const std::string s = toLower(text);
+    if (s.find("instrument") != std::string::npos ||
+        s.find("sample") != std::string::npos ||
+        s.find("bass") != std::string::npos ||
+        s.find("kick") != std::string::npos ||
+        s.find("pad") != std::string::npos ||
+        s.find("lead") != std::string::npos ||
+        s.find("snare") != std::string::npos ||
+        s.find("hi-hat") != std::string::npos)
+        return ItemType::Instrument;
+    if (s.find("pattern") != std::string::npos)
+        return ItemType::Pattern;
+    if (s.find("session") != std::string::npos)
+        return ItemType::Session;
+    if (s.find("render") != std::string::npos)
+        return ItemType::RenderJob;
+    if (s.find("song") != std::string::npos)
+        return ItemType::Song;
+    if (s.find("project") != std::string::npos)
+        return ItemType::Project;
+    return std::nullopt;
+}
+
+std::optional<WorkingSet::ItemType> WorkingSet::typeHintFromContext(
+    std::string_view context) noexcept
+{
+    const std::string s = toLower(context);
+    // Instrument / audio-parameter modifiers.
+    if (s.find("dark") != std::string::npos ||
+        s.find("bright") != std::string::npos ||
+        s.find("warm") != std::string::npos ||
+        s.find("cold") != std::string::npos ||
+        s.find("loud") != std::string::npos ||
+        s.find("soft") != std::string::npos ||
+        s.find("gain") != std::string::npos ||
+        s.find("filter") != std::string::npos ||
+        s.find("distort") != std::string::npos ||
+        s.find("eq") != std::string::npos ||
+        s.find("tone") != std::string::npos ||
+        s.find("attack") != std::string::npos ||
+        s.find("decay") != std::string::npos ||
+        s.find("resonant") != std::string::npos ||
+        s.find("use") != std::string::npos)
+        return ItemType::Instrument;
+    // Pattern / rhythm modifiers.
+    if (s.find("simpl") != std::string::npos ||
+        s.find("complex") != std::string::npos ||
+        s.find("dens") != std::string::npos ||
+        s.find("spars") != std::string::npos ||
+        s.find("note") != std::string::npos ||
+        s.find("pattern") != std::string::npos ||
+        s.find("rhythm") != std::string::npos)
+        return ItemType::Pattern;
+    return std::nullopt;
+}
+
+std::string WorkingSet::extractSlotReference(std::string_view text) noexcept
+{
+    const std::string s = toLower(text);
+    for (size_t i = 0; i + 1 < s.size(); ++i) {
+        if (s[i] == 'd' && s[i + 1] >= '0' && s[i + 1] <= '9') {
+            size_t j = i + 1;
+            while (j < s.size() && s[j] >= '0' && s[j] <= '9')
+                ++j;
+            return s.substr(i, j - i);
+        }
+    }
+    return "";
+}
+
+bool WorkingSet::itemMatchesDomain(const TrackedItem& item,
+                                   const std::string& domain) noexcept
+{
+    if (domain.empty())
+        return false;
+    if (!item.alias.empty() &&
+        classifyMusicalDomain(item.alias) == domain)
+        return true;
+    if (!item.name.empty() &&
+        classifyMusicalDomain(item.name) == domain)
+        return true;
+    if (!item.id.empty() &&
+        classifyMusicalDomain(item.id) == domain)
+        return true;
+    return false;
+}
+
+WorkingSet::ResolveResult WorkingSet::resolveChangeReference(
+    std::string_view kind) const
 {
     ResolveResult result;
     std::lock_guard<std::mutex> lock(mtx_);
+
+    if (kind == "same") {
+        if (changes_.empty()) {
+            result.errorMessage = "no previous change found";
+            return result;
+        }
+        const auto& c = changes_.back();
+        nlohmann::json j;
+        j["type"] = "change";
+        j["change_id"] = c.changeId;
+        j["operation"] = c.operation;
+        j["resource_id"] = c.resourceId;
+        j["reversible"] = c.reversible;
+        if (!c.after.is_null())
+            j["after"] = c.after;
+        result.resolved = std::move(j);
+        result.found = true;
+        return result;
+    }
+
+    // "revert" → the most recent reversible change.
+    for (auto it = changes_.rbegin(); it != changes_.rend(); ++it) {
+        if (it->reversible) {
+            nlohmann::json j;
+            j["type"] = "change";
+            j["change_id"] = it->changeId;
+            j["operation"] = it->operation;
+            j["resource_id"] = it->resourceId;
+            j["reversible"] = true;
+            j["revert_action"] = it->revertAction;
+            if (!it->before.is_null())
+                j["before"] = it->before;
+            if (!it->after.is_null())
+                j["after"] = it->after;
+            result.resolved = std::move(j);
+            result.found = true;
+            return result;
+        }
+    }
+    result.errorMessage = "no reversible change found";
+    return result;
+}
+
+WorkingSet::ResolveResult WorkingSet::resolvePronoun(
+    const std::string& query,
+    const std::string& intentContext,
+    std::optional<ItemType> typeHint,
+    const std::string& slot,
+    const std::string& domain) const
+{
+    ResolveResult result;
+    std::lock_guard<std::mutex> lock(mtx_);
+
+    (void)intentContext; // only used below to derive an implied type
 
     if (items_.empty()) {
         result.errorMessage = "no tracked items in the working set";
         return result;
     }
 
-    // Find the most recently touched item, preferring musical objects
-    // (instruments/patterns) over project/song metadata.
-    const ItemType prefOrder[] = {
-        ItemType::Instrument, ItemType::Pattern,
-        ItemType::Session, ItemType::RenderJob,
-        ItemType::Song, ItemType::Project
-    };
-
-    for (ItemType t : prefOrder) {
-        TrackedItem* best = nullptr;
-        for (auto& item : items_) {
-            if (item.type == t && (!best || item.lastTouched > best->lastTouched))
-                best = &item;
-        }
-        if (best) {
-            // Use intent context to disambiguate within the type if needed.
-            (void)intentContext;
-
-            nlohmann::json j;
-            j["id"] = best->id;
-            j["name"] = best->name;
-            j["type"] = itemTypeName(best->type);
-            j["slot"] = best->slotName;
-            j["alias"] = best->alias;
-            if (!best->state.is_null())
-                j["state"] = best->state;
-            result.resolved = std::move(j);
-            result.found = true;
-            return result;
-        }
+    // If no explicit type word was present, fall back to the type implied by
+    // the conversational modifier ("darker" → Instrument, "simpler" → Pattern).
+    std::optional<ItemType> type = typeHint;
+    if (!type.has_value()) {
+        const std::string combined = toLower(intentContext) + " " + toLower(query);
+        type = typeHintFromContext(combined);
     }
 
-    result.errorMessage = "no suitable item found for pronoun resolution";
+    std::vector<const TrackedItem*> candidates;
+    for (const auto& item : items_) {
+        if (type.has_value() && item.type != *type)
+            continue;
+        if (!slot.empty() && item.slotName != slot)
+            continue;
+        if (!domain.empty() && !itemMatchesDomain(item, domain))
+            continue;
+        candidates.push_back(&item);
+    }
+
+    if (candidates.empty()) {
+        result.errorMessage = "no tracked item matches '" + query + "'";
+        return result;
+    }
+
+    const auto toJson = [](const TrackedItem& item) {
+        nlohmann::json j;
+        j["id"] = item.id;
+        j["name"] = item.name;
+        j["type"] = itemTypeName(item.type);
+        j["slot"] = item.slotName;
+        j["alias"] = item.alias;
+        if (!item.state.is_null())
+            j["state"] = item.state;
+        return j;
+    };
+
+    // A musical domain matching several items is genuinely ambiguous — surface
+    // it instead of silently mutating the wrong object (testing requirement #5).
+    if (candidates.size() > 1 && !domain.empty()) {
+        result.ambiguous = true;
+        result.errorMessage =
+            "ambiguous reference — multiple candidates match '" + query + "'";
+        for (const TrackedItem* item : candidates)
+            result.candidates.push_back(toJson(*item));
+        return result;
+    }
+
+    // Otherwise pick the most recently touched candidate.
+    const TrackedItem* best = candidates[0];
+    for (const TrackedItem* item : candidates) {
+        if (item->lastTouched > best->lastTouched)
+            best = item;
+    }
+    result.resolved = toJson(*best);
+    result.found = true;
     return result;
 }
 
 WorkingSet::ResolveResult WorkingSet::resolveNamedReference(
     const std::string& query,
-    const std::string& intentContext) const
+    const std::string& intentContext,
+    std::optional<ItemType> typeHint,
+    const std::string& slot,
+    const std::string& domain) const
 {
     ResolveResult result;
     std::lock_guard<std::mutex> lock(mtx_);
 
-    // "the last change" or "the last" → resolve to last reversible change
-    if (query.find("last change") != std::string::npos ||
-        (query.find("last") != std::string::npos && query.find("change") != std::string::npos)) {
-        const auto change = getLastReversibleChange();
-        if (change.has_value()) {
-            nlohmann::json j;
-            j["type"] = "change";
-            j["change_id"] = change->changeId;
-            j["operation"] = change->operation;
-            j["resource_id"] = change->resourceId;
-            j["reversible"] = change->reversible;
-            j["revert_action"] = change->revertAction;
-            if (!change->before.is_null())
-                j["before"] = change->before;
-            if (!change->after.is_null())
-                j["after"] = change->after;
-            result.resolved = std::move(j);
-            result.found = true;
-            return result;
-        }
-        result.errorMessage = "no reversible change found";
-        return result;
-    }
-
-    // "same as before" → most recent change
-    if (query.find("same as before") != std::string::npos ||
-        query.find("same") != std::string::npos) {
-        if (!changes_.empty()) {
-            const auto& change = changes_.back();
-            nlohmann::json j;
-            j["type"] = "change";
-            j["change_id"] = change.changeId;
-            j["operation"] = change.operation;
-            j["resource_id"] = change.resourceId;
-            j["reversible"] = change.reversible;
-            if (!change.after.is_null())
-                j["after"] = change.after;
-            result.resolved = std::move(j);
-            result.found = true;
-            return result;
-        }
-        result.errorMessage = "no previous change found";
-        return result;
-    }
-
-    // Match by alias, name, or id
-    std::vector<TrackedItem*> matches;
-    for (auto& item : items_) {
-        // Match alias (e.g. "the bass" matches alias "the bass")
-        if (!item.alias.empty() &&
-            query.find(item.alias) != std::string::npos) {
-            matches.push_back(&item);
-            continue;
-        }
-        // Match name (e.g. "acid_bass" or "acid bass")
-        if (!item.name.empty() &&
-            (query.find(item.name) != std::string::npos ||
-             query.find(toLower(item.name)) != std::string::npos)) {
-            matches.push_back(&item);
-            continue;
-        }
-        // Match id (e.g. "instrument:acid_bass")
-        if (query.find(item.id) != std::string::npos) {
-            matches.push_back(&item);
-            continue;
-        }
-        // Match slot name
-        if (!item.slotName.empty() && query.find(item.slotName) != std::string::npos) {
-            matches.push_back(&item);
-            continue;
-        }
-    }
-
-    // Use intent context to narrow down (e.g. "darker" hints at the most
-    // recently modified instrument)
     (void)intentContext;
 
-    if (matches.empty()) {
+    std::vector<const TrackedItem*> candidates;
+    for (const auto& item : items_) {
+        if (typeHint.has_value() && item.type != *typeHint)
+            continue;
+
+        if (!slot.empty()) {
+            // Slot-driven named reference: only items on that slot match.
+            if (item.slotName == slot)
+                candidates.push_back(&item);
+            continue;
+        }
+
+        bool match = false;
+        if (!item.alias.empty() &&
+            query.find(item.alias) != std::string::npos)
+            match = true;
+        else if (!item.name.empty() &&
+                 (query.find(item.name) != std::string::npos ||
+                  query.find(toLower(item.name)) != std::string::npos))
+            match = true;
+        else if (!item.id.empty() &&
+                 query.find(item.id) != std::string::npos)
+            match = true;
+        else if (!domain.empty() && itemMatchesDomain(item, domain))
+            match = true;
+
+        if (match)
+            candidates.push_back(&item);
+    }
+
+    if (candidates.empty()) {
         result.errorMessage = "no tracked item matches '" + query + "'";
         return result;
     }
 
-    if (matches.size() == 1) {
-        TrackedItem* item = matches[0];
+    const auto toJson = [](const TrackedItem& item) {
         nlohmann::json j;
-        j["id"] = item->id;
-        j["name"] = item->name;
-        j["type"] = itemTypeName(item->type);
-        j["slot"] = item->slotName;
-        j["alias"] = item->alias;
-        if (!item->state.is_null())
-            j["state"] = item->state;
-        result.resolved = std::move(j);
+        j["id"] = item.id;
+        j["name"] = item.name;
+        j["type"] = itemTypeName(item.type);
+        j["slot"] = item.slotName;
+        j["alias"] = item.alias;
+        if (!item.state.is_null())
+            j["state"] = item.state;
+        return j;
+    };
+
+    if (candidates.size() == 1) {
+        result.resolved = toJson(*candidates[0]);
         result.found = true;
         return result;
     }
 
-    // Multiple matches — surface ambiguity (testing requirement #5)
-    result.ambiguous = true;
-    for (TrackedItem* item : matches) {
-        nlohmann::json j;
-        j["id"] = item->id;
-        j["name"] = item->name;
-        j["type"] = itemTypeName(item->type);
-        j["slot"] = item->slotName;
-        j["alias"] = item->alias;
-        result.candidates.push_back(std::move(j));
+    // Multiple candidates: a slot mention can narrow to a unique target.
+    if (!slot.empty()) {
+        std::vector<const TrackedItem*> slotCandidates;
+        for (const TrackedItem* item : candidates) {
+            if (item->slotName == slot)
+                slotCandidates.push_back(item);
+        }
+        if (slotCandidates.size() == 1) {
+            result.resolved = toJson(*slotCandidates[0]);
+            result.found = true;
+            return result;
+        }
     }
-    result.errorMessage = "ambiguous reference — multiple candidates match '" +
-                          query + "'";
+
+    result.ambiguous = true;
+    result.errorMessage =
+        "ambiguous reference — multiple candidates match '" + query + "'";
+    for (const TrackedItem* item : candidates)
+        result.candidates.push_back(toJson(*item));
     return result;
 }
 
@@ -681,59 +814,52 @@ WorkingSet::ResolveResult WorkingSet::resolveReference(
     std::string_view intentContext) const
 {
     ResolveResult result;
-    std::string query = toLower(std::string(phrase));
+    const std::string raw = toLower(phrase);
+    const std::string ctx = toLower(intentContext);
 
-    // Strip common leading articles and conversational wrappers
-    if (query.rfind("make ", 0) == 0 || query.rfind("use ", 0) == 0 ||
-        query.rfind("revert ", 0) == 0 || query.rfind("apply ", 0) == 0) {
-        // "make it darker" → resolve "it"
-        // "use that instrument" → resolve "that instrument"
-        // "revert that" → resolve "that" as a change
-        size_t start = 0;
-        if (query.rfind("make ", 0) == 0) start = 5;
-        else if (query.rfind("use ", 0) == 0) start = 4;
-        else if (query.rfind("revert ", 0) == 0) start = 7;
-        else if (query.rfind("apply ", 0) == 0) start = 6;
-        query = toLower(query.substr(start));
+    // --- 1. Change references (evaluated on the FULL phrase, before any
+    //        verb/article stripping that would remove the "revert" keyword).
+    if (raw.find("revert") != std::string::npos ||
+        raw.find("undo") != std::string::npos ||
+        raw.find("last change") != std::string::npos) {
+        return resolveChangeReference("revert");
+    }
+    if (raw.find("same") != std::string::npos) {
+        return resolveChangeReference("same");
     }
 
-    // Check for "revert" / "undo" / "change" → resolve as a change
-    if (query.find("revert") != std::string::npos ||
-        query.find("undo") != std::string::npos ||
-        query.find("change") != std::string::npos) {
-        query = "the last change";
+    // --- 2. Object references -----------------------------------------------
+    std::string q = raw;
+
+    // Strip common leading verbs / conversational wrappers.
+    const std::string prefixes[] = {
+        "make ", "use ", "apply ", "edit ", "create ", "add ",
+        "delete ", "remove ", "give ", "swap ", "replace "
+    };
+    for (const auto& p : prefixes) {
+        if (q.rfind(p, 0) == 0) {
+            q = toLower(q.substr(p.size()));
+            break;
+        }
     }
 
-    std::string contextStr = toLower(std::string(intentContext));
+    const std::optional<ItemType> typeHint = typeHintFromText(q);
+    const std::string slot = extractSlotReference(q + " " + ctx);
+    const std::string domain = classifyMusicalDomain(q);
 
-    // Check if the query is just a pronoun
-    if (isPronoun(query)) {
-        return resolvePronoun(query, contextStr);
-    }
+    // Pronoun reference: "it", "that", "this", optionally followed by a
+    // qualifier ("it darker", "that instrument", "that bass").
+    const bool pronounRef =
+        q == "it" || q == "that" || q == "this" || q == "them" ||
+        q.rfind("it ", 0) == 0 || q.rfind("that ", 0) == 0 ||
+        q.rfind("this ", 0) == 0 ||
+        q == "the last one" || q == "the last";
 
-    // Check for explicit named references
-    if (query.find("the bass") != std::string::npos ||
-        query.find("bass") != std::string::npos ||
-        query.find("instrument") != std::string::npos ||
-        query.find("the pattern") != std::string::npos ||
-        query.find("the session") != std::string::npos ||
-        query.find("the render") != std::string::npos ||
-        query.find("the song") != std::string::npos ||
-        query.find("that") != std::string::npos ||
-        query.find("this") != std::string::npos ||
-        query.find("it") != std::string::npos) {
-        return resolveNamedReference(query, contextStr);
-    }
+    if (pronounRef)
+        return resolvePronoun(q, ctx, typeHint, slot, domain);
 
-    // If the query contains a slot name pattern (d0-d15), try slot matching
-    if (query.size() >= 2 && query[0] == 'd' &&
-        query[1] >= '0' && query[1] <= '9') {
-        const std::string slotName = query.substr(0, 2);
-        return resolveNamedReference(slotName, contextStr);
-    }
-
-    // Fall back: try named reference resolution with the full query
-    return resolveNamedReference(query, contextStr);
+    // Named reference.
+    return resolveNamedReference(q, ctx, typeHint, slot, domain);
 }
 
 // ---------------------------------------------------------------------------

@@ -306,13 +306,23 @@ public:
       * Called when a new chat session starts, the project changes, or
       * the application restarts.  Does NOT affect persistent project state.
       *
-      * Requirement: AI-10.2 — memory lifecycle.
-      */
+     * Requirement: AI-10.2 — memory lifecycle.
+     */
     void clearWorkingSet();
 
     /**
-      * Check if a workflow is currently active (not Idle).
-      */
+     * Reconcile the working set against authoritative project state.
+     *
+     * Ensures that if the project changed outside the working set, stale
+     * items are pruned before the next workflow runs.
+     *
+     * Requirement: AI-10.2 — stale reconciliation.
+     */
+    void reconcileWorkingSet(const nlohmann::json& projectState);
+
+    /**
+     * Check if a workflow is currently active (not Idle).
+     */
     bool isRunning() const noexcept;
 
     /**

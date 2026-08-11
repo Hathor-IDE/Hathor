@@ -348,18 +348,63 @@ private:
     static bool isPronoun(std::string_view word) noexcept;
 
     /**
-     * Resolve a pronoun reference ("it", "that", "this") against the most
-     * recently touched item of the appropriate type.
+     * Detect an explicit item-type word ("instrument", "pattern", "session",
+     * "render", "song", "project") in a reference phrase.
      */
-    ResolveResult resolvePronoun(std::string_view pronoun,
-                                 const std::string& intentContext) const;
+    static std::optional<ItemType> typeHintFromText(
+        std::string_view text) noexcept;
 
     /**
-     * Resolve a named reference (e.g. "the bass", "that pattern", "acid_bass")
-     * by matching against item aliases, names, and types.
+     * Detect an implied item-type from a conversational modifier, e.g.
+     * "darker"/"warmer" → Instrument, "simpler"/"notes" → Pattern.
+     */
+    static std::optional<ItemType> typeHintFromContext(
+        std::string_view context) noexcept;
+
+    /**
+     * Extract a slot token ("d1", "d15") mentioned in a reference phrase.
+     * Returns "" if none is present.
+     */
+    static std::string extractSlotReference(std::string_view text) noexcept;
+
+    /**
+     * True if the item's alias/name/id classify into the given musical domain.
+     */
+    static bool itemMatchesDomain(const TrackedItem& item,
+                                  const std::string& domain) noexcept;
+
+    /**
+     * Resolve a change reference ("revert that", "last change", "same as
+     * before").
+     *
+     * @param kind "revert" → most recent reversible change, "same" → the most
+     *             recent change regardless of reversibility.
+     */
+    ResolveResult resolveChangeReference(std::string_view kind) const;
+
+    /**
+     * Resolve a pronoun reference ("it", "that", "this" + optional qualifier)
+     * against the most recently touched matching item.
+     *
+     * When a musical domain is present and multiple items match, the reference
+     * is surfaced as ambiguous rather than silently picking one.
+     */
+    ResolveResult resolvePronoun(const std::string& query,
+                                 const std::string& intentContext,
+                                 std::optional<ItemType> typeHint,
+                                 const std::string& slot,
+                                 const std::string& domain) const;
+
+    /**
+     * Resolve a named reference (e.g. "the bass", "the pattern on d1",
+     * "acid_bass") by matching against item aliases, names, domains, and
+     * slots.
      */
     ResolveResult resolveNamedReference(const std::string& query,
-                                        const std::string& intentContext) const;
+                                        const std::string& intentContext,
+                                        std::optional<ItemType> typeHint,
+                                        const std::string& slot,
+                                        const std::string& domain) const;
 
     // -----------------------------------------------------------------------
     // Internal state (protected by mtx_)

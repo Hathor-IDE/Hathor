@@ -75,20 +75,6 @@ WorkingSet::TrackedItem makePattern(const std::string& slot,
     return item;
 }
 
-/// Create a minimal session TrackedItem for testing.
-WorkingSet::TrackedItem makeSession(const std::string& sessionId,
-                                     const std::string& slot = "d1",
-                                     const std::string& source = "SinOsc s => dac;")
-{
-    WorkingSet::TrackedItem item;
-    item.id   = sessionId;
-    item.name = sessionId;
-    item.type = WorkingSet::ItemType::Session;
-    item.slotName = slot;
-    item.state = nlohmann::json{{"session_id", sessionId}, {"source", source}};
-    return item;
-}
-
 /// Create a recorded change for testing.
 WorkingSet::RecordedChange makeChange(
     int id,
@@ -661,18 +647,11 @@ TEST_CASE("AI-10.2: clear resets change ID counter",
 {
     WorkingSet ws;
 
-    ws.recordChange({1, "edit_song", "resource:1", "revert1", true});
-    ws.recordChange({2, "edit_song", "resource:2", "revert2", true});
+    ws.recordChange(makeChange(1, "edit_song", "resource:1", "revert1", true));
     ws.clear();
 
     // After clear, recordChange without an explicit ID should start at 1 again.
-    WorkingSet::RecordedChange c;
-    c.changeId = 0; // 0 means auto-assign
-    c.operation = "edit_song";
-    c.resourceId = "resource:3";
-    c.reversible = true;
-    c.revertAction = "revert3";
-    ws.recordChange(c);
+    ws.recordChange(makeChange(0, "edit_song", "resource:3", "revert3", true));
 
     nlohmann::json info = ws.getRevertInfo();
     REQUIRE(info["last_change"]["change_id"] == 1);
