@@ -55,6 +55,7 @@ add_library(hathor-control OBJECT
     AuthoringContext.cpp
     CompletionContextProvider.cpp
     ProjectRetrievalContext.cpp
+    AgenticWorkflow.cpp
 )
 
 target_include_directories(hathor-control
