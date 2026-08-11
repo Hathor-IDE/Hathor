@@ -95,6 +95,57 @@ static const char* stateName(AgenticWorkflow::State s) noexcept
 }
 
 // ---------------------------------------------------------------------------
+// AI-10.4: Event type names
+// ---------------------------------------------------------------------------
+
+const char* AgenticWorkflow::eventTypeName(EventType t) noexcept
+{
+    switch (t) {
+        case EventType::WorkflowStarted:       return "workflow_started";
+        case EventType::PlanCreated:           return "plan_created";
+        case EventType::StepStarted:           return "step_started";
+        case EventType::StepProgress:          return "step_progress";
+        case EventType::StepCompleted:         return "step_completed";
+        case EventType::StepFailed:            return "step_failed";
+        case EventType::DiagnosticsDiscovered: return "diagnostics_discovered";
+        case EventType::RepairStarted:         return "repair_started";
+        case EventType::RepairCompleted:       return "repair_completed";
+        case EventType::ConfirmationRequired:  return "confirmation_required";
+        case EventType::RenderStarted:         return "render_started";
+        case EventType::RenderCompleted:       return "render_completed";
+        case EventType::AssetCommitted:        return "asset_committed";
+        case EventType::SongMutationApplied:   return "song_mutation_applied";
+        case EventType::WorkflowCancelled:     return "workflow_cancelled";
+        case EventType::WorkflowCompleted:     return "workflow_completed";
+    }
+    return "unknown";
+}
+
+std::atomic<uint64_t> AgenticWorkflow::s_nextWorkflowId_{1};
+
+/// AI-10.4: Concise, musical/application-level explanation of a canonical step
+/// (used in StepStarted / StepCompleted events — no implementation noise).
+static const char* stepExplain(AgenticWorkflow::Step s) noexcept
+{
+    switch (s) {
+        case AgenticWorkflow::Step::InspectProject:       return "Inspecting the project";
+        case AgenticWorkflow::Step::InspectSong:          return "Inspecting the current song";
+        case AgenticWorkflow::Step::InspectAssets:        return "Checking the available instruments";
+        case AgenticWorkflow::Step::GeneratePattern:      return "Generating the pattern";
+        case AgenticWorkflow::Step::Validate:             return "Validating the notation";
+        case AgenticWorkflow::Step::Compile:              return "Compiling the instrument";
+        case AgenticWorkflow::Step::Audition:             return "Auditioning the result";
+        case AgenticWorkflow::Step::InspectDiagnostics:   return "Checking for errors";
+        case AgenticWorkflow::Step::Repair:               return "Repairing the issue";
+        case AgenticWorkflow::Step::Render:               return "Rendering the instrument to audio";
+        case AgenticWorkflow::Step::BindAsset:            return "Committing the rendered asset";
+        case AgenticWorkflow::Step::UpdateSong:           return "Updating the song file";
+        case AgenticWorkflow::Step::None:                 return "";
+    }
+    return "";
+}
+
+// ---------------------------------------------------------------------------
 // Internal audit helper (stderr — canonical pattern from AI-6/AI-7)
 // ---------------------------------------------------------------------------
 
@@ -169,40 +220,59 @@ bool AgenticWorkflow::start(Request request,
                             ProgressCallback onProgress,
                             ConfirmationCallback onConfirmation)
 {
-    std::lock_guard<std::mutex> lock(stateMtx_);
+    // The initial state + request are set under stateMtx_, but the
+    // WorkflowStarted event is emitted AFTER the lock is released:
+    // emitEvent() calls getState() which itself acquires stateMtx_, so it
+    // must never be invoked while the caller holds that lock (self-deadlock).
+    std::string startMessage;
 
-    if (state_ != State::Idle) {
-        return false;
+    {
+        std::lock_guard<std::mutex> lock(stateMtx_);
+        { FILE* d = std::fopen("/tmp/ai104_dbg.log","a"); std::fprintf(d,"[start] acquired stateMtx_\n"); std::fclose(d); }
+
+        if (state_ != State::Idle) {
+            return false;
+        }
+
+        state_ = State::Queued;
+        currentRequest_ = std::move(request);
+        progressCallback_ = std::move(onProgress);
+        confirmationCallback_ = std::move(onConfirmation);
+        stopRequested_.store(false, std::memory_order_release);
+        confirmationResponded_.store(false, std::memory_order_release);
+        completedSteps_.clear();
+        appliedChanges_.clear();
+        error_.reset();
+        repairAttempts_ = 0;
+        renderCompleted_ = false;
+
+        // AI-10.4: Assign a fresh workflow identity for event scoping.
+        workflowId_ = s_nextWorkflowId_.fetch_add(1, std::memory_order_acq_rel);
+
+        // AI-10.2: Record the user intent in the working set so that aliases
+        // (e.g. "the bass") can be derived from intent keywords.
+        workingSet_.setLastIntent(currentRequest_.intent);
+
+        // AI-10.3: Begin a fresh, pending change-set for this workflow run so
+        // that every persistent mutation is grouped into one coherent,
+        // reviewable unit.
+        changeSetManager_.beginChangeSet(currentRequest_.intent);
+
+        // Build the start message while we still hold the current request.
+        startMessage = std::string("Starting the ") +
+                       (currentRequest_.dryRun ? "dry-run " : "") +
+                       "workflow for \"" + currentRequest_.intent + "\"";
     }
 
-    state_ = State::Queued;
-    currentRequest_ = std::move(request);
-    progressCallback_ = std::move(onProgress);
-    confirmationCallback_ = std::move(onConfirmation);
-    stopRequested_.store(false, std::memory_order_release);
-    confirmationResponded_.store(false, std::memory_order_release);
-    completedSteps_.clear();
-    appliedChanges_.clear();
-    error_.reset();
-    repairAttempts_ = 0;
-    renderCompleted_ = false;
-
-    // AI-10.2: Record the user intent in the working set so that aliases
-    // (e.g. "the bass") can be derived from intent keywords.
-    workingSet_.setLastIntent(currentRequest_.intent);
-
-    // AI-10.3: Begin a fresh, pending change-set for this workflow run so that
-    // every persistent mutation is grouped into one coherent, reviewable unit.
-    changeSetManager_.beginChangeSet(currentRequest_.intent);
-
-    // Emit the initial queued state.
+    // Emit the initial queued state (AI-10.4: workflow started), lock-free.
     if (progressCallback_) {
-        nlohmann::json state = getState();
-        progressCallback_(state);
+        emitEvent(EventType::WorkflowStarted, startMessage, true, {},
+                  {{"queued", true}});
     }
 
     // Launch the workflow thread.
     workflowThread_ = std::thread([this] { runWorkflow(); });
+    { FILE* d = std::fopen("/tmp/ai104_dbg.log","a"); std::fprintf(d,"[start] thread launched, returning\n"); std::fclose(d); }
 
     return true;
 }
@@ -338,7 +408,7 @@ void AgenticWorkflow::runWorkflow()
         std::lock_guard<std::mutex> lock(stateMtx_);
         state_ = State::Planning;
     }
-    emitProgress();
+    emitEvent(EventType::StepStarted, "Planning the approach", true, "planning");
 
     if (checkCancellation()) {
         setState(State::Cancelled);
@@ -373,15 +443,24 @@ void AgenticWorkflow::runWorkflow()
 
         currentStepResult_ = plan.toJson();
     }
-    emitProgress();
+    { FILE* d = std::fopen("/tmp/ai104_dbg.log","a"); std::fprintf(d,"[wf] plan done, about to emit PlanCreated\n"); std::fclose(d); }
+    // AI-10.4: The plan is now observable as a dedicated event.
+    // (Emitted lock-free — emitEvent() calls getState(), which acquires
+    // stateMtx_; it must not be called while that lock is held.)
+    emitEvent(EventType::PlanCreated,
+              currentStepResult_.value("intent",
+                  std::string("Assembled a plan")) + " — planned " +
+                  std::to_string(currentStepResult_.value("steps",
+                      nlohmann::json::array()).size()) + " steps",
+              true, "planning", currentStepResult_);
 
     // Phase 2: INSPECTION — inspect_project, inspect_song, inspect_assets.
     setState(State::Inspecting);
+    { FILE* d = std::fopen("/tmp/ai104_dbg.log","a"); std::fprintf(d,"[wf] Inspecting\n"); std::fclose(d); }
 
     for (const auto step : { Step::InspectProject, Step::InspectSong,
                              Step::InspectAssets }) {
         setCurrentStep(step);
-        emitProgress();
 
         if (checkCancellation()) {
             setState(State::Cancelled);
@@ -414,7 +493,6 @@ void AgenticWorkflow::runWorkflow()
     // Phase 3: EDITING — generate/modify pattern.
     setCurrentStep(Step::GeneratePattern);
     setState(State::Editing);
-    emitProgress();
 
     if (checkCancellation()) {
         setState(State::Cancelled);
@@ -435,7 +513,6 @@ void AgenticWorkflow::runWorkflow()
     // Phase 4: VALIDATION — validate the generated content.
     setCurrentStep(Step::Validate);
     setState(State::Validating);
-    emitProgress();
 
     if (checkCancellation()) {
         setState(State::Cancelled);
@@ -458,7 +535,6 @@ void AgenticWorkflow::runWorkflow()
     if (isChuckWorkflow) {
         setCurrentStep(Step::Compile);
         setState(State::Compiling);
-        emitProgress();
 
         if (checkCancellation()) {
             setState(State::Cancelled);
@@ -479,7 +555,6 @@ void AgenticWorkflow::runWorkflow()
     // Phase 6: AUDITION.
     setCurrentStep(Step::Audition);
     setState(State::Auditioning);
-    emitProgress();
 
     if (checkCancellation()) {
         setState(State::Cancelled);
@@ -500,7 +575,6 @@ void AgenticWorkflow::runWorkflow()
     // Phase 7: INSPECT DIAGNOSTICS.
     setCurrentStep(Step::InspectDiagnostics);
     setState(State::InspectingDiagnostics);
-    emitProgress();
 
     if (checkCancellation()) {
         setState(State::Cancelled);
@@ -534,7 +608,10 @@ void AgenticWorkflow::runWorkflow()
 
             setCurrentStep(Step::Repair);
             setState(State::Repairing);
-            emitProgress();
+            emitEvent(EventType::RepairStarted,
+                      "Repair attempt " + std::to_string(repairAttempts_) +
+                          " of " + std::to_string(maxAttempts) +
+                          " (attempting to fix the last failure)");
 
             if (checkCancellation()) {
                 setState(State::Cancelled);
@@ -550,12 +627,15 @@ void AgenticWorkflow::runWorkflow()
                     return;
                 }
                 completeStep("repair", result);
+                emitEvent(EventType::RepairCompleted,
+                          "Repair attempt " + std::to_string(repairAttempts_) +
+                              " succeeded",
+                          true, "repair", result.data);
             }
 
             // Re-validate.
             setCurrentStep(Step::Validate);
             setState(State::Validating);
-            emitProgress();
 
             {
                 StepResult result = stepValidate();
@@ -571,7 +651,6 @@ void AgenticWorkflow::runWorkflow()
             if (isChuckWorkflow) {
                 setCurrentStep(Step::Compile);
                 setState(State::Compiling);
-                emitProgress();
 
                 StepResult compileResult = stepCompile();
                 diagnostics_ = compileResult.data;
@@ -585,7 +664,6 @@ void AgenticWorkflow::runWorkflow()
 
             setCurrentStep(Step::Audition);
             setState(State::Auditioning);
-            emitProgress();
 
             StepResult auditionResult = stepAudition();
             if (!auditionResult.ok) {
@@ -616,7 +694,6 @@ void AgenticWorkflow::runWorkflow()
     if (isChuckWorkflow) {
         setCurrentStep(Step::Render);
         setState(State::Rendering);
-        emitProgress();
 
         if (checkCancellation()) {
             setState(State::Cancelled);
@@ -640,7 +717,6 @@ void AgenticWorkflow::runWorkflow()
     if (isChuckWorkflow) {
         setCurrentStep(Step::BindAsset);
         setState(State::Binding);
-        emitProgress();
 
         if (checkCancellation()) {
             setState(State::Cancelled);
@@ -701,7 +777,6 @@ void AgenticWorkflow::runWorkflow()
     {
         setCurrentStep(Step::UpdateSong);
         setState(State::UpdatingSong);
-        emitProgress();
 
         if (checkCancellation()) {
             setState(State::Cancelled);
@@ -964,8 +1039,13 @@ AgenticWorkflow::StepResult AgenticWorkflow::stepValidate()
             sr.ok = true;
             sr.message = "ChucK source validated";
         }
+        const bool ckHasErrors = !sr.ok;
         sr.data["diagnostics"] = std::move(diags);
         sr.data["source"] = "chuck_compiler";
+        emitEvent(EventType::DiagnosticsDiscovered,
+                  ckHasErrors ? "The instrument source has problems to resolve"
+                              : "The instrument source validates cleanly",
+                  !ckHasErrors, "validate", {{"diagnostics", sr.data["diagnostics"]}});
         return sr;
     } else {
         // Validate mini-notation via the real parseMini().
@@ -1006,8 +1086,13 @@ AgenticWorkflow::StepResult AgenticWorkflow::stepValidate()
             sr.ok = !hasError;
             sr.message = hasError ? "tokeniser errors found" : "notation validated";
         }
+        const bool mnHasErrors = !sr.ok;
         sr.data["diagnostics"] = std::move(diags);
         sr.data["source"] = "miniparser";
+        emitEvent(EventType::DiagnosticsDiscovered,
+                  mnHasErrors ? "The pattern has syntax problems to resolve"
+                              : "The pattern notation validates cleanly",
+                  !mnHasErrors, "validate", {{"diagnostics", sr.data["diagnostics"]}});
         return sr;
     }
 }
@@ -1238,6 +1323,13 @@ AgenticWorkflow::StepResult AgenticWorkflow::stepInspectDiagnostics()
         sr.message = "no diagnostics errors found";
     }
 
+    emitEvent(EventType::DiagnosticsDiscovered,
+              sr.ok ? "No remaining errors after checking"
+                    : "Diagnostics revealed " + std::to_string(diags.size()) +
+                          " error(s): " + sr.message,
+              sr.ok, "inspect_diagnostics",
+              {{"diagnostics", diags}, {"error_count", diags.size()}});
+
     return sr;
 }
 
@@ -1343,6 +1435,13 @@ AgenticWorkflow::StepResult AgenticWorkflow::stepRender()
         renderJobId_ = jobId;
     }
 
+    // AI-10.4: Render job submitted — surface it with its job identity.
+    emitEvent(EventType::RenderStarted,
+              "Rendering \"" + currentRequest_.assetName +
+                  "\" to audio in the background",
+              true, "render", {{"job_id", jobId}, {"asset_name", currentRequest_.assetName}},
+              false, jobId, currentRequest_.assetName);
+
     // Wait for the render job to complete (with cancellation checking).
     nlohmann::json jobResult;
 
@@ -1355,6 +1454,10 @@ AgenticWorkflow::StepResult AgenticWorkflow::stepRender()
 
         sr.data = jobResult;
         const std::string status = jobResult.value("status", std::string("cancelled"));
+        emitEvent(EventType::RenderCompleted,
+                  status == "cancelled" ? "Render cancelled before completion"
+                                        : "Render failed or timed out",
+                  false, "render", jobResult, false, jobId, currentRequest_.assetName);
         if (status == "cancelled") {
             sr.ok = false;
             sr.message = "render cancelled";
@@ -1380,9 +1483,14 @@ AgenticWorkflow::StepResult AgenticWorkflow::stepRender()
         sr.ok = true;
         sr.message = "render completed successfully";
         renderCompleted_ = true;
+        emitEvent(EventType::RenderCompleted,
+                  "Finished rendering \"" + currentRequest_.assetName + "\"",
+                  true, "render", jobResult, false, jobId, currentRequest_.assetName);
     } else if (finalStatus == "cancelled") {
         sr.ok = false;
         sr.message = "render cancelled";
+        emitEvent(EventType::RenderCompleted, "Render cancelled before completion",
+                  false, "render", jobResult, false, jobId, currentRequest_.assetName);
     } else {
         sr.ok = false;
         sr.message = "render failed: " +
@@ -1432,6 +1540,13 @@ AgenticWorkflow::StepResult AgenticWorkflow::stepBindAsset()
     if (result.value("ok", false)) {
         sr.ok = true;
         sr.message = "asset committed: " + result.value("asset_name", std::string(""));
+
+        // AI-10.4: The rendered asset is now committed to the project.
+        emitEvent(EventType::AssetCommitted,
+                  "Baked \"" + currentRequest_.assetName +
+                      "\" into the project as an instrument",
+                  true, "bind_asset", result, false, jobId,
+                  "instrument:" + currentRequest_.assetName);
 
         // Verify the asset is bound to the SampleBank.
         const auto assetName = result.value("asset_name", std::string{});
@@ -1561,6 +1676,12 @@ AgenticWorkflow::StepResult AgenticWorkflow::stepUpdateSong()
         sr.message = "song updated successfully";
         sr.data["song"] = songFile;
 
+        // AI-10.4: The song file mutation has been applied.
+        emitEvent(EventType::SongMutationApplied,
+                  "Wrote the new " + currentRequest_.targetSlot +
+                      " pattern into the song file",
+                  true, "update_song", {{"song", songFile}, {"result", result}});
+
         // AI-10.3: capture the after-content and record the change-set op.
         std::string afterContent;
         {
@@ -1616,6 +1737,13 @@ AgenticWorkflow::StepResult AgenticWorkflow::stepUpdateSong()
 
 void AgenticWorkflow::setState(State s)
 {
+    // AI-10.4: A requested cancellation wins over a coincident failure so the
+    // UI reports "cancelled", not "failed", when the user stopped the work.
+    // This matters for async steps (compile/render) where the underlying job
+    // is cancelled mid-flight and surfaces as a step failure.
+    if (s == State::Failed && stopRequested_.load(std::memory_order_acquire))
+        s = State::Cancelled;
+
     {
         std::lock_guard<std::mutex> lock(stateMtx_);
         state_ = s;
@@ -1626,7 +1754,48 @@ void AgenticWorkflow::setState(State s)
     if (s == State::Failed || s == State::Cancelled)
         changeSetManager_.cancelCurrent();
     auditLog("state_change", "workflow", true, stateName(s));
-    emitProgress();
+
+    // AI-10.4: Emit a typed event for terminal states.
+    switch (s) {
+        case State::Completed: {
+            const int steps = static_cast<int>(completedSteps_.size());
+            emitEvent(EventType::WorkflowCompleted,
+                      "Workflow complete — applied " +
+                          std::to_string(appliedChanges_.size()) + " change(s) across " +
+                          std::to_string(steps) + " step(s)",
+                      true, {}, {{"completed_steps", completedSteps_}});
+            break;
+        }
+        case State::Cancelled: {
+            emitEvent(EventType::WorkflowCancelled,
+                      "Workflow cancelled — background work has stopped",
+                      false, {}, {});
+            break;
+        }
+        case State::Failed: {
+            std::string step;
+            std::string err;
+            {
+                std::lock_guard<std::mutex> lock(stateMtx_);
+                step = stepName(currentStep_);
+                if (error_.has_value())
+                    err = *error_;
+            }
+            // Indicate whether the agent would attempt repair: only when the
+            // failure is repairable and repair budget remains.
+            const bool canRepair = (repairAttempts_ < kMaxRepairAttempts)
+                                   && step != "bind_asset" && step != "update_song"
+                                   && step != "inspect_project" && step != "inspect_song"
+                                   && step != "inspect_assets";
+            emitEvent(EventType::StepFailed,
+                      err.empty() ? ("Step '" + step + "' failed") : ("Could not " + step +
+                          " — " + err),
+                      false, step, {}, canRepair);
+            break;
+        }
+        default:
+            break;  // Non-terminal state — no standalone event.
+    }
 }
 
 void AgenticWorkflow::setCurrentStep(Step s)
@@ -1636,7 +1805,7 @@ void AgenticWorkflow::setCurrentStep(Step s)
         currentStep_ = s;
         currentStepResult_.clear();
     }
-    emitProgress();
+    emitEvent(EventType::StepStarted, stepExplain(s), true, stepName(s));
 }
 
 void AgenticWorkflow::completeStep(const std::string& name, const StepResult& result)
@@ -1660,7 +1829,11 @@ void AgenticWorkflow::completeStep(const std::string& name, const StepResult& re
     // set unchanged (testing requirement #8).
     workingSet_.updateAfterStep(name, result.data, result.ok);
 
-    emitProgress();
+    // AI-10.4: Emit the outcome for this step.
+    if (result.ok)
+        emitEvent(EventType::StepCompleted, result.message, true, name, result.data);
+    else
+        emitEvent(EventType::StepFailed, result.message, false, name, result.data);
 }
 
 bool AgenticWorkflow::checkCancellation()
@@ -1673,10 +1846,45 @@ void AgenticWorkflow::emitProgress()
     if (!progressCallback_)
         return;
 
-    // Call the callback with the current state snapshot.
-    // getState() acquires stateMtx_ internally.
-    nlohmann::json state = getState();
-    progressCallback_(std::move(state));
+    // Legacy fallback: emit a generic progress event carrying the state snapshot.
+    ProgressEvent ev;
+    ev.workflowId = workflowId_;
+    ev.type = EventType::StepProgress;
+    ev.step = currentStep_;
+    ev.stepName = stepName(currentStep_);
+    ev.ok = true;
+    ev.message = "…";
+    ev.state = getState();
+    progressCallback_(ev);
+}
+
+void AgenticWorkflow::emitEvent(EventType type,
+                                std::string message,
+                                bool ok,
+                                std::string stepNameIn,
+                                nlohmann::json details,
+                                bool repairPlanned,
+                                uint64_t jobId,
+                                std::string resource)
+{
+    if (!progressCallback_)
+        return;
+
+    ProgressEvent ev;
+    ev.workflowId = workflowId_;
+    ev.type = type;
+    ev.step = currentStep_;
+    ev.stepName = stepNameIn.empty() ? stepName(currentStep_) : std::move(stepNameIn);
+    ev.message = std::move(message);
+    ev.ok = ok;
+    ev.repairPlanned = repairPlanned;
+    ev.jobId = jobId;
+    ev.resource = std::move(resource);
+    ev.details = std::move(details);
+    ev.state = getState();
+
+    auditLog(eventTypeName(type), ev.stepName, ok, ev.message);
+    progressCallback_(ev);
 }
 
 bool AgenticWorkflow::waitForConfirmation(const std::string& action,
@@ -1706,7 +1914,10 @@ bool AgenticWorkflow::waitForConfirmation(const std::string& action,
         std::lock_guard<std::mutex> lock(stateMtx_);
         state_ = State::WaitingForApproval;
     }
-    emitProgress();
+    // AI-10.4: Surface the authorization boundary as an observable event.
+    emitEvent(EventType::ConfirmationRequired,
+              description,
+              true, action, details);
 
     // Wait for the response (with a generous timeout).
     constexpr auto kTimeout = std::chrono::minutes(5);
@@ -1718,20 +1929,22 @@ bool AgenticWorkflow::waitForConfirmation(const std::string& action,
             if (cv_.wait_until(lock, deadline) == std::cv_status::timeout) {
                 // Also check stopRequested.
                 if (stopRequested_.load(std::memory_order_acquire)) {
-                    std::lock_guard<std::mutex> l2(stateMtx_);
-                    pendingConfirmation_.reset();
-                    state_ = State::Cancelled;
+                    {
+                        std::lock_guard<std::mutex> l2(stateMtx_);
+                        pendingConfirmation_.reset();
+                    }
                     confirmationResponded_.store(false, std::memory_order_release);
-                    emitProgress();
+                    setState(State::Cancelled);
                     return false;
                 }
                 // Timeout waiting for confirmation.
-                std::lock_guard<std::mutex> l2(stateMtx_);
-                pendingConfirmation_.reset();
-                error_ = "confirmation timed out";
-                state_ = State::Failed;
+                {
+                    std::lock_guard<std::mutex> l2(stateMtx_);
+                    pendingConfirmation_.reset();
+                    error_ = "confirmation timed out";
+                }
                 confirmationResponded_.store(false, std::memory_order_release);
-                emitProgress();
+                setState(State::Failed);
                 return false;
             }
         }
@@ -1789,6 +2002,17 @@ bool AgenticWorkflow::waitForAsyncJob(uint64_t jobTrackerId,
             status == "cancelled" || status == "completed") {
             return status == "succeeded" || status == "completed";
         }
+
+        // AI-10.4: Surface meaningful progress while the async job runs so the
+        // user sees it is still actively working (not hung).
+        if (serviceType == "chuck")
+            emitEvent(EventType::StepProgress,
+                      "Still compiling — waiting on the instrument to build",
+                      true, "compile", result, false, jobTrackerId);
+        else if (serviceType == "render")
+            emitEvent(EventType::StepProgress,
+                      "Still rendering audio in the background",
+                      true, "render", result, false, jobTrackerId);
 
         std::this_thread::sleep_for(kPollInterval);
     }

@@ -1625,9 +1625,24 @@ void ControlInterface::handleWorkflowStart(std::string_view rest)
     // Start the workflow with progress + confirmation callbacks.
     bool started = agenticWorkflow_->start(
         std::move(request),
-        // Progress callback: stream state snapshots to stdout.
-        [](nlohmann::json state) {
+        // Progress callback: stream typed progress/explanation events to stdout
+        // (AI-10.4) so the chat can render a checklist + natural language.
+        [](const AgenticWorkflow::ProgressEvent& ev) {
+            nlohmann::json state = ev.state;
             state["cmd"] = "workflow_progress";
+            state["event"] = AgenticWorkflow::eventTypeName(ev.type);
+            state["event_index"] = ev.workflowId;
+            state["workflow_id"] = ev.workflowId;
+            state["step"] = ev.stepName;
+            state["ok"] = ev.ok;
+            state["repair_planned"] = ev.repairPlanned;
+            if (ev.jobId != 0)
+                state["job_id"] = ev.jobId;
+            if (!ev.resource.empty())
+                state["resource"] = ev.resource;
+            state["message"] = ev.message;
+            if (!ev.details.is_null())
+                state["details"] = ev.details;
             emitResponse(state);
         },
         // Confirmation callback: emit a confirmation request.

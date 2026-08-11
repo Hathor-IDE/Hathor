@@ -146,6 +146,63 @@ public:
     };
 
     // -----------------------------------------------------------------------
+    // AI-10.4: Observable progress/explanation event stream.
+    //
+    // Each progress event describes one observable step in the agent's work so
+    // the chat UI can show a checklist/progress stream and natural-language
+    // explanations.  The event stream REUSES the per-workflow ProgressCallback
+    // established by AI-5/AI-6 — it does not create a parallel progress system.
+    //
+    // Every event carries enough identity to associate it with:
+    //   - the workflow (workflowId)
+    //   - the current plan step (step / stepName)
+    //   - the relevant async job, where applicable (jobId)
+    //   - the affected resource/session, where applicable (resource)
+    //   - the success/failure outcome (ok)
+    // -----------------------------------------------------------------------
+
+    enum class EventType {
+        WorkflowStarted,        ///< Workflow accepted and running.
+        PlanCreated,            ///< A structured plan was assembled.
+        StepStarted,            ///< A canonical step began.
+        StepProgress,           ///< Meaningful progress within an async step.
+        StepCompleted,          ///< A canonical step finished successfully.
+        StepFailed,             ///< A canonical step failed.
+        DiagnosticsDiscovered,  ///< Errors/notes surfaced from validation.
+        RepairStarted,          ///< The agent began repairing a failure.
+        RepairCompleted,        ///< The agent finished a repair attempt.
+        ConfirmationRequired,   ///< Destructive op paused at the auth boundary.
+        RenderStarted,          ///< Background render job submitted (AI-6).
+        RenderCompleted,        ///< Background render job finished.
+        AssetCommitted,         ///< Rendered asset committed (bind_asset).
+        SongMutationApplied,    ///< Song file mutation applied (update_song).
+        WorkflowCancelled,      ///< Workflow cancelled; underlying work stopped.
+        WorkflowCompleted,      ///< Workflow finished successfully.
+    };
+
+    /**
+     * ProgressEvent — one observable event in the agent workflow.
+     *
+     * Delivered via ProgressCallback on the workflow thread.  `message` is a
+     * concise, natural-language, musical/application-level explanation — not
+     * implementation noise.  `state` carries the full getState() snapshot for
+     * backward compatibility with existing consumers.
+     */
+    struct ProgressEvent {
+        uint64_t        workflowId  = 0;
+        EventType       type        = EventType::WorkflowStarted;
+        Step            step        = Step::None;  ///< canonical step (if any)
+        std::string     stepName;                  ///< e.g. "compile", "bind_asset"
+        std::string     message;                   ///< natural-language explanation
+        bool            ok          = true;        ///< success/failure outcome
+        bool            repairPlanned = false;     ///< whether the agent will attempt repair
+        uint64_t        jobId       = 0;           ///< relevant async job (compile/render)
+        std::string     resource;                  ///< affected session/slot/asset
+        nlohmann::json  details;                   ///< diagnostics, plan, job status, etc.
+        nlohmann::json  state;                     ///< full workflow state snapshot
+    };
+
+    // -----------------------------------------------------------------------
     // Request — the high-level intent the workflow executes
     // -----------------------------------------------------------------------
 
@@ -188,7 +245,8 @@ public:
     // -----------------------------------------------------------------------
 
     /// Called on every state/step transition so the UI can report progress.
-    using ProgressCallback       = std::function<void(nlohmann::json state)>;
+    /// Delivers a structured ProgressEvent (AI-10.4) on the workflow thread.
+    using ProgressCallback       = std::function<void(const ProgressEvent& ev)>;
 
     /// Called when a destructive operation requires user confirmation.
     using ConfirmationCallback   = std::function<void(ConfirmationRequest req)>;
@@ -225,6 +283,9 @@ public:
     // -----------------------------------------------------------------------
     // Public interface
     // -----------------------------------------------------------------------
+
+    /// AI-10.4: Stable string name for a progress EventType (e.g. for the UI).
+    static const char* eventTypeName(EventType t) noexcept;
 
     /**
      * Start a new workflow.
@@ -434,6 +495,24 @@ private:
     /// Emit the current state as a progress event.
     void emitProgress();
 
+    /// AI-10.4: Build and emit a structured progress/explanation event.
+    /// @param type        The event kind (workflow/step/diagnostic/repair/…).
+    /// @param message     Concise natural-language explanation.
+    /// @param ok          Success/failure outcome.
+    /// @param stepName    Canonical step name (empty for workflow-level events).
+    /// @param details     Event-specific payload (diagnostics, job status, …).
+    /// @param repairPlanned Whether the agent will attempt a repair after a failure.
+    /// @param jobId       Relevant async job ID (compile/render) if applicable.
+    /// @param resource    Affected resource/session/slot/asset if applicable.
+    void emitEvent(EventType type,
+                   std::string message,
+                   bool ok = true,
+                   std::string stepName = {},
+                   nlohmann::json details = {},
+                   bool repairPlanned = false,
+                   uint64_t jobId = 0,
+                   std::string resource = {});
+
     /// Execute a change-set revert plan via AI-7 (restore_song) / AI-6
     /// (remove_asset).  Returns {ok, executed:[...]}.  Destructive actions are
     /// only executed when @p confirm is true.
@@ -499,6 +578,11 @@ private:
     std::vector<nlohmann::json> appliedChanges_;
     std::optional<std::string> error_;
     Request           currentRequest_;
+
+    // AI-10.4: Workflow identity — every progress event carries this id so it
+    // can be scoped to the correct workflow/thread.
+    uint64_t          workflowId_ = 0;
+    static std::atomic<uint64_t> s_nextWorkflowId_;
 
     // Inspection results (cached for use across steps)
     nlohmann::json  projectInfo_;

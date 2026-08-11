@@ -115,6 +115,7 @@ std::vector<ReuseFinding> IntentPlanner::discoverReuseCandidates(
     // inspectProject() gives us the project_dir; we pass it to
     // listChuckInstruments() for the full asset inventory.
     auto projectInfo = readFacade_.inspectProject();
+    { FILE* d = std::fopen("/tmp/ai104_dbg.log","a"); std::fprintf(d,"[reuse] inspectProject done ok=%d\n", (int)projectInfo.value("ok",false)); std::fclose(d); }
     if (!projectInfo.value("ok", false))
         return findings;
 
@@ -123,6 +124,7 @@ std::vector<ReuseFinding> IntentPlanner::discoverReuseCandidates(
         return findings;
 
     auto instruments = readFacade_.listChuckInstruments(projectDir);
+    { FILE* d = std::fopen("/tmp/ai104_dbg.log","a"); std::fprintf(d,"[reuse] listChuckInstruments done\n"); std::fclose(d); }
     if (instruments.value("ok", false)) {
         for (const auto& inst : instruments.value("instruments", nlohmann::json::array())) {
             const std::string name = inst.value("name", std::string{});
@@ -177,6 +179,7 @@ std::vector<ReuseFinding> IntentPlanner::discoverReuseCandidates(
     // Sessions are "ck:N" so we check by source content matching.
     // We query listRenderJobs to see if a previous render exists.
     auto jobs = renderService_.listRenderJobs();
+    { FILE* d = std::fopen("/tmp/ai104_dbg.log","a"); std::fprintf(d,"[reuse] listRenderJobs done\n"); std::fclose(d); }
     if (jobs.is_array()) {
         for (const auto& job : jobs) {
             const std::string assetNameVal = job.value("asset_name", std::string{});
@@ -588,9 +591,12 @@ PlanModel IntentPlanner::planFromRequest(
     model.durationBars = durationBars;
     model.isDryRun = dryRun;
 
+    { FILE* d = std::fopen("/tmp/ai104_dbg.log","a"); std::fprintf(d,"[planner] start intent=%s slot=%s asset=%s\n", model.intent.c_str(), model.targetSlot.c_str(), model.assetName.c_str()); std::fclose(d); }
+
     // Inspect existing project state to populate reuse findings.
     model.reuseFindings = discoverReuseCandidates(
         model.intent, model.assetName);
+    { FILE* d = std::fopen("/tmp/ai104_dbg.log","a"); std::fprintf(d,"[planner] reuse done n=%zu\n", model.reuseFindings.size()); std::fclose(d); }
     model.reuseDecision = decideReuse(
         model.reuseFindings, model.assetName);
 
