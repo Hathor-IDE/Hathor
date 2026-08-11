@@ -152,6 +152,10 @@ public:
     /** Number of characters to dim (existing text covered by the ghost). */
     int insertionLen() const noexcept { return insertionLen_; }
 
+    /** J-2: Current candidate count and selected index for the indicator badge. */
+    size_t candidateCount() const noexcept { return candidateCount_; }
+    size_t selectedCandidate() const noexcept { return selectedCandidate_; }
+
 private:
     friend class HathorTab;
 

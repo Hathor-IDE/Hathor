@@ -1003,6 +1003,26 @@ bool HathorTab::handleLspKeyPress(const juce::KeyPress& key)
         }
     }
 
+    // J-2: Alt+→ / Alt+← cycle ghost candidates (if ghost active).
+    // Inspects existing key handling first — arrows are only consumed when
+    // ghost has multiple candidates; otherwise they fall through to the
+    // editor's default cursor-movement behaviour.
+    if (coordinator_ && coordinator_->isGhostEnabled()
+        && ghostOverlay_ && ghostOverlay_->hasGhost()
+        && ghostOverlay_->candidateCount() > 1)
+    {
+        if (key.getModifiers().isAltDown() && key.getKeyCode() == juce::KeyPress::rightKey)
+        {
+            cycleGhostNext();
+            return true;
+        }
+        if (key.getModifiers().isAltDown() && key.getKeyCode() == juce::KeyPress::leftKey)
+        {
+            cycleGhostPrev();
+            return true;
+        }
+    }
+
     // Up/Down: navigate LSP completion popup (if visible)
     if (lspCompletionPopup_ && lspCompletionPopup_->hasCandidates())
     {
@@ -1308,6 +1328,69 @@ void HathorTab::dismissGhostCompletion()
     activeGhostResult_.reset();
 }
 
+// ---------------------------------------------------------------------------
+// J-2: Candidate cycling (Alt+→ / Alt+←)
+// ---------------------------------------------------------------------------
+// Cycling operates entirely on the cached candidate set in GhostCompletionLogic
+// — no LLM request is issued. The overlay's displayed text is updated to show
+// the newly selected candidate. The document is never modified during cycling.
+// ---------------------------------------------------------------------------
+
+void HathorTab::cycleGhostNext()
+{
+    if (!coordinator_ || !ghostOverlay_)
+        return;
+
+    // Delegate to the coordinator (which delegates to GhostCompletionLogic).
+    // This changes the selectedIndex of the cached active ghost.
+    coordinator_->selectNextGhostCandidate();
+
+    // Get the newly selected candidate and update the overlay display.
+    auto selected = coordinator_->selectedGhostResult();
+    if (!selected.has_value())
+        return;
+
+    // Re-resolve the caret pixel rectangle — the cursor hasn't moved
+    // but we recompute in case of scroll or resize.
+    juce::Rectangle<int> caretRect = editor_.getCaretRectangleForCharIndex(
+        editor_.getCaretPosition());
+
+    ghostOverlay_->setGhostText(selected->text, caretRect, 0);
+    ghostOverlay_->setCandidateIndicator(
+        coordinator_->ghostCandidateCount(),
+        coordinator_->ghostSelectedCandidateIndex());
+
+    if (!coordinator_->isLspPopupActive())
+        ghostOverlay_->showGhost();
+    else
+        ghostOverlay_->hideGhost();
+}
+
+void HathorTab::cycleGhostPrev()
+{
+    if (!coordinator_ || !ghostOverlay_)
+        return;
+
+    coordinator_->selectPreviousGhostCandidate();
+
+    auto selected = coordinator_->selectedGhostResult();
+    if (!selected.has_value())
+        return;
+
+    juce::Rectangle<int> caretRect = editor_.getCaretRectangleForCharIndex(
+        editor_.getCaretPosition());
+
+    ghostOverlay_->setGhostText(selected->text, caretRect, 0);
+    ghostOverlay_->setCandidateIndicator(
+        coordinator_->ghostCandidateCount(),
+        coordinator_->ghostSelectedCandidateIndex());
+
+    if (!coordinator_->isLspPopupActive())
+        ghostOverlay_->showGhost();
+    else
+        ghostOverlay_->hideGhost();
+}
+
 void HathorTab::ghostTick()
 {
     if (!coordinator_ || !coordinator_->isGhostEnabled()
@@ -1343,6 +1426,9 @@ void HathorTab::ghostTick()
     // Rebuild the request with the resolved provider config
     const auto& ctx = coordinator_->ghostLogic().currentContext();
     req = lsp::GhostCompletionLogic::buildRequest(ctx, *config);
+
+    // J-2: Preserve maxCandidates from the coordinator's ghost logic config.
+    req.maxCandidates = coordinator_->ghostLogic().maxCandidates();
 
     // Send the request via the llm-ls client
     ghostClient_->requestGhostCompletion(
@@ -1401,10 +1487,15 @@ void HathorTab::ghostTick()
              juce::Rectangle<int> caretRect = editor_.getCaretRectangleForCharIndex(
                  editor_.getCaretPosition());
 
-             ghostOverlay_->setGhostText(ghostResult.text, caretRect, 0);
+              ghostOverlay_->setGhostText(ghostResult.text, caretRect, 0);
 
-             // Store the result for cursor verification on accept
-             activeGhostResult_ = ghostResult;
+              // J-2: Set the candidate indicator badge on the overlay
+              ghostOverlay_->setCandidateIndicator(
+                  coordinator_->ghostCandidateCount(),
+                  coordinator_->ghostSelectedCandidateIndex());
+
+              // Store the result for cursor verification on accept
+              activeGhostResult_ = ghostResult;
 
              // AI-G3: Only show the ghost overlay if the coordinator
              // hasn't entered LspPopupActive mode (no late ghost-behind-popup).

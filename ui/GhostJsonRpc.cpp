@@ -101,9 +101,14 @@ std::pair<std::string, std::string> GhostJsonRpc::serializeGhostCompletion(
         {"tls_skip_verify_insecure", req.tlsSkipVerify},
         {"request_body", req.requestBody.is_null() ? json::object() : req.requestBody},
         {"disable_url_path_completion", req.disableUrlPathCompletion},
-        {"tokens_to_clear", req.tokensToClear},
-        {"n", req.maxCandidates > 0 ? static_cast<int>(req.maxCandidates) : json(nullptr)}
-    };
+         {"tokens_to_clear", req.tokensToClear}
+     };
+
+     // J-2: Request N independent completions from the LLM
+     if (req.maxCandidates > 0)
+         params["n"] = static_cast<int>(req.maxCandidates);
+     else
+         params["n"] = nullptr;
 
     json msg = {
         {"jsonrpc", "2.0"},
@@ -311,7 +316,7 @@ nlohmann::json GhostCompletionRequest::toJson() const
 
     nlohmann::json apiTokenJson = apiToken.empty() ? nullptr : nlohmann::json(apiToken);
 
-    return nlohmann::json{
+    nlohmann::json result = {
         {"textDocument", {
             {"uri", uri},
             {"languageId", languageId}
@@ -338,9 +343,16 @@ nlohmann::json GhostCompletionRequest::toJson() const
         {"tls_skip_verify_insecure", tlsSkipVerify},
         {"request_body", requestBody.is_null() ? nlohmann::json::object() : requestBody},
         {"disable_url_path_completion", disableUrlPathCompletion},
-        {"tokens_to_clear", tokensToClear},
-        {"n", maxCandidates > 0 ? static_cast<int>(maxCandidates) : json(nullptr)}
+        {"tokens_to_clear", tokensToClear}
     };
+
+    // J-2: Request N independent completions from the LLM
+    if (maxCandidates > 0)
+        result["n"] = static_cast<int>(maxCandidates);
+    else
+        result["n"] = nullptr;
+
+    return result;
 }
 
 std::optional<GhostCompletionResponse> parseGhostCompletionResponse(

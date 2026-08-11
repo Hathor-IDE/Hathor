@@ -479,7 +479,7 @@ size_t GhostCompletionLogic::selectedCandidateIndex() const noexcept
     return activeGhost_->selectedIndex;
 }
 
-std::optional<const GhostResult&> GhostCompletionLogic::selectedCandidate() const noexcept
+std::optional<GhostResult> GhostCompletionLogic::selectedCandidate() const noexcept
 {
     if (!activeGhost_.has_value() || activeGhost_->candidates.empty())
         return std::nullopt;

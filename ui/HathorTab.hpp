@@ -331,9 +331,17 @@ public:
       /// Dismiss the ghost text (Escape key or any edit).
       void dismissGhostCompletion();
 
-       /// Check for ghost text timeout / tick — called by EditorArea's
-       /// UITimer.
-       void ghostTick();
+      // J-2: Cycle ghost completion candidates (Alt+→ / Alt+←).
+      // Cycling operates on cached candidates — no LLM request is issued.
+      // Updates the overlay to show the newly selected candidate.
+      /// Select the next ghost candidate (wraps). No LLM request.
+      void cycleGhostNext();
+      /// Select the previous ghost candidate (wraps). No LLM request.
+      void cycleGhostPrev();
+
+      /// Check for ghost text timeout / tick — called by EditorArea's
+      /// UITimer.
+      void ghostTick();
 
      /// Callback fired by the LspHoverHandler when it's dismissed
     /// (used to clear hover state).

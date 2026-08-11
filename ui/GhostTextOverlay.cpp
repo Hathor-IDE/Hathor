@@ -78,46 +78,64 @@ void GhostTextOverlay::paint(juce::Graphics& g)
     // -----------------------------------------------------------------------
     // AI-G6: Render the ghost text, dimming characters that overlap with
     // already-present document text (insertionLen).
-    //
-    // The first `insertionLen_` characters of the ghost text represent text
-    // that already exists in the document at the cursor position. We render
-    // those with a lower alpha (dimmed) to visually distinguish them from
-    // the genuinely new completion text that follows.
     // -----------------------------------------------------------------------
 
-    // Measure the full ghost text width for layout.
     juce::String ghostStr(ghostText_);
     const juce::Font& font = ghostFont_;
+    int textEndX = startX;
 
-    // Render in two parts if insertionLen > 0:
-    //   1. Dimmed part: first insertionLen_ characters (existing text)
-    //   2. Normal part: remaining characters (new completion)
     if (insertionLen_ > 0 && insertionLen_ < static_cast<int>(ghostText_.length()))
     {
         juce::String dimmedPart = ghostStr.substring(0, insertionLen_);
         juce::String normalPart = ghostStr.substring(insertionLen_);
 
-         // Dimmed part — lower opacity to indicate it's existing text
-         g.setColour(ghostColour_.withAlpha(0.2f));
-
-         // Measure the dimmed part to know where the normal part starts
-         float dimmedWidth = font.getStringWidthFloat(dimmedPart);
-
+        // Dimmed part — lower opacity to indicate it's existing text
+        g.setColour(ghostColour_.withAlpha(0.2f));
+        float dimmedWidth = font.getStringWidthFloat(dimmedPart);
         g.drawText(dimmedPart,
                    startX, startY,
                    static_cast<int>(dimmedWidth), rowHeight,
                    juce::Justification::topLeft,
                    false);
+        textEndX = startX + static_cast<int>(dimmedWidth);
 
         // Normal part — standard ghost opacity
         g.setColour(ghostColour_);
         float normalWidth = font.getStringWidthFloat(normalPart);
         g.drawText(normalPart,
-                   startX + static_cast<int>(dimmedWidth), startY,
+                   textEndX, startY,
                    static_cast<int>(normalWidth), rowHeight,
-                   juce::Justification::topLeft,
+                   juce::Justification::top_left,
+                   false);
+        textEndX += static_cast<int>(normalWidth);
+    }
+    else
+    {
+        // No dimming needed — draw the entire ghost text at standard opacity
+        float fullWidth = font.getStringWidthFloat(ghostStr);
+        g.drawText(ghostStr,
+                   startX, startY,
+                   static_cast<int>(fullWidth), rowHeight,
+                   juce::Justification::top_left,
+                   false);
+        textEndX = startX + static_cast<int>(fullWidth);
+    }
+
+    // -----------------------------------------------------------------------
+    // J-2: Draw candidate indicator badge (e.g. "2/3") after the ghost text
+    // -----------------------------------------------------------------------
+    if (candidateCount_ > 1)
+    {
+        juce::String badge = juce::String(selectedCandidate_ + 1) + "/" + juce::String(candidateCount_);
+        float badgeWidth = font.getStringWidthFloat(badge);
+        g.setColour(ghostColour_.withAlpha(0.6f));
+        g.drawText(badge,
+                   textEndX + 4, startY,
+                   static_cast<int>(badgeWidth), rowHeight,
+                   juce::Justification::top_left,
                    false);
     }
+}
     else
     {
         // No dimming needed — draw the entire ghost text at standard opacity

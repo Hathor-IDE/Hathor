@@ -302,10 +302,10 @@ public:
     size_t selectedCandidateIndex() const noexcept;
 
     /**
-      * Get the currently selected candidate result.
+      * Get the currently selected candidate result (for overlay display).
       * Returns nullopt if no ghost is active.
       */
-    std::optional<const GhostResult&> selectedCandidate() const noexcept;
+    std::optional<GhostResult> selectedCandidate() const noexcept;
 
     /**
       * Select the next candidate (wraps to first after the last).
