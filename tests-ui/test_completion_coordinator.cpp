@@ -336,3 +336,133 @@ TEST_CASE("CompletionCoordinator documentChangeCancelsPendingGhostRequest", "[co
     auto req2 = coord.onGhostTick(200);
     REQUIRE_FALSE(req2.has_value());
 }
+
+// ===========================================================================
+// J-1: Trigger policy integration with coordinator
+// ===========================================================================
+// These tests verify that the trigger policy (which runs inside
+// GhostCompletionLogic) is properly consulted by the coordinator's
+// trigger + tick paths, and that the deterministic popup state is synced.
+
+TEST_CASE("Coordinator syncs deterministic popup state to ghost logic", "[coordinator][trigger]")
+{
+    CompletionCoordinator coord;
+    coord.setGhostEnabled(true);
+    coord.setGhostDebounceMs(0);
+
+    GhostContext ctx = makeCtx("bd ");
+    ctx.line = 0;
+    ctx.character = 3;
+
+    // When popup is active, triggerGhostCompletion returns nullopt
+    coord.requestLspCompletion();
+    REQUIRE(coord.isLspPopupActive());
+
+    auto result = coord.triggerGhostCompletion(ctx, 0);
+    REQUIRE_FALSE(result.has_value());
+
+    // Verify ghost logic knows popup is active
+    REQUIRE(coord.ghostLogic().isDeterministicPopupActive());
+
+    // After dismiss, popup state is synced
+    coord.onLspPopupDismissed();
+    REQUIRE_FALSE(coord.isLspPopupActive());
+    REQUIRE_FALSE(coord.ghostLogic().isDeterministicPopupActive());
+}
+
+TEST_CASE("Coordinator trigger policy suppresses ghost in string (AI-G5)", "[coordinator][trigger]")
+{
+    CompletionCoordinator coord;
+    coord.setGhostEnabled(true);
+    coord.setGhostDebounceMs(0);
+
+    // Cursor inside a string literal
+    GhostContext ctx = makeCtx("bd \"sd", 0, 6);
+    ctx.languageId = "hathor";
+
+    coord.triggerGhostCompletion(ctx, 0);
+
+    // Even with debounce=0, no request should fire because the trigger
+    // policy suppresses at the onEditorChanged level.
+    auto req = coord.onGhostTick(0);
+    REQUIRE_FALSE(req.has_value());
+}
+
+TEST_CASE("Coordinator trigger policy suppresses mid-token (AI-G1)", "[coordinator][trigger]")
+{
+    CompletionCoordinator coord;
+    coord.setGhostEnabled(true);
+    coord.setGhostDebounceMs(0);
+
+    // Cursor mid-token (between two word chars)
+    GhostContext ctx = makeCtx("bdsn", 0, 2);
+    ctx.languageId = "hathor";
+
+    coord.triggerGhostCompletion(ctx, 0);
+    auto req = coord.onGhostTick(0);
+    REQUIRE_FALSE(req.has_value());
+}
+
+TEST_CASE("Coordinator trigger policy allows at boundary (J-1)", "[coordinator][trigger]")
+{
+    CompletionCoordinator coord;
+    coord.setGhostEnabled(true);
+    coord.setGhostDebounceMs(0);
+
+    // Cursor after a space following a word
+    GhostContext ctx = makeCtx("bd ", 0, 3);
+    ctx.languageId = "hathor";
+
+    coord.triggerGhostCompletion(ctx, 0);
+    auto req = coord.onGhostTick(0);
+    REQUIRE(req.has_value());
+}
+
+TEST_CASE("Coordinator trigger policy respects configurable allowInStrings", "[coordinator][trigger]")
+{
+    CompletionCoordinator coord;
+    coord.setGhostEnabled(true);
+    coord.setGhostDebounceMs(0);
+
+    // Configure to allow in strings
+    GhostTriggerPolicyConfig cfg;
+    cfg.allowInStrings = true;
+    coord.setGhostTriggerPolicyConfig(cfg);
+
+    GhostContext ctx = makeCtx("bd \"", 0, 4);
+    ctx.languageId = "hathor";
+
+    // With allowInStrings=true, the in-string check is bypassed.
+    // However isSyntacticallyUnreliable also checks for unclosed strings,
+    // so this should still be suppressed.
+    coord.triggerGhostCompletion(ctx, 0);
+    auto req = coord.onGhostTick(0);
+    REQUIRE_FALSE(req.has_value());
+}
+
+TEST_CASE("Coordinator: after LspPopupDismissed, ghost resumes", "[coordinator][trigger]")
+{
+    CompletionCoordinator coord;
+    coord.setGhostEnabled(true);
+    coord.setGhostDebounceMs(0);
+
+    // Show popup
+    coord.requestLspCompletion();
+    REQUIRE(coord.isLspPopupActive());
+
+    // Try to trigger ghost — should be suppressed
+    auto ctx = makeCtx("bd ");
+    auto result = coord.triggerGhostCompletion(ctx, 0);
+    REQUIRE_FALSE(result.has_value());
+
+    auto req = coord.onGhostTick(0);
+    REQUIRE_FALSE(req.has_value());
+
+    // Dismiss popup
+    coord.onLspPopupDismissed();
+
+    // Now trigger should work
+    coord.triggerGhostCompletion(ctx, 0);
+    auto req2 = coord.onGhostTick(0);
+    REQUIRE(req2.has_value());
+}

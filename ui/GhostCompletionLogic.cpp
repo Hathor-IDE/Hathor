@@ -167,16 +167,31 @@ GhostCompletionLogic::onEditorChanged(const GhostContext& ctx, int64_t nowMs)
     if (!enabled_)
         return std::nullopt;
 
-    // Update the current context and revision
+    // J-1: Trigger policy — decide whether to even start the debounce cycle.
+    // If the cursor is in a string/comment, mid-token, or the context is
+    // a duplicate, do NOT start the debounce so the timer tick won't fire
+    // a request. We still update the context and clear any active ghost
+    // (the cursor moved, so a previous ghost at a different position is stale).
+    auto decision = policy_.shouldTrigger(
+        ctx, lastRequestedCtx_, deterministicPopupActive_, pendingRequest_.has_value());
+
+    // Always update the current context snapshot.
     currentCtx_ = ctx;
     ++revision_;
     lastChangeTimeMs_ = nowMs;
-    debouncePending_ = true;
 
-    // Clear any active ghost — the document changed while it was showing
+    // Clear any active ghost — the cursor moved so a previous ghost is stale.
     activeGhost_.reset();
 
-    // Don't request immediately — wait for debounce to expire
+    if (!decision.shouldTrigger)
+    {
+        // Policy says suppress — don't start the debounce cycle.
+        debouncePending_ = false;
+        return std::nullopt;
+    }
+
+    // Policy says allow — start (or restart) the debounce cycle.
+    debouncePending_ = true;
     return std::nullopt;
 }
 
@@ -246,6 +261,10 @@ GhostCompletionLogic::onTimerTick(int64_t nowMs)
             requestId, revision_, nowMs,
             req.docPrefix, req.docSuffix
         };
+
+        // J-1: Record this context so future onEditorChanged calls with the
+        // same document text + cursor position are detected as duplicates.
+        lastRequestedCtx_ = currentCtx_;
 
         return std::make_optional(std::make_pair(req, requestId));
     }
@@ -389,16 +408,44 @@ std::optional<RejectCompletionParams> GhostCompletionLogic::onReject()
     return params;
 }
 
-void GhostCompletionLogic::clearActiveGhost() noexcept
+    void GhostCompletionLogic::clearActiveGhost() noexcept
 {
     activeGhost_.reset();
     pendingRequest_.reset();
+}
+
+void GhostCompletionLogic::setDeterministicPopupActive(bool active) noexcept
+{
+    if (deterministicPopupActive_ == active)
+        return;
+
+    deterministicPopupActive_ = active;
+
+    if (active)
+    {
+        // AI-G5: A deterministic popup is now visible — cancel any in-flight
+        // ghost request and clear any active ghost so the popup takes precedence.
+        cancelPendingRequest();
+        activeGhost_.reset();
+        debouncePending_ = false;
+    }
+    else
+    {
+        // Popup dismissed — allow the debounce cycle to resume on the next
+        // editor change / timer tick. Clear lastRequestedCtx_ so we don't
+        // suppress a fresh trigger at the same position.
+        lastRequestedCtx_.reset();
+    }
 }
 
 void GhostCompletionLogic::cancelPendingRequest() noexcept
 {
     pendingRequest_.reset();
     debouncePending_ = false;
+    // J-1: Clear the last requested context so a subsequent editor change
+    // at the same position is NOT treated as a duplicate (the user may
+    // want to re-trigger after a cancel, e.g. via Ctrl+Shift+Space).
+    lastRequestedCtx_.reset();
 }
 
 // ---------------------------------------------------------------------------

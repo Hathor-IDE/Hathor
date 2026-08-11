@@ -36,6 +36,7 @@
 
 #include "GhostProtocol.hpp"
 #include "GhostProviderConfig.hpp"
+#include "GhostTriggerPolicy.hpp"
 
 #include <chrono>
 #include <optional>
@@ -47,31 +48,9 @@
 namespace hathor::lsp {
 
 // ---------------------------------------------------------------------------
-// GhostContext — current editor state snapshot for ghost text
+// GhostContext — defined in GhostProtocol.hpp (JUCE-free, shared with
+//                 GhostTriggerPolicy — J-1)
 // ---------------------------------------------------------------------------
-
-/**
-  * A point-in-time snapshot of the editor state needed for ghost-text requests.
-  * This mirrors the fields from EditorContextSnapshot relevant to FIM.
-  *
-  * AI-G2: includes explicit docPrefix/docSuffix for FIM trimming.
-  * AI-8: includes authoringContext (dynamic authoring context JSON,
-  *       assembled by AuthoringContext — may be null if not wired).
-  */
-struct GhostContext {
-    std::string documentText;  ///< full document text
-    std::string uri;           ///< file:// URI or synthetic URI
-    std::string languageId;    ///< "hathor" or "chuck"
-    int         line      = 0; ///< 0-based cursor line
-    int         character = 0; ///< 0-based cursor character offset
-    int         revision  = 0; ///< incremented on each document edit
-
-    // AI-G8: Dynamic authoring context (from AuthoringContext / AI-8).
-    // May be null if the AI-8 context provider is not wired. When present,
-    // this JSON includes supported-surface info (AI-3), diagnostics, editor
-    // state, and other relevant project/language information.
-    nlohmann::json authoringContext;
-};
 
 // ---------------------------------------------------------------------------
 // FIM context builder
@@ -175,6 +154,34 @@ public:
 
     /** Maximum milliseconds to wait for a response before timeout. */
     void setTimeoutMs(int ms) noexcept { timeoutMs_ = ms; }
+
+    /**
+      * Set the trigger policy configuration (tunables for the ghost completion
+      * triggering rules — J-1). Allows callers to configure which contexts
+      * should trigger ghost completion without restructuring the lifecycle.
+      */
+    void setTriggerPolicyConfig(const GhostTriggerPolicyConfig& cfg) noexcept
+    {
+        policy_.setConfig(cfg);
+    }
+
+    /** Read the current trigger policy configuration. */
+    const GhostTriggerPolicyConfig& triggerPolicyConfig() const noexcept
+    {
+        return policy_.config();
+    }
+
+    /**
+      * Notify the ghost logic that a deterministic (LSP/metadata) completion
+      * popup is currently visible or has been dismissed.
+      *
+      * When a deterministic popup is active, ghost completion is suppressed
+      * (AI-G5 precedence) and any in-flight request / active ghost is cancelled.
+      */
+    void setDeterministicPopupActive(bool active) noexcept;
+
+    /** True if a deterministic completion popup is currently active. */
+    bool isDeterministicPopupActive() const noexcept { return deterministicPopupActive_; }
 
     // -----------------------------------------------------------------------
     // State queries
@@ -296,6 +303,18 @@ private:
     int         revision_         = 0;
     int64_t     lastChangeTimeMs_ = 0;  ///< ms since epoch of last editor change
     bool        debouncePending_  = false;
+
+    /// The trigger policy (J-1) — decides whether to start the debounce cycle.
+    GhostTriggerPolicy policy_;
+
+    /// True when a deterministic (LSP/metadata) completion popup is visible.
+    /// When true, ghost requests are suppressed (AI-G5 precedence).
+    bool deterministicPopupActive_ = false;
+
+    /// The context from the last request that was actually sent (in onTimerTick).
+    /// Used by the trigger policy to suppress duplicate requests for unchanged
+    /// editor state (J-1 test #9).
+    std::optional<GhostContext> lastRequestedCtx_;
 
     /// The current in-flight request (requestId + revision at time of request).
     // AI-G2: also carries docPrefix/docSuffix for response trimming.

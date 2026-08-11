@@ -44,6 +44,18 @@ void CompletionCoordinator::setGhostTimeoutMs(int ms) noexcept
     ghostLogic_->setTimeoutMs(ms);
 }
 
+void CompletionCoordinator::setGhostTriggerPolicyConfig(
+    const lsp::GhostTriggerPolicyConfig& cfg) noexcept
+{
+    ghostLogic_->setTriggerPolicyConfig(cfg);
+}
+
+const lsp::GhostTriggerPolicyConfig&
+CompletionCoordinator::ghostTriggerPolicyConfig() const noexcept
+{
+    return ghostLogic_->triggerPolicyConfig();
+}
+
 bool CompletionCoordinator::isGhostEnabled() const noexcept
 {
     return ghostLogic_->isEnabled();
@@ -74,15 +86,19 @@ void CompletionCoordinator::onDocumentChanged()
 // Ghost completion
 // -----------------------------------------------------------------------
 
-std::optional<std::pair<lsp::GhostCompletionRequest, std::string>>
-CompletionCoordinator::triggerGhostCompletion(const lsp::GhostContext& ctx, int64_t nowMs)
-{
-    // Suppress if LSP popup is visible — ghost should not display behind popup.
-    if (mode_ == Mode::LspPopupActive)
-        return std::nullopt;
+    std::optional<std::pair<lsp::GhostCompletionRequest, std::string>>
+    CompletionCoordinator::triggerGhostCompletion(const lsp::GhostContext& ctx, int64_t nowMs)
+    {
+        // Suppress if LSP popup is visible — ghost should not display behind popup.
+        if (mode_ == Mode::LspPopupActive)
+            return std::nullopt;
 
-    if (!ghostLogic_->isEnabled())
-        return std::nullopt;
+        // Defense-in-depth: sync the popup state to the ghost logic so its
+        // internal trigger policy also knows the popup is invisible here.
+        ghostLogic_->setDeterministicPopupActive(false);
+
+        if (!ghostLogic_->isEnabled())
+            return std::nullopt;
 
     // Stamp the coordinator's document revision onto the context so that
     // GhostCompletionLogic's internal revision-based staleness check uses
@@ -175,6 +191,11 @@ void CompletionCoordinator::markGhostRequestSent() noexcept
 // LSP completion control
 // -----------------------------------------------------------------------
 
+void CompletionCoordinator::setGhostDeterministicPopupActive(bool active) noexcept
+{
+    ghostLogic_->setDeterministicPopupActive(active);
+}
+
 void CompletionCoordinator::requestLspCompletion()
 {
     // If ghost is currently displayed, send reject notification to llm-ls
@@ -189,12 +210,16 @@ void CompletionCoordinator::requestLspCompletion()
     // Clear ghost display
     ghostLogic_->clearActiveGhost();
 
+    // Suppress ghost completion while the popup is visible (AI-G5 precedence).
+    ghostLogic_->setDeterministicPopupActive(true);
     mode_ = Mode::LspPopupActive;
 }
 
 void CompletionCoordinator::onLspPopupDismissed()
 {
     mode_ = Mode::Idle;
+    // Resume normal ghost completion now that the popup is gone.
+    ghostLogic_->setDeterministicPopupActive(false);
 }
 
 } // namespace hathor::ui

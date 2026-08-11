@@ -66,6 +66,16 @@ public:
     /** Maximum milliseconds to wait for a ghost response before timeout. */
     void setGhostTimeoutMs(int ms) noexcept;
 
+    /**
+       * Set the ghost trigger policy configuration (tunables for which
+       * editor contexts should trigger ghost completion — J-1).
+       * Delegates directly to GhostCompletionLogic.
+       */
+    void setGhostTriggerPolicyConfig(const lsp::GhostTriggerPolicyConfig& cfg) noexcept;
+
+    /** Current trigger policy configuration. */
+    const lsp::GhostTriggerPolicyConfig& ghostTriggerPolicyConfig() const noexcept;
+
     // -----------------------------------------------------------------------
     // State queries
     // -----------------------------------------------------------------------
@@ -173,6 +183,13 @@ public:
       * does not support $/cancelRequest).
       */
     void cancelPendingGhostRequest() noexcept;
+
+    /**
+      * Notify the coordinator that a deterministic completion popup has
+      * become active or was dismissed. Delegates to GhostCompletionLogic
+      * to suppress / resume ghost completion (AI-G5 precedence).
+      */
+    void setGhostDeterministicPopupActive(bool active) noexcept;
 
     // -----------------------------------------------------------------------
     // LSP completion control

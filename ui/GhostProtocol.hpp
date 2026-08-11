@@ -49,6 +49,37 @@
 namespace hathor::lsp {
 
 // ---------------------------------------------------------------------------
+// GhostContext — current editor state snapshot for ghost text
+// ---------------------------------------------------------------------------
+
+/**
+  * A point-in-time snapshot of the editor state needed for ghost-text requests.
+  * This mirrors the fields from EditorContextSnapshot relevant to FIM.
+  *
+  * AI-G2: includes explicit docPrefix/docSuffix for FIM trimming.
+  * AI-8: includes authoringContext (dynamic authoring context JSON,
+  *       assembled by AuthoringContext — may be null if not wired).
+  *
+  * Moved here from GhostCompletionLogic.hpp so that GhostTriggerPolicy.hpp
+  * (which includes GhostProtocol.hpp) can reference it without creating
+  * a circular include dependency.
+  */
+struct GhostContext {
+    std::string documentText;  ///< full document text
+    std::string uri;           ///< file:// URI or synthetic URI
+    std::string languageId;    ///< "hathor" or "chuck"
+    int         line      = 0; ///< 0-based cursor line
+    int         character = 0; ///< 0-based cursor character offset
+    int         revision  = 0; ///< incremented on each document edit
+
+    // AI-G8: Dynamic authoring context (from AuthoringContext / AI-8).
+    // May be null if the AI-8 context provider is not wired. When present,
+    // this JSON includes supported-surface info (AI-3), diagnostics, editor
+    // state, and other relevant project/language information.
+    nlohmann::json authoringContext;
+};
+
+// ---------------------------------------------------------------------------
 // llm-ls backend type
 // ---------------------------------------------------------------------------
 

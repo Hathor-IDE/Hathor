@@ -1525,3 +1525,302 @@ TEST_CASE("onGhostResponse rejects stale response with correct revision check", 
     std::string requestId2 = r2.value().second;
     REQUIRE(requestId1 != requestId2);
 }
+
+// ===========================================================================
+// GhostTriggerPolicy integration — J-1 triggering rules
+// ===========================================================================
+// These tests verify that GhostCompletionLogic's onEditorChanged consults the
+// trigger policy and respects suppression decisions.
+
+TEST_CASE("GhostCompletionLogic: trigger policy suppresses in string literal", "[ghost][trigger]")
+{
+    GhostCompletionLogic logic;
+    logic.setEnabled(true);
+    logic.setDebounceMs(300);
+
+    GhostContext ctx;
+    ctx.documentText = "bd \"sd sn\"";
+    ctx.uri = "file:///test.hathor";
+    ctx.languageId = "hathor";
+    ctx.line = 0;
+    ctx.character = 6;  // inside "sd sn"
+
+    logic.onEditorChanged(ctx, 0);
+
+    // Even after debounce expires, no request should be produced
+    auto r = logic.onTimerTick(500);
+    REQUIRE_FALSE(r.has_value());
+}
+
+TEST_CASE("GhostCompletionLogic: trigger policy suppresses in ChucK comment", "[ghost][trigger]")
+{
+    GhostCompletionLogic logic;
+    logic.setEnabled(true);
+    logic.setDebounceMs(300);
+
+    GhostContext ctx;
+    ctx.documentText = "// this is a comment";
+    ctx.uri = "file:///test.ck";
+    ctx.languageId = "chuck";
+    ctx.line = 0;
+    ctx.character = 5;
+
+    logic.onEditorChanged(ctx, 0);
+
+    auto r = logic.onTimerTick(500);
+    REQUIRE_FALSE(r.has_value());
+}
+
+TEST_CASE("GhostCompletionLogic: trigger policy suppresses mid-token", "[ghost][trigger]")
+{
+    GhostCompletionLogic logic;
+    logic.setEnabled(true);
+    logic.setDebounceMs(300);
+
+    GhostContext ctx;
+    ctx.documentText = "bdsn";
+    ctx.uri = "file:///test.hathor";
+    ctx.languageId = "hathor";
+    ctx.line = 0;
+    ctx.character = 2;  // between 'b' and 'd' — both word chars
+
+    logic.onEditorChanged(ctx, 0);
+
+    auto r = logic.onTimerTick(500);
+    REQUIRE_FALSE(r.has_value());
+}
+
+TEST_CASE("GhostCompletionLogic: trigger policy allows at meaningful boundary", "[ghost][trigger]")
+{
+    GhostCompletionLogic logic;
+    logic.setEnabled(true);
+    logic.setDebounceMs(300);
+
+    GhostContext ctx;
+    ctx.documentText = "bd ";
+    ctx.uri = "file:///test.hathor";
+    ctx.languageId = "hathor";
+    ctx.line = 0;
+    ctx.character = 3;  // after space following "bd"
+
+    logic.onEditorChanged(ctx, 0);
+
+    // Debounce not yet elapsed
+    auto r1 = logic.onTimerTick(100);
+    REQUIRE_FALSE(r1.has_value());
+
+    // Debounce elapsed — should fire
+    auto r2 = logic.onTimerTick(500);
+    REQUIRE(r2.has_value());
+}
+
+TEST_CASE("GhostCompletionLogic: deterministic popup active suppresses trigger", "[ghost][trigger]")
+{
+    GhostCompletionLogic logic;
+    logic.setEnabled(true);
+    logic.setDebounceMs(300);
+
+    GhostContext ctx;
+    ctx.documentText = "bd ";
+    ctx.uri = "file:///test.hathor";
+    ctx.languageId = "hathor";
+    ctx.line = 0;
+    ctx.character = 3;
+
+    logic.setDeterministicPopupActive(true);
+    logic.onEditorChanged(ctx, 0);
+
+    auto r = logic.onTimerTick(500);
+    REQUIRE_FALSE(r.has_value());
+
+    // Resume after popup dismissed
+    logic.setDeterministicPopupActive(false);
+    logic.onEditorChanged(ctx, 501);
+
+    auto r2 = logic.onTimerTick(900);
+    REQUIRE(r2.has_value());
+}
+
+TEST_CASE("GhostCompletionLogic: duplicate context suppressed (AI-G6)", "[ghost][trigger]")
+{
+    GhostCompletionLogic logic;
+    logic.setEnabled(true);
+    logic.setDebounceMs(300);
+
+    GhostContext ctx;
+    ctx.documentText = "bd ";
+    ctx.uri = "file:///test.hathor";
+    ctx.languageId = "hathor";
+    ctx.line = 0;
+    ctx.character = 3;
+
+    // First editor change → debounce → request fires
+    logic.onEditorChanged(ctx, 0);
+    auto r1 = logic.onTimerTick(500);
+    REQUIRE(r1.has_value());
+    std::string requestId1 = r1.value().second;
+
+    // Simulate a response so the request is cleared
+    GhostCompletionResponse resp;
+    resp.request_id = requestId1;
+    resp.completions = {{.generatedText = "sn"}};
+    logic.onGhostResponse(requestId1, resp, 500);
+
+    // Same context again (no doc change, cursor didn't move) → duplicate
+    logic.onEditorChanged(ctx, 600);
+    auto r2 = logic.onTimerTick(1000);
+    REQUIRE_FALSE(r2.has_value());
+}
+
+TEST_CASE("GhostCompletionLogic: non-duplicate triggers after cursor move", "[ghost][trigger]")
+{
+    GhostCompletionLogic logic;
+    logic.setEnabled(true);
+    logic.setDebounceMs(300);
+
+    GhostContext ctx;
+    ctx.documentText = "bd sn";
+    ctx.uri = "file:///test.hathor";
+    ctx.languageId = "hathor";
+    ctx.line = 0;
+    ctx.character = 3;  // end of "bd"
+
+    // First request cycle
+    logic.onEditorChanged(ctx, 0);
+    auto r1 = logic.onTimerTick(500);
+    REQUIRE(r1.has_value());
+    std::string requestId1 = r1.value().second;
+
+    // Simulate a response so the pending request is cleared
+    GhostCompletionResponse resp;
+    resp.request_id = requestId1;
+    resp.completions = {{.generatedText = " sn"}};
+    logic.onGhostResponse(requestId1, resp, 500);
+
+    // Cursor moves to a different position → NOT a duplicate
+    ctx.character = 6;  // end of "sn"
+    logic.onEditorChanged(ctx, 600);
+    auto r2 = logic.onTimerTick(1000);
+    REQUIRE(r2.has_value());
+}
+
+TEST_CASE("GhostCompletionLogic: cancelPendingRequest clears duplicate suppression", "[ghost][trigger]")
+{
+    GhostCompletionLogic logic;
+    logic.setEnabled(true);
+    logic.setDebounceMs(0);
+
+    GhostContext ctx;
+    ctx.documentText = "bd ";
+    ctx.uri = "file:///test.hathor";
+    ctx.languageId = "hathor";
+    ctx.line = 0;
+    ctx.character = 3;
+
+    // Trigger first request
+    logic.onEditorChanged(ctx, 0);
+    auto r1 = logic.onTimerTick(0);
+    REQUIRE(r1.has_value());
+    std::string requestId1 = r1.value().second;
+
+    // Respond
+    GhostCompletionResponse resp;
+    resp.request_id = requestId1;
+    resp.completions = {{.generatedText = "sn"}};
+    logic.onGhostResponse(requestId1, resp, 0);
+
+    // Now simulate Ctrl+Shift+Space: cancel + re-trigger
+    logic.cancelPendingRequest();
+    logic.onEditorChanged(ctx, 1);
+    auto r2 = logic.onTimerTick(1);
+    REQUIRE(r2.has_value());  // Should NOT be suppressed as duplicate
+}
+
+TEST_CASE("GhostCompletionLogic: trigger policy after deterministic popup dismiss resumes", "[ghost][trigger]")
+{
+    GhostCompletionLogic logic;
+    logic.setEnabled(true);
+    logic.setDebounceMs(300);
+
+    GhostContext ctx;
+    ctx.documentText = "bd ";
+    ctx.uri = "file:///test.hathor";
+    ctx.languageId = "hathor";
+    ctx.line = 0;
+    ctx.character = 3;
+
+    // Simulate Ctrl+Space → popup active
+    logic.setDeterministicPopupActive(true);
+    logic.onEditorChanged(ctx, 0);
+    auto r1 = logic.onTimerTick(500);
+    REQUIRE_FALSE(r1.has_value());  // suppressed while popup active
+
+    // Popup dismissed
+    logic.setDeterministicPopupActive(false);
+    logic.onEditorChanged(ctx, 600);
+    auto r2 = logic.onTimerTick(1000);
+    REQUIRE(r2.has_value());  // now allowed
+}
+
+TEST_CASE("GhostCompletionLogic: configurable trigger policy via setTriggerPolicyConfig", "[ghost][trigger]")
+{
+    GhostCompletionLogic logic;
+    logic.setEnabled(true);
+    logic.setDebounceMs(300);
+
+    // Allow ghost in strings
+    GhostTriggerPolicyConfig cfg;
+    cfg.allowInStrings = true;
+    logic.setTriggerPolicyConfig(cfg);
+
+    REQUIRE(logic.triggerPolicyConfig().allowInStrings == true);
+
+    GhostContext ctx;
+    ctx.documentText = "bd \"";  // inside an unclosed string
+    ctx.uri = "file:///test.hathor";
+    ctx.languageId = "hathor";
+    ctx.line = 0;
+    ctx.character = 4;  // right after the quote
+
+    // With allowInStrings=true, the string suppression should be bypassed
+    // But isSyntacticallyUnreliable also checks for unclosed strings → still suppress
+    logic.onEditorChanged(ctx, 0);
+    auto r = logic.onTimerTick(500);
+    REQUIRE_FALSE(r.has_value());
+}
+
+TEST_CASE("GhostCompletionLogic: ChucK cursor after => triggers", "[ghost][trigger]")
+{
+    GhostCompletionLogic logic;
+    logic.setEnabled(true);
+    logic.setDebounceMs(300);
+
+    GhostContext ctx;
+    ctx.documentText = "SinOsc s =>";
+    ctx.uri = "file:///test.ck";
+    ctx.languageId = "chuck";
+    ctx.line = 0;
+    ctx.character = 11;  // cursor at end after '=>'
+
+    logic.onEditorChanged(ctx, 0);
+    auto r = logic.onTimerTick(500);
+    REQUIRE(r.has_value());
+}
+
+TEST_CASE("GhostCompletionLogic: trigger policy after ('(' triggers", "[ghost][trigger]")
+{
+    GhostCompletionLogic logic;
+    logic.setEnabled(true);
+    logic.setDebounceMs(300);
+
+    GhostContext ctx;
+    ctx.documentText = "bd(";
+    ctx.uri = "file:///test.hathor";
+    ctx.languageId = "hathor";
+    ctx.line = 0;
+    ctx.character = 3;
+
+    logic.onEditorChanged(ctx, 0);
+    auto r = logic.onTimerTick(500);
+    REQUIRE(r.has_value());
+}

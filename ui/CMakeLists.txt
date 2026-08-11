@@ -71,8 +71,9 @@ target_sources(hathor-ui
          # AI-4: Ghost text (llm-ls inline completion)
          GhostJsonRpc.cpp              # llm-ls JSON-RPC serialization
          GhostProviderConfig.cpp       # provider config (env-var credentials)
-          GhostCompletionLogic.cpp      # JUCE-free lifecycle logic
-          GhostLlmClient.cpp            # JUCE process management for llm-ls
+           GhostCompletionLogic.cpp      # JUCE-free lifecycle logic
+           GhostTriggerPolicy.cpp        # J-1: trigger policy engine
+           GhostLlmClient.cpp            # JUCE process management for llm-ls
           GhostTextOverlay.cpp          # ghost-text renderer overlay
           CompletionCoordinator.cpp     # AI-G3: LSP + ghost coordination
          # App-layer sources (AudioEngine, SampleBank, VoicePool live in app/,
