@@ -79,25 +79,39 @@ public:
     // -----------------------------------------------------------------------
 
     /**
-     * Set the ghost completion text to display.
-     *
-     * @param text           The completion text to show at the cursor.
-     * @param caretBounds    Resolved pixel rectangle of the caret cursor in
-     *                       editor-local coordinates (== overlay-local since
-     *                       they share the same bounds in HathorTab::resized).
-     *                       The ghost text is drawn starting at caretBounds.getRight().
-     * @param insertionLen   Number of characters at the cursor position that
-     *                       are already present in the document and are covered
-     *                       (dimmed) by the ghost text. This is used to visually
-     *                       distinguish the new completion from the existing
-     *                       text it extends.
-     *
-     * This method ONLY stores rendering state. It does NOT modify the
-     * CodeDocument, undo history, compiler input, or diagnostics.
-     */
+      * Set the ghost completion text to display.
+      *
+      * @param text           The completion text to show at the cursor.
+      * @param caretBounds    Resolved pixel rectangle of the caret cursor in
+      *                       editor-local coordinates (== overlay-local since
+      *                       they share the same bounds in HathorTab::resized).
+      *                       The ghost text is drawn starting at caretBounds.getRight().
+      * @param insertionLen   Number of characters at the cursor position that
+      *                       are already present in the document and are covered
+      *                       (dimmed) by the ghost text. This is used to visually
+      *                       distinguish the new completion from the existing
+      *                       text it extends.
+      *
+      * This method ONLY stores rendering state. It does NOT modify the
+      * CodeDocument, undo history, compiler input, or diagnostics.
+      */
     void setGhostText(const std::string& text,
                       const juce::Rectangle<int>& caretBounds,
                       int insertionLen = 0);
+
+    /**
+      * Set the J-2 candidate indicator (e.g. "2/3").
+      * When count > 1, a small badge is rendered next to the ghost text
+      * showing the currently selected candidate index (1-based) out of the
+      * total count.
+      *
+      * @param count  Total number of cached candidates.
+      * @param selectedIndex  0-based index of the currently selected candidate.
+      */
+    void setCandidateIndicator(size_t count, size_t selectedIndex) noexcept;
+
+    /** Clear the candidate indicator (no badge rendered). */
+    void clearCandidateIndicator() noexcept;
 
     /**
      * Clear the ghost text and hide the overlay.
@@ -145,6 +159,10 @@ private:
     juce::Rectangle<int> caretBounds_;    ///< caret pixel position (editor-local = overlay-local)
     int insertionLen_       = 0;
     bool visible_          = false;
+
+    /// J-2: candidate count + selected index for the "n/M" indicator badge.
+    size_t candidateCount_     = 0;
+    size_t selectedCandidate_  = 0;
 
     juce::Font ghostFont_;
     juce::Colour ghostColour_;

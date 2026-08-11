@@ -247,6 +247,10 @@ GhostCompletionLogic::onTimerTick(int64_t nowMs)
             req.fim.prefix = currentCtx_.authoringContext.dump();
         req.fim.middle = std::move(fim.middle);
 
+        // J-2: Request a bounded number of candidate completions from the LLM
+        // so the user can cycle through alternatives without re-requesting.
+        req.maxCandidates = maxCandidates_;
+
         // Store authoring context on the request for inspection
         req.authoringContext = currentCtx_.authoringContext;
 
@@ -303,7 +307,7 @@ std::optional<GhostResult> GhostCompletionLogic::onGhostResponse(
         return std::nullopt;
     }
 
-    // 4. Extract docPrefix/docSuffix before clearing pending request
+    // 5. Extract docPrefix/docSuffix before clearing pending request
     //    (pending is a reference to the soon-to-be-reset optional)
     std::string docPrefix = pending.docPrefix;
     std::string docSuffix = pending.docSuffix;
@@ -312,51 +316,53 @@ std::optional<GhostResult> GhostCompletionLogic::onGhostResponse(
     // 5. Clear the pending request
     pendingRequest_.reset();
 
-    // 5. Extract the best completion from the response
-    if (response.completions.empty())
+    // 5. Extract ALL completions from the response (J-2: multiple candidates).
+    //    Each completion is independently trimmed against the FIM suffix/prefix.
+    std::vector<GhostResult> candidates;
+    candidates.reserve(std::min(response.completions.size(),
+                                static_cast<size_t>(maxCandidates_)));
+
+    for (size_t i = 0; i < response.completions.size(); ++i)
+    {
+        if (maxCandidates_ > 0 && i >= maxCandidates_)
+            break;
+
+        std::string text = response.completions[i].generatedText;
+        stripWhitespace(text);
+        trimPrefixOverlap(text, docPrefix);
+        trimSuffixOverlap(text, docSuffix);
+        stripWhitespace(text);
+
+        if (text.empty())
+            continue;
+
+        GhostResult result;
+        result.text = text;
+        result.displayText = text;
+        result.insertText = text;
+        result.requestId = respRequestId;
+        result.docPrefix = docPrefix;
+        result.docSuffix = docSuffix;
+        result.cursorLine = currentCtx_.line;
+        result.character = currentCtx_.character;
+        result.candidateIndex = static_cast<uint32_t>(i);
+
+        candidates.push_back(std::move(result));
+    }
+
+    if (candidates.empty())
         return std::nullopt;
 
-    // Use the first completion (llm-ls typically returns one)
-    const auto& comp = response.completions[0];
-    std::string text = comp.generatedText;
+    // Store as active ghost with all candidates cached (J-2).
+    activeGhost_ = ActiveGhost{
+        std::move(candidates),
+        respRequestId,
+        revision_,
+        0  // selectedIndex starts at first candidate
+    };
 
-    // Trim whitespace from the generated text
-    // llm-ls may return text with leading/trailing whitespace
-    stripWhitespace(text);
-
-    // AI-G2: Trim prefix/suffix overlap from the generated text.
-    // The LLM may repeat the end of the document prefix or include the
-    // beginning of the document suffix. We trim these so only the MIDDLE
-    // (the code that fits between prefix and suffix) is inserted at the cursor.
-    // The suffix is NEVER silently discarded — it is explicitly used for trimming.
-    trimPrefixOverlap(text, docPrefix);
-    trimSuffixOverlap(text, docSuffix);
-
-    // Strip whitespace again after trimming
-    stripWhitespace(text);
-
-    if (text.empty())
-        return std::nullopt;
-
-    // Build the GhostResult
-    GhostResult result;
-    result.text = text;
-    result.displayText = text;
-    result.insertText = text;
-    result.requestId = respRequestId;
-    result.cursorLine = currentCtx_.line;
-    result.character = currentCtx_.character;
-
-    // AI-G2: Carry the document prefix/suffix in the result for editor
-    // verification. The editor can check that the ghost text still fits
-    // between these markers before displaying or inserting it.
-    result.docPrefix = docPrefix;
-    result.docSuffix = docSuffix;
-
-    // Store as active ghost
-    activeGhost_ = ActiveGhost{result, respRequestId, revision_};
-
-    return result;
+    // Return the currently selected candidate for display.
+    return activeGhost_->candidates[activeGhost_->selectedIndex];
 }
 
 std::optional<GhostResult> GhostCompletionLogic::onProviderFailure()
@@ -364,10 +370,10 @@ std::optional<GhostResult> GhostCompletionLogic::onProviderFailure()
     // Clear any pending request
     pendingRequest_.reset();
 
-    // Return the active ghost to be cleared (if any)
+    // Return the currently selected candidate to be cleared (if any)
     if (activeGhost_.has_value())
     {
-        auto ghost = activeGhost_->result;
+        auto ghost = activeGhost_->candidates[activeGhost_->selectedIndex];
         activeGhost_.reset();
         return ghost;
     }
@@ -382,10 +388,14 @@ std::optional<AcceptCompletionParams> GhostCompletionLogic::onAccept()
 
     AcceptCompletionParams params;
     params.requestId = activeGhost_->requestId;
-    // llm-ls track which completion was accepted and which were shown.
-    // We only track a single ghost completion per request cycle.
-    params.acceptedCompletion = 0;
-    params.shownCompletions = {0};
+
+    // J-2: Report which candidate was accepted and all candidates that
+    // were shown to the user (for llm-ls feedback).
+    size_t selected = activeGhost_->selectedIndex;
+    params.acceptedCompletion = static_cast<uint32_t>(
+        activeGhost_->candidates[selected].candidateIndex);
+    for (const auto& c : activeGhost_->candidates)
+        params.shownCompletions.push_back(c.candidateIndex);
 
     activeGhost_.reset();
     pendingRequest_.reset();
@@ -400,7 +410,10 @@ std::optional<RejectCompletionParams> GhostCompletionLogic::onReject()
 
     RejectCompletionParams params;
     params.requestId = activeGhost_->requestId;
-    params.shownCompletions = {0};
+
+    // J-2: Report all candidate indices that were shown to the user.
+    for (const auto& c : activeGhost_->candidates)
+        params.shownCompletions.push_back(c.candidateIndex);
 
     activeGhost_.reset();
     pendingRequest_.reset();
@@ -449,6 +462,62 @@ void GhostCompletionLogic::cancelPendingRequest() noexcept
 }
 
 // ---------------------------------------------------------------------------
+// J-2: Candidate cycling API
+// ---------------------------------------------------------------------------
+
+size_t GhostCompletionLogic::candidateCount() const noexcept
+{
+    if (!activeGhost_.has_value())
+        return 0;
+    return activeGhost_->candidates.size();
+}
+
+size_t GhostCompletionLogic::selectedCandidateIndex() const noexcept
+{
+    if (!activeGhost_.has_value() || activeGhost_->candidates.empty())
+        return 0;
+    return activeGhost_->selectedIndex;
+}
+
+std::optional<const GhostResult&> GhostCompletionLogic::selectedCandidate() const noexcept
+{
+    if (!activeGhost_.has_value() || activeGhost_->candidates.empty())
+        return std::nullopt;
+    return activeGhost_->candidates[activeGhost_->selectedIndex];
+}
+
+bool GhostCompletionLogic::selectNextCandidate() noexcept
+{
+    if (!activeGhost_.has_value() || activeGhost_->candidates.empty())
+        return false;
+
+    size_t count = activeGhost_->candidates.size();
+    if (count <= 1)
+        return false;
+
+    // Wrapping behaviour: cycle from last to first (wraps).
+    activeGhost_->selectedIndex = (activeGhost_->selectedIndex + 1) % count;
+    return true;
+}
+
+bool GhostCompletionLogic::selectPreviousCandidate() noexcept
+{
+    if (!activeGhost_.has_value() || activeGhost_->candidates.empty())
+        return false;
+
+    size_t count = activeGhost_->candidates.size();
+    if (count <= 1)
+        return false;
+
+    // Wrapping behaviour: cycle from first to last (wraps).
+    if (activeGhost_->selectedIndex == 0)
+        activeGhost_->selectedIndex = count - 1;
+    else
+        activeGhost_->selectedIndex--;
+    return true;
+}
+
+// ---------------------------------------------------------------------------
 // Static: build a complete GhostCompletionRequest
 // ---------------------------------------------------------------------------
 
@@ -487,6 +556,9 @@ GhostCompletionRequest GhostCompletionLogic::buildRequest(
     req.tokenizerConfig = config.tokenizerConfig;
     req.contextWindow = config.contextWindow;
     req.tlsSkipVerify = config.tlsSkipVerify;
+
+    // J-2: Request a bounded number of candidate completions.
+    req.maxCandidates = kDefaultMaxCandidates;
 
     return req;
 }

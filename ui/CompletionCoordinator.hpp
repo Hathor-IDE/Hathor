@@ -179,10 +179,38 @@ public:
     void clearActiveGhost();
 
     /**
-      * Cancel any in-flight ghost request (client-side cancellation — llm-ls
-      * does not support $/cancelRequest).
-      */
+       * Cancel any in-flight ghost request (client-side cancellation — llm-ls
+       * does not support $/cancelRequest).
+       */
     void cancelPendingGhostRequest() noexcept;
+
+    // -----------------------------------------------------------------------
+    // J-2: Candidate cycling (delegated to GhostCompletionLogic)
+    // -----------------------------------------------------------------------
+
+    /** Number of cached ghost candidates, or 0 if no active ghost. */
+    size_t ghostCandidateCount() const noexcept;
+
+    /** Index of the currently selected ghost candidate (0-based). */
+    size_t ghostSelectedCandidateIndex() const noexcept;
+
+    /**
+     * Select the next ghost candidate (wraps). Returns true if the
+     * selection changed. Does NOT issue an LLM request.
+     */
+    bool selectNextGhostCandidate() noexcept;
+
+    /**
+     * Select the previous ghost candidate (wraps). Returns true if the
+     * selection changed. Does NOT issue an LLM request.
+     */
+    bool selectPreviousGhostCandidate() noexcept;
+
+    /**
+     * Get the currently selected ghost candidate result (for overlay display).
+     * Returns nullopt if no active ghost.
+     */
+    std::optional<lsp::GhostResult> selectedGhostResult() const noexcept;
 
     /**
       * Notify the coordinator that a deterministic completion popup has

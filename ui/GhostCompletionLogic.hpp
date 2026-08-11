@@ -245,16 +245,23 @@ public:
     std::optional<GhostResult> onProviderFailure();
 
     /**
-     * Called when the user accepts the ghost text.
-     * Sends an accept notification (caller is responsible for sending it
-     * via the LSP client) and clears the active ghost.
-     */
+      * Called when the user accepts the ghost text.
+      * Sends an accept notification (caller is responsible for sending it
+      * via the LSP client) and clears the active ghost.
+      *
+      * Returns AcceptCompletionParams with acceptedCompletion set to the
+      * currently selected candidate index and shownCompletions listing all
+      * candidate indices that were presented (for llm-ls feedback).
+      */
     std::optional<AcceptCompletionParams> onAccept();
 
     /**
-     * Called when the user dismisses or modifies the ghost text.
-     * Clears the active ghost and sends a reject notification.
-     */
+      * Called when the user dismisses or modifies the ghost text.
+      * Clears the active ghost and sends a reject notification.
+      *
+      * Returns RejectCompletionParams with shownCompletions listing all
+      * candidate indices that were presented.
+      */
     std::optional<RejectCompletionParams> onReject();
 
     /**
@@ -264,28 +271,74 @@ public:
     void clearActiveGhost() noexcept;
 
     /**
-     * Cancel any in-flight request (client-side cancellation — llm-ls
-     * does not support `$/cancelRequest`).
-     */
+      * Cancel any in-flight request (client-side cancellation — llm-ls
+      * does not support `$/cancelRequest`).
+      */
     void cancelPendingRequest() noexcept;
 
+    // -----------------------------------------------------------------------
+    // J-2: Candidate cycling API
+    // -----------------------------------------------------------------------
+    // When llm-ls returns multiple completions, they are cached in the
+    // active ghost state. Cycling operates entirely on the cached set —
+    // no new LLM request is issued. The selected candidate index wraps
+    // around (wrapping is enabled) so cycling from the last candidate
+    // returns to the first and vice-versa.
+    // -----------------------------------------------------------------------
+
+    /** Maximum number of candidates to request from the LLM. */
+    static constexpr uint32_t kDefaultMaxCandidates = 4;
+
+    /** Configure the bounded candidate count for new requests. */
+    void setMaxCandidates(uint32_t n) noexcept { maxCandidates_ = n; }
+
+    /** Current max candidates configured (0 = server default). */
+    uint32_t maxCandidates() const noexcept { return maxCandidates_; }
+
+    /** Number of cached candidates in the active ghost, or 0 if none. */
+    size_t candidateCount() const noexcept;
+
+    /** Index of the currently selected candidate (0-based). */
+    size_t selectedCandidateIndex() const noexcept;
+
     /**
-     * Get the current editor context (for building requests).
-     * Used by onTimeout/onProviderFailure to know what was being requested.
-     */
-    const GhostContext& currentContext() const noexcept { return currentCtx_; }
+      * Get the currently selected candidate result.
+      * Returns nullopt if no ghost is active.
+      */
+    std::optional<const GhostResult&> selectedCandidate() const noexcept;
+
+    /**
+      * Select the next candidate (wraps to first after the last).
+      * Does NOT issue an LLM request — operates on cached candidates.
+      * Returns true if the selection changed (i.e. there is an active ghost
+      * with >1 candidate).
+      */
+    bool selectNextCandidate() noexcept;
+
+    /**
+      * Select the previous candidate (wraps to last before the first).
+      * Does NOT issue an LLM request — operates on cached candidates.
+      * Returns true if the selection changed.
+      */
+    bool selectPreviousCandidate() noexcept;
 
     // -----------------------------------------------------------------------
     // Helper: build a GhostCompletionRequest from context + provider config
     // -----------------------------------------------------------------------
 
     /**
-     * Build the actual llm-ls request from the current context.
-     * Populates FIM fields and backend config.
-     */
+      * Build the actual llm-ls request from the current context.
+      * Populates FIM fields and backend config.
+      */
     static GhostCompletionRequest buildRequest(
         const GhostContext& ctx,
         const GhostProviderConfig& config);
+
+    /**
+     * Get the current editor context (for building requests).
+     * Used by onTimeout/onProviderFailure to know what was being requested.
+     */
+    const GhostContext& currentContext() const noexcept { return currentCtx_; }
 
 private:
     // -----------------------------------------------------------------------
@@ -294,6 +347,7 @@ private:
     bool  enabled_     = false;
     int   debounceMs_  = 300;
     int   timeoutMs_   = 5000;
+    uint32_t maxCandidates_ = kDefaultMaxCandidates;
 
     // -----------------------------------------------------------------------
     // State
@@ -327,13 +381,15 @@ private:
     };
     std::optional<PendingRequest> pendingRequest_;
 
-    /// The currently displayed ghost text (cleared on cursor move, accept,
-    /// reject, or timeout).
-    // AI-G2: carries docPrefix/docSuffix for editor-side verification.
+    /// The currently displayed ghost candidates (cleared on cursor move, accept,
+    /// reject, or timeout).  J-2: caches all candidates returned by the LLM
+    /// so the user can cycle through them locally without re-requesting.
+    // AI-G2: each GhostResult carries docPrefix/docSuffix for editor-side verification.
     struct ActiveGhost {
-        GhostResult   result;
-        std::string   requestId;
-        int           revision;
+        std::vector<GhostResult> candidates;   ///< all cached, trimmed candidates
+        std::string              requestId;     ///< for accept/reject notifications
+        int                      revision;      ///< document revision at generation time
+        size_t                   selectedIndex = 0;  ///< currently displayed candidate
     };
     std::optional<ActiveGhost> activeGhost_;
 };

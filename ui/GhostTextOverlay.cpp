@@ -129,31 +129,52 @@ void GhostTextOverlay::paint(juce::Graphics& g)
     }
 }
 
-// ---------------------------------------------------------------------------
-// Ghost text management
-// ---------------------------------------------------------------------------
+    // -----------------------------------------------------------------------
+    // Ghost text management
+    // -----------------------------------------------------------------------
 
-void GhostTextOverlay::setGhostText(const std::string& text,
-                                    const juce::Rectangle<int>& caretBounds,
-                                    int insertionLen)
-{
-    ghostText_ = text;
-    caretBounds_ = caretBounds;
-    insertionLen_ = insertionLen;
-    visible_ = !text.empty();
-    setVisible(visible_);
-    if (visible_)
-        repaint();
-}
+    void GhostTextOverlay::setGhostText(const std::string& text,
+                                         const juce::Rectangle<int>& caretBounds,
+                                         int insertionLen)
+    {
+        ghostText_ = text;
+        caretBounds_ = caretBounds;
+        insertionLen_ = insertionLen;
+        visible_ = !text.empty();
+        setVisible(visible_);
+        if (visible_)
+            repaint();
+    }
+
+    void GhostTextOverlay::setCandidateIndicator(size_t count, size_t selectedIndex) noexcept
+    {
+        candidateCount_ = count;
+        selectedCandidate_ = selectedIndex;
+        if (visible_)
+        {
+            setVisible(true);
+            repaint();
+        }
+    }
+
+    void GhostTextOverlay::clearCandidateIndicator() noexcept
+    {
+        candidateCount_ = 0;
+        selectedCandidate_ = 0;
+        if (visible_)
+            repaint();
+    }
 
 void GhostTextOverlay::clearGhost() noexcept
 {
-    if (visible_ || !ghostText_.empty())
+    if (visible_ || !ghostText_.empty() || candidateCount_ > 0)
     {
         visible_ = false;
         ghostText_.clear();
         caretBounds_ = {};
         insertionLen_ = 0;
+        candidateCount_ = 0;
+        selectedCandidate_ = 0;
         setVisible(false);
         repaint();
     }

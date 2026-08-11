@@ -226,6 +226,13 @@ struct GhostCompletionRequest {
     bool disableUrlPathCompletion = false;  ///< don't append URI path as suffix
     std::vector<std::string> tokensToClear;  ///< tokens to clear before completion
 
+    // --- J-2: Number of candidate completions to request ---
+    // If non-zero, the llm-ls request includes `n` so the server returns
+    // up to `maxCandidates` independent completion candidates. The client
+    // caches all returned candidates and lets the user cycle through them
+    // locally without re-requesting.
+    uint32_t maxCandidates = 0;  ///< 0 = server default; otherwise bounded N
+
     /** Serialize this request into the nlohmann::json params for llm-ls. */
     nlohmann::json toJson() const;
 };
@@ -322,6 +329,13 @@ struct GhostResult {
 
     int         cursorLine = 0;  ///< 0-based line where ghost was requested
     int         character  = 0;  ///< 0-based character offset on the line
+
+    /// Index of this candidate within the original response's completions array.
+    /// Used when sending the accept/reject notification back to llm-ls so the
+    /// server knows which candidate was accepted.  Defaults to 0 for backward
+    /// compatibility with single-candidate responses.
+    uint32_t    candidateIndex = 0;
+
     bool        isEmpty() const noexcept { return text.empty(); }
 };
 

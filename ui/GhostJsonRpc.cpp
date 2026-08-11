@@ -101,7 +101,8 @@ std::pair<std::string, std::string> GhostJsonRpc::serializeGhostCompletion(
         {"tls_skip_verify_insecure", req.tlsSkipVerify},
         {"request_body", req.requestBody.is_null() ? json::object() : req.requestBody},
         {"disable_url_path_completion", req.disableUrlPathCompletion},
-        {"tokens_to_clear", req.tokensToClear}
+        {"tokens_to_clear", req.tokensToClear},
+        {"n", req.maxCandidates > 0 ? static_cast<int>(req.maxCandidates) : json(nullptr)}
     };
 
     json msg = {
@@ -337,7 +338,8 @@ nlohmann::json GhostCompletionRequest::toJson() const
         {"tls_skip_verify_insecure", tlsSkipVerify},
         {"request_body", requestBody.is_null() ? nlohmann::json::object() : requestBody},
         {"disable_url_path_completion", disableUrlPathCompletion},
-        {"tokens_to_clear", tokensToClear}
+        {"tokens_to_clear", tokensToClear},
+        {"n", maxCandidates > 0 ? static_cast<int>(maxCandidates) : json(nullptr)}
     };
 }
 

@@ -182,6 +182,35 @@ void CompletionCoordinator::cancelPendingGhostRequest() noexcept
     ghostLogic_->cancelPendingRequest();
 }
 
+// ---------------------------------------------------------------------------
+// J-2: Candidate cycling (delegated to GhostCompletionLogic)
+// ---------------------------------------------------------------------------
+
+size_t CompletionCoordinator::ghostCandidateCount() const noexcept
+{
+    return ghostLogic_->candidateCount();
+}
+
+size_t CompletionCoordinator::ghostSelectedCandidateIndex() const noexcept
+{
+    return ghostLogic_->selectedCandidateIndex();
+}
+
+bool CompletionCoordinator::selectNextGhostCandidate() noexcept
+{
+    return ghostLogic_->selectNextCandidate();
+}
+
+bool CompletionCoordinator::selectPreviousGhostCandidate() noexcept
+{
+    return ghostLogic_->selectPreviousCandidate();
+}
+
+std::optional<lsp::GhostResult> CompletionCoordinator::selectedGhostResult() const noexcept
+{
+    return ghostLogic_->selectedCandidate();
+}
+
 void CompletionCoordinator::markGhostRequestSent() noexcept
 {
     ghostRequestRevision_ = docRevision_;
