@@ -65,6 +65,7 @@
 #include <nlohmann/json.hpp>
 
 #include "IntentPlanner.hpp"
+#include "WorkingSet.hpp"
 
 namespace hathor::control {
 
@@ -268,8 +269,50 @@ public:
     nlohmann::json getState() const;
 
     /**
-     * Check if a workflow is currently active (not Idle).
-     */
+      * Get the current working set as a JSON snapshot (thread-safe).
+      *
+      * Requirement: AI-10.2 — conversational memory / working set.
+      *
+      * @return JSON object with tracked items, recorded changes, aliases,
+      *         last intent, active slot, and reconciliation status.
+      */
+    nlohmann::json getWorkingSet() const;
+
+    /**
+      * Resolve a conversational reference (e.g. "it", "that bass", "the
+      * last change") against the working set.
+      *
+      * Requirement: AI-10.2 — reference resolution.
+      *
+      * @param phrase         The reference text from the user.
+      * @param intentContext  Optional intent keyword hint for disambiguation.
+      * @return JSON with "found", "ambiguous", "resolved", "candidates", etc.
+      */
+    nlohmann::json resolveReference(std::string_view phrase,
+                                    std::string_view intentContext = {}) const;
+
+    /**
+      * Get revert information for the last reversible change.
+      *
+      * Requirement: AI-10.2 — undo/revert support.
+      *
+      * @return JSON with has_revertable, last_change, revert_command.
+      */
+    nlohmann::json getRevertInfo() const;
+
+    /**
+      * Clear the conversational working set (session-scoped state).
+      *
+      * Called when a new chat session starts, the project changes, or
+      * the application restarts.  Does NOT affect persistent project state.
+      *
+      * Requirement: AI-10.2 — memory lifecycle.
+      */
+    void clearWorkingSet();
+
+    /**
+      * Check if a workflow is currently active (not Idle).
+      */
     bool isRunning() const noexcept;
 
     /**
@@ -349,6 +392,11 @@ private:
     // AI-10.1: Intent planner — produces a structured, inspectable plan
     // from the natural-language intent before any heavy/destructive step.
     IntentPlanner                  planner_;
+
+    // AI-10.2: Conversational working set — session-scoped memory that
+    // persists across workflow runs for multi-turn continuity.  NOT cleared
+    // by reset() (only by clearWorkingSet()).
+    WorkingSet                   workingSet_;
 
     // Thread management
     std::thread      workflowThread_;

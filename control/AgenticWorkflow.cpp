@@ -167,6 +167,10 @@ bool AgenticWorkflow::start(Request request,
     repairAttempts_ = 0;
     renderCompleted_ = false;
 
+    // AI-10.2: Record the user intent in the working set so that aliases
+    // (e.g. "the bass") can be derived from intent keywords.
+    workingSet_.setLastIntent(currentRequest_.intent);
+
     // Emit the initial queued state.
     if (progressCallback_) {
         nlohmann::json state = getState();
@@ -281,6 +285,10 @@ void AgenticWorkflow::reset()
     renderJobId_ = 0;
     sessionId_.clear();
     // Note: projectInfo_/songInfo_/assetsInfo_ are cleared on the next start().
+
+    // AI-10.2: The working set is NOT cleared here — it persists across
+    // workflow runs for multi-turn conversational continuity.  Use
+    // clearWorkingSet() to explicitly reset session-scoped memory.
     stopRequested_.store(false, std::memory_order_release);
     confirmationResponded_.store(false, std::memory_order_release);
 
@@ -296,6 +304,11 @@ void AgenticWorkflow::reset()
 
 void AgenticWorkflow::runWorkflow()
 {
+    // AI-10.2: Set the active slot from the request so that pronoun
+    // resolution ("it", "that pattern") targets the correct slot.
+    if (!currentRequest_.targetSlot.empty())
+        workingSet_.setActiveSlot(currentRequest_.targetSlot);
+
     // Phase 1: PLANNING — analyse the request and assemble a plan.
     {
         std::lock_guard<std::mutex> lock(stateMtx_);
@@ -1536,6 +1549,14 @@ void AgenticWorkflow::completeStep(const std::string& name, const StepResult& re
         };
     }
     auditLog("step_complete", name, result.ok, result.message);
+
+    // AI-10.2: Update the conversational working set after every completed step.
+    // The working set tracks items, changes, and aliases for multi-turn
+    // reference resolution ("make it darker", "revert that", etc.).
+    // Only successful steps contribute state; failures leave the working
+    // set unchanged (testing requirement #8).
+    workingSet_.updateAfterStep(name, result.data, result.ok);
+
     emitProgress();
 }
 
@@ -1675,6 +1696,68 @@ bool AgenticWorkflow::waitForAsyncJob(uint64_t jobTrackerId,
                          std::to_string(kMaxWait.count()) + "s"}};
     auditLog("async_job_timeout", serviceType, false, "job_id=" + std::to_string(jobTrackerId));
     return false;
+}
+
+// ---------------------------------------------------------------------------
+// AI-10.2: Conversational working set access
+// ---------------------------------------------------------------------------
+
+nlohmann::json AgenticWorkflow::getWorkingSet() const
+{
+    // AI-10.2: Return a thread-safe snapshot of the conversational working set.
+    // The working set is owned by the workflow but is a separate object with
+    // its own mutex, so we can safely call it without holding stateMtx_.
+    nlohmann::json j = workingSet_.toJson();
+    j["cmd"] = "working_set";
+    return j;
+}
+
+nlohmann::json AgenticWorkflow::resolveReference(
+    std::string_view phrase,
+    std::string_view intentContext) const
+{
+    WorkingSet::ResolveResult resolved = workingSet_.resolveReference(phrase, intentContext);
+
+    nlohmann::json j;
+    j["cmd"] = "resolve_reference";
+    j["ok"] = resolved.found;
+    j["ambiguous"] = resolved.ambiguous;
+
+    if (resolved.found && !resolved.ambiguous) {
+        j["resolved"] = resolved.resolved;
+    }
+
+    if (resolved.ambiguous) {
+        j["candidates"] = resolved.candidates;
+        j["error"] = resolved.errorMessage;
+    }
+
+    if (!resolved.found && !resolved.ambiguous) {
+        j["error"] = resolved.errorMessage.empty()
+            ? "no matching item in working set"
+            : resolved.errorMessage;
+    }
+
+    return j;
+}
+
+nlohmann::json AgenticWorkflow::getRevertInfo() const
+{
+    nlohmann::json j = workingSet_.getRevertInfo();
+    j["cmd"] = "revert_info";
+    return j;
+}
+
+void AgenticWorkflow::clearWorkingSet()
+{
+    std::lock_guard<std::mutex> lock(stateMtx_);
+    workingSet_.clear();
+    auditLog("working_set_cleared", "agentic", true, "session-scoped state cleared");
+}
+
+void AgenticWorkflow::reconcileWorkingSet(const nlohmann::json& projectState)
+{
+    workingSet_.reconcile(projectState);
 }
 
 } // namespace hathor::control

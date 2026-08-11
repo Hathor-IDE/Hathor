@@ -385,8 +385,13 @@ void ControlInterface::dispatch(std::string_view rawLine)
                cmd == "workflow_status" ||
                cmd == "workflow_approve" ||
                cmd == "workflow_reject" ||
-               cmd == "workflow_plan") {
+               cmd == "workflow_plan" ||
+               cmd == "working_set" ||
+               cmd == "resolve_reference" ||
+               cmd == "revert_change" ||
+               cmd == "clear_working_set") {
         // AI-10: Agentic musical workflow orchestration.
+        // AI-10.2: Conversational memory / working set.
         handleWorkflowCommand(cmd, rest);
     } else {
         emitResponse({
@@ -1462,7 +1467,7 @@ void ControlInterface::handleEditSong(std::string_view songFile,
 // ---------------------------------------------------------------------------
 
 void ControlInterface::handleWorkflowCommand(std::string_view cmd,
-                                              std::string_view rest)
+                                               std::string_view rest)
 {
     if (cmd == "workflow_start") {
         handleWorkflowStart(rest);
@@ -1476,6 +1481,14 @@ void ControlInterface::handleWorkflowCommand(std::string_view cmd,
         handleWorkflowApprove(rest, false);
     } else if (cmd == "workflow_plan") {
         handleWorkflowPlan(rest);
+    } else if (cmd == "working_set") {
+        handleWorkingSet(rest);
+    } else if (cmd == "resolve_reference") {
+        handleResolveReference(rest);
+    } else if (cmd == "revert_change") {
+        handleRevertChange(rest);
+    } else if (cmd == "clear_working_set") {
+        handleClearWorkingSet(rest);
     }
 }
 
@@ -1517,6 +1530,21 @@ void ControlInterface::handleWorkflowStart(std::string_view rest)
             *chuckSessionService_,
             *renderService_,
             *songMutationService_);
+    }
+
+    // AI-10.2: Reconcile the working set against authoritative project state
+    // before starting a new workflow.  This ensures that if the project changed
+    // outside the working set (e.g. the user edited a file directly), stale
+    // working-set items are pruned before the new workflow runs.
+    {
+        auto projectInfo = readFacade_->inspectProject();
+        auto songInfo = readFacade_->getCurrentSong();
+        auto assetsInfo = readFacade_->listAssets();
+        nlohmann::json combined;
+        combined["project"] = projectInfo;
+        combined["song"] = songInfo;
+        combined["assets"] = assetsInfo;
+        agenticWorkflow_->reconcileWorkingSet(combined);
     }
 
     // Build the request from JSON arguments.
@@ -1765,4 +1793,155 @@ void ControlInterface::handleWorkflowApprove(std::string_view rest, bool approve
     });
 }
 
-} // namespace hathor::control
+// ---------------------------------------------------------------------------
+// AI-10.2: Conversational memory / working set command handlers
+// ---------------------------------------------------------------------------
+
+void ControlInterface::handleWorkingSet(std::string_view /*rest*/)
+{
+    if (!agenticWorkflow_) {
+        emitResponse({
+            {"ok", false},
+            {"cmd", "working_set"},
+            {"error", "no agentic workflow session active"}
+        });
+        return;
+    }
+
+    emitResponse(agenticWorkflow_->getWorkingSet());
+}
+
+void ControlInterface::handleResolveReference(std::string_view rest)
+{
+    // Format: resolve_reference <phrase> [intent_context]
+    // The phrase may contain spaces; intent_context is the last token if present.
+    auto [phraseStr, contextStr] = splitFirst(rest);
+
+    if (std::string(phraseStr).empty()) {
+        emitResponse({
+            {"ok", false},
+            {"cmd", "resolve_reference"},
+            {"error", "missing phrase"}
+        });
+        return;
+    }
+
+    if (!agenticWorkflow_) {
+        emitResponse({
+            {"ok", false},
+            {"cmd", "resolve_reference"},
+            {"error", "no agentic workflow session active"}
+        });
+        return;
+    }
+
+    nlohmann::json result = agenticWorkflow_->resolveReference(
+        phraseStr, trim(contextStr));
+
+    emitResponse(result);
+}
+
+void ControlInterface::handleRevertChange(std::string_view rest)
+{
+    // Format: revert_change [change_id]
+    // If no change_id is given, revert the last reversible change.
+    if (!agenticWorkflow_) {
+        emitResponse({
+            {"ok", false},
+            {"cmd", "revert_change"},
+            {"error", "no agentic workflow session active"}
+        });
+        return;
+    }
+
+    nlohmann::json revertInfo = agenticWorkflow_->getRevertInfo();
+
+    if (!revertInfo.value("has_revertable", false)) {
+        emitResponse({
+            {"ok", false},
+            {"cmd", "revert_change"},
+            {"error", "no reversible change to revert"}
+        });
+        return;
+    }
+
+    const auto revertCmd = revertInfo.value("revert_command", nlohmann::json{});
+
+    if (rest.empty()) {
+        // Revert the last reversible change.
+        // Dispatch the canonical revert command through ControlInterface.
+        const std::string cmd = revertCmd.value("cmd", std::string{});
+
+        nlohmann::json result;
+        result["cmd"] = "revert_change";
+        result["ok"] = true;
+        result["revert_info"] = revertInfo;
+        result["executed"] = false;  // not yet executed — caller must confirm
+        result["message"] = "revert identified; canonical command: " + cmd;
+        emitResponse(result);
+        return;
+    }
+
+    // If a specific change_id is provided, verify it matches the last reversible change.
+    try {
+        int requestedId = std::stoi(std::string(rest));
+        int lastId = 0;
+        if (revertInfo.contains("last_change") &&
+            revertInfo["last_change"].contains("change_id")) {
+            lastId = revertInfo["last_change"].value("change_id", 0);
+        }
+
+        if (requestedId != lastId) {
+            emitResponse({
+                {"ok", false},
+                {"cmd", "revert_change"},
+                {"error", "change_id does not match the last reversible change"}
+            });
+            return;
+        }
+    } catch (...) {
+        emitResponse({
+            {"ok", false},
+            {"cmd", "revert_change"},
+            {"error", "invalid change_id"}
+        });
+        return;
+    }
+
+    // Proceed with revert of the last reversible change.
+    const std::string revertCmdStr = revertCmd.value("cmd", std::string{});
+    if (!revertCmdStr.empty()) {
+        // Re-dispatch the canonical revert command through the proper handler.
+        // For edit_song reverts, construct the command line and dispatch it.
+        if (revertCmdStr == "edit_song") {
+            const std::string songFile = revertInfo.value("last_change",
+                nlohmann::json{}).value("resource_id", std::string{});
+            nlohmann::json ops = revertCmd.value("ops", nlohmann::json::array());
+            dispatch(std::string("edit_song ") + songFile + " " + ops.dump());
+        }
+    }
+
+    emitResponse({
+        {"ok", true},
+        {"cmd", "revert_change"},
+        {"revert_info", revertInfo},
+    });
+}
+
+void ControlInterface::handleClearWorkingSet(std::string_view /*rest*/)
+{
+    if (!agenticWorkflow_) {
+        emitResponse({
+            {"ok", false},
+            {"cmd", "clear_working_set"},
+            {"error", "no agentic workflow session active"}
+        });
+        return;
+    }
+
+    agenticWorkflow_->clearWorkingSet();
+    emitResponse({
+        {"ok", true},
+        {"cmd", "clear_working_set"}
+    });
+}

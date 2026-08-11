@@ -337,9 +337,29 @@ public:
     /// Format: workflow_status
     void handleWorkflowStatus(std::string_view rest);
 
-    /// Handle a workflow_approve command (respond to confirmation).
-    /// Format: workflow_approve <request_id>
-    void handleWorkflowApprove(std::string_view rest, bool approved);
+     /// Handle a workflow_approve command (respond to confirmation).
+     /// Format: workflow_approve <request_id>
+     void handleWorkflowApprove(std::string_view rest, bool approved);
+
+     // -----------------------------------------------------------------------
+     // AI-10.2: Conversational memory / working set
+     // -----------------------------------------------------------------------
+
+     /// Handle a working_set command (read-only query of conversational memory).
+     /// Format: working_set
+     void handleWorkingSet(std::string_view rest);
+
+     /// Handle a resolve_reference command (resolve a conversational reference).
+     /// Format: resolve_reference <phrase> [intent_context]
+     void handleResolveReference(std::string_view rest);
+
+     /// Handle a revert_change command (undo the last reversible change).
+     /// Format: revert_change [change_id]
+     void handleRevertChange(std::string_view rest);
+
+     /// Handle a clear_working_set command (clear session-scoped memory).
+     /// Format: clear_working_set
+     void handleClearWorkingSet(std::string_view rest);
 
 private:
     // --- Command handlers ---------------------------------------------------
