@@ -98,6 +98,8 @@ AuthoringContext::AuthoringContext(
     , lspCtx_(lspCtx)
     , metadata_(metadata)
     , compat_(compat)
+    , projectSymbolIndex_(nullptr)
+    , projectRetrieval_(nullptr)
 {
 }
 
@@ -111,6 +113,17 @@ void AuthoringContext::setMetadata(
 {
     metadata_ = metadata;
     compat_ = compat;
+}
+
+// ---------------------------------------------------------------------------
+// J-5: Project symbol index wiring
+// ---------------------------------------------------------------------------
+
+void AuthoringContext::setProjectSymbolIndex(
+    hathor::language::ProjectSymbolIndex* index) noexcept
+{
+    projectSymbolIndex_ = index;
+    projectRetrieval_.setIndex(index);
 }
 
 // ---------------------------------------------------------------------------
@@ -187,7 +200,9 @@ std::vector<std::string> AuthoringContext::resolveScope(
         return req.scope;
 
     // Auto-mode: include sections relevant to the language.
-    std::vector<std::string> sections = {"editor", "diagnostics", "runtime", "project"};
+    // J-5: project_retrieval is always auto-included since it's bounded.
+    std::vector<std::string> sections = {"editor", "diagnostics", "runtime",
+                                         "project", "project_retrieval"};
 
     if (language == "mininotation")
     {
@@ -205,7 +220,8 @@ std::vector<std::string> AuthoringContext::resolveScope(
     {
         // Unknown language — include everything we can.
         sections = {"editor", "diagnostics", "runtime", "project",
-                    "metadata", "samples", "instruments", "lsp"};
+                    "metadata", "samples", "instruments", "lsp",
+                    "project_retrieval"};
     }
 
     return sections;
@@ -276,6 +292,8 @@ nlohmann::json AuthoringContext::assemble(const ContextRequest& req) const
             sectionsJson["lsp"] = assembleLsp(req, snap, language);
         else if (name == "project")
             sectionsJson["project"] = assembleProject(req);
+        else if (name == "project_retrieval")
+            sectionsJson["project_retrieval"] = assembleProjectRetrieval(req, language);
     }
 
     response["sections"] = std::move(sectionsJson);
@@ -649,6 +667,56 @@ nlohmann::json AuthoringContext::assembleProject(const ContextRequest& req) cons
 {
     (void)req;
     return readFacade_.inspectProject();
+}
+
+// ---------------------------------------------------------------------------
+// assembleProjectRetrieval — J-5 bounded, ranked project snippets
+// ---------------------------------------------------------------------------
+
+nlohmann::json AuthoringContext::assembleProjectRetrieval(
+    const ContextRequest& req,
+    std::string_view language) const
+{
+    nlohmann::json result;
+    result["ok"] = (projectSymbolIndex_ != nullptr);
+    result["available"] = (projectSymbolIndex_ != nullptr);
+
+    if (projectSymbolIndex_ == nullptr)
+    {
+        result["reason"] = "ProjectSymbolIndex not bound";
+        return result;
+    }
+
+    // Build the retrieval context from the request.
+    RetrievalContext rctx;
+    rctx.language = std::string(language);
+    rctx.currentFile = req.file;
+
+    // Derive typed text from selected text if available.
+    if (req.selectedText.size() <= 200)
+    {
+        rctx.typedText = req.selectedText;
+    }
+    else
+    {
+        rctx.typedText = req.selectedText.substr(0, 200);
+    }
+
+    rctx.cursorContextKind = (language == "chuck") ? "synth_section" : "general";
+    rctx.cursorContextLabel = std::string(language);
+
+    // Use default bounds (ProjectRetrievalContext defaults are already reasonable).
+    auto retrieved = projectRetrieval_.retrieve(rctx);
+
+    result["version_token"] = retrieved.value("version_token", std::string{});
+    result["query"] = retrieved.value("query", std::string{});
+    result["snippets"] = retrieved["snippets"];
+    result["files"] = retrieved["files"];
+    result["count"] = retrieved.value("count", 0);
+    result["file_count"] = retrieved.value("file_count", 0);
+    result["truncated"] = retrieved.value("truncated", false);
+
+    return result;
 }
 
 } // namespace hathor::control

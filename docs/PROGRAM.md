@@ -1365,6 +1365,12 @@ audition_chuck, stop_chuck), `Rendering` (render_chuck, get_job_status, commit_r
 ### J-4 — Selection-Aware & Intent-Aware Completion (folded in)
 - Already covered by AI-9 / AI-G3 (continue vs. transform vs. densify vs. repair). Do **not** add a
   separate task; keep it as an acceptance criterion of AI-9 and J-1 so there's one intent-aware path.
+- **Implemented.** Selection state (`hasSelection` / `selectedText`) now flows through `GhostContext`
+  into `GhostTriggerPolicy::shouldTrigger()` (J-1), which suppresses ghost completion when a non-empty
+  selection is active. Intent is classified in `CompletionContextProvider::classifyIntent()` (AI-G3)
+  from the existing cursor classification + diagnostics — no second classifier. The derived intent
+  (continue / transform / densify / repair / general) is surfaced in the assembled context JSON
+  (`intent`, `intent_kind`) and in the FIM instructions string.
 
 ### J-5 — Codebase / Project Retrieval for Completion
 - Make the completion context **project-aware**, not just current-file-aware. Index → retrieve →

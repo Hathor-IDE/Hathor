@@ -116,6 +116,15 @@ void ControlInterface::setFewShotCorpus(
         completionContext_->setFewShotCorpus(corpus);
 }
 
+void ControlInterface::setProjectSymbolIndex(
+    hathor::language::ProjectSymbolIndex* index) noexcept
+{
+    if (completionContext_)
+        completionContext_->setProjectSymbolIndex(index);
+    if (authoringContext_)
+        authoringContext_->setProjectSymbolIndex(index);
+}
+
 ControlInterface::~ControlInterface()
 {
     delete impl_;
@@ -339,6 +348,10 @@ void ControlInterface::dispatch(std::string_view rawLine)
         // AI-2 read-only introspection commands — route through the canonical
         // ProjectReadFacade service layer (Phase 2.5 H0).
         handleReadOnlyCommand(cmd, rest);
+    } else if (cmd == "index_project") {
+        // J-5: Trigger a project symbol index refresh.
+        // Format: index_project <projectDir>
+        handleIndexProject(trim(rest));
     } else if (cmd == "get-context") {
         // AI-8: Dynamic authoring context assembly.
         // Routes through AuthoringContext, which pulls from EditorContextProvider,
@@ -740,6 +753,64 @@ void ControlInterface::handleQuit()
     // Flush is handled inside respond(), but call it again to be safe.
     std::fflush(stdout);
     std::exit(0);
+}
+
+// ---------------------------------------------------------------------------
+// handleIndexProject() — J-5 project symbol index refresh
+// ---------------------------------------------------------------------------
+
+void ControlInterface::handleIndexProject(std::string_view projectDir)
+{
+    nlohmann::json result;
+    result["cmd"] = "index_project";
+
+    if (completionContext_ == nullptr || authoringContext_ == nullptr)
+    {
+        result["ok"] = false;
+        result["reason"] = "context providers not initialized";
+        emitResponse(result);
+        return;
+    }
+
+    auto* idx = completionContext_->projectSymbolIndex();
+
+    if (idx == nullptr)
+    {
+        result["ok"] = false;
+        result["reason"] = "ProjectSymbolIndex not bound to ControlInterface";
+        emitResponse(result);
+        return;
+    }
+
+    // Get the project directory from the read facade.
+    std::string projectDirStr;
+    if (projectDir.empty())
+    {
+        auto projInfo = readFacade_->inspectProject();
+        projectDirStr = projInfo.value("project_dir", std::string{});
+    }
+    else
+    {
+        projectDirStr = std::string(projectDir);
+    }
+
+    if (projectDirStr.empty())
+    {
+        result["ok"] = false;
+        result["reason"] = "no project directory available";
+        emitResponse(result);
+        return;
+    }
+
+    // Trigger a reindex of the project directory.
+    idx->reindex(projectDirStr);
+
+    result["ok"] = true;
+    result["project_dir"] = std::string(projectDir);
+    result["version_token"] = idx->versionToken();
+    result["symbols_count"] = idx->symbolCount();
+
+    emitResponse(result);
 }
 
 // ---------------------------------------------------------------------------

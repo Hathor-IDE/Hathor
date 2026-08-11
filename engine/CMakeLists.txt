@@ -10,6 +10,7 @@ add_library(hathor-engine STATIC
     src/PatternCompiler.cpp
     src/LanguageMetadata.cpp
     src/FewShotCorpus.cpp
+    src/ProjectSymbolIndex.cpp
 )
 
 target_include_directories(hathor-engine
@@ -36,6 +37,7 @@ target_sources(hathor-engine
         include/hathor/Pattern.hpp
         include/hathor/PatternCompiler.hpp
         include/hathor/PrettyPrinter.hpp
+        include/hathor/ProjectSymbolIndex.hpp
         include/hathor/Rational.hpp
         include/hathor/Value.hpp
 )

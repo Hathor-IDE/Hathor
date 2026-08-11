@@ -47,6 +47,7 @@
 
 #include "EditorContextProvider.hpp"
 #include "LspContextProvider.hpp"
+#include "ProjectRetrievalContext.hpp"
 
 namespace hathor {
 namespace language {
@@ -87,7 +88,8 @@ struct ContextRequest {
 
     // --- Scope control — if empty, auto-determine from file type ---
     // Valid values: "editor", "diagnostics", "metadata", "runtime",
-    //               "samples", "instruments", "lsp", "project"
+    //               "samples", "instruments", "lsp", "project",
+    //               "project_retrieval" (J-5)
     std::vector<std::string> scope;
 
     /// Include the full file content in the response (default: false).
@@ -154,11 +156,18 @@ public:
     nlohmann::json assemble(const ContextRequest& req) const;
 
     /**
-     * Update the LanguageMetadata pointer (e.g. after a hot-reload).
-     * Thread-safe: uses a shared_ptr internally.
-     */
+      * Update the LanguageMetadata pointer (e.g. after a hot-reload).
+      * Thread-safe: uses a shared_ptr internally.
+      */
     void setMetadata(const language::LanguageMetadata* metadata,
                      const language::MetadataCompatibility* compat);
+
+    /**
+      * Install/replace the J-5 ProjectSymbolIndex (may be null).
+      * When set, the assembled context can include a
+      * `project_retrieval` section with bounded, ranked snippets.
+      */
+    void setProjectSymbolIndex(hathor::language::ProjectSymbolIndex* index) noexcept;
 
 private:
     // --- Section assemblers ---
@@ -186,6 +195,9 @@ private:
 
     nlohmann::json assembleProject(const ContextRequest& req) const;
 
+    nlohmann::json assembleProjectRetrieval(const ContextRequest& req,
+                                            std::string_view language) const;
+
     // --- Helpers ---
 
     /// Determine which sections to assemble (auto-detect if scope is empty).
@@ -205,6 +217,8 @@ private:
     LspContextProvider*                        lspCtx_;
     const language::LanguageMetadata*          metadata_;
     const language::MetadataCompatibility*     compat_;
+    hathor::language::ProjectSymbolIndex*      projectSymbolIndex_; /* J-5 */
+    ProjectRetrievalContext                    projectRetrieval_;   /* J-5 */
 };
 
 } // namespace hathor::control

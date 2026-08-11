@@ -216,7 +216,9 @@ bool containsWord(std::string_view text, std::string_view name)
 /// Whether the identifier at the cursor position (scanning backward) matches.
 std::string identifierAtCursor(std::string_view line, int character)
 {
+    if (character < 0) return {};
     std::size_t i = static_cast<std::size_t>(character);
+    if (i > line.size()) i = line.size();
     while (i > 0 &&
            ((line[i - 1] >= 'a' && line[i - 1] <= 'z') ||
             (line[i - 1] >= 'A' && line[i - 1] <= 'Z') ||
@@ -264,6 +266,8 @@ CompletionContextProvider::CompletionContextProvider(
     , metadata_(metadata)
     , compat_(compat)
     , corpus_(corpus)
+    , projectSymbolIndex_(nullptr)
+    , projectRetrieval_(nullptr)
 {
 }
 
@@ -273,6 +277,17 @@ void CompletionContextProvider::setMetadata(
 {
     metadata_ = metadata;
     compat_ = compat;
+}
+
+// ---------------------------------------------------------------------------
+// J-5: Project symbol index wiring
+// ---------------------------------------------------------------------------
+
+void CompletionContextProvider::setProjectSymbolIndex(
+    hathor::language::ProjectSymbolIndex* index) noexcept
+{
+    projectSymbolIndex_ = index;
+    projectRetrieval_.setIndex(index);
 }
 
 // ---------------------------------------------------------------------------
@@ -1257,6 +1272,92 @@ nlohmann::json CompletionContextProvider::assembleProject(const CompletionReques
 }
 
 // ---------------------------------------------------------------------------
+// assembleProjectRetrieval — J-5 bounded, ranked project snippets
+// ---------------------------------------------------------------------------
+
+nlohmann::json CompletionContextProvider::assembleProjectRetrieval(
+    const CompletionRequest& req,
+    const CursorContext& ctx,
+    std::string_view language) const
+{
+    const auto& bounds = resolveBounds(req);
+
+    nlohmann::json result;
+    result["ok"] = (projectSymbolIndex_ != nullptr);
+    result["available"] = (projectSymbolIndex_ != nullptr);
+
+    if (projectSymbolIndex_ == nullptr)
+    {
+        result["reason"] = "ProjectSymbolIndex not bound";
+        return result;
+    }
+
+    // Build the retrieval context from the current edit location.
+    RetrievalContext rctx;
+    rctx.language = std::string(language);
+    rctx.cursorContextKind = [k = ctx.kind] {
+        switch (k) {
+            case CursorContextKind::SampleExpr:   return "sample_expr";
+            case CursorContextKind::Transform:    return "transform";
+            case CursorContextKind::ScaleExpr:    return "scale_expr";
+            case CursorContextKind::Rhythm:       return "rhythm";
+            case CursorContextKind::UgenDecl:     return "ugen_decl";
+            case CursorContextKind::Routing:      return "routing";
+            case CursorContextKind::Timing:       return "timing";
+            case CursorContextKind::SynthSection: return "synth_section";
+            case CursorContextKind::General:      return "general";
+        }
+        return "general";
+    }();
+    rctx.cursorContextLabel = ctx.label;
+    rctx.currentFile = req.file;
+
+    // Derive the typed text (partial token at the cursor).
+    {
+        const std::string currentLine = lineAt(
+            req.documentText.empty() ? std::string{} : req.documentText, req.line);
+        rctx.typedText = identifierAtCursor(currentLine, req.character);
+    }
+
+    // Build bounded retrieval limits from the ContextBounds.
+    RetrievalBounds rbounds;
+    rbounds.maxSnippets = bounds.maxProjectSnippets;
+    rbounds.maxSnippetChars = bounds.maxProjectSnippetChars;
+    rbounds.maxTotalChars = bounds.maxProjectRetrievalChars;
+    rbounds.maxFiles = bounds.maxInstruments;  // reuse the instrument count for file listing
+    rbounds.maxSearchedSymbols = 30;
+
+    auto retrieved = projectRetrieval_.retrieve(rctx, rbounds);
+
+    // Enforce the overall context budget as a hard cap on total chars.
+    // The retrieve() method already bounds by maxTotalChars, but we
+    // double-check the serialized form fits within maxContextChars.
+    const auto serialized = retrieved.dump();
+    if (static_cast<int>(serialized.size()) > bounds.maxProjectRetrievalChars)
+    {
+        // Trim the snippets array until we fit.
+        auto& snippets = retrieved["snippets"];
+        while (!snippets.empty() &&
+               static_cast<int>(retrieved.dump().size()) > bounds.maxProjectRetrievalChars)
+        {
+            snippets.erase(std::prev(snippets.end()));
+            retrieved["count"] = snippets.size();
+            retrieved["truncated"] = true;
+        }
+    }
+
+    result["version_token"] = retrieved.value("version_token", std::string{});
+    result["query"] = retrieved.value("query", std::string{});
+    result["snippets"] = retrieved["snippets"];
+    result["files"] = retrieved["files"];
+    result["count"] = retrieved.value("count", 0);
+    result["file_count"] = retrieved.value("file_count", 0);
+    result["truncated"] = retrieved.value("truncated", false);
+
+    return result;
+}
+
+// ---------------------------------------------------------------------------
 // Intent classification (J-4) — single intent-aware path, no second classifier
 // ---------------------------------------------------------------------------
 
@@ -1436,6 +1537,9 @@ CompletionContext CompletionContextProvider::assemble(const CompletionRequest& r
 
     // --- project (compact overview) ---
     ctxJson["project"] = assembleProject(req);
+
+    // --- J-5: project retrieval (bounded, ranked snippets) ---
+    ctxJson["project_retrieval"] = assembleProjectRetrieval(req, ctx, language);
 
     // J-4: Intent-aware instructions — the intent (continue / transform /
     // densify / repair) is derived from the AI-G3 cursor classification +

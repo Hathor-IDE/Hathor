@@ -69,12 +69,14 @@
 
 #include "EditorContextProvider.hpp"
 #include "LspContextProvider.hpp"
+#include "ProjectRetrievalContext.hpp"
 
 namespace hathor {
 namespace language {
 struct LanguageMetadata;
 struct MetadataCompatibility;
 struct FewShotCorpus;
+class ProjectSymbolIndex;
 }
 }
 
@@ -168,6 +170,9 @@ struct ContextBounds {
     int maxRegionLines      = 5;     ///< surrounding source region (lines either side)
     int maxSurroundingChars = 512;   ///< surrounding source chars (region cap)
     int maxContextChars     = 4096;  ///< overall serialized-context character budget
+    int maxProjectSnippets  = 5;     ///< J-5: max project retrieval snippets
+    int maxProjectSnippetChars = 200; ///< J-5: max chars per retrieved snippet
+    int maxProjectRetrievalChars = 1536; ///< J-5: total project retrieval context budget (subset of maxContextChars)
 };
 
 // ---------------------------------------------------------------------------
@@ -282,6 +287,15 @@ public:
     /// Install/replace the AI-G4 few-shot example corpus (may be null).
     void setFewShotCorpus(const hathor::language::FewShotCorpus* corpus) noexcept { corpus_ = corpus; }
 
+    /// Expose the bound ProjectSymbolIndex (may be null). Used by ControlInterface
+    /// for the `index_project` command to trigger reindexing.
+    hathor::language::ProjectSymbolIndex* projectSymbolIndex() const noexcept { return projectSymbolIndex_; }
+
+    /// Install/replace the J-5 ProjectSymbolIndex (may be null).
+    /// When set, the assembled context includes a `project_retrieval` section
+    /// with bounded, ranked snippets from the project.
+    void setProjectSymbolIndex(hathor::language::ProjectSymbolIndex* index) noexcept;
+
     /// Set default bounds used when a request does not override them.
     void setBounds(ContextBounds bounds) noexcept { defaultBounds_ = bounds; }
 
@@ -342,6 +356,12 @@ private:
     /// Compact project overview (not the whole repo — only what is relevant).
     nlohmann::json assembleProject(const CompletionRequest& req) const;
 
+    /// J-5: Bounded, ranked project retrieval — snippets from other project
+    /// files relevant to the current edit location. Feeds fim.prefix.
+    nlohmann::json assembleProjectRetrieval(const CompletionRequest& req,
+                                            const CursorContext& ctx,
+                                            std::string_view language) const;
+
     // --- Helpers ---
 
     /// Resolve the editor snapshot, applying request overrides for cursor/file.
@@ -383,6 +403,8 @@ private:
     const hathor::language::LanguageMetadata*        metadata_;
     const hathor::language::MetadataCompatibility*     compat_;
     const hathor::language::FewShotCorpus*             corpus_; /* AI-G4 */
+    hathor::language::ProjectSymbolIndex*              projectSymbolIndex_; /* J-5 */
+    ProjectRetrievalContext                         projectRetrieval_; /* J-5 */
     ContextBounds                                   defaultBounds_;
 };
 

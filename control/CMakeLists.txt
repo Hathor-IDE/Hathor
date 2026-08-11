@@ -54,6 +54,7 @@ add_library(hathor-control OBJECT
     SongMutationService.cpp
     AuthoringContext.cpp
     CompletionContextProvider.cpp
+    ProjectRetrievalContext.cpp
 )
 
 target_include_directories(hathor-control

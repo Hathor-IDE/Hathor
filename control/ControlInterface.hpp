@@ -35,6 +35,7 @@ class SampleBank;
 namespace hathor::language {
 struct LanguageMetadata;
 struct MetadataCompatibility;
+class ProjectSymbolIndex;
 }
 
 namespace hathor::control {
@@ -194,6 +195,11 @@ public:
     /// pointer; the caller (UI layer) owns the loaded corpus lifetime.
     void setFewShotCorpus(const hathor::language::FewShotCorpus* corpus) noexcept;
 
+    /// Set the J-5 ProjectSymbolIndex for project-aware code completion.
+    /// The ControlInterface holds a non-owning pointer; the caller owns the
+    /// index lifetime. May be called multiple times (e.g. after hot-reload).
+    void setProjectSymbolIndex(hathor::language::ProjectSymbolIndex* index) noexcept;
+
     /// Assemble and emit the dynamic authoring context for the given request.
     /// Parses JSON arguments from the socket command line, builds a
     /// ContextRequest, and responds via the thread-local response sink.
@@ -338,6 +344,10 @@ private:
 
     /// quit  (Req 16.5)
     void handleQuit();
+
+    /// index_project <projectDir>  (J-5)
+    /// Trigger a project symbol index refresh for project-aware completion.
+    void handleIndexProject(std::string_view projectDir);
 
     // --- Members ------------------------------------------------------------
     AudioEngineFacade& audio_;
