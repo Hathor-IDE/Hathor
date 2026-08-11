@@ -244,7 +244,7 @@ public:
      */
     std::optional<GhostResult> onProviderFailure();
 
-    /**
+     /**
       * Called when the user accepts the ghost text.
       * Sends an accept notification (caller is responsible for sending it
       * via the LSP client) and clears the active ghost.
@@ -253,7 +253,27 @@ public:
       * currently selected candidate index and shownCompletions listing all
       * candidate indices that were presented (for llm-ls feedback).
       */
-    std::optional<AcceptCompletionParams> onAccept();
+     std::optional<AcceptCompletionParams> onAccept();
+
+     /**
+      * Called when the user partially accepts the ghost text (J-3).
+      *
+      * Splits the currently selected candidate at `acceptLen` characters:
+      * the prefix (0..acceptLen) is the accepted text, the suffix
+      * (acceptLen..end) remains as ghost text.
+      *
+      * The active ghost is NOT cleared — the remaining suffix is updated
+      * in-place and stays active for further partial accepts or full accept.
+      * No llm-ls notification is sent (partial accept is pure UI state).
+      *
+      * @param acceptLen  Number of characters of the selected candidate to
+      *                   accept (must be > 0 and ≤ candidate text length).
+      * @return PartialAcceptResult with the accepted prefix and the updated
+      *         GhostResult for the remaining suffix. nullopt if no ghost is
+      *         active, acceptLen is invalid, or the remaining suffix is empty
+      *         (in which case the caller should use onAccept() for full accept).
+      */
+     std::optional<PartialAcceptResult> onPartialAccept(size_t acceptLen);
 
     /**
       * Called when the user dismisses or modifies the ghost text.
@@ -322,9 +342,28 @@ public:
       */
     bool selectPreviousCandidate() noexcept;
 
-    // -----------------------------------------------------------------------
-    // Helper: build a GhostCompletionRequest from context + provider config
-    // -----------------------------------------------------------------------
+     // -----------------------------------------------------------------------
+     // J-3: Partial / multi-token acceptance
+     // -----------------------------------------------------------------------
+
+     /**
+      * Find the next token boundary in the ghost text for partial acceptance.
+      *
+      * Returns the number of characters to accept so that the accepted prefix
+      * includes the first complete whitespace-delimited token (i.e. up to and
+      * including the first space, or the entire text if no space is found).
+      *
+      * For "kick snare hat clap" → returns 5 (accepts "kick "), leaving
+      * "snare hat clap".
+      *
+      * For "clap" (single token) → returns 4 (accepts entire text — equivalent
+      * to a full accept; the caller should use onAccept() instead).
+      */
+     static size_t findNextTokenBoundary(std::string_view text) noexcept;
+
+     // -----------------------------------------------------------------------
+     // Helper: build a GhostCompletionRequest from context + provider config
+     // -----------------------------------------------------------------------
 
     /**
       * Build the actual llm-ls request from the current context.

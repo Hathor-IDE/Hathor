@@ -275,14 +275,6 @@ std::optional<GhostCompletionResponse> parseGhostCompletionResponse(
 // llm-ls notification types (accept/reject)
 // ---------------------------------------------------------------------------
 
-/**
- * Parameters for the `llm-ls/acceptCompletion` notification.
- * Sent when the user accepts a ghost completion suggestion.
- *
- * Verified against llm-ls source: the Rust `AcceptCompletionParams` struct
- * has `request_id: Uuid`, `accepted_completion: u32`,
- * and `shown_completions: Vec<u32>`.
- */
 struct AcceptCompletionParams {
     std::string requestId;       ///< the request_id from the completion response (UUID string)
     uint32_t    acceptedCompletion = 0;  ///< index of the accepted completion
@@ -337,6 +329,26 @@ struct GhostResult {
     uint32_t    candidateIndex = 0;
 
     bool        isEmpty() const noexcept { return text.empty(); }
+};
+
+/**
+  * Result of a partial acceptance of a ghost completion.
+  *
+  * When the user accepts only a prefix of the displayed ghost text (J-3),
+  * the accepted prefix is returned for document insertion, and the remaining
+  * suffix is returned as an updated GhostResult whose docPrefix has been
+  * extended to include the accepted text. The caller (HathorTab) is
+  * responsible for inserting the accepted text into the document via the
+  * normal CodeDocument edit mechanism (which creates a proper undo entry),
+  * and for re-displaying the remaining suffix via the overlay.
+  *
+  * AI-G6 (Ghost Text Is UI State): the remaining suffix has NOT entered the
+  * document or undo history — it remains ghost overlay state until explicitly
+  * accepted or dismissed.
+  */
+struct PartialAcceptResult {
+    std::string   acceptedText;      ///< the prefix that was accepted (for document insertion)
+    GhostResult   remainingResult;   ///< updated result for the remaining suffix (for display)
 };
 
 } // namespace hathor::lsp

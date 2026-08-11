@@ -326,10 +326,17 @@ public:
       void triggerGhostCompletion();
 
       /// Accept the currently displayed ghost text (Tab key).
-      void acceptGhostCompletion();
+       void acceptGhostCompletion();
 
-      /// Dismiss the ghost text (Escape key or any edit).
-      void dismissGhostCompletion();
+       // J-3: Partial acceptance — accept the next word/token of the ghost
+       // text (Ctrl+→). The accepted prefix is inserted into the document as
+       // a normal undoable edit; the remaining suffix stays as ghost text.
+       // Does NOT issue a new LLM request. Integrates with J-2 candidate
+       // cycling (acts on the currently selected candidate).
+       void partialAcceptGhostCompletion();
+
+       /// Dismiss the ghost text (Escape key or any edit).
+       void dismissGhostCompletion();
 
       // J-2: Cycle ghost completion candidates (Alt+→ / Alt+←).
       // Cycling operates on cached candidates — no LLM request is issued.
@@ -519,11 +526,17 @@ private:
        std::unique_ptr<CompletionCoordinator> coordinator_;
        std::unique_ptr<GhostTextOverlay>     ghostOverlay_;
 
-      // AI-G6: The active ghost result (if any) — stored so that
-      // acceptGhostCompletion() can verify the cursor hasn't moved since
-      // the ghost was generated. Stale ghost results (cursor moved,
-      // document changed) are rejected before text is inserted.
-      std::optional<lsp::GhostResult>      activeGhostResult_;
+       /// AI-G6: The active ghost result (if any) — stored so that
+       // acceptGhostCompletion() can verify the cursor hasn't moved since
+       // the ghost was generated. Stale ghost results (cursor moved,
+       // document changed) are rejected before text is inserted.
+       std::optional<lsp::GhostResult>      activeGhostResult_;
+
+       // J-3: Flag set during partial-accept document insertion. While true,
+       // codeDocumentTextInserted / caretPositionMoved skip ghost-clearing so
+       // the remaining suffix survives the document edit. Cleared after the
+       // overlay is re-displayed with the remaining text.
+       bool partialAcceptInProgress_ = false;
 
       // AI-G7: ChucK diagnostics debounce timestamp.
       int64_t chuckLastDiagTimeMs_{ 0 };

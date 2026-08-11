@@ -171,6 +171,36 @@ CompletionCoordinator::onGhostRejected()
     return params;
 }
 
+// ---------------------------------------------------------------------------
+// J-3: Partial / multi-token acceptance
+// ---------------------------------------------------------------------------
+
+std::optional<lsp::PartialAcceptResult>
+CompletionCoordinator::onGhostPartialAccepted(size_t acceptLen)
+{
+    auto result = ghostLogic_->onPartialAccept(acceptLen);
+    // Mode stays GhostActive — the remaining suffix is still displayed.
+    // No notification is sent to llm-ls (partial accept is UI-only state).
+    // ghostRevision_ stays in sync with docRevision_ (it was set when the
+    // ghost was generated; the document hasn't changed yet at this point).
+    return result;
+}
+
+void CompletionCoordinator::onPartialAcceptDocumentChange() noexcept
+{
+    // Called AFTER the accepted prefix has been inserted into the CodeDocument.
+    // We need to:
+    //   1. Increment docRevision_ (the document changed)
+    //   2. Sync ghostRevision_ with docRevision_ (the ghost is still valid)
+    //   3. NOT clear the active ghost (unlike onDocumentChanged)
+    //   4. NOT cancel pending requests (no new request needed just because
+    //      a prefix was accepted — AI-G4/J-2 coexistence requirement)
+    ++docRevision_;
+    ghostRevision_ = docRevision_;
+    // mode_ stays GhostActive
+    // active ghost in GhostCompletionLogic is preserved (not cleared)
+}
+
 void CompletionCoordinator::clearActiveGhost()
 {
     ghostLogic_->clearActiveGhost();

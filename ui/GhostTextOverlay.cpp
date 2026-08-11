@@ -136,15 +136,6 @@ void GhostTextOverlay::paint(juce::Graphics& g)
                    false);
     }
 }
-    else
-    {
-        // No dimming needed — draw the entire ghost text at standard opacity
-        g.drawText(ghostStr,
-                   startX, startY,
-                   ghostStr.length() * 8, rowHeight,
-                   juce::Justification::topLeft,
-                   false);
-    }
 }
 
     // -----------------------------------------------------------------------

@@ -90,6 +90,17 @@ HathorTab::HathorTab(int slotIndex, const juce::File& file)
 
           // Install LSP key listener on the editor (after TabKeyListener
           // is installed by EditorArea, so it handles keys first)
+           lspKeyListener_ = std::make_unique<LspKeyListener>(*this);
+           editor_.addKeyListener(lspKeyListener_.get());
+      }
+
+      // J-3: Install the LSP key listener for ALL file types (including .ck).
+      // For .hathor files it handles Ctrl+Space / Tab / Escape / Alt+→ / Ctrl+→.
+      // For .ck files, only Tab (ghost accept), Escape (ghost dismiss),
+      // Alt+→/← (cycle), and Ctrl+→ (partial accept) are relevant — the LSP
+      // completions are handled separately for .ck.
+      if (useChuckTokeniser_ && !lspKeyListener_)
+      {
           lspKeyListener_ = std::make_unique<LspKeyListener>(*this);
           editor_.addKeyListener(lspKeyListener_.get());
       }
@@ -446,6 +457,20 @@ void HathorTab::codeDocumentTextInserted(const juce::String& /*newText*/,
 {
     markUnsaved();
 
+    // J-3: During a partial-accept insertion, the ghost state has already been
+    // updated to the remaining suffix. Don't clear it — just sync to LSP and
+    // increment the coordinator revision so the ghost stays valid.
+    if (partialAcceptInProgress_)
+    {
+        if (coordinator_)
+            coordinator_->onPartialAcceptDocumentChange();
+        if (useChuckTokeniser_)
+            triggerChuckDiagnostics();
+        else
+            notifyLspDidChange();
+        return;
+    }
+
     // AI-G3: Document change invalidates ghost state. The coordinator
     // increments docRevision_, cancels pending ghost requests, and clears
     // any active ghost.
@@ -466,9 +491,27 @@ void HathorTab::codeDocumentTextInserted(const juce::String& /*newText*/,
 }
 
 void HathorTab::codeDocumentTextDeleted(int /*startIndex*/,
-                                         int /*endIndex*/)
+                                        int /*endIndex*/)
 {
     markUnsaved();
+
+    // J-3: If a deletion happened during a partial accept (should not occur
+    // in normal flow, but guard against it), treat it as a full document
+    // change and clear the ghost.
+    if (partialAcceptInProgress_)
+    {
+        if (coordinator_)
+            coordinator_->onDocumentChanged();
+        if (ghostOverlay_)
+            ghostOverlay_->clearGhost();
+        activeGhostResult_.reset();
+        partialAcceptInProgress_ = false;
+        if (useChuckTokeniser_)
+            triggerChuckDiagnostics();
+        else
+            notifyLspDidChange();
+        return;
+    }
 
     // AI-G3: Document change invalidates ghost state.
     if (coordinator_)
@@ -1016,12 +1059,29 @@ bool HathorTab::handleLspKeyPress(const juce::KeyPress& key)
             cycleGhostNext();
             return true;
         }
-        if (key.getModifiers().isAltDown() && key.getKeyCode() == juce::KeyPress::leftKey)
-        {
-            cycleGhostPrev();
-            return true;
-        }
-    }
+         if (key.getModifiers().isAltDown() && key.getKeyCode() == juce::KeyPress::leftKey)
+         {
+             cycleGhostPrev();
+             return true;
+         }
+     }
+
+     // J-3: Ctrl+→ partially accepts the next word/token of the ghost text.
+     // The accepted prefix is inserted into the document as a normal undoable
+     // edit; the remaining suffix stays as ghost text for further acceptance
+     // or dismissal. Does not issue a new LLM request.
+     // Only consumed when a ghost is active; otherwise falls through to the
+     // editor's default cursor-movement behaviour.
+     if (coordinator_ && coordinator_->isGhostEnabled()
+         && ghostOverlay_ && ghostOverlay_->hasGhost())
+     {
+         if (key.getModifiers().isCtrlDown()
+             && key.getKeyCode() == juce::KeyPress::rightKey)
+         {
+             partialAcceptGhostCompletion();
+             return true;
+         }
+     }
 
     // Up/Down: navigate LSP completion popup (if visible)
     if (lspCompletionPopup_ && lspCompletionPopup_->hasCandidates())
@@ -1042,6 +1102,13 @@ bool HathorTab::handleLspKeyPress(const juce::KeyPress& key)
 
 void HathorTab::handleCursorMove()
 {
+     // J-3: During partial-accept insertion, suppress ghost re-triggering.
+    // The cursor moves as the accepted prefix is inserted, but the ghost
+    // overlay is manually re-displayed with the remaining suffix after
+    // insertText() returns.
+    if (partialAcceptInProgress_)
+        return;
+
     // AI-8: Notify listeners that the cursor position may have changed.
     if (onCursorMoved)
         onCursorMoved();
@@ -1311,6 +1378,95 @@ void HathorTab::acceptGhostCompletion()
     // proper, undoable edit — the ghost text becomes a normal document edit.
     int caretAbs = editor_.getCaretPosition();
     document_.insertText(caretAbs, juce::String(text));
+}
+
+void HathorTab::partialAcceptGhostCompletion()
+{
+    if (!ghostOverlay_ || !coordinator_)
+        return;
+
+    // AI-G6: Verify the cursor hasn't moved since the ghost was generated.
+    if (activeGhostResult_.has_value())
+    {
+        const auto& gr = activeGhostResult_.value();
+        const auto caretPos = editor_.getCaretPos();
+        if (static_cast<int>(caretPos.getLineNumber()) != gr.cursorLine ||
+            static_cast<int>(caretPos.getIndexInLine()) != gr.character)
+        {
+            // Cursor moved — dismiss the stale ghost instead.
+            coordinator_->onGhostRejected();
+            ghostOverlay_->clearGhost();
+            activeGhostResult_.reset();
+            return;
+        }
+    }
+
+    // Get the currently selected candidate text (J-2 integration).
+    auto selected = coordinator_->selectedGhostResult();
+    if (!selected.has_value() || selected->text.empty())
+        return;
+
+    // J-3: Find the next token boundary — accept up to and including the
+    // first whitespace character (one word/token of the ghost text).
+    size_t acceptLen = lsp::GhostCompletionLogic::findNextTokenBoundary(selected->text);
+
+    // If the boundary is the entire text, do a full accept instead.
+    if (acceptLen >= selected->text.size())
+    {
+        acceptGhostCompletion();
+        return;
+    }
+
+    // J-3: Ask the coordinator to split the ghost — the accepted prefix is
+    // returned for insertion; the remaining suffix stays as ghost state.
+    // No LLM request is issued; no notification is sent to llm-ls.
+    auto partialResult = coordinator_->onGhostPartialAccepted(acceptLen);
+    if (!partialResult.has_value())
+        return;
+
+    // Flag: suppress ghost clearing in codeDocumentTextInserted and
+    // handleCursorMove while we insert the accepted prefix.
+    partialAcceptInProgress_ = true;
+
+    // AI-G6: Insert the accepted prefix into the document using the normal
+    // CodeDocument edit mechanism — this creates a proper, undoable edit.
+    // The remaining suffix does NOT enter the document.
+    int caretAbs = editor_.getCaretPosition();
+    document_.insertText(caretAbs, juce::String(partialResult->acceptedText));
+
+    // Document insert has triggered codeDocumentTextInserted (which, with the
+    // flag, incremented the coordinator revision and did NOT clear the ghost)
+    // and caretPositionMoved (which was suppressed by the flag).
+    partialAcceptInProgress_ = false;
+
+    // Re-display the ghost overlay with the remaining suffix at the new
+    // cursor position.
+    auto remaining = coordinator_->selectedGhostResult();
+    if (remaining.has_value())
+    {
+        juce::Rectangle<int> caretRect = editor_.getCaretRectangleForCharIndex(
+            editor_.getCaretPosition());
+
+        ghostOverlay_->setGhostText(remaining->text, caretRect, 0);
+        ghostOverlay_->setCandidateIndicator(
+            coordinator_->ghostCandidateCount(),
+            coordinator_->ghostSelectedCandidateIndex());
+
+        // Update the stored result for cursor-verification on the next
+        // accept / partial-accept.
+        activeGhostResult_ = *remaining;
+
+        if (!coordinator_->isLspPopupActive())
+            ghostOverlay_->showGhost();
+        else
+            ghostOverlay_->hideGhost();
+    }
+    else
+    {
+        // Should not happen, but handle gracefully.
+        ghostOverlay_->clearGhost();
+        activeGhostResult_.reset();
+    }
 }
 
 void HathorTab::dismissGhostCompletion()

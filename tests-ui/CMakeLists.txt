@@ -43,10 +43,11 @@ add_executable(hathor-ui-tests
      test_lsp_jsonrpc.cpp
      test_lsp_completion_logic.cpp
        # AI-4: Ghost text unit tests (JUCE-free, req 31.1)
-        test_ghost_completion_logic.cpp
-        test_completion_coordinator.cpp
-        test_ghost_state_isolation.cpp
-        test_ghost_candidates.cpp
+         test_ghost_completion_logic.cpp
+         test_completion_coordinator.cpp
+         test_ghost_state_isolation.cpp
+         test_ghost_candidates.cpp
+         test_ghost_partial_accept.cpp
       ${CMAKE_SOURCE_DIR}/ui/HathorFileParser.cpp
      ${CMAKE_SOURCE_DIR}/ui/ExplorerFileTypes.cpp
      ${CMAKE_SOURCE_DIR}/ui/TreeBuilder.cpp

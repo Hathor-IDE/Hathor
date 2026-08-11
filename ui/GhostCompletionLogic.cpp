@@ -403,6 +403,62 @@ std::optional<AcceptCompletionParams> GhostCompletionLogic::onAccept()
     return params;
 }
 
+std::optional<PartialAcceptResult> GhostCompletionLogic::onPartialAccept(size_t acceptLen)
+{
+    if (!activeGhost_.has_value())
+        return std::nullopt;
+
+    auto& candidate = activeGhost_->candidates[activeGhost_->selectedIndex];
+
+    if (acceptLen == 0 || acceptLen > candidate.text.size())
+        return std::nullopt;
+
+    std::string acceptedText = candidate.text.substr(0, acceptLen);
+    std::string remainingText = candidate.text.substr(acceptLen);
+
+    // If the entire candidate is accepted, the caller should use onAccept()
+    // instead (full accept clears ghost state).
+    if (remainingText.empty())
+        return std::nullopt;
+
+    // Update the candidate in-place to be the remaining suffix.
+    // docPrefix is extended to include the accepted text (AI-G2: the prefix
+    // now reflects the new document state after insertion).
+    // cursorLine/character stay the same — the remaining ghost is displayed
+    // at the new cursor position which the UI resolves from the editor.
+    candidate.text = remainingText;
+    candidate.displayText = remainingText;
+    candidate.insertText = remainingText;
+    candidate.docPrefix += acceptedText;
+
+    PartialAcceptResult result;
+    result.acceptedText = std::move(acceptedText);
+    result.remainingResult = candidate;  // copy the updated candidate
+
+    // Active ghost is NOT cleared — stays active for further partial accepts.
+    // selectedIndex stays the same; the candidate text is now the remaining suffix.
+    // No pending request to clear; no revision change (document hasn't changed
+    // at the logic level yet).
+
+    return result;
+}
+
+size_t GhostCompletionLogic::findNextTokenBoundary(std::string_view text) noexcept
+{
+    // Accept up to and including the first whitespace character.
+    // If no whitespace is found, return the entire text length (the caller
+    // should use onAccept() for a full accept in that case).
+    for (size_t i = 0; i < text.size(); ++i)
+    {
+        if (text[i] == ' ' || text[i] == '\t' ||
+            text[i] == '\n' || text[i] == '\r')
+        {
+            return i + 1; // include the whitespace
+        }
+    }
+    return text.size();
+}
+
 std::optional<RejectCompletionParams> GhostCompletionLogic::onReject()
 {
     if (!activeGhost_.has_value())

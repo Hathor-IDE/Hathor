@@ -160,17 +160,49 @@ public:
                     const lsp::GhostCompletionResponse& response,
                     int64_t nowMs);
 
-    /**
+     /**
       * Called when the user accepts the ghost text (Tab / Ctrl+.).
       * Returns AcceptCompletionParams for the notification to llm-ls.
       */
-    std::optional<lsp::AcceptCompletionParams> onGhostAccepted();
+     std::optional<lsp::AcceptCompletionParams> onGhostAccepted();
 
-    /**
+     /**
       * Called when the user rejects the ghost text (Escape / any edit).
       * Returns RejectCompletionParams for the notification to llm-ls.
       */
-    std::optional<lsp::RejectCompletionParams> onGhostRejected();
+     std::optional<lsp::RejectCompletionParams> onGhostRejected();
+
+     // -----------------------------------------------------------------------
+     // J-3: Partial / multi-token acceptance
+     // -----------------------------------------------------------------------
+
+     /**
+      * Called when the user partially accepts the ghost text (Ctrl+→).
+      *
+      * Splits the currently selected candidate at `acceptLen` characters.
+      * The prefix is returned for document insertion; the suffix remains as
+      * ghost state. The coordinator stays in GhostActive mode.
+      *
+      * Does NOT issue an LLM request. Does NOT send a notification to llm-ls
+      * (partial accept is pure UI state — the accept/reject notification is
+      * only sent when the ghost is fully accepted or dismissed).
+      *
+      * @param acceptLen  Number of characters of the selected candidate to accept.
+      * @return PartialAcceptResult with the accepted prefix and updated
+      *         GhostResult for the remaining suffix.
+      */
+     std::optional<lsp::PartialAcceptResult>
+     onGhostPartialAccepted(size_t acceptLen);
+
+     /**
+      * Called by HathorTab when a partial-accept document insert has been
+      * performed (the accepted prefix was inserted into the CodeDocument).
+      *
+      * Increments docRevision_ and syncs ghostRevision_ so the ghost remains
+      * valid for the new document state — WITHOUT clearing it (unlike
+      * onDocumentChanged, which clears the ghost on arbitrary edits).
+      */
+     void onPartialAcceptDocumentChange() noexcept;
 
     /**
       * Clear the active ghost without sending accept/reject notifications.
