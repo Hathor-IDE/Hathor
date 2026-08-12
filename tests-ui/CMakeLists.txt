@@ -85,6 +85,9 @@ add_executable(hathor-ui-tests
       ${CMAKE_SOURCE_DIR}/app/LiveJamSessionManager.cpp
       ${CMAKE_SOURCE_DIR}/ui/TerminalProcess.cpp
       ${CMAKE_SOURCE_DIR}/ui/TaskRunner.cpp
+      # L-5: Git backend + repository model (JUCE-free)
+      ${CMAKE_SOURCE_DIR}/ui/GitProcess.cpp
+      ${CMAKE_SOURCE_DIR}/ui/GitRepository.cpp
 )
 
 target_compile_features(hathor-ui-tests PRIVATE cxx_std_20)

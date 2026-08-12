@@ -39,6 +39,7 @@
 
 #include <juce_gui_extra/juce_gui_extra.h>
 
+#include <atomic>
 #include <functional>
 #include <memory>
 #include <string>
@@ -103,7 +104,7 @@ public:
     void setActiveTab(GitPanelTab tab);
 
     /** Get the currently active tab. */
-    GitPanelTab activeTab() const noexcept { return activeTab_; }
+    GitPanelTab getActiveTab() const noexcept { return activeTab_; }
 
     /** Get the GitRepository model (non-owning). */
     GitRepository* repository() noexcept { return repository_.get(); }
@@ -228,20 +229,26 @@ private:
     std::unique_ptr<GitGraph>             gitGraph_;
     std::unique_ptr<juce::ListBox>        historyList_;
     std::unique_ptr<juce::TextEditor>     commitDetail_;
-    std::unique_ptr<juce::Component>      historyDiffView_;  ///< wraps GitDiffView
+    std::unique_ptr<GitDiffView>          historyDiffView_;
 
     // -----------------------------------------------------------------------
     // Tab bar
     // -----------------------------------------------------------------------
 
-    std::array<struct TabButton, 2> tabButtons_;
+    GitPanelTab activeTab_ = GitPanelTab::Changes;
 
-    enum class Tab
+    // -----------------------------------------------------------------------
+    // Tab bar (local button model, no dependency on EnhancedTabBar)
+    // -----------------------------------------------------------------------
+
+    struct TabButton
     {
-        Changes,
-        History,
+        GitPanelTab tab;
+        juce::String label;
+        juce::Rectangle<int> bounds;
+        bool active = false;
     };
-    Tab activeTabInternal_ = Tab::Changes;
+    std::array<TabButton, 2> tabButtons_;
 
     // -----------------------------------------------------------------------
     // State
@@ -256,7 +263,8 @@ private:
     bool isBusy_ = false;
     bool statusRefreshPending_ = false;
     bool historyRefreshPending_ = false;
-    bool historyRefreshDone_ = false;
+    std::atomic<bool> statusRefreshDone_ = false;
+    std::atomic<bool> historyRefreshDone_ = false;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(SourceControlPanel)
 };

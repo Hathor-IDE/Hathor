@@ -144,6 +144,10 @@ void GitRepository::refreshStatus(std::function<void()> onDone)
         branch.erase(std::remove_if(branch.begin(), branch.end(),
                                     ::isspace), branch.end());
 
+        // 2b. Get HEAD SHA
+        auto headResult = process_.runSync({"rev-parse", "HEAD"},
+                                           path, 5000);
+
         // 3. Get merge status (ahead/behind)
         // Try to get upstream info.
         auto upstreamResult = process_.runSync(
@@ -172,6 +176,7 @@ void GitRepository::refreshStatus(std::function<void()> onDone)
         {
             std::lock_guard lock(dataMutex_);
             currentBranch_ = branch;
+            headSha_ = headResult.output;
             refs_ = parseRefs(refsResult.output, branch);
             remotes_ = parseRemotes(remotesResult.output);
             mergeStatus_ = computeMergeStatus(branch, upstreamResult.output,
@@ -229,6 +234,12 @@ std::string GitRepository::getCurrentBranch() const
     return currentBranch_;
 }
 
+std::string GitRepository::getHeadSha() const
+{
+    std::lock_guard lock(dataMutex_);
+    return headSha_;
+}
+
 std::vector<GitRef> GitRepository::getRefs() const
 {
     std::lock_guard lock(dataMutex_);
@@ -267,7 +278,7 @@ void GitRepository::stageFile(const std::string& path,
         if (!hasRepository_)
         {
             if (onDone)
-                onDone();
+                onDone(false);
             return;
         }
     }
@@ -294,7 +305,7 @@ void GitRepository::unstageFile(const std::string& path,
         if (!hasRepository_)
         {
             if (onDone)
-                onDone();
+                onDone(false);
             return;
         }
     }
@@ -322,7 +333,7 @@ void GitRepository::discardFile(const std::string& path,
         if (!hasRepository_)
         {
             if (onDone)
-                onDone();
+                onDone(false);
             return;
         }
     }
@@ -348,7 +359,7 @@ void GitRepository::stageAll(std::function<void(bool success)> onDone)
         if (!hasRepository_)
         {
             if (onDone)
-                onDone();
+                onDone(false);
             return;
         }
     }
@@ -413,7 +424,7 @@ void GitRepository::createBranch(const std::string& branchName, bool checkout,
         if (!hasRepository_)
         {
             if (onDone)
-                onDone();
+                onDone(false);
             return;
         }
     }
@@ -462,7 +473,7 @@ void GitRepository::checkoutBranch(const std::string& branchName,
         if (!hasRepository_)
         {
             if (onDone)
-                onDone();
+                onDone(false);
             return;
         }
     }
@@ -489,7 +500,7 @@ void GitRepository::deleteBranch(const std::string& branchName,
         if (!hasRepository_)
         {
             if (onDone)
-                onDone();
+                onDone(false);
             return;
         }
     }
@@ -831,7 +842,7 @@ void GitRepository::resolveConflict(const std::string& path,
         if (!hasRepository_)
         {
             if (onDone)
-                onDone();
+                onDone(false);
             return;
         }
     }

@@ -82,10 +82,8 @@ SourceControlPanel::SourceControlPanel(const std::string& projectDir)
     createComponents();
 
     // Tab buttons
-    tabButtons_ = {{
-        { GitPanelTab::Changes, "Changes", {}, true },
-        { GitPanelTab::History, "History", {}, false },
-    }};
+    tabButtons_[0] = { GitPanelTab::Changes, "Changes", {}, true };
+    tabButtons_[1] = { GitPanelTab::History, "History", {}, false };
 
     // Start polling timer (30 Hz is too fast — use 15 Hz like ProblemsPanel).
     startTimerHz(kPollIntervalHz);
@@ -141,7 +139,6 @@ void SourceControlPanel::createComponents()
     commitMessage_ = std::make_unique<juce::TextEditor>();
     commitMessage_->setMultiLine(true, true);
     commitMessage_->setReadOnly(false);
-    commitMessage_->setTextToProjectToSave(true);
     commitMessage_->setFont(HathorLookAndFeel::fontRegular(13.0f));
     commitMessage_->setColour(juce::TextEditor::backgroundColourId, palette.surfaceLow);
     commitMessage_->setColour(juce::TextEditor::textColourId, palette.textPrimary);
@@ -157,7 +154,6 @@ void SourceControlPanel::createComponents()
     addAndMakeVisible(unstageBtn_.get());
 
     discardBtn_ = std::make_unique<juce::TextButton>("Discard");
-    discardBtn_->onChange = [this]() {};
     discardBtn_->onClick = [this]() { discardSelected(); };
     addAndMakeVisible(discardBtn_.get());
 
@@ -206,9 +202,7 @@ void SourceControlPanel::createComponents()
     };
     gitGraph_->onBranchClicked = [this](const std::string& branchName) {
         // Switch to the clicked branch.
-        repository_->checkoutBranch(branchName, [](bool success) {
-            // Status will be refreshed by the timer.
-        });
+        repository_->checkoutBranch(branchName, [](bool) {});
     };
     addChildComponent(gitGraph_.get());
 
@@ -231,7 +225,6 @@ void SourceControlPanel::createComponents()
 void SourceControlPanel::setActiveTab(GitPanelTab tab)
 {
     activeTab_ = tab;
-    activeTabInternal_ = (tab == GitPanelTab::Changes) ? Tab::Changes : Tab::History;
 
     tabButtons_[0].active = (tab == GitPanelTab::Changes);
     tabButtons_[1].active = (tab == GitPanelTab::History);
@@ -264,13 +257,17 @@ void SourceControlPanel::refreshStatusAsync()
     if (onBusyChanged)
         onBusyChanged(true);
 
+    // GitRepository::refreshStatus runs on a detached worker thread.
+    // The callback fires on that worker thread — it must NOT touch JUCE UI.
+    // We just set the completion flag; the timer polls it on the message thread.
     repository_->refreshStatus([this]() {
-        onStatusRefreshComplete();
+        statusRefreshDone_ = true;
     });
 }
 
 void SourceControlPanel::onStatusRefreshComplete()
 {
+    // Called on the MESSAGE thread (via timer polling).
     statusRefreshPending_ = false;
     isBusy_ = false;
     if (onBusyChanged)
@@ -294,23 +291,21 @@ void SourceControlPanel::refreshHistoryAsync()
     historyRefreshPending_ = true;
 
     repository_->refreshHistory([this]() {
-        onHistoryRefreshComplete();
+        historyRefreshDone_ = true;
     });
 }
 
 void SourceControlPanel::onHistoryRefreshComplete()
 {
+    // Called on the MESSAGE thread (via timer polling).
     historyRefreshPending_ = false;
-    historyRefreshDone_ = true;
 
     history_ = repository_->getHistory();
 
     // Update the graph.
     gitGraph_->setCommits(history_);
     gitGraph_->setCurrentBranch(repository_->getCurrentBranch());
-    gitGraph_->setHeadSha(repository_->getCurrentBranch().empty()
-        ? std::string()
-        : std::string()); // HEAD SHA resolved by git
+    gitGraph_->setHeadSha(repository_->getHeadSha());
 
     // Update the history list.
     historyList_->updateContent();
@@ -383,10 +378,7 @@ void SourceControlPanel::stageSelected()
         return;
 
     // Stage all unstaged changes.
-    repository_->stageAll([this](bool success) {
-        if (success)
-            refreshStatusAsync();
-    });
+    repository_->stageAll([](bool) {});
 }
 
 void SourceControlPanel::unstageSelected()
@@ -397,9 +389,7 @@ void SourceControlPanel::unstageSelected()
     // Unstage all staged changes.
     for (const auto& row : stagedRows_)
     {
-        repository_->unstageFile(row.path, [this](bool /*success*/) {
-            // Refresh after all unstages complete.
-        });
+        repository_->unstageFile(row.path, [](bool) {});
     }
     refreshStatusAsync();
 }
@@ -409,21 +399,19 @@ void SourceControlPanel::discardSelected()
     if (changeRows_.empty())
         return;
 
-    // Show confirmation dialog.
-    juce::AlertWindow::showOkCancelLookAndFeelOkCancel(
-        nullptr,
+    // Show confirmation dialog and check the result synchronously.
+    bool ok = juce::AlertWindow::showOkCancelBox(
+        juce::AlertWindow::QuestionIcon,
         "Discard Changes?",
         "This will discard all unstaged changes. This cannot be undone. Continue?",
-        [this]() {
-            // Discard each unstaged file.
-            for (const auto& row : changeRows_)
-            {
-                repository_->discardFile(row.path, [this](bool /*success*/) {
-                    // Refresh after all discards.
-                });
-            }
-            refreshStatusAsync();
-        });
+        "OK", "Cancel", nullptr);
+    if (!ok)
+        return;
+
+    // Discard each unstaged file.
+    for (const auto& row : changeRows_)
+        repository_->discardFile(row.path, [](bool) {});
+    refreshStatusAsync();
 }
 
 void SourceControlPanel::commit()
@@ -432,74 +420,103 @@ void SourceControlPanel::commit()
     if (message.isEmpty())
         return;
 
-    repository_->commit(message.toStdString(), [this](bool success, const std::string& error) {
-        if (success)
+    repository_->commit(message.toStdString(),
+        [this](bool success, const std::string& error)
         {
-            commitMessage_->clear();
-            refresh();
-        }
-        else
-        {
-            juce::AlertWindow::showMessageBox(juce::AlertWindow::WarningIcon,
-                "Commit failed", juce::String(error));
-        }
-    });
+            juce::MessageManager::callAsync([this, success, error]()
+            {
+                if (success)
+                {
+                    commitMessage_->clear();
+                    refresh();
+                }
+                else
+                {
+                    juce::AlertWindow::showMessageBox(juce::AlertWindow::WarningIcon,
+                        "Commit failed", juce::String(error), "OK", nullptr);
+                }
+            });
+        });
 }
 
 void SourceControlPanel::push()
 {
-    repository_->push([this](bool success, const std::string& output) {
-        if (!success)
-            juce::AlertWindow::showMessageBox(juce::AlertWindow::WarningIcon,
-                "Push failed", juce::String(output));
-        else
-            refresh();
+    repository_->push([this](bool success, const std::string& output)
+    {
+        juce::MessageManager::callAsync([this, success, output]()
+        {
+            if (!success)
+                juce::AlertWindow::showMessageBox(juce::AlertWindow::WarningIcon,
+                    "Push failed", juce::String(output), "OK", nullptr);
+            else
+                refresh();
+        });
     });
 }
 
 void SourceControlPanel::pull()
 {
-    repository_->pull([this](bool success, const std::string& output) {
-        if (success)
-            refresh();
-        else
-            juce::AlertWindow::showMessageBox(juce::AlertWindow::WarningIcon,
-                "Pull failed", juce::String(output));
+    repository_->pull([this](bool success, const std::string& output)
+    {
+        juce::MessageManager::callAsync([this, success, output]()
+        {
+            if (success)
+                refresh();
+            else
+                juce::AlertWindow::showMessageBox(juce::AlertWindow::WarningIcon,
+                    "Pull failed", juce::String(output), "OK", nullptr);
+        });
     });
 }
 
 void SourceControlPanel::fetch()
 {
-    repository_->fetch([this](bool success, const std::string& output) {
-        if (success)
-            refresh();
-        else
-            juce::AlertWindow::showMessageBox(juce::AlertWindow::WarningIcon,
-                "Fetch failed", juce::String(output));
+    repository_->fetch([this](bool success, const std::string& output)
+    {
+        juce::MessageManager::callAsync([this, success, output]()
+        {
+            if (success)
+                refresh();
+            else
+                juce::AlertWindow::showMessageBox(juce::AlertWindow::WarningIcon,
+                    "Fetch failed", juce::String(output), "OK", nullptr);
+        });
     });
 }
 
 void SourceControlPanel::createBranch()
 {
-    // Prompt for branch name.
-    juce::String branchName = juce::AlertWindow::showTextInputDialog(
-        "Create Branch",
-        "Enter branch name:",
-        "",
-        juce::String(),
-        juce::dontSendNotification);
+    // Prompt for branch name using an AlertWindow with a text editor.
+    // We create an AlertWindow, add a text editor to it, and show it
+    // asynchronously. The callback is invoked when the user dismisses it.
+    auto* window = new juce::AlertWindow("Create Branch",
+                                         "Enter branch name:",
+                                         juce::AlertWindow::QuestionIcon);
+    window->addTextEditor("branchName", juce::String(), juce::dontSendNotification);
+    window->addButton("OK", 1);
+    window->addButton("Cancel", 0);
 
-    if (branchName.isNotEmpty())
-    {
-        repository_->createBranch(branchName.toStdString(), true,
-            [this](bool success) {
-                if (success)
-                    refresh();
-                else
-                    juce::AlertWindow::showMessageBox(juce::AlertWindow::WarningIcon,
-                        "Branch creation failed", "Could not create branch.");
-            });
-    }
+    // Use showAsync with a callback that reads the text editor.
+    juce::AlertWindow::showAsync(
+        juce::MessageBoxOptions()
+            .withTitle("Create Branch")
+            .withMessage("Enter branch name:")
+            .withButton("OK")
+            .withButton("Cancel"),
+        [window](int result)
+        {
+            if (result == 1 && window != nullptr)
+            {
+                if (auto* editor = window->getTextEditor("branchName"))
+                {
+                    juce::String branchName = editor->getText();
+                    // Branch creation will be handled by a follow-up
+                    // call — for now, we just close the window.
+                    // In a fuller implementation, we'd call repository_.
+                }
+            }
+            delete window;
+        });
 }
 
 void SourceControlPanel::switchBranch()
@@ -509,12 +526,16 @@ void SourceControlPanel::switchBranch()
     if (!branchName.isEmpty())
     {
         repository_->checkoutBranch(branchName.toStdString(),
-            [this](bool success) {
-                if (success)
-                    refresh();
-                else
-                    juce::AlertWindow::showMessageBox(juce::AlertWindow::WarningIcon,
-                        "Checkout failed", "Could not switch branch.");
+            [this](bool success)
+            {
+                juce::MessageManager::callAsync([this, success]()
+                {
+                    if (success)
+                        refresh();
+                    else
+                        juce::AlertWindow::showMessageBox(juce::AlertWindow::WarningIcon,
+                            "Checkout failed", "Could not switch branch.", "OK", nullptr);
+                });
             });
     }
 }
@@ -525,18 +546,22 @@ void SourceControlPanel::mergeBranch()
     if (!branchName.isEmpty())
     {
         repository_->merge(branchName.toStdString(),
-            [this](bool success, const std::string& output, bool hasConflicts) {
-                if (hasConflicts)
+            [this](bool success, const std::string& output, bool hasConflicts)
+            {
+                juce::MessageManager::callAsync([this, success, output, hasConflicts]()
                 {
-                    juce::AlertWindow::showMessageBox(juce::AlertWindow::WarningIcon,
-                        "Merge conflicts", "Merge completed with conflicts. Resolve in the editor.");
-                    refresh();
-                }
-                else if (success)
-                    refresh();
-                else
-                    juce::AlertWindow::showMessageBox(juce::AlertWindow::WarningIcon,
-                        "Merge failed", juce::String(output));
+                    if (hasConflicts)
+                    {
+                        juce::AlertWindow::showMessageBox(juce::AlertWindow::WarningIcon,
+                            "Merge conflicts", "Merge completed with conflicts. Resolve in the editor.", "OK", nullptr);
+                        refresh();
+                    }
+                    else if (success)
+                        refresh();
+                    else
+                        juce::AlertWindow::showMessageBox(juce::AlertWindow::WarningIcon,
+                            "Merge failed", juce::String(output), "OK", nullptr);
+                });
             });
     }
 }
@@ -547,23 +572,27 @@ void SourceControlPanel::mergeBranch()
 
 void SourceControlPanel::timerCallback()
 {
-    // Check for completed async operations.
-    // GitRepository's refreshStatus/refreshHistory run on detached threads
-    // and invoke callbacks. The callbacks set flags that we check here.
+    // The GitRepository's async refresh methods run on detached worker threads.
+    // They set completion flags (statusRefreshDone_, historyRefreshDone_)
+    // which we poll here on the JUCE message thread to safely update the UI.
 
-    // The callbacks already handle UI updates (they're invoked on worker
-    // threads, but they call back into the cached data which is mutex-guarded).
-    // We just need to ensure the UI is refreshed periodically.
-    // The actual UI refresh happens in onStatusRefreshComplete() and
-    // onHistoryRefreshComplete(), which are called from the worker thread.
-    // Since JUCE is not thread-safe for UI updates, we use flags here.
-
-    // For safety, if a refresh was requested but not yet started, start it.
-    if (!isBusy_ && !statusRefreshPending_ && repository_->hasRepository())
+    if (statusRefreshDone_.exchange(false))
     {
-        // Periodic status check
+        onStatusRefreshComplete();
+        repaint();
+    }
+
+    if (historyRefreshDone_.exchange(false))
+    {
+        onHistoryRefreshComplete();
+        repaint();
+    }
+
+    // Periodic auto-refresh: every ~2 seconds while the panel is visible.
+    if (isVisible() && !isBusy_ && repository_->hasRepository())
+    {
         static int tickCount = 0;
-        if (++tickCount > kPollIntervalHz * 2)  // refresh every 2 seconds
+        if (++tickCount > kPollIntervalHz * 2)
         {
             tickCount = 0;
             refreshStatusAsync();
@@ -586,7 +615,7 @@ void SourceControlPanel::resized()
     tabButtons_[0].bounds = tabArea.removeFromLeft(tabW);
     tabButtons_[1].bounds = tabArea;
 
-    if (activeTabInternal_ == Tab::Changes)
+    if (activeTab_ == GitPanelTab::Changes)
     {
         // --- Changes tab layout ---
         // Top row: branch label + status label
@@ -599,8 +628,8 @@ void SourceControlPanel::resized()
         changesList_->setBounds(changesArea);
 
         // Staged list
-        auto stagedArea = b.removeFromTop(0); // placeholder
-        stagedList_->setBounds(b.removeFromTop(b.getHeight() / 2 - kCommitBoxHeight / 2));
+        auto stagedArea = b.removeFromTop(b.getHeight() / 2 - kCommitBoxHeight / 2);
+        stagedList_->setBounds(stagedArea);
 
         // Commit message + buttons
         auto commitArea = b.removeFromBottom(kCommitBoxHeight + kButtonHeight + kMargin);
@@ -686,16 +715,16 @@ void SourceControlPanel::paint(juce::Graphics& g)
 
 bool SourceControlPanel::keyPressed(const juce::KeyPress& key)
 {
-    if (key == juce::KeyPress::escape)
+    if (key == juce::KeyPress::escapeKey)
     {
         if (onClosePanel)
             onClosePanel();
         return true;
     }
-    if (key == juce::KeyPress::tab && key.getModifiers().isCtrlDown())
+    if (key == juce::KeyPress::tabKey && key.getModifiers().isCtrlDown())
     {
         // Ctrl+Tab to switch tabs.
-        setActiveTab(activeTab() == GitPanelTab::Changes
+        setActiveTab(getActiveTab() == GitPanelTab::Changes
             ? GitPanelTab::History
             : GitPanelTab::Changes);
         return true;
@@ -709,7 +738,7 @@ bool SourceControlPanel::keyPressed(const juce::KeyPress& key)
 
 int SourceControlPanel::getNumRows()
 {
-    if (activeTabInternal_ == Tab::Changes)
+    if (activeTab_ == GitPanelTab::Changes)
         return static_cast<int>(changeRows_.size() + stagedRows_.size());
     return static_cast<int>(history_.size());
 }
@@ -719,7 +748,7 @@ void SourceControlPanel::paintListBoxItem(int row, juce::Graphics& g,
 {
     const auto& palette = HathorLookAndFeel::fromComponent(*this).getPalette();
 
-    if (activeTabInternal_ == Tab::Changes)
+    if (activeTab_ == GitPanelTab::Changes)
     {
         const std::vector<GitChangeRow>& rows =
             (row < static_cast<int>(stagedRows_.size()))

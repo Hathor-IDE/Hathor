@@ -32,8 +32,6 @@ GitDiffView::GitDiffView()
     rightEditor_->setReadOnly(true);
     leftEditor_->setFont(HathorLookAndFeel::fontRegular(13.0f));
     rightEditor_->setFont(HathorLookAndFeel::fontRegular(13.0f));
-    leftEditor_->setLineNumbersVisible(false);  // we draw our own
-    rightEditor_->setLineNumbersVisible(false);
 
     addAndMakeVisible(leftEditor_.get());
     addAndMakeVisible(rightEditor_.get());
@@ -109,7 +107,6 @@ void GitDiffView::buildLines()
 
         int oldLineNum = 0;
         int newLineNum = 0;
-        bool inHunk = false;
 
         for (const auto& dl : diff.lines)
         {

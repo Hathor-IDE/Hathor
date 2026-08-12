@@ -82,15 +82,14 @@ void GitGraph::assignColors()
         {
             if (branchColors_.find(refName) == branchColors_.end())
             {
-                branchColors_[refName] = GitGraphColors::branchColors
-                    [colorIdx++ % GitGraphColors::numColors];
+                branchColors_[refName] = GitGraphColors::branchColor(colorIdx++ % 8);
             }
         }
     }
 
     // Ensure current branch has a color (default to green/accent).
     if (branchColors_.find(currentBranch_) == branchColors_.end())
-        branchColors_[currentBranch_] = GitGraphColors::branchColors[0];
+        branchColors_[currentBranch_] = GitGraphColors::branchColor(0);
 }
 
 juce::Colour GitGraph::colorForBranch(const std::string& branchName)
@@ -348,7 +347,6 @@ void GitGraph::drawEdges(juce::Graphics& g)
 
     const int graphX = 8;
     const int columnWidth = kGraphColumnWidth / std::max(1, numColumns);
-    const int centerX = graphX + kGraphColumnWidth / 2;
 
     for (const auto& edge : edges_)
     {
@@ -470,7 +468,6 @@ void GitGraph::drawLabels(juce::Graphics& g, const GitGraphNode& node,
     if (node.branchLabels.empty())
         return;
 
-    const auto& palette = HathorLookAndFeel::fromComponent(*this).getPalette();
     g.setFont(HathorLookAndFeel::fontMedium(10.0f));
 
     int numColumns = 1;
@@ -533,9 +530,9 @@ void GitGraph::drawCommitMessage(juce::Graphics& g, const GitGraphNode& node,
         // Trim ISO timestamp to date only.
         std::string time = node.commit->authorTime;
         if (time.size() > 10)
-            authorDate += time.substr(0, 10).c_str();
+            authorDate += juce::String(time.substr(0, 10));
         else
-            authorDate += time;
+            authorDate += juce::String(time);
     }
 
     g.setColour(palette.textMuted);

@@ -43,17 +43,20 @@ namespace hathor::ui {
 /// Color palette for distinct branches in the graph.
 struct GitGraphColors
 {
-    static constexpr juce::Colour branchColors[] = {
-        juce::Colours::green,
-        juce::Colours::blue,
-        juce::Colours::yellow,
-        juce::Colours::orange,
-        juce::Colours::magenta,
-        juce::Colours::cyan,
-        juce::Colours::red,
-        juce::Colours::greyLavender,
-    };
-    static constexpr int numColors = 8;
+    static juce::Colour branchColor(int idx)
+    {
+        static const juce::Colour colors[] = {
+            juce::Colour(0xff008000),  // green
+            juce::Colour(0xff0000ff),  // blue
+            juce::Colour(0xffffc000),  // yellow
+            juce::Colour(0xffffa500),  // orange
+            juce::Colour(0xffff00ff),  // magenta
+            juce::Colour(0xff00ffff),  // cyan
+            juce::Colour(0xff800000),  // red (dark)
+            juce::Colour(0xff808080),  // grey
+        };
+        return colors[idx % 8];
+    }
 };
 
 /// A node in the graph layout — a commit positioned at a row and column.

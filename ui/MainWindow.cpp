@@ -471,7 +471,7 @@ MainWindow::MainWindow(AudioEngine& audio,
                       int staged = 0, unstaged = 0;
                       for (const auto& e : entries)
                       {
-                          if (e.staged == GitStaged::Yes) ++staged;
+                          if (e.staged == hathor::ui::GitStaged::Yes) ++staged;
                           else ++unstaged;
                       }
                       statusRibbon_->setGitStatus(

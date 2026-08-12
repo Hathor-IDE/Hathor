@@ -250,6 +250,9 @@ public:
     /// Get the current branch name.
     std::string getCurrentBranch() const;
 
+    /// Get the HEAD commit SHA (long form).
+    std::string getHeadSha() const;
+
     /// Get all branches, remotes, and tags.
     std::vector<GitRef> getRefs() const;
 
@@ -428,6 +431,7 @@ private:
 
     std::vector<GitStatusEntry> statusEntries_;
     std::string currentBranch_;
+    std::string headSha_;
     GitMergeStatus mergeStatus_ = GitMergeStatus::Unknown;
     std::vector<GitRef> refs_;
     std::vector<GitRemote> remotes_;

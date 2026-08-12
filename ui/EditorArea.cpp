@@ -2465,14 +2465,12 @@ void EditorArea::registerEditorActions()
         if (sourceControlPanel_ && sourceControlPanel_->isVisible())
         {
             hideSourceControlPanel();
-            activityRibbon_->setActivePanel(hathor::ui::Panel::None);
         }
         else
         {
             showSourceControlPanel();
             if (sourceControlPanel_)
                 sourceControlPanel_->refresh();
-            activityRibbon_->setActivePanel(hathor::ui::Panel::VersionControl);
         }
         resized();
     });

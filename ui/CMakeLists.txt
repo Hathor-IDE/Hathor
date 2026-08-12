@@ -92,6 +92,12 @@ target_sources(hathor-ui
           TerminalProcess.cpp            # L-4: subprocess lifecycle (JUCE-free)
           TaskRunner.cpp                 # L-4: lightweight task runner
           TerminalPanel.cpp              # L-4: native JUCE terminal UI
+          # L-5: Git source control + history + graph
+          GitProcess.cpp                 # L-5: async git subprocess runner (JUCE-free)
+          GitRepository.cpp              # L-5: JUCE-free Git data model
+          GitGraph.cpp                   # L-5: native JUCE commit graph
+          GitDiffView.cpp                # L-5: native JUCE side-by-side diff view
+          SourceControlPanel.cpp         # L-5: Changes/Commit + History panel
          # AI-4: Ghost text (llm-ls inline completion)
          GhostJsonRpc.cpp              # llm-ls JSON-RPC serialization
          GhostProviderConfig.cpp       # provider config (env-var credentials)

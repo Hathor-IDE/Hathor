@@ -243,22 +243,13 @@ void StatusRibbon::paint(juce::Graphics& g)
         const bool hasChanges = (gitStagedCount_ + gitUnstagedCount_) > 0;
         const juce::Colour dotCol = hasChanges ? palette.accent : palette.textMuted;
         g.setColour(dotCol);
-        // Draw a git "branch" icon (two arcs forming a circle)
+        // Draw a git "branch" icon (filled circle)
         g.fillEllipse(static_cast<float>(gitBox_.bounds.getX() + 4),
                       static_cast<float>(gitBox_.bounds.getY() + (gitBox_.bounds.getHeight() - 8) / 2),
                       8.0f, 8.0f);
-        // Draw a small arc for the "arrow" part of the git logo
-        juce::Path gitPath;
-        gitPath.addCentredArc(
-            static_cast<float>(gitBox_.bounds.getX() + 12),
-            static_cast<float>(gitBox_.bounds.getY() + gitBox_.bounds.getHeight() / 2),
-            6.0f, 6.0f, 0.0,
-            juce::PathAngleUtil::fromDegrees(30.0f), juce::PathAngleUtil::fromDegrees(200.0f));
-        g.setColour(dotCol.withAlpha(0.6f));
-        g.strokePath(gitPath, juce::PathStrokeType(1.5f));
 
         g.setColour(palette.textPrimary);
-        juce::String text = juce::String::toStdString(gitBranch_).empty()
+        juce::String text = gitBranch_.empty()
             ? "Git: n/a"
             : ("Git: " + juce::String(gitBranch_));
         if (gitStagedCount_ > 0)
