@@ -1601,6 +1601,13 @@ workflows, diagnostics and recovery, and future development tooling.
 cancel a process, and continue running the IDE. Terminal activity cannot block the real-time audio
 path.
 
+**Status:** ✅ Implemented. `TerminalProcess` (JUCE-free subprocess lifecycle manager via `posix_spawn` +
+non-blocking pipes + lock-free SPSC ring buffer), `TerminalPanel` (JUCE-native UI), and `TaskRunner`
+(build/test/check/configure/clean via CMake) are integrated as a bottom-docked panel in `EditorArea`,
+toggled via the ActivityRibbon Terminal (">") button or `Cmd+Shift+\``. Worker threads remain off the
+message and audio threads. Unit tests in `tests-ui/test_terminal_process.cpp` cover streaming output,
+cancellation, exit-code propagation, stderr capture, shutdown, and task resolution.
+
 ### L-5 — Git Source Control, History & Graph
 
 > **Git backend/library + native JUCE UI.** Do not build repository logic from scratch and do not
@@ -1945,7 +1952,7 @@ An item is **done** only when **all** hold:
 - [ ] **L-1** editor & workspace ergonomics · `ui`
 - [ ] **L-2** navigation & workspace search · `ui engine`
 - [ ] **L-3** unified Problems / diagnostics surface (+ bottom ribbon) · `ui engine control`
-- [ ] **L-4** tasks + simple integrated terminal · `ui control`
+- [x] **L-4** tasks + simple integrated terminal · `ui control`
 - [ ] **L-5** git source control + history + graph · `ui engine`
 - [ ] **L-6** debugging + Hathor runtime inspection · `ui control engine`
 - [ ] **L-7** workspace/session persistence · `ui engine`

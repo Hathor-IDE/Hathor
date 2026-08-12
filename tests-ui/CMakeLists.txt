@@ -59,6 +59,8 @@ add_executable(hathor-ui-tests
         test_action_registry.cpp
         # L-3: Diagnostic registry unit tests
         test_diagnostic_registry.cpp
+        # L-4: Terminal process + task runner unit tests (JUCE-free)
+        test_terminal_process.cpp
         ${CMAKE_SOURCE_DIR}/ui/HathorFileParser.cpp
      ${CMAKE_SOURCE_DIR}/ui/ExplorerFileTypes.cpp
      ${CMAKE_SOURCE_DIR}/ui/TreeBuilder.cpp
@@ -81,6 +83,8 @@ add_executable(hathor-ui-tests
         ${CMAKE_SOURCE_DIR}/ui/SymbolSearchModel.cpp
       ${CMAKE_SOURCE_DIR}/control/DiagnosticRegistry.cpp
       ${CMAKE_SOURCE_DIR}/app/LiveJamSessionManager.cpp
+      ${CMAKE_SOURCE_DIR}/ui/TerminalProcess.cpp
+      ${CMAKE_SOURCE_DIR}/ui/TaskRunner.cpp
 )
 
 target_compile_features(hathor-ui-tests PRIVATE cxx_std_20)

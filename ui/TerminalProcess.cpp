@@ -38,6 +38,13 @@
 #  include <unistd.h>
 #endif
 
+// On POSIX, environ is declared in <unistd.h> but some toolchains
+// (notably when building inside a namespace) need an explicit extern
+// declaration at file scope to resolve it to the global symbol.
+#ifndef _WIN32
+extern char** environ;
+#endif
+
 namespace hathor::ui {
 
 // ---------------------------------------------------------------------------
@@ -101,6 +108,12 @@ bool TerminalRingBuffer::empty() const noexcept
     uint32_t r = readIdx_.load(std::memory_order_acquire);
     uint32_t w = writeIdx_.load(std::memory_order_acquire);
     return r == w;
+}
+
+void TerminalRingBuffer::reset() noexcept
+{
+    uint32_t w = writeIdx_.load(std::memory_order_acquire);
+    readIdx_.store(w, std::memory_order_release);
 }
 
 // ---------------------------------------------------------------------------
@@ -306,7 +319,19 @@ void TerminalProcess::shutdown()
     if (workerThread_.joinable())
         workerThread_.join();
 
-    state_.store(State::Done, std::memory_order_release);
+    // Reset state so the object can be reused for a new launch.
+    state_.store(State::Idle, std::memory_order_release);
+    pid_.store(-1, std::memory_order_release);
+    stdoutRead_ = -1;
+    stderrRead_ = -1;
+    stdinWrite_ = -1;
+    exitCode_.store(-1, std::memory_order_release);
+    exitSignal_.store(-1, std::memory_order_release);
+    wasCancelled_.store(false, std::memory_order_release);
+    cancelRequested_.store(false, std::memory_order_release);
+    workerStop_.store(false, std::memory_order_release);
+    // Clear the ring buffer for reuse.
+    outputRing_.reset();
 }
 
 // -----------------------------------------------------------------------
@@ -466,9 +491,43 @@ TerminalProcess::ExitStatus TerminalProcess::exitStatus() const
 
 #ifndef _WIN32
 
-// environ is declared in <unistd.h> on POSIX systems, but some toolchains
-// require an explicit extern declaration.
-extern char** environ;
+std::string TerminalProcess::resolvePath(const std::string& name)
+{
+    // If the name contains a '/', treat it as a path.
+    if (name.find('/') != std::string::npos)
+    {
+        // Check if it's executable.
+        if (::access(name.c_str(), X_OK) == 0)
+            return name;
+        return {};
+    }
+
+    // Search PATH.
+    const char* pathEnv = std::getenv("PATH");
+    if (pathEnv == nullptr)
+        return {};
+
+    std::string pathEnvStr(pathEnv);
+    std::string::size_type start = 0;
+
+    while (start < pathEnvStr.size())
+    {
+        auto sep = pathEnvStr.find(':', start);
+        std::string dir = (sep == std::string::npos)
+            ? pathEnvStr.substr(start)
+            : pathEnvStr.substr(start, sep - start);
+
+        std::string fullPath = dir + "/" + name;
+        if (::access(fullPath.c_str(), X_OK) == 0)
+            return fullPath;
+
+        if (sep == std::string::npos)
+            break;
+        start = sep + 1;
+    }
+
+    return {};
+}
 
 bool TerminalProcess::spawnPosix(const std::vector<std::string>& argv,
                                   const std::string& cwd)
@@ -562,6 +621,23 @@ bool TerminalProcess::spawnPosix(const std::vector<std::string>& argv,
     std::vector<std::string> argStrs;
     for (const auto& a : argv)
         argStrs.emplace_back(a);
+
+    // Resolve the executable path: if argv[0] doesn't contain a '/',
+    // search PATH (posix_spawn does not do PATH lookup on its own).
+    std::string exePath = argStrs[0];
+    if (exePath.find('/') == std::string::npos)
+    {
+        exePath = resolvePath(exePath);
+        if (exePath.empty())
+        {
+            std::lock_guard<std::mutex> lk(errorMutex_);
+            lastError_ = "Command not found: " + argStrs[0];
+            ::close(stdoutPipe[0]);
+            ::close(stdoutPipe[1]);
+            return false;
+        }
+        argStrs[0] = exePath;
+    }
 
     std::vector<char*> argvArr;
     argvArr.reserve(argStrs.size() + 1);

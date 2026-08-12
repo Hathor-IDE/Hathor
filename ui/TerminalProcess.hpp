@@ -77,6 +77,9 @@ public:
     /// True if no unread bytes are available.
     bool empty() const noexcept;
 
+    /// Reset the buffer for reuse (discards all buffered data).
+    void reset() noexcept;
+
 private:
     std::vector<char>   buf_;
     std::size_t         capacity_;
@@ -209,6 +212,9 @@ private:
 
     /** Close all pipe file descriptors in the parent. */
     void closePipes();
+
+    /** Resolve an executable name against $PATH. POSIX only. */
+    static std::string resolvePath(const std::string& name);
 
     // -----------------------------------------------------------------------
     // Platform-specific spawn
