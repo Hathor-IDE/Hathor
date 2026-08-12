@@ -62,6 +62,16 @@ std::string LspJsonRpc::serializeInitialize(std::string_view uri)
                     {"dynamicRegistration", false},
                     {"triggerCharacters", json::array({"(", ","})}
                 }},
+                {"definition", {{"dynamicRegistration", false}}},
+                {"references", {{"dynamicRegistration", false}}},
+                {"typeDefinition", {{"dynamicRegistration", false}}},
+                {"declaration", {{"dynamicRegistration", false}}},
+                {"rename", {
+                    {"dynamicRegistration", false},
+                    {"prepareProvider", true}
+                }},
+                {"documentSymbol", {{"dynamicRegistration", false}}},
+                {"workspaceSymbol", {{"dynamicRegistration", false}}},
                 {"diagnostic", {
                     {"dynamicRegistration", false}
                 }},
@@ -71,6 +81,9 @@ std::string LspJsonRpc::serializeInitialize(std::string_view uri)
                     {"didSave", true},
                     {"save", {{"includeText", false}}}
                 }}
+            }},
+            {"workspace", {
+                {"symbol", {{"dynamicRegistration", false}}}
             }}
         }}
     };
@@ -142,6 +155,236 @@ std::pair<int, std::string> LspJsonRpc::serializeSignatureHelp(std::string_view 
         {"position", {{"line", line}, {"character", character}}}
     };
     return {nextId_, serializeRequest("textDocument/signatureHelp", params)};
+}
+
+// ---------------------------------------------------------------------------
+// Navigation request serialization
+// ---------------------------------------------------------------------------
+
+std::pair<int, std::string> LspJsonRpc::serializeDefinition(std::string_view uri, int line, int character)
+{
+    json params = {
+        {"textDocument", {{"uri", std::string(uri)}}},
+        {"position", {{"line", line}, {"character", character}}}
+    };
+    return {nextId_, serializeRequest("textDocument/definition", params)};
+}
+
+std::pair<int, std::string> LspJsonRpc::serializeReferences(std::string_view uri, int line, int character,
+                                                                bool includeDeclaration)
+{
+    json params = {
+        {"textDocument", {{"uri", std::string(uri)}}},
+        {"position", {{"line", line}, {"character", character}}},
+        {"context", {{"includeDeclaration", includeDeclaration}}}
+    };
+    return {nextId_, serializeRequest("textDocument/references", params)};
+}
+
+std::pair<int, std::string> LspJsonRpc::serializeTypeDefinition(std::string_view uri, int line, int character)
+{
+    json params = {
+        {"textDocument", {{"uri", std::string(uri)}}},
+        {"position", {{"line", line}, {"character", character}}}
+    };
+    return {nextId_, serializeRequest("textDocument/typeDefinition", params)};
+}
+
+std::pair<int, std::string> LspJsonRpc::serializeDeclaration(std::string_view uri, int line, int character)
+{
+    json params = {
+        {"textDocument", {{"uri", std::string(uri)}}},
+        {"position", {{"line", line}, {"character", character}}}
+    };
+    return {nextId_, serializeRequest("textDocument/declaration", params)};
+}
+
+std::pair<int, std::string> LspJsonRpc::serializeRename(std::string_view uri, int line, int character,
+                                                          std::string_view newName)
+{
+    json params = {
+        {"textDocument", {{"uri", std::string(uri)}}},
+        {"position", {{"line", line}, {"character", character}}},
+        {"newName", std::string(newName)}
+    };
+    return {nextId_, serializeRequest("textDocument/rename", params)};
+}
+
+std::pair<int, std::string> LspJsonRpc::serializeDocumentSymbol(std::string_view uri)
+{
+    json params = {
+        {"textDocument", {{"uri", std::string(uri)}}}
+    };
+    return {nextId_, serializeRequest("textDocument/documentSymbol", params)};
+}
+
+std::pair<int, std::string> LspJsonRpc::serializeWorkspaceSymbol(std::string_view query)
+{
+    json params = {
+        {"query", std::string(query)}
+    };
+    return {nextId_, serializeRequest("workspace/symbol", params)};
+}
+
+std::pair<int, std::string> LspJsonRpc::serializePrepareRename(std::string_view uri, int line, int character)
+{
+    json params = {
+        {"textDocument", {{"uri", std::string(uri)}}},
+        {"position", {{"line", line}, {"character", character}}}
+    };
+    return {nextId_, serializeRequest("textDocument/prepareRename", params)};
+}
+
+// ---------------------------------------------------------------------------
+// Navigation response parsing
+// ---------------------------------------------------------------------------
+
+static SymbolKind symbolKindFromJson(int k)
+{
+    switch (k)
+    {
+        case 1:  return SymbolKind::File;
+        case 2:  return SymbolKind::Module;
+        case 3:  return SymbolKind::Namespace;
+        case 4:  return SymbolKind::Package;
+        case 5:  return SymbolKind::Class;
+        case 6:  return SymbolKind::Method;
+        case 7:  return SymbolKind::Property;
+        case 8:  return SymbolKind::Field;
+        case 9:  return SymbolKind::Constructor;
+        case 10: return SymbolKind::Enum;
+        case 11: return SymbolKind::Interface;
+        case 12: return SymbolKind::Function;
+        case 13: return SymbolKind::Variable;
+        case 14: return SymbolKind::Constant;
+        case 15: return SymbolKind::String;
+        case 16: return SymbolKind::Number;
+        case 17: return SymbolKind::Boolean;
+        case 18: return SymbolKind::Array;
+        case 19: return SymbolKind::Object;
+        case 20: return SymbolKind::Key;
+        case 21: return SymbolKind::Null;
+        case 22: return SymbolKind::Struct;
+        case 23: return SymbolKind::Event;
+        case 24: return SymbolKind::Operator;
+        case 25: return SymbolKind::TypeParameter;
+        default: return SymbolKind::Function;
+    }
+}
+
+static std::optional<Location> parseLocation(const json& j)
+{
+    if (j.is_null())
+        return std::nullopt;
+
+    Location loc;
+    if (j.is_string())
+    {
+        loc.uri = j.get<std::string>();
+        loc.range = Range{{0, 0}, {0, 0}};
+    }
+    else if (j.is_object())
+    {
+        loc.uri = j.value("uri", "");
+        if (j.contains("range"))
+        {
+            loc.range = Range{
+                {j["range"]["start"]["line"].get<int>(), j["range"]["start"]["character"].get<int>()},
+                {j["range"]["end"]["line"].get<int>(), j["range"]["end"]["character"].get<int>()}
+            };
+        }
+    }
+    else
+    {
+        return std::nullopt;
+    }
+
+    return loc;
+}
+
+static SymbolInformation parseSymbolInformation(const json& j)
+{
+    SymbolInformation sym;
+    sym.name = j.value("name", "");
+    if (j.contains("kind"))
+        sym.kind = symbolKindFromJson(j["kind"].get<int>());
+    if (j.contains("deprecated"))
+        sym.deprecated = j["deprecated"].get<bool>();
+    sym.detail = j.contains("detail") ? std::optional<std::string>(j["detail"].get<std::string>()) : std::nullopt;
+    if (j.contains("location"))
+    {
+        if (auto loc = parseLocation(j["location"]))
+            sym.location = *loc;
+    }
+    sym.containerName = j.value("containerName", "");
+    if (j.contains("flags"))
+        sym.flags = j["flags"].get<int>();
+    return sym;
+}
+
+NavigationResult LspJsonRpc::parseNavigationResult(const json& j)
+{
+    NavigationResult result;
+    if (j.is_null())
+        return result;
+
+    if (j.is_array())
+    {
+        for (const auto& item : j)
+        {
+            if (auto loc = parseLocation(item))
+                result.locations.push_back(*loc);
+        }
+    }
+    else
+    {
+        if (auto loc = parseLocation(j))
+            result.locations.push_back(*loc);
+    }
+
+    return result;
+}
+
+DocumentSymbolResult LspJsonRpc::parseDocumentSymbolResult(const json& j)
+{
+    DocumentSymbolResult result;
+    if (j.is_null() || !j.is_array())
+        return result;
+
+    for (const auto& item : j)
+    {
+        result.symbols.push_back(parseSymbolInformation(item));
+    }
+
+    return result;
+}
+
+WorkspaceSymbolResult LspJsonRpc::parseWorkspaceSymbolResult(const json& j)
+{
+    WorkspaceSymbolResult result;
+    if (j.is_null() || !j.is_array())
+        return result;
+
+    for (const auto& item : j)
+    {
+        result.symbols.push_back(parseSymbolInformation(item));
+    }
+
+    return result;
+}
+
+bool LspJsonRpc::parsePrepareRename(const json& j)
+{
+    if (j.is_null())
+        return false;
+
+    if (j.is_object() && j.contains("range"))
+        return true;
+
+    if (j.is_boolean())
+        return j.get<bool>();
+
+    return false;
 }
 
 // ---------------------------------------------------------------------------

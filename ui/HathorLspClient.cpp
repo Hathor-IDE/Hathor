@@ -333,8 +333,168 @@ void HathorLspClient::requestSignatureHelp(const std::string& uri,
 }
 
 // ---------------------------------------------------------------------------
-// I/O
+// Navigation requests
 // ---------------------------------------------------------------------------
+
+void HathorLspClient::requestDefinition(const std::string& uri,
+                                          int line, int character,
+                                          NavigationCallback callback)
+{
+    if (!isRunning())
+    {
+        if (callback)
+            callback({});
+        return;
+    }
+
+    auto [id, msg] = rpc_.serializeDefinition(uri, line, character);
+    writeToStdin(msg);
+
+    PendingRequest req;
+    req.type = PendingRequest::Definition;
+    req.navigationCb = std::move(callback);
+    pendingRequests_[id] = std::move(req);
+}
+
+void HathorLspClient::requestReferences(const std::string& uri,
+                                          int line, int character,
+                                          bool includeDeclaration,
+                                          NavigationCallback callback)
+{
+    if (!isRunning())
+    {
+        if (callback)
+            callback({});
+        return;
+    }
+
+    auto [id, msg] = rpc_.serializeReferences(uri, line, character, includeDeclaration);
+    writeToStdin(msg);
+
+    PendingRequest req;
+    req.type = PendingRequest::References;
+    req.navigationCb = std::move(callback);
+    pendingRequests_[id] = std::move(req);
+}
+
+void HathorLspClient::requestTypeDefinition(const std::string& uri,
+                                              int line, int character,
+                                              NavigationCallback callback)
+{
+    if (!isRunning())
+    {
+        if (callback)
+            callback({});
+        return;
+    }
+
+    auto [id, msg] = rpc_.serializeTypeDefinition(uri, line, character);
+    writeToStdin(msg);
+
+    PendingRequest req;
+    req.type = PendingRequest::TypeDefinition;
+    req.navigationCb = std::move(callback);
+    pendingRequests_[id] = std::move(req);
+}
+
+void HathorLspClient::requestDeclaration(const std::string& uri,
+                                           int line, int character,
+                                           NavigationCallback callback)
+{
+    if (!isRunning())
+    {
+        if (callback)
+            callback({});
+        return;
+    }
+
+    auto [id, msg] = rpc_.serializeDeclaration(uri, line, character);
+    writeToStdin(msg);
+
+    PendingRequest req;
+    req.type = PendingRequest::Declaration;
+    req.navigationCb = std::move(callback);
+    pendingRequests_[id] = std::move(req);
+}
+
+void HathorLspClient::requestRename(const std::string& uri,
+                                      int line, int character,
+                                      const std::string& newName,
+                                      RenameCallback callback)
+{
+    if (!isRunning())
+    {
+        if (callback)
+            callback(std::nullopt);
+        return;
+    }
+
+    auto [id, msg] = rpc_.serializeRename(uri, line, character, newName);
+    writeToStdin(msg);
+
+    PendingRequest req;
+    req.type = PendingRequest::Rename;
+    req.renameCb = std::move(callback);
+    pendingRequests_[id] = std::move(req);
+}
+
+void HathorLspClient::requestPrepareRename(const std::string& uri,
+                                             int line, int character,
+                                             PrepareRenameCallback callback)
+{
+    if (!isRunning())
+    {
+        if (callback)
+            callback(false);
+        return;
+    }
+
+    auto [id, msg] = rpc_.serializePrepareRename(uri, line, character);
+    writeToStdin(msg);
+
+    PendingRequest req;
+    req.type = PendingRequest::PrepareRename;
+    req.prepareRenameCb = std::move(callback);
+    pendingRequests_[id] = std::move(req);
+}
+
+void HathorLspClient::requestDocumentSymbols(const std::string& uri,
+                                               DocumentSymbolCallback callback)
+{
+    if (!isRunning())
+    {
+        if (callback)
+            callback({});
+        return;
+    }
+
+    auto [id, msg] = rpc_.serializeDocumentSymbol(uri);
+    writeToStdin(msg);
+
+    PendingRequest req;
+    req.type = PendingRequest::DocumentSymbol;
+    req.documentSymbolCb = std::move(callback);
+    pendingRequests_[id] = std::move(req);
+}
+
+void HathorLspClient::requestWorkspaceSymbols(const std::string& query,
+                                                WorkspaceSymbolCallback callback)
+{
+    if (!isRunning())
+    {
+        if (callback)
+            callback({});
+        return;
+    }
+
+    auto [id, msg] = rpc_.serializeWorkspaceSymbol(query);
+    writeToStdin(msg);
+
+    PendingRequest req;
+    req.type = PendingRequest::WorkspaceSymbol;
+    req.workspaceSymbolCb = std::move(callback);
+    pendingRequests_[id] = std::move(req);
+}
 
 bool HathorLspClient::writeToStdin(const std::string& framedMessage)
 {
@@ -466,11 +626,33 @@ void HathorLspClient::handleResponse(int id,
                 if (req.hoverCb)
                     req.hoverCb(std::nullopt);
                 break;
-            case PendingRequest::Signature:
-                if (req.signatureCb)
-                    req.signatureCb(std::nullopt);
-                break;
-        }
+             case PendingRequest::Signature:
+                 if (req.signatureCb)
+                     req.signatureCb(std::nullopt);
+                 break;
+             case PendingRequest::Definition:
+             case PendingRequest::References:
+             case PendingRequest::TypeDefinition:
+             case PendingRequest::Declaration:
+                 if (req.navigationCb)
+                     req.navigationCb({});
+                 break;
+             case PendingRequest::Rename:
+                 if (req.renameCb)
+                     req.renameCb(std::nullopt);
+                 break;
+             case PendingRequest::PrepareRename:
+                 if (req.prepareRenameCb)
+                     req.prepareRenameCb(false);
+                 break;
+             case PendingRequest::DocumentSymbol:
+                 if (req.documentSymbolCb)
+                     req.documentSymbolCb({});
+                 break;
+             case PendingRequest::WorkspaceSymbol:
+                 if (req.workspaceSymbolCb)
+                     req.workspaceSymbolCb({});
+                 break;
         return;
     }
 
@@ -506,14 +688,87 @@ void HathorLspClient::handleResponse(int id,
                 req.hoverCb(hover);
             break;
         }
-        case PendingRequest::Signature:
-        {
-            auto sig = lsp::LspJsonRpc::parseSignatureHelp(result);
-            if (req.signatureCb)
-                req.signatureCb(sig);
-            break;
-        }
-    }
+         case PendingRequest::Signature:
+         {
+             auto sig = lsp::LspJsonRpc::parseSignatureHelp(result);
+             if (req.signatureCb)
+                 req.signatureCb(sig);
+             break;
+         }
+         case PendingRequest::Definition:
+         case PendingRequest::References:
+         case PendingRequest::TypeDefinition:
+         case PendingRequest::Declaration:
+         {
+             auto nav = lsp::LspJsonRpc::parseNavigationResult(result);
+             if (req.navigationCb)
+                 req.navigationCb(nav);
+             break;
+         }
+         case PendingRequest::Rename:
+         {
+             if (result.is_null())
+             {
+                 if (req.renameCb)
+                     req.renameCb(std::nullopt);
+             }
+             else
+             {
+                 // Rename response: { documentChanges: [...] }
+                 // We extract locations from the document changes for display
+                 lsp::RenameResult renameResult;
+                 if (result.contains("documentChanges"))
+                 {
+                     for (const auto& change : result["documentChanges"])
+                     {
+                         if (change.contains("textDocument") && change.contains("edits"))
+                         {
+                             std::string uri = change["textDocument"].value("uri", "");
+                             for (const auto& edit : change["edits"])
+                             {
+                              if (edit.contains("range"))
+                              {
+                                  if (edit["range"].contains("start") && edit["range"].contains("end"))
+                                  {
+                                      lsp::Location loc;
+                                      loc.uri = uri;
+                                      loc.range = lsp::Range{
+                                         {edit["range"]["start"]["line"].get<int>(), edit["range"]["start"]["character"].get<int>()},
+                                         {edit["range"]["end"]["line"].get<int>(), edit["range"]["end"]["character"].get<int>()}
+                                     };
+                                     renameResult.changes.push_back(std::move(loc));
+                                 }
+                             }
+                         }
+                     }
+                 }
+                 if (req.renameCb)
+                     req.renameCb(renameResult);
+             }
+             break;
+         }
+         case PendingRequest::PrepareRename:
+         {
+             bool canRename = !result.is_null();
+             if (req.prepareRenameCb)
+                 req.prepareRenameCb(canRename);
+             break;
+         }
+         case PendingRequest::DocumentSymbol:
+         {
+             auto syms = lsp::LspJsonRpc::parseDocumentSymbolResult(result);
+             if (req.documentSymbolCb)
+                 req.documentSymbolCb(syms);
+             break;
+         }
+         case PendingRequest::WorkspaceSymbol:
+         {
+             auto syms = lsp::LspJsonRpc::parseWorkspaceSymbolResult(result);
+             if (req.workspaceSymbolCb)
+                 req.workspaceSymbolCb(syms);
+             break;
+         }
+     }
 }
 
 void HathorLspClient::handleNotification(const std::string& method,

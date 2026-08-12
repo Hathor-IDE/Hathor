@@ -1054,44 +1054,46 @@ void EditorArea::wireContextMenuCallbacks(HathorTab& tab)
     };
     tab.onShowReplacePanel = [this]() {
         showFindReplace();
-        if (findReplacePanel_)
-            findReplacePanel_->toBack();  // TODO: focus replace field
     };
     tab.onGoToLine = [this]() {
         showStatus("Go to line: not yet implemented");
     };
-    tab.onToggleComment = [this, &tab]() {
-        tab.editor().performCommand(juce::CommandIDs::cmd_Cut);
-        // Toggle line comment — use the editor's built-in command
-        // For .hathor and .ck, use // prefix
-        auto& ed = tab.editor();
-        auto caret = ed.getCaretPos();
-        auto doc = ed.getMappedDocument();
-        if (!doc) return;
-        juce::String line = doc->getLine(caret.getLineNumber());
-        if (line.trimStart().startsWith("//"))
+    tab.onToggleComment = [&tab]() {
+        // Toggle line comment — use // prefix for .hathor and .ck
+        auto& doc = tab.document();
+        auto caret = tab.editor().getCaretPos();
+        int lineNum = caret.getLineNumber();
+        juce::String line = doc.getLine(lineNum);
+        juce::String trimmed = line.trim();
+        if (trimmed.startsWith("//"))
         {
-            // Uncomment
-            int indent = line.indexOfNonWhitespace();
-            doc->deleteSection(juce::Range<int>(caret.getLineStartIndex() + indent,
-                                                 caret.getLineStartIndex() + indent + 2));
+            // Uncomment — remove "//" after leading whitespace
+            int indent = 0;
+            while (indent < line.length() && (line[indent] == ' ' || line[indent] == '\t'))
+                ++indent;
+            juce::CodeDocument::Position lineStartPos(doc, lineNum, 0);
+            doc.deleteSection(lineStartPos.getPosition() + indent,
+                              lineStartPos.getPosition() + indent + 2);
         }
         else
         {
-            // Comment
-            int indent = line.indexOfNonWhitespace();
-            doc->insertText(juce::String("//"), caret.getLineStartIndex() + indent);
+            // Comment — insert "//" after leading whitespace
+            int indent = 0;
+            while (indent < line.length() && (line[indent] == ' ' || line[indent] == '\t'))
+                ++indent;
+            juce::CodeDocument::Position lineStartPos(doc, lineNum, 0);
+            doc.insertText(lineStartPos.getPosition() + indent, juce::String("//"));
         }
     };
-    tab.onDuplicateLine = [this, &tab]() {
+    tab.onDuplicateLine = [&tab]() {
         auto& ed = tab.editor();
+        auto& doc = tab.document();
         auto caret = ed.getCaretPos();
-        int lineStart = caret.getLineStartIndex();
-        int lineEnd = caret.getLineEndIndex();
-        auto doc = ed.getMappedDocument();
-        if (!doc) return;
-        juce::String lineText = doc->getTextSection(lineStart, lineEnd);
-        doc->insertText(lineText + "\n", lineEnd);
+        int lineNum = caret.getLineNumber();
+        juce::CodeDocument::Position lineStart(doc, lineNum, 0);
+        juce::CodeDocument::Position lineEnd(doc, lineNum + 1, 0);
+        juce::String lineText = doc.getTextBetween(lineStart, lineEnd);
+        doc.insertText(lineEnd.getPosition(), lineText + "\n");
     };
     tab.onEvalLine = [this, &tab]() {
         if (tab.isChuckTab())
@@ -1101,7 +1103,7 @@ void EditorArea::wireContextMenuCallbacks(HathorTab& tab)
     };
     tab.onEvalBlock = [this, &tab]() {
         // Eval selected text (or current line if no selection)
-        juce::String text = tab.editor().getHighlightedText();
+        juce::String text = tab.editor().getTextInRange(tab.editor().getHighlightedRegion());
         if (text.isEmpty())
             text = tab.document().getLine(tab.editor().getCaretPos().getLineNumber());
         if (tab.isChuckTab())

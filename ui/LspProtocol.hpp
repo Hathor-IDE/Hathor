@@ -108,6 +108,63 @@ struct CompletionList {
 };
 
 // ---------------------------------------------------------------------------
+// LSP SymbolKind (subset for navigation)
+// ---------------------------------------------------------------------------
+enum class SymbolKind : int {
+    File        = 1,
+    Module      = 2,
+    Namespace   = 3,
+    Package     = 4,
+    Class       = 5,
+    Method      = 6,
+    Property    = 7,
+    Field       = 8,
+    Constructor = 9,
+    Enum        = 10,
+    Interface   = 11,
+    Function    = 12,
+    Variable    = 13,
+    Constant    = 14,
+    String      = 15,
+    Number      = 16,
+    Boolean     = 17,
+    Array       = 18,
+    Object      = 19,
+    Key         = 20,
+    Null        = 21,
+    Struct      = 22,
+    Event       = 23,
+    Operator    = 24,
+    TypeParameter = 25,
+};
+
+// ---------------------------------------------------------------------------
+// LSP SymbolInformation (for documentSymbol / workspaceSymbol)
+// ---------------------------------------------------------------------------
+struct SymbolInformation {
+    std::string                   name;
+    SymbolKind                    kind = SymbolKind::Function;
+    std::optional<bool>           deprecated;
+    std::optional<std::string>    detail;
+    Location                      location;
+    std::string                   containerName;
+    std::optional<int>            flags;
+};
+
+// ---------------------------------------------------------------------------
+// LSP DocumentSymbol (hierarchical, for documentSymbol with hierarchical capability)
+// ---------------------------------------------------------------------------
+struct DocumentSymbol {
+    std::string                   name;
+    std::string                   detail;
+    SymbolKind                    kind = SymbolKind::Function;
+    Range                         range;
+    Range                         selectionRange;
+    std::optional<bool>           deprecated;
+    std::vector<DocumentSymbol>   children;
+};
+
+// ---------------------------------------------------------------------------
 // LSP ParameterInformation (for SignatureInformation)
 // ---------------------------------------------------------------------------
 struct ParameterInformation {
@@ -232,6 +289,50 @@ struct CompletionContext {
     std::string           fullText;     ///< entire document text at the time of request
     Position              position;
     std::string           uri;
+};
+
+// ---------------------------------------------------------------------------
+// Navigation result types
+// ---------------------------------------------------------------------------
+
+/**
+ * Result of a textDocument/definition or textDocument/references request.
+ * May contain 0, 1, or many locations.
+ */
+struct NavigationResult {
+    std::vector<Location> locations;
+};
+
+/**
+ * Result of a textDocument/rename request.
+ * Contains the locations to rename (for display/preview).
+ */
+struct RenameResult {
+    std::vector<Location> changes;
+};
+
+/**
+ * Result of a textDocument/documentSymbol request (flat list).
+ */
+struct DocumentSymbolResult {
+    std::vector<SymbolInformation> symbols;
+};
+
+/**
+ * Result of a workspace/symbol request (flat list).
+ */
+struct WorkspaceSymbolResult {
+    std::vector<SymbolInformation> symbols;
+};
+
+/**
+ * Kind of navigation requested by the editor.
+ */
+enum class NavigationKind {
+    Definition,
+    References,
+    TypeDefinition,
+    Declaration,
 };
 
 } // namespace hathor::lsp

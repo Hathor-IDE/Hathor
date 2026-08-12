@@ -495,6 +495,357 @@ function provideHover(uri, line, character) {
 }
 
 // ---------------------------------------------------------------------------
+// Word extraction (shared by hover, definition, references)
+// ---------------------------------------------------------------------------
+
+/**
+ * Extract the word at the given line/character position.
+ * Returns { word, line, wordStart, wordEnd } or null if no word found.
+ */
+function findWordAt(text, line, character) {
+    const lines = text.split('\n');
+    const currentLine = lines[line] || '';
+
+    let wordStart = character;
+    let wordEnd = character;
+
+    while (wordStart > 0) {
+        const c = currentLine[wordStart - 1];
+        if (c === ' ' || c === '\t' || c === '[' || c === ']' || c === '<' || c === '>' ||
+            c === '(' || c === ')' || c === ',' || c === '*' || c === '/' ||
+            c === '!' || c === '~' || c === '|' || c === '"' || c === "'" ||
+            c === ':' || c === '{' || c === '}') {
+            break;
+        }
+        wordStart--;
+    }
+
+    while (wordEnd < currentLine.length) {
+        const c = currentLine[wordEnd];
+        if (c === ' ' || c === '\t' || c === '[' || c === ']' || c === '<' || c === '>' ||
+            c === '(' || c === ')' || c === ',' || c === '*' || c === '/' ||
+            c === '!' || c === '~' || c === '|' || c === '"' || c === "'" ||
+            c === ':' || c === '{' || c === '}') {
+            break;
+        }
+        wordEnd++;
+    }
+
+    const word = currentLine.slice(wordStart, wordEnd);
+    if (word.length === 0) return null;
+
+    return { word, line, wordStart, wordEnd };
+}
+
+// ---------------------------------------------------------------------------
+// Definition
+// ---------------------------------------------------------------------------
+
+/**
+ * Provide definition location for the word at the cursor position.
+ * For Strudel functions: returns the function name location (self-definition).
+ * For sample names: returns the sample alias definition if known.
+ * For scale names: returns the scale name definition.
+ */
+function provideDefinition(uri, line, character) {
+    const text = getDocumentText(uri);
+    const info = findWordAt(text, line, character);
+    if (!info) return [];
+
+    const { word, wordStart, wordEnd } = info;
+    const locations = [];
+
+    // Check if it's a known function
+    if (FUNCTION_NAMES.includes(word)) {
+        // Find all occurrences of this function in the document
+        // The "definition" is the first occurrence (declaration)
+        const lines = text.split('\n');
+        for (let i = 0; i < lines.length; i++) {
+            const line = lines[i];
+            let idx = line.indexOf(word);
+            while (idx !== -1) {
+                // Check it's a whole word (not a substring)
+                const charBefore = idx > 0 ? line[idx - 1] : ' ';
+                const charAfter = idx + word.length < line.length ? line[idx + word.length] : ' ';
+                if (isWordBoundary(charBefore) && isWordBoundary(charAfter)) {
+                    locations.push({
+                        uri,
+                        range: {
+                            start: { line: i, character: idx },
+                            end: { line: i, character: idx + word.length },
+                        },
+                    });
+                }
+                idx = line.indexOf(word, idx + 1);
+            }
+        }
+    }
+
+    // If no locations found, return the cursor position as self-definition
+    if (locations.length === 0) {
+        locations.push({
+            uri,
+            range: {
+                start: { line, character: wordStart },
+                end: { line, character: wordEnd },
+            },
+        });
+    }
+
+    return locations;
+}
+
+// ---------------------------------------------------------------------------
+// References
+// ---------------------------------------------------------------------------
+
+/**
+ * Provide all references to the word at the cursor position within the
+ * current document.
+ */
+function provideReferences(uri, line, character, includeDeclaration = true) {
+    const text = getDocumentText(uri);
+    const info = findWordAt(text, line, character);
+    if (!info) return [];
+
+    const { word } = info;
+    const locations = [];
+    const lines = text.split('\n');
+
+    for (let i = 0; i < lines.length; i++) {
+        const currentLine = lines[i];
+        let idx = currentLine.indexOf(word);
+        while (idx !== -1) {
+            const charBefore = idx > 0 ? currentLine[idx - 1] : ' ';
+            const charAfter = idx + word.length < currentLine.length ? currentLine[idx + word.length] : ' ';
+            if (isWordBoundary(charBefore) && isWordBoundary(charAfter)) {
+                locations.push({
+                    uri,
+                    range: {
+                        start: { line: i, character: idx },
+                        end: { line: i, character: idx + word.length },
+                    },
+                });
+            }
+            idx = currentLine.indexOf(word, idx + 1);
+        }
+    }
+
+    return locations;
+}
+
+/**
+ * Check if a character is a word boundary (non-word character).
+ */
+function isWordBoundary(c) {
+    return !c || ' \t\n\r'.includes(c) || '[]<>(),*/!~|:;{}()"\'='.includes(c);
+}
+
+// ---------------------------------------------------------------------------
+// Document Symbol
+// ---------------------------------------------------------------------------
+
+/**
+ * Provide document-level symbols for a Strudel mini-notation file.
+ * Each line that starts with a known function is a top-level symbol.
+ * Sample names in s("...") strings are also indexed as constants.
+ */
+function provideDocumentSymbol(uri) {
+    const text = getDocumentText(uri);
+    const lines = text.split('\n');
+    const symbols = [];
+
+    for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        const trimmed = line.trim();
+
+        // Skip blank lines and front-matter
+        if (trimmed === '') continue;
+        if (trimmed === '[hathor]') continue;
+        if (/^[a-zA-Z_-]+ *=/.test(trimmed)) continue;
+
+        // Check if line starts with a function call
+        const funcMatch = trimmed.match(/^(\w+)\s*\(/);
+        if (funcMatch) {
+            const funcName = funcMatch[1];
+            if (FUNCTION_NAMES.includes(funcName)) {
+                symbols.push({
+                    name: funcName,
+                    kind: 13, // Variable (function invocation at top level)
+                    detail: getFunctionSignature(funcName),
+                    range: {
+                        start: { line: i, character: line.indexOf(funcName) },
+                        end: { line: i, character: line.length },
+                    },
+                    selectionRange: {
+                        start: { line: i, character: line.indexOf(funcName) },
+                        end: { line: i, character: line.indexOf(funcName) + funcName.length },
+                    },
+                });
+            }
+        }
+
+        // Check for sample patterns: s("name") or sound("name")
+        const sampleMatches = trimmed.matchAll(/s\s*\(\s*"([^"]+)"\s*\)|sound\s*\(\s*"([^"]+)"\s*\)/g);
+        for (const m of sampleMatches) {
+            const sampleName = m[1] || m[2];
+            if (sampleName) {
+                symbols.push({
+                    name: sampleName,
+                    kind: 14, // Constant (sample name)
+                    detail: 'sample',
+                    range: {
+                        start: { line: i, character: m.index },
+                        end: { line: i, character: m.index + m[0].length },
+                    },
+                    selectionRange: {
+                        start: { line: i, character: m.index },
+                        end: { line: i, character: m.index + m[0].length },
+                    },
+                });
+            }
+        }
+    }
+
+    return symbols;
+}
+
+// ---------------------------------------------------------------------------
+// Rename
+// ---------------------------------------------------------------------------
+
+/**
+ * Provide rename locations for the word at the cursor position.
+ * For Strudel mini-notation, we can only rename within the current document
+ * since function/sample names are global identifiers.
+ */
+function provideRename(uri, line, character, newName) {
+    const text = getDocumentText(uri);
+    const info = findWordAt(text, line, character);
+    if (!info) return null;
+
+    const { word } = info;
+
+    // Check if it's a renamable identifier (function name or sample name)
+    if (!FUNCTION_NAMES.includes(word) && !SAMPLE_NAMES.includes(word) && !HATHOR_SAMPLE_ALIASES.includes(word) && !SCALE_NAMES.includes(word)) {
+        return null;
+    }
+
+    // For Strudel mini-notation, renaming a global function/sample name
+    // only affects this document (no cross-file rename support in this architecture).
+    return {
+        documentChanges: [{
+            textDocument: { uri },
+            edits: [{
+                range: {
+                    start: { line, character: info.wordStart },
+                    end: { line, character: info.wordEnd },
+                },
+                newText: newName,
+            }],
+        }],
+    };
+}
+
+// ---------------------------------------------------------------------------
+// Prepare Rename
+// ---------------------------------------------------------------------------
+
+function providePrepareRename(uri, line, character) {
+    const text = getDocumentText(uri);
+    const info = findWordAt(text, line, character);
+    if (!info) return null;
+
+    const { word, wordStart, wordEnd } = info;
+
+    // Only renamable if it's a known function, sample, scale, or alias
+    const isRenamable = FUNCTION_NAMES.includes(word) ||
+                        SAMPLE_NAMES.includes(word) ||
+                        HATHOR_SAMPLE_ALIASES.includes(word) ||
+                        SCALE_NAMES.includes(word);
+
+    if (!isRenamable) return null;
+
+    return {
+        placeholder: word,
+        range: {
+            start: { line, character: wordStart },
+            end: { line, character: wordEnd },
+        },
+    };
+}
+
+// ---------------------------------------------------------------------------
+// Workspace Symbol
+// ---------------------------------------------------------------------------
+
+/**
+ * Provide workspace-wide symbol search.
+ * Returns all known functions, samples, and scales that match the query.
+ */
+function provideWorkspaceSymbol(query) {
+    const symbols = [];
+    const lowerQuery = (query || '').toLowerCase();
+
+    // Function symbols
+    for (const fn of FUNCTION_NAMES) {
+        if (fn.toLowerCase().includes(lowerQuery)) {
+            symbols.push({
+                name: fn,
+                kind: 12, // Function
+                detail: getFunctionSignature(fn),
+                location: {
+                    uri: 'hathor://builtin/strudel',
+                    range: {
+                        start: { line: 0, character: 0 },
+                        end: { line: 0, character: fn.length },
+                    },
+                },
+            });
+        }
+    }
+
+    // Sample symbols
+    const allSamples = [...SAMPLE_NAMES, ...HATHOR_SAMPLE_ALIASES];
+    for (const sample of allSamples) {
+        if (sample.toLowerCase().includes(lowerQuery)) {
+            symbols.push({
+                name: sample,
+                kind: 14, // Constant
+                detail: 'sample',
+                location: {
+                    uri: 'hathor://builtin/samples',
+                    range: {
+                        start: { line: 0, character: 0 },
+                        end: { line: 0, character: sample.length },
+                    },
+                },
+            });
+        }
+    }
+
+    // Scale symbols
+    for (const scale of SCALE_NAMES) {
+        if (scale.toLowerCase().includes(lowerQuery)) {
+            symbols.push({
+                name: scale,
+                kind: 13, // Enum (scale names are treated as enums)
+                detail: 'scale',
+                location: {
+                    uri: 'hathor://builtin/scales',
+                    range: {
+                        start: { line: 0, character: 0 },
+                        end: { line: 0, character: scale.length },
+                    },
+                },
+            });
+        }
+    }
+
+    return symbols;
+}
+
+// ---------------------------------------------------------------------------
 // Signature Help (L2)
 // ---------------------------------------------------------------------------
 
@@ -697,7 +1048,15 @@ function handleRequest(method, params) {
                     hoverProvider: true,
                     signatureHelpProvider: {
                         triggerCharacters: ['(', ','],
+                        request: { id: 1 }
                     },
+                    definitionProvider: true,
+                    referencesProvider: true,
+                    renameProvider: {
+                        prepareProvider: true,
+                    },
+                    documentSymbolProvider: true,
+                    workspaceSymbolProvider: true,
                     diagnosticProvider: {
                         documentChanges: true,
                         didOpen: true,
@@ -737,6 +1096,55 @@ function handleRequest(method, params) {
             {
                 const { textDocument, position } = params;
                 return provideSignatureHelp(textDocument.uri, position.line, position.character);
+            }
+
+        case 'textDocument/definition':
+            {
+                const { textDocument, position } = params;
+                return provideDefinition(textDocument.uri, position.line, position.character);
+            }
+
+        case 'textDocument/references':
+            {
+                const { textDocument, position, context } = params;
+                const includeDeclaration = context ? context.includeDeclaration !== false : true;
+                return provideReferences(textDocument.uri, position.line, position.character, includeDeclaration);
+            }
+
+        case 'textDocument/typeDefinition':
+            {
+                const { textDocument, position } = params;
+                return provideDefinition(textDocument.uri, position.line, position.character);
+            }
+
+        case 'textDocument/declaration':
+            {
+                const { textDocument, position } = params;
+                return provideDefinition(textDocument.uri, position.line, position.character);
+            }
+
+        case 'textDocument/prepareRename':
+            {
+                const { textDocument, position } = params;
+                return providePrepareRename(textDocument.uri, position.line, position.character);
+            }
+
+        case 'textDocument/rename':
+            {
+                const { textDocument, position, newName } = params;
+                return provideRename(textDocument.uri, position.line, position.character, newName);
+            }
+
+        case 'textDocument/documentSymbol':
+            {
+                const { textDocument } = params;
+                return provideDocumentSymbol(textDocument.uri);
+            }
+
+        case 'workspace/symbol':
+            {
+                const { query } = params;
+                return provideWorkspaceSymbol(query || '');
             }
 
         case 'textDocument/publishDiagnostics':

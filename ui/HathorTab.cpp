@@ -457,6 +457,142 @@ void HathorTab::lookAndFeelChanged()
 }
 
 // ---------------------------------------------------------------------------
+// L-1 §3: Editing ergonomics — auto-indentation + bracket matching
+// ---------------------------------------------------------------------------
+
+void GhostAwareEditor::handleReturnKey()
+{
+    // L-1 §3: Auto-indentation — when pressing Enter, copy the leading
+    // whitespace from the current line to the new line.
+    juce::CodeDocument& doc = getDocument();
+    juce::CodeDocument::Position caret = getCaretPos();
+    juce::String currentLine = doc.getLine(caret.getLineNumber());
+
+    // Extract leading whitespace from the current line
+    juce::String indent;
+    for (int i = 0; i < currentLine.length(); ++i)
+    {
+        juce::juce_wchar c = currentLine[i];
+        if (c == ' ' || c == '\t')
+            indent << c;
+        else
+            break;
+    }
+
+    // Let JUCE handle the Enter key first (inserts newline)
+    juce::CodeEditorComponent::handleReturnKey();
+
+    // Then insert the indentation on the new line
+    if (!indent.isEmpty())
+    {
+        juce::CodeDocument::Position newCaret = getCaretPos();
+        doc.insertText(newCaret.getPosition(), indent);
+    }
+}
+
+void GhostAwareEditor::paintOverChildren(juce::Graphics& /*g*/)
+{
+    // L-1 §3: Bracket matching highlight
+    updateBracketHighlight();
+
+    // Let the base class do its standard painting
+}
+
+void GhostAwareEditor::updateBracketHighlight()
+{
+    // L-1 §3: Find the bracket character before or at the caret and highlight it
+    // along with its matching bracket.
+    juce::CodeDocument& doc = getDocument();
+    if (doc.getNumCharacters() == 0)
+        return;
+
+    juce::CodeDocument::Position caret = getCaretPos();
+    int caretPos = caret.getPosition();
+
+    juce::String fullText = doc.getAllContent();
+
+    // Look at the character before the caret and the character at the caret
+    juce::juce_wchar charBefore = (caretPos > 0) ? fullText[caretPos - 1] : 0;
+    juce::juce_wchar charAt = (caretPos < fullText.length()) ? fullText[caretPos] : 0;
+
+    juce::String opens = "({[<";
+    juce::String closes = ")}>]";
+
+    int bracketPos = -1;
+    juce::juce_wchar matchingChar = 0;
+    bool scanningForward = false;
+
+    // Check if the char before the caret is an opening bracket
+    if (charBefore != 0 && opens.containsChar(charBefore))
+    {
+        bracketPos = caretPos - 1;
+        matchingChar = closes[opens.indexOfChar(charBefore)];
+        scanningForward = true;
+    }
+    // Check if the char at the caret is a closing bracket
+    else if (charAt != 0 && closes.containsChar(charAt))
+    {
+        bracketPos = caretPos;
+        matchingChar = opens[closes.indexOfChar(charAt)];
+        scanningForward = false;
+    }
+
+    if (bracketPos >= 0 && matchingChar != 0)
+    {
+        // Find the matching bracket by scanning
+        int depth = 1;
+        int matchPos = -1;
+
+        if (scanningForward)
+        {
+            // Forward scan for matching close bracket
+            int pos = bracketPos + 1;
+            while (pos < fullText.length() && depth > 0)
+            {
+                if (fullText[pos] == charBefore)
+                    ++depth;
+                else if (fullText[pos] == matchingChar)
+                    --depth;
+                ++pos;
+            }
+            matchPos = (depth == 0) ? pos - 1 : -1;
+        }
+        else
+        {
+            // Backward scan for matching open bracket
+            int pos = bracketPos - 1;
+            while (pos >= 0 && depth > 0)
+            {
+                if (fullText[pos] == charAt)
+                    ++depth;
+                else if (fullText[pos] == matchingChar)
+                    --depth;
+                --pos;
+            }
+            matchPos = (depth == 0) ? pos + 1 : -1;
+        }
+
+        if (matchPos >= 0)
+        {
+            // Highlight both brackets using a temporary underlining
+            juce::Array<juce::Range<int>> ranges;
+            ranges.add(juce::Range<int>(bracketPos, bracketPos + 1));
+            ranges.add(juce::Range<int>(matchPos, matchPos + 1));
+            setTemporaryUnderlining(ranges);
+        }
+        else
+        {
+            setTemporaryUnderlining({});
+        }
+    }
+    else
+    {
+        // No bracket near caret — clear highlight
+        setTemporaryUnderlining({});
+    }
+}
+
+// ---------------------------------------------------------------------------
 // L-1 §5: Context menu
 // ---------------------------------------------------------------------------
 

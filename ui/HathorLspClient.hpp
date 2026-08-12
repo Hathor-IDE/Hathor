@@ -45,7 +45,12 @@ using CompletionCallback = std::function<void(const lsp::CompletionResult&)>;
 using HoverCallback = std::function<void(const std::optional<lsp::Hover>&)>;
 using SignatureCallback = std::function<void(const std::optional<lsp::SignatureHelp>&)>;
 using DiagnosticsCallback = std::function<void(const std::string& uri,
-                                                 const std::vector<lsp::Diagnostic>&)>;
+                                               const std::vector<lsp::Diagnostic>&)>;
+using NavigationCallback = std::function<void(const lsp::NavigationResult&)>;
+using DocumentSymbolCallback = std::function<void(const lsp::DocumentSymbolResult&)>;
+using WorkspaceSymbolCallback = std::function<void(const lsp::WorkspaceSymbolResult&)>;
+using PrepareRenameCallback = std::function<void(bool canRename)>;
+using RenameCallback = std::function<void(const std::optional<lsp::RenameResult>&)>;
 
 /**
  * HathorLspClient
@@ -88,8 +93,34 @@ public:
                       int line, int character,
                       HoverCallback callback);
     void requestSignatureHelp(const std::string& uri,
+                               int line, int character,
+                               SignatureCallback callback);
+
+    // Navigation requests
+    void requestDefinition(const std::string& uri,
+                           int line, int character,
+                           NavigationCallback callback);
+    void requestReferences(const std::string& uri,
+                           int line, int character,
+                           bool includeDeclaration,
+                           NavigationCallback callback);
+    void requestTypeDefinition(const std::string& uri,
+                               int line, int character,
+                               NavigationCallback callback);
+    void requestDeclaration(const std::string& uri,
+                            int line, int character,
+                            NavigationCallback callback);
+    void requestRename(const std::string& uri,
+                       int line, int character,
+                       const std::string& newName,
+                       RenameCallback callback);
+    void requestPrepareRename(const std::string& uri,
                               int line, int character,
-                              SignatureCallback callback);
+                              PrepareRenameCallback callback);
+    void requestDocumentSymbols(const std::string& uri,
+                                DocumentSymbolCallback callback);
+    void requestWorkspaceSymbols(const std::string& query,
+                                 WorkspaceSymbolCallback callback);
 
     // Diagnostics callback registration
     void setDiagnosticsCallback(DiagnosticsCallback callback) { diagnosticsCb_ = std::move(callback); }
@@ -146,7 +177,17 @@ private:
         CompletionCallback   completionCb;
         HoverCallback        hoverCb;
         SignatureCallback    signatureCb;
-        enum Type { Completion, Hover, Signature } type;
+        NavigationCallback   navigationCb;
+        DocumentSymbolCallback documentSymbolCb;
+        WorkspaceSymbolCallback workspaceSymbolCb;
+        PrepareRenameCallback prepareRenameCb;
+        RenameCallback       renameCb;
+        enum Type {
+            Completion, Hover, Signature,
+            Definition, References, TypeDefinition, Declaration,
+            Rename, PrepareRename,
+            DocumentSymbol, WorkspaceSymbol
+        } type;
     };
     std::unordered_map<int, PendingRequest> pendingRequests_;
 

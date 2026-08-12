@@ -155,8 +155,83 @@ public:
     std::pair<int, std::string> serializeSignatureHelp(std::string_view uri, int line, int character);
 
     // -----------------------------------------------------------------------
-    // Incoming message parsing
+    // Navigation request serialization (definition, references, rename, symbols)
     // -----------------------------------------------------------------------
+
+    /**
+     * Serialize a textDocument/definition request.
+     * @return Pair of (requestId, framedMessage).
+     */
+    std::pair<int, std::string> serializeDefinition(std::string_view uri, int line, int character);
+
+    /**
+     * Serialize a textDocument/references request.
+     * @param includeDeclaration If true, results include the declaration.
+     * @return Pair of (requestId, framedMessage).
+     */
+    std::pair<int, std::string> serializeReferences(std::string_view uri, int line, int character,
+                                                     bool includeDeclaration = true);
+
+    /**
+     * Serialize a textDocument/typeDefinition request.
+     * @return Pair of (requestId, framedMessage).
+     */
+    std::pair<int, std::string> serializeTypeDefinition(std::string_view uri, int line, int character);
+
+    /**
+     * Serialize a textDocument/declaration request.
+     * @return Pair of (requestId, framedMessage).
+     */
+    std::pair<int, std::string> serializeDeclaration(std::string_view uri, int line, int character);
+
+    /**
+     * Serialize a textDocument/rename request.
+     * @return Pair of (requestId, framedMessage).
+     */
+    std::pair<int, std::string> serializeRename(std::string_view uri, int line, int character,
+                                                 std::string_view newName);
+
+    /**
+     * Serialize a textDocument/documentSymbol request (flat, non-hierarchical).
+     * @return Pair of (requestId, framedMessage).
+     */
+    std::pair<int, std::string> serializeDocumentSymbol(std::string_view uri);
+
+    /**
+     * Serialize a workspace/symbol request.
+     * @return Pair of (requestId, framedMessage).
+     */
+    std::pair<int, std::string> serializeWorkspaceSymbol(std::string_view query);
+
+    /**
+     * Serialize a textDocument/prepareRename request to validate a rename.
+     * @return Pair of (requestId, framedMessage).
+     */
+    std::pair<int, std::string> serializePrepareRename(std::string_view uri, int line, int character);
+
+    // -----------------------------------------------------------------------
+    // Navigation response parsing
+    // -----------------------------------------------------------------------
+
+    /**
+     * Parse a Location or array of Locations from a definition/references response.
+     */
+    static NavigationResult parseNavigationResult(const json& j);
+
+    /**
+     * Parse SymbolInformation array from a documentSymbol / workspaceSymbol response.
+     */
+    static DocumentSymbolResult parseDocumentSymbolResult(const json& j);
+
+    /**
+     * Parse SymbolInformation array from workspace/symbol response.
+     */
+    static WorkspaceSymbolResult parseWorkspaceSymbolResult(const json& j);
+
+    /**
+     * Parse a prepareRename response — returns true if position is renamable.
+     */
+    static bool parsePrepareRename(const json& j);
 
     /**
      * Parse a JSON string into an IncomingMessage.

@@ -61,6 +61,13 @@
 #include "CommandPalette.hpp"
 #include "BreadcrumbsBar.hpp"
 #include "EditorSplitSurface.hpp"
+// L-2: Navigation & workspace search
+#include "NavigationHistory.hpp"
+#include "WorkspaceSearchModel.hpp"
+#include "SymbolSearchModel.hpp"
+#include "QuickOpenDialog.hpp"
+#include "WorkspaceSearchPanel.hpp"
+#include "SymbolSearchPanel.hpp"
 
 namespace hathor::ui {
 
@@ -293,6 +300,65 @@ public:
 
     /// Toggle a vertical split of the active editor group.
     void toggleSplit();
+
+    // -----------------------------------------------------------------------
+    // L-2: Navigation & Workspace Search
+    // -----------------------------------------------------------------------
+
+    /// Show the quick-open file dialog (Ctrl/Cmd+P).
+    void showQuickOpen();
+
+    /// Navigate to the definition of the symbol at the cursor.
+    void gotoDefinition();
+
+    /// Navigate to references of the symbol at the cursor.
+    void gotoReferences();
+
+    /// Peek at the definition (show in a small overlay, don't navigate).
+    void peekDefinition();
+
+    /// Navigate back in history.
+    void navigateBack();
+
+    /// Navigate forward in history.
+    void navigateForward();
+
+    /// Show the workspace search panel for multi-file text search.
+    void showWorkspaceSearch();
+
+    /// Show the symbol search panel.
+    void showSymbolSearch();
+
+    /// Show document symbols for the active tab.
+    void showDocumentSymbols();
+
+    /// Navigate to a specific diagnostic (from the error panel / next/prev).
+    void navigateToNextDiagnostic();
+    void navigateToPrevDiagnostic();
+
+    /// Get the navigation history (non-owning).
+    NavigationHistory* navigationHistory() noexcept
+    {
+        return navigationHistory_.get();
+    }
+
+    /// Get the workspace search model (non-owning).
+    WorkspaceSearchModel* workspaceSearchModel() noexcept
+    {
+        return workspaceSearchModel_.get();
+    }
+
+    /// Get the symbol search model (non-owning).
+    SymbolSearchModel* symbolSearchModel() noexcept
+    {
+        return symbolSearchModel_.get();
+    }
+
+    /**
+     * Set the workspace root directory for search and quick-open.
+     * Called by MainWindow after project loading.
+     */
+    void setWorkspaceRoot(const std::filesystem::path& root);
 
     /// Get the action registry (non-owning).
     hathor::ui::ActionRegistry* actionRegistry() noexcept
@@ -566,6 +632,18 @@ private:
     std::unique_ptr<hathor::ui::CommandPalette>   commandPalette_;
     std::unique_ptr<hathor::ui::BreadcrumbsBar>   breadcrumbsBar_;
     std::unique_ptr<hathor::ui::EditorSplitSurface> editorSplitSurface_;
+
+    // -----------------------------------------------------------------------
+    // L-2: Navigation & workspace search components
+    // -----------------------------------------------------------------------
+    std::unique_ptr<hathor::ui::NavigationHistory>      navigationHistory_;
+    std::unique_ptr<hathor::ui::WorkspaceSearchModel>   workspaceSearchModel_;
+    std::unique_ptr<hathor::ui::SymbolSearchModel>      symbolSearchModel_;
+    std::unique_ptr<hathor::ui::QuickOpenDialog>        quickOpenDialog_;
+    std::unique_ptr<hathor::ui::WorkspaceSearchPanel>   workspaceSearchPanel_;
+    std::unique_ptr<hathor::ui::SymbolSearchPanel>      symbolSearchPanel_;
+
+    std::filesystem::path workspaceRoot_;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(EditorArea)
 };

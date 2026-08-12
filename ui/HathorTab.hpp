@@ -65,6 +65,16 @@ public:
             onCaretMoved();
     }
 
+    // L-1 §3: Auto-indentation — preserve indentation when pressing Enter.
+    void handleReturnKey() override;
+
+    // L-1 §3: Bracket matching — highlight the matching bracket.
+    void paintOverChildren(juce::Graphics& g) override;
+
+private:
+    // L-1 §3: Highlight the matching bracket for the one at/near the caret.
+    void updateBracketHighlight();
+
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(GhostAwareEditor)
 };
 
