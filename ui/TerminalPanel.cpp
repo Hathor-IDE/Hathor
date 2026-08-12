@@ -33,7 +33,7 @@ TerminalPanel::TerminalPanel(const std::string& projectDir)
     outputEditor_->setReadOnly(true);
     outputEditor_->setOpaque(false);
     outputEditor_->setCaretVisible(false);
-    outputEditor_->setScrollBarsShown(true);
+    outputEditor_->setScrollbarsShown(true);
     outputEditor_->setFont(HathorLookAndFeel::fontRegular(12.0f));
     outputEditor_->setColour(juce::TextEditor::backgroundColourId, palette.surfaceContainer);
     outputEditor_->setColour(juce::TextEditor::textColourId, palette.textPrimary);
@@ -52,12 +52,12 @@ TerminalPanel::TerminalPanel(const std::string& projectDir)
     inputField_->setOpaque(false);
     inputField_->setCaretVisible(true);
     inputField_->setMultiLine(false);
-    inputField_->setScrollBarsShown(false);
+    inputField_->setScrollbarsShown(false);
     inputField_->setFont(HathorLookAndFeel::fontRegular(12.0f));
     inputField_->setColour(juce::TextEditor::backgroundColourId, palette.surfaceContainer);
     inputField_->setColour(juce::TextEditor::textColourId, palette.textPrimary);
     inputField_->setColour(juce::TextEditor::outlineColourId, palette.accent.withAlpha(0.3f));
-    inputField_->addActionListener(this);
+    inputField_->addListener(this);
     addAndMakeVisible(*inputField_);
 
     // -----------------------------------------------------------------------
@@ -84,24 +84,25 @@ TerminalPanel::TerminalPanel(const std::string& projectDir)
     {
         taskCombo_->addItem(juce::String(label) + " (" + juce::String(id) + ")", idx++);
     }
-    taskCombo_->setSelectedIndex(0);
+    taskCombo_->setSelectedItemIndex(0);
     taskCombo_->setTooltip("Select a task to run (build, test, check, ...)");
     addAndMakeVisible(*taskCombo_);
 
     runTaskBtn_ = std::make_unique<juce::TextButton>("Run");
     runTaskBtn_->setTooltip("Run the selected task");
     runTaskBtn_->onClick = [this]() {
-        if (auto* item = taskCombo_->getSelectedItem())
+        int selectedIdx = taskCombo_->getSelectedItemIndex();
+        if (selectedIdx < 0)
+            return;
+
+        // Extract task id from the item text (we stored "Label (id)")
+        juce::String itemText = taskCombo_->getItemText(selectedIdx);
+        int openParen = itemText.lastIndexOfChar('(');
+        int closeParen = itemText.lastIndexOfChar(')');
+        if (openParen > 0 && closeParen > openParen)
         {
-            // Extract task id from the item text (we stored "Label (id)")
-            juce::String itemText = taskCombo_->getItemText(taskCombo_->getSelectedItemIndex());
-            int openParen = itemText.lastIndexOfChar('(');
-            int closeParen = itemText.lastIndexOfChar(')');
-            if (openParen > 0 && closeParen > openParen)
-            {
-                juce::String taskId = itemText.substring(openParen + 1, closeParen);
-                runTask(taskId.toStdString());
-            }
+            juce::String taskId = itemText.substring(openParen + 1, closeParen);
+            runTask(taskId.toStdString());
         }
     };
     addAndMakeVisible(*runTaskBtn_);
@@ -121,9 +122,10 @@ TerminalPanel::TerminalPanel(const std::string& projectDir)
     addAndMakeVisible(*clearBtn_);
 
     // -----------------------------------------------------------------------
-    // Wire process exit callback
+    // Wire process exit callback — fires on the worker thread. We disable it
+    // in favor of polling the state in the timer (avoids JUCE message-thread
+    // marshaling complexity in the process worker).
     // -----------------------------------------------------------------------
-    process_.onProcessExited = [this]() { onProcessExited(); };
 
     // -----------------------------------------------------------------------
     // Header buttons callback
@@ -260,10 +262,7 @@ void TerminalPanel::runCommand(const std::string& commandLine)
 
     clearOutput();
 
-    // Parse the command line into argv.
-    std::vector<std::string> argv = parseCommandLine(commandLine);
-
-    // We run commands through the user's shell so that pipes, redirects,
+    // Run commands through the user's shell so that pipes, redirects,
     // environment variables, etc. work naturally. This is NOT implementing
     // a shell ourselves — we delegate to /bin/sh (or $SHELL).
     std::string shell = resolveShell();
@@ -332,7 +331,6 @@ void TerminalPanel::cancelProcess()
 
 void TerminalPanel::focusInput()
 {
-    show();
     inputField_->grabKeyboardFocus();
 }
 
@@ -347,14 +345,18 @@ bool TerminalPanel::isRunning() const noexcept
 
 void TerminalPanel::timerCallback()
 {
-    if (!running_)
-        return;
+    if (running_)
+    {
+        // Drain output from the process's SPSC ring buffer.
+        char buf[4096];
+        std::size_t n = process_.drainOutput(buf, sizeof(buf));
+        if (n > 0)
+            appendOutput(std::string(buf, n));
 
-    // Drain output from the process's SPSC ring buffer.
-    char buf[4096];
-    std::size_t n = process_.drainOutput(buf, sizeof(buf));
-    if (n > 0)
-        appendOutput(std::string(buf, n));
+        // Check if the process has exited (state transitioned to Done).
+        if (process_.state() == TerminalProcess::State::Done)
+            onProcessExited();
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -402,12 +404,12 @@ void TerminalPanel::onProcessExited()
 // juce::TextEditor::Listener
 // ---------------------------------------------------------------------------
 
-void TerminalPanel::editorTextChanged(juce::TextEditor& /*editor*/)
+void TerminalPanel::textEditorTextChanged(juce::TextEditor& /*editor*/)
 {
     (void)0; // no-op — we don't need to react to live text changes
 }
 
-void TerminalPanel::editorFocusLost(juce::TextEditor& /*editor*/)
+void TerminalPanel::textEditorFocusLost(juce::TextEditor& /*editor*/)
 {
     (void)0; // no-op
 }
@@ -431,7 +433,7 @@ void TerminalPanel::textEditorReturnKeyPressed(juce::TextEditor& /*editor*/)
     }
 }
 
-void TerminalPanel::textEditorEscapePressed(juce::TextEditor& /*editor*/)
+void TerminalPanel::textEditorEscapeKeyPressed(juce::TextEditor& /*editor*/)
 {
     if (running_)
     {
@@ -447,52 +449,14 @@ void TerminalPanel::textEditorEscapePressed(juce::TextEditor& /*editor*/)
 // Internal helpers
 // ---------------------------------------------------------------------------
 
-std::vector<std::string> TerminalPanel::parseCommandLine(const std::string& line) const
-{
-    std::vector<std::string> tokens;
-    std::string current;
-    bool inSingleQuote = false;
-    bool inDoubleQuote = false;
-
-    for (char c : line)
-    {
-        if (c == '\'' && !inDoubleQuote)
-        {
-            inSingleQuote = !inSingleQuote;
-        }
-        else if (c == '"' && !inSingleQuote)
-        {
-            inDoubleQuote = !inDoubleQuote;
-        }
-        else if (c == ' ' && !inSingleQuote && !inDoubleQuote)
-        {
-            if (!current.empty())
-            {
-                tokens.push_back(current);
-                current.clear();
-            }
-        }
-        else
-        {
-            current += c;
-        }
-    }
-    if (!current.empty())
-        tokens.push_back(current);
-
-    return tokens;
-}
-
 void TerminalPanel::appendOutput(const std::string& text)
 {
     if (text.empty())
         return;
 
-    outputEditor_->setCaretPosition(outputEditor_->getDocument().getNumCharacters());
+    // Insert text at the end of the document.
+    outputEditor_->setCaretPosition(static_cast<int>(outputEditor_->getText().length()));
     outputEditor_->insertTextAtCaret(juce::String(text));
-
-    // Auto-scroll to the bottom.
-    outputEditor_->scrollToBottom();
 }
 
 void TerminalPanel::appendStatus(const std::string& text)

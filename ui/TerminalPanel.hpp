@@ -54,9 +54,6 @@ public:
     explicit TerminalPanel(const std::string& projectDir = {});
     ~TerminalPanel() override;
 
-    TerminalPanel(const TerminalPanel&) = delete;
-    TerminalPanel& operator=(const TerminalPanel&) = delete;
-
     // -----------------------------------------------------------------------
     // juce::Component
     // -----------------------------------------------------------------------
@@ -127,10 +124,10 @@ public:
     // -----------------------------------------------------------------------
     // juce::TextEditor::Listener
     // -----------------------------------------------------------------------
-    void editorTextChanged(juce::TextEditor& editor) override;
-    void editorFocusLost(juce::TextEditor& editor) override;
+    void textEditorTextChanged(juce::TextEditor& editor) override;
     void textEditorReturnKeyPressed(juce::TextEditor& editor) override;
-    void textEditorEscapePressed(juce::TextEditor& editor) override;
+    void textEditorEscapeKeyPressed(juce::TextEditor& editor) override;
+    void textEditorFocusLost(juce::TextEditor& editor) override;
 
 private:
     // -----------------------------------------------------------------------
@@ -142,10 +139,6 @@ private:
     // -----------------------------------------------------------------------
     // Internal helpers
     // -----------------------------------------------------------------------
-
-    /** Parse a command line string into an argv vector. Handles basic
-        quoting (single and double quotes). */
-    std::vector<std::string> parseCommandLine(const std::string& line) const;
 
     /** Append text to the output editor (message thread). */
     void appendOutput(const std::string& text);
@@ -191,9 +184,6 @@ private:
     // Input history (for Up/Down arrow recall).
     std::vector<std::string> inputHistory_;
     int historyIndex_ = -1;
-
-    // Current command being typed (for history navigation).
-    std::string pendingInput_;
 
     // Layout constants
     static constexpr int kInputHeight    = 26;

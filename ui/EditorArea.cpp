@@ -2391,6 +2391,25 @@ void EditorArea::registerEditorActions()
     actionRegistry_->setCallback("editor.togglePin", []() {
         // Pin toggle is handled at the EditorGroup/EnhancedTabBar level
     });
+
+    // L-4: Terminal + task runner actions
+    actionRegistry_->registerAction("terminal.toggle",      "Toggle Terminal",     "Terminal",    "Show/hide the integrated terminal");
+    actionRegistry_->registerAction("terminal.runCommand",  "Run Command…",        "Terminal",    "Run a command in the terminal");
+    actionRegistry_->registerAction("terminal.cancel",      "Cancel Process",      "Terminal",    "Cancel the running terminal process");
+
+    if (auto k = parseKeyEquivalent("Cmd+Shift+`")) actionRegistry_->bindKey(*k, "terminal.toggle");
+
+    actionRegistry_->setCallback("terminal.toggle", [this]() {
+        if (terminalPanel_ && terminalPanel_->isVisible())
+            hideTerminalPanel();
+        else
+            showTerminalPanel();
+        resized();
+    });
+    actionRegistry_->setCallback("terminal.cancel", [this]() {
+        if (terminalPanel_ && terminalPanel_->isRunning())
+            terminalPanel_->cancelProcess();
+    });
 }
 
 } // namespace hathor::ui

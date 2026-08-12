@@ -247,10 +247,6 @@ private:
     // Worker thread
     std::thread               workerThread_;
     std::atomic<bool>         workerStop_{false};
-
-    // Non-copyable, non-movable.
-    TerminalProcess(const TerminalProcess&) = delete;
-    TerminalProcess& operator=(const TerminalProcess&) = delete;
 };
 
 } // namespace hathor::ui

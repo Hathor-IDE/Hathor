@@ -214,6 +214,21 @@ MainWindow::MainWindow(AudioEngine& audio,
             // Other panels (Search, VersionControl, AIAgent) are not yet
             // implemented — do nothing, preserving active state.
 
+            // L-4: Terminal panel toggles the bottom-docked terminal panel.
+            if (panel == hathor::ui::Panel::Terminal)
+            {
+                const bool wantsOpen = (activityRibbon_->activePanel() != hathor::ui::Panel::Terminal);
+                if (wantsOpen)
+                {
+                    editorArea_->showTerminalPanel();
+                    editorArea_->terminalPanel()->openShell();
+                }
+                else
+                    editorArea_->hideTerminalPanel();
+                activityRibbon_->setActivePanel(wantsOpen ? hathor::ui::Panel::Terminal : hathor::ui::Panel::None);
+                editorArea_->resized(); // re-lay-out editor area
+            }
+
             // L-3: Problems panel toggles the bottom-docked problems panel.
             if (panel == hathor::ui::Panel::Problems)
             {

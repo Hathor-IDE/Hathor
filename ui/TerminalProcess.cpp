@@ -20,6 +20,7 @@
 #include <cerrno>
 #include <chrono>
 #include <cstring>
+#include <mutex>
 #include <sstream>
 #include <system_error>
 
@@ -31,10 +32,13 @@
 #  include <windows.h>
 #else
 #  include <fcntl.h>
+#  include <signal.h>
 #  include <spawn.h>
 #  include <sys/wait.h>
 #  include <unistd.h>
 #endif
+
+namespace hathor::ui {
 
 // ---------------------------------------------------------------------------
 // TerminalRingBuffer
@@ -62,7 +66,6 @@ void TerminalRingBuffer::push(const char* data, std::size_t len) noexcept
     for (std::size_t i = 0; i < len; ++i)
     {
         // If the ring is full, drop the oldest byte (advance read index).
-        // This prevents the worker thread from ever blocking on a full ring.
         if ((w - r) == static_cast<uint32_t>(capacity_))
         {
             r = (r + 1) & mask;
@@ -101,7 +104,7 @@ bool TerminalRingBuffer::empty() const noexcept
 }
 
 // ---------------------------------------------------------------------------
-// TerminalProcess
+// TerminalProcess — Construction / destruction
 // ---------------------------------------------------------------------------
 
 TerminalProcess::TerminalProcess()
@@ -136,6 +139,7 @@ bool TerminalProcess::launch(const std::vector<std::string>& argv,
         std::lock_guard<std::mutex> lk(errorMutex_);
         lastError_ = "TerminalProcess already in use";
         state_.store(State::Idle, std::memory_order_release);
+        closePipes();
         return false;
     }
 
@@ -208,7 +212,7 @@ void TerminalProcess::cancel(int killGraceMs)
             if (result == 0)
             {
                 ::kill(static_cast<pid_t>(pid), SIGKILL);
-                ::waitpid(static_cast<pid_t>(pid), &status, 0);
+                ::waitpid(static_cast<pid_t>(pid), nullptr, 0);
             }
         }
 #endif
@@ -224,27 +228,20 @@ std::optional<TerminalProcess::ExitStatus> TerminalProcess::waitForExit(int time
     {
         if (timeoutMs == 0)
         {
-            // Non-blocking: just check if the thread has finished.
-            if (workerThread_.joinable())
-            {
-                // Can't non-blockingly check std::thread. Use a short timed_join.
+            // Non-blocking: join immediately if done.
+            if (state_.load(std::memory_order_acquire) == State::Done)
                 workerThread_.join();
-            }
         }
         else
         {
-            // Timed join — not directly supported by std::thread, so we poll
-            // the state flag instead.
+            // Timed wait: poll the state flag.
             while (std::chrono::steady_clock::now() < deadline)
             {
                 if (state_.load(std::memory_order_acquire) == State::Done)
                     break;
                 std::this_thread::sleep_for(std::chrono::milliseconds(10));
             }
-        }
 
-        if (workerThread_.joinable())
-        {
             if (state_.load(std::memory_order_acquire) == State::Done)
                 workerThread_.join();
         }
@@ -254,12 +251,6 @@ std::optional<TerminalProcess::ExitStatus> TerminalProcess::waitForExit(int time
     {
         return exitStatus();
     }
-
-    if (timeoutMs == 0)
-        return std::nullopt;
-
-    if (state_.load(std::memory_order_acquire) == State::Done)
-        return exitStatus();
 
     return std::nullopt;
 }
@@ -281,10 +272,14 @@ void TerminalProcess::shutdown()
         {
 #ifdef _WIN32
             HANDLE h = OpenProcess(PROCESS_TERMINATE, FALSE, static_cast<DWORD>(pid));
-            if (h) { TerminateProcess(h, 1); CloseHandle(h); }
+            if (h)
+            {
+                TerminateProcess(h, 1);
+                CloseHandle(h);
+            }
 #else
             ::kill(static_cast<pid_t>(pid), SIGTERM);
-            // Brief grace period.
+            // Brief grace period (blocking — safe in shutdown path).
             auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(500);
             while (std::chrono::steady_clock::now() < deadline)
             {
@@ -320,11 +315,9 @@ void TerminalProcess::shutdown()
 
 void TerminalProcess::workerLoop()
 {
-    char buf[4096];
-
     while (!workerStop_.load(std::memory_order_acquire))
     {
-        // Try to read available output from both stdout and stderr.
+        // Try to read available output from the child's stdout/stderr pipes.
         readAvailableOutput();
 
         // Check if the child has exited.
@@ -358,24 +351,17 @@ void TerminalProcess::workerLoop()
             state_.store(State::Done, std::memory_order_release);
     }
 
-    // Fire the exit callback on the JUCE message thread.
-    // NOTE: TerminalProcess is constructed before JUCE is fully available in
-    // some test scenarios, so we check for the callback. The TerminalPanel
-    // is responsible for marshalling via MessageManager when it owns this.
+    // Fire the exit callback. The TerminalPanel marshals this to the JUCE
+    // message thread via MessageManager::callAsync before calling this.
     if (onProcessExited)
-    {
-        // Post to the JUCE message thread if possible. In test contexts without
-        // a running message loop, the callback runs on this worker thread —
-        // callers must not assume message-thread execution in tests.
         onProcessExited();
-    }
 }
 
 void TerminalProcess::readAvailableOutput()
 {
     char buf[4096];
 
-    // Read from stdout (merged stderr on POSIX).
+    // Read from stdout (stderr is merged into stdout on POSIX).
     if (stdoutRead_ != -1)
     {
         ssize_t n = 0;
@@ -392,8 +378,8 @@ void TerminalProcess::readAvailableOutput()
         {
             outputRing_.push(buf, static_cast<std::size_t>(n));
         }
-        // On EAGAIN/EWOULDBLOCK, just return (no data available now).
-        // On n <= 0 (EOF or error), the worker loop will reap the child.
+        // On EAGAIN/EWOULDBLOCK (n == -1, errno == EAGAIN), just return.
+        // On n == 0 (EOF) or n < 0 (error), the worker loop will reap the child.
     }
 }
 
@@ -480,19 +466,17 @@ TerminalProcess::ExitStatus TerminalProcess::exitStatus() const
 
 #ifndef _WIN32
 
+// environ is declared in <unistd.h> on POSIX systems, but some toolchains
+// require an explicit extern declaration.
+extern char** environ;
+
 bool TerminalProcess::spawnPosix(const std::vector<std::string>& argv,
                                   const std::string& cwd)
 {
-    // Create pipes for child stdout (and stderr, which we merge into stdout).
+    // Create a pipe for the child's stdout (stderr is merged into stdout).
     // stdoutPipe_[0] = read end (parent), stdoutPipe_[1] = write end (child)
     int stdoutPipe[2] = {-1, -1};
-    // stderrPipe: redirect child stderr to stdout pipe.
-    int stderrPipe[2] = {-1, -1};
 
-    // For a terminal, we want both stdout and stderr visible. We can either
-    // create separate pipes (more complex) or merge stderr into stdout.
-    // Merging is simpler and sufficient for a developer terminal. We'll use
-    // a single pipe for stdout and dup2 stderr to the same fd.
     if (::pipe(stdoutPipe) != 0)
     {
         std::lock_guard<std::mutex> lk(errorMutex_);
@@ -500,8 +484,11 @@ bool TerminalProcess::spawnPosix(const std::vector<std::string>& argv,
         return false;
     }
 
-    // Set the stdout read end to non-blocking so our worker thread can poll.
+    // Set the stdout read end to non-blocking so our worker thread can poll
+    // without blocking. This is how we avoid blocking I/O on the worker thread.
     int flags = ::fcntl(stdoutPipe[0], F_GETFL, 0);
+    if (flags == -1)
+        flags = 0;
     ::fcntl(stdoutPipe[0], F_SETFL, flags | O_NONBLOCK);
 
     // Prepare file actions for posix_spawn.
@@ -516,21 +503,60 @@ bool TerminalProcess::spawnPosix(const std::vector<std::string>& argv,
     // Close all pipe ends in the child (after dup2).
     ::posix_spawn_file_actions_addclose(&fileActions, stdoutPipe[0]);
     ::posix_spawn_file_actions_addclose(&fileActions, stdoutPipe[1]);
-    ::posix_spawn_file_actions_addclose(&fileActions, stderrPipe[0]);
-    ::posix_spawn_file_actions_addclose(&fileActions, stderrPipe[1]);
 
-    // Optionally set the working directory via chdir in file actions.
-    // posix_spawn doesn't have a chdir file action, so we use a pre-spawn
-    // approach: set cwd_ on spawnattr (not portable) — instead, we just
-    // spawn and the child inherits cwd. For a full terminal, the shell
-    // handles its own cwd. For tasks, we pass cwd and use a wrapper.
-    //
-    // Actually, posix_spawn_file_actions_addchdir_np is a non-standard
-    // extension. For portable cwd support, we can use the approach of
-    // spawning via a shell: /bin/sh -c "cd <dir> && exec <cmd>". But
-    // the task runner will pass cwd explicitly. For now, if cwd is
-    // non-empty, we use a spawnattr with POSIX_SPAWN_SETSD or just
-    // spawn normally and rely on the parent's cwd (which is the project dir).
+    // Optionally set the working directory.
+    // On macOS/BSD and glibc, addchdir_np is available.
+    if (!cwd.empty())
+    {
+#ifdef __APPLE__
+        ::posix_spawn_file_actions_addchdir_np(&fileActions, cwd.c_str());
+#elif defined(__GLIBC__)
+        ::posix_spawn_file_actions_addchdir_np(&fileActions, cwd.c_str());
+#else
+        // Fallback: spawn via /bin/sh -c "cd <dir> && exec ..."
+        std::string cmd = "cd \"" + cwd + "\" && exec \"";
+        for (size_t i = 0; i < argv.size(); ++i)
+        {
+            if (i > 0)
+                cmd += "\" \"";
+            cmd += argv[i];
+        }
+        cmd += "\"";
+        // Rebuild argv for /bin/sh
+        std::vector<std::string> shellArgv = {"/bin/sh", "-c", cmd};
+        std::vector<char*> argvArr;
+        argvArr.reserve(shellArgv.size() + 1);
+        for (auto& s : shellArgv)
+            argvArr.push_back(s.data());
+        argvArr.push_back(nullptr);
+
+        pid_t pid = 0;
+        const int rc = ::posix_spawn(&pid,
+                                     "/bin/sh",
+                                     &fileActions,
+                                     nullptr,
+                                     argvArr.data(),
+                                     environ);
+
+        ::posix_spawn_file_actions_destroy(&fileActions);
+
+        if (rc != 0)
+        {
+            std::lock_guard<std::mutex> lk(errorMutex_);
+            lastError_ = "posix_spawn failed: " + std::string(std::strerror(rc));
+            ::close(stdoutPipe[0]);
+            ::close(stdoutPipe[1]);
+            return false;
+        }
+
+        ::close(stdoutPipe[1]);
+        stdoutRead_ = stdoutPipe[0];
+        stderrRead_ = -1;
+        stdinWrite_ = -1;
+        pid_.store(static_cast<int>(pid), std::memory_order_release);
+        return true;
+#endif
+    }
 
     // Build the argv array (posix_spawn needs modifiable char* const*).
     std::vector<std::string> argStrs;
@@ -543,48 +569,14 @@ bool TerminalProcess::spawnPosix(const std::vector<std::string>& argv,
         argvArr.push_back(s.data());
     argvArr.push_back(nullptr);
 
-    // Build a modified environment that includes PWD if cwd is set.
-    // For simplicity, we spawn with the parent's environment. If cwd is
-    // non-empty, we use posix_spawn_file_actions_addchdir_np (BSD/macOS)
-    // or fall back to spawning through /bin/sh.
+    // Spawn with the parent's environment.
     pid_t pid = 0;
-
-    if (!cwd.empty())
-    {
-        // On macOS/BSD, addchdir_np is available. On Linux/glibc, it's
-        // available as addchdir_np as well (GNU extension).
-#ifdef __APPLE__
-        ::posix_spawn_file_actions_addchdir_np(&fileActions, cwd.c_str());
-#elif defined(__GLIBC__)
-        ::posix_spawn_file_actions_addchdir_np(&fileActions, cwd.c_str());
-#else
-        // Fallback: spawn via /bin/sh -c "cd <cwd> && exec ..."
-        // This is used only when neither macOS nor glibc is detected.
-        std::string cmd = "cd \"" + cwd + "\" && exec \"";
-        for (size_t i = 0; i < argStrs.size(); ++i)
-        {
-            if (i > 0) cmd += "\" \"";
-            cmd += argStrs[i];
-        }
-        cmd += "\"";
-        // Rebuild argv for /bin/sh
-        argStrs.clear();
-        argStrs.push_back("/bin/sh");
-        argStrs.push_back("-c");
-        argStrs.push_back(cmd);
-        argvArr.clear();
-        for (auto& s : argStrs)
-            argvArr.push_back(s.data());
-        argvArr.push_back(nullptr);
-#endif
-    }
-
     const int rc = ::posix_spawn(&pid,
                                  argvArr[0],
                                  &fileActions,
                                  nullptr,  // default spawn attributes
                                  argvArr.data(),
-                                 ::environ);
+                                 environ);
 
     ::posix_spawn_file_actions_destroy(&fileActions);
 
@@ -597,8 +589,8 @@ bool TerminalProcess::spawnPosix(const std::vector<std::string>& argv,
         return false;
     }
 
-    // Parent: close the child-side pipe ends.
-    ::close(stdoutPipe[1]);  // close child's stdout write end
+    // Parent: close the child-side pipe end.
+    ::close(stdoutPipe[1]);
     stdoutRead_ = stdoutPipe[0];  // save read end for worker thread
     stderrRead_ = -1;  // merged into stdout
     stdinWrite_ = -1;  // not using stdin
@@ -622,14 +614,13 @@ void TerminalProcess::terminatePosix(bool force)
 #else // _WIN32
 
 // ---------------------------------------------------------------------------
-// Windows spawn implementation (stub — POSIX is the primary target)
+// Windows spawn implementation
 // ---------------------------------------------------------------------------
 
 bool TerminalProcess::spawnWindows(const std::vector<std::string>& argv,
                                     const std::string& cwd)
 {
     // Build a command line string from argv.
-    // (Windows CreateProcess takes a flat command line, not an argv array.)
     std::string cmdLine;
     for (size_t i = 0; i < argv.size(); ++i)
     {
@@ -675,14 +666,14 @@ bool TerminalProcess::spawnWindows(const std::vector<std::string>& argv,
     std::wstring wCwd(cwd.begin(), cwd.end());
 
     BOOL ok = CreateProcessW(
-        nullptr,                          // application name
-        wCmd.data(),                      // command line
-        nullptr, nullptr,                 // process/thread security
-        TRUE,                             // inherit handles
-        0,                                // creation flags
-        nullptr,                          // environment
-        wCwd.empty() ? nullptr : wCwd.c_str(), // working directory
-        nullptr,                          // startup info
+        nullptr,
+        wCmd.data(),
+        nullptr, nullptr,
+        TRUE,
+        0,
+        nullptr,
+        wCwd.empty() ? nullptr : wCwd.c_str(),
+        &si,
         &pi);
 
     if (!ok)
@@ -704,7 +695,7 @@ bool TerminalProcess::spawnWindows(const std::vector<std::string>& argv,
     return true;
 }
 
-void TerminalProcess::terminateWindows()
+void TerminalProcess::terminateWindows(bool force)
 {
     const int pid = pid_.load(std::memory_order_acquire);
     if (pid <= 0)
@@ -712,9 +703,11 @@ void TerminalProcess::terminateWindows()
     HANDLE h = OpenProcess(PROCESS_TERMINATE, FALSE, static_cast<DWORD>(pid));
     if (h)
     {
-        TerminateProcess(h, 1);
+        TerminateProcess(h, force ? 1 : 0);
         CloseHandle(h);
     }
 }
 
 #endif // _WIN32
+
+} // namespace hathor::ui
