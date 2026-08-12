@@ -541,7 +541,11 @@ void HathorTab::editorContextMenuSelected(int menuItemID)
         case 3:  editor_.cutToClipboard(); break;
         case 4:  editor_.copyToClipboard(); break;
         case 5:  editor_.pasteFromClipboard(); break;
-        case 6:  editor_.removeSelectedText(); break;
+        case 6:  editor_.getDocument().deleteSection(
+                    editor_.getSelectionStart().getPosition(),
+                    editor_.getSelectionEnd().getPosition());
+                break;
+
         case 7:  editor_.selectAll(); break;
         case 8:  onShowFindPanel(); break;
         case 9:  onShowReplacePanel(); break;
@@ -559,16 +563,16 @@ void HathorTab::editorContextMenuSelected(int menuItemID)
 
 void HathorTab::mouseUp(const juce::MouseEvent& e)
 {
-    if (e.button == juce::MouseButton::right)
+    if (e.mods.isRightButtonDown())
     {
         juce::PopupMenu menu = prepareEditorContextMenu();
-        auto mousePos = e.getScreenPosition().roundToInt();
+        auto mousePos = juce::Desktop::getInstance().getMousePosition().roundToInt();
         menu.showMenuAsync(
-            juce::PopupMenu::Options()
-                .withTargetScreenArea(juce::Rectangle<int>(mousePos.x + 10, mousePos.y + 10, 1, 1))
-                .withOnItemSelected([this](int itemID) {
-                    editorContextMenuSelected(itemID);
-                }));
+            juce::PopupMenu::Options().withTargetScreenArea(
+                juce::Rectangle<int>(mousePos.x + 10, mousePos.y + 10, 1, 1)),
+            [this](int itemID) {
+                editorContextMenuSelected(itemID);
+            });
     }
 }
 
