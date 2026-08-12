@@ -14,6 +14,7 @@
 #include <algorithm>
 #include <cctype>
 #include <filesystem>
+#include <fstream>
 #include <string>
 
 namespace hathor::ui {
@@ -39,8 +40,7 @@ void SymbolSearchModel::searchMetadata(std::string_view query)
 
     std::string lowerQuery = toLowerStr(query);
 
-    const auto& functions = metadata_->functions();
-    for (const auto& fn : functions)
+    for (const auto& fn : metadata_->functions)
     {
         std::string lowerName = toLowerStr(fn.name);
         if (lowerName.find(lowerQuery) != std::string::npos)
@@ -48,8 +48,8 @@ void SymbolSearchModel::searchMetadata(std::string_view query)
             SymbolSearchResult result;
             result.name = fn.name;
             result.kind = "function";
-            result.detail = fn.signature.value_or("");
-            result.containerName = fn.category.value_or("");
+            result.detail = fn.signature;
+            result.containerName = fn.category;
             result.isBuiltin = true;
             result.uri = "hathor://builtin/strudel";
             result.line = 0;
@@ -58,16 +58,16 @@ void SymbolSearchModel::searchMetadata(std::string_view query)
         }
     }
 
-    const auto& samples = metadata_->samples();
-    for (const auto& sample : samples)
+    for (const auto& sample : metadata_->samples)
     {
-        std::string lowerName = toLowerStr(sample);
+        std::string lowerName = toLowerStr(sample.name);
         if (lowerName.find(lowerQuery) != std::string::npos)
         {
             SymbolSearchResult result;
-            result.name = sample;
+            result.name = sample.name;
             result.kind = "sample";
-            result.detail = "sample";
+            result.detail = sample.description;
+            result.containerName = sample.category;
             result.isBuiltin = true;
             result.uri = "hathor://builtin/samples";
             result.line = 0;
@@ -76,33 +76,14 @@ void SymbolSearchModel::searchMetadata(std::string_view query)
         }
     }
 
-    const auto& scales = metadata_->scales();
-    for (const auto& scale : scales)
-    {
-        std::string lowerName = toLowerStr(scale);
-        if (lowerName.find(lowerQuery) != std::string::npos)
-        {
-            SymbolSearchResult result;
-            result.name = scale;
-            result.kind = "scale";
-            result.detail = "scale";
-            result.isBuiltin = true;
-            result.uri = "hathor://builtin/scales";
-            result.line = 0;
-            result.column = 0;
-            metadataResults_.push_back(std::move(result));
-        }
-    }
+    rebuildResults();
 }
 
 void SymbolSearchModel::setLspResults(const std::vector<SymbolSearchResult>& lspResults)
 {
     lspResults_ = lspResults;
     lspResultsValid_ = !lspResults_.empty();
-    results_.clear();
-    results_.insert(results_.end(), metadataResults_.begin(), metadataResults_.end());
-    results_.insert(results_.end(), fileResults_.begin(), fileResults_.end());
-    results_.insert(results_.end(), lspResults_.begin(), lspResults_.end());
+    rebuildResults();
 }
 
 void SymbolSearchModel::searchWorkspaceFiles(const std::filesystem::path& workspaceRoot,
@@ -188,6 +169,11 @@ void SymbolSearchModel::searchWorkspaceFiles(const std::filesystem::path& worksp
     }
 
     // Rebuild combined results
+    rebuildResults();
+}
+
+void SymbolSearchModel::rebuildResults()
+{
     results_.clear();
     results_.insert(results_.end(), metadataResults_.begin(), metadataResults_.end());
     results_.insert(results_.end(), fileResults_.begin(), fileResults_.end());

@@ -23,6 +23,8 @@
 #include <string_view>
 #include <vector>
 
+#include <nlohmann/json.hpp>
+
 #include "hathor/LanguageMetadata.hpp"
 
 namespace hathor::ui {
@@ -91,6 +93,8 @@ private:
     bool lspResultsValid_ = false;
 
     std::vector<SymbolSearchResult> fileResults_;
+
+    void rebuildResults();
 };
 
 } // namespace hathor::ui

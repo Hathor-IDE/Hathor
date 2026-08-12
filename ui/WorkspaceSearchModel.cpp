@@ -79,10 +79,10 @@ int WorkspaceSearchModel::search(std::string_view query,
     {
         try
         {
-            patternRegex.assign(query.begin(), query.end(),
-                               std::regex::ECMAScript |
-                                   (flags.caseSensitive ? std::regex_constants::mask_none
-                                                        : std::regex_constants::icase));
+            std::regex::flag_type regexFlags = std::regex_constants::ECMAScript;
+            if (!flags.caseSensitive)
+                regexFlags |= std::regex_constants::icase;
+            patternRegex.assign(query.begin(), query.end(), regexFlags);
         }
         catch (const std::regex_error&)
         {
@@ -265,10 +265,10 @@ int WorkspaceSearchModel::replaceInFile(const std::filesystem::path& filePath,
     {
         try
         {
-            std::regex patternRegex(query.begin(), query.end(),
-                                   std::regex::ECMAScript |
-                                       (flags.caseSensitive ? std::regex_constants::mask_none
-                                                            : std::regex_constants::icase));
+            std::regex::flag_type regexFlags = std::regex_constants::ECMAScript;
+            if (!flags.caseSensitive)
+                regexFlags |= std::regex_constants::icase;
+            std::regex patternRegex(query.begin(), query.end(), regexFlags);
             content = std::regex_replace(content, patternRegex, std::string(replacement));
             count = static_cast<int>(std::distance(
                 std::sregex_iterator(content.begin(), content.end(), patternRegex),

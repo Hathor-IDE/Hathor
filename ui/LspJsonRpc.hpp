@@ -216,22 +216,22 @@ public:
     /**
      * Parse a Location or array of Locations from a definition/references response.
      */
-    static NavigationResult parseNavigationResult(const json& j);
+    static NavigationResult parseNavigationResult(const nlohmann::json& j);
 
     /**
      * Parse SymbolInformation array from a documentSymbol / workspaceSymbol response.
      */
-    static DocumentSymbolResult parseDocumentSymbolResult(const json& j);
+    static DocumentSymbolResult parseDocumentSymbolResult(const nlohmann::json& j);
 
     /**
      * Parse SymbolInformation array from workspace/symbol response.
      */
-    static WorkspaceSymbolResult parseWorkspaceSymbolResult(const json& j);
+    static WorkspaceSymbolResult parseWorkspaceSymbolResult(const nlohmann::json& j);
 
     /**
      * Parse a prepareRename response — returns true if position is renamable.
      */
-    static bool parsePrepareRename(const json& j);
+    static bool parsePrepareRename(const nlohmann::json& j);
 
     /**
      * Parse a JSON string into an IncomingMessage.
