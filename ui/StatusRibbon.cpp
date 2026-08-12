@@ -83,6 +83,20 @@ void StatusRibbon::setMasterGain(float gain) noexcept
     repaint();
 }
 
+// ---------------------------------------------------------------------------
+// Git status
+// ---------------------------------------------------------------------------
+
+void StatusRibbon::setGitStatus(const std::string& branch,
+                                int stagedCount,
+                                int unstagedCount) noexcept
+{
+    gitBranch_ = branch;
+    gitStagedCount_ = stagedCount;
+    gitUnstagedCount_ = unstagedCount;
+    repaint();
+}
+
 void StatusRibbon::setRegistry(hathor::control::DiagnosticRegistry* registry) noexcept
 {
     registry_ = registry;
@@ -114,6 +128,7 @@ void StatusRibbon::layoutIndicators()
     transportBox_.bounds = {x, 4, indicatorW, h - 8}; transportBox_.active = transportRunning_; x += indicatorW + 4;
     workerBox_.bounds    = {x, 4, indicatorW, h - 8}; workerBox_.active = workerAlive_;        x += indicatorW + 4;
     lspBox_.bounds       = {x, 4, indicatorW, h - 8}; lspBox_.active = lspConnected_;         x += indicatorW + 4;
+    gitBox_.bounds       = {x, 4, 140, h - 8}; gitBox_.active = (gitStagedCount_ + gitUnstagedCount_) > 0; x += 144;
     gainBox_.bounds      = {x, 4, getWidth() - x - 8, h - 8}; gainBox_.active = true;
 }
 
@@ -223,6 +238,39 @@ void StatusRibbon::paint(juce::Graphics& g)
                    juce::Justification::centredLeft, false);
     }
 
+    // --- Git indicator ---
+    {
+        const bool hasChanges = (gitStagedCount_ + gitUnstagedCount_) > 0;
+        const juce::Colour dotCol = hasChanges ? palette.accent : palette.textMuted;
+        g.setColour(dotCol);
+        // Draw a git "branch" icon (two arcs forming a circle)
+        g.fillEllipse(static_cast<float>(gitBox_.bounds.getX() + 4),
+                      static_cast<float>(gitBox_.bounds.getY() + (gitBox_.bounds.getHeight() - 8) / 2),
+                      8.0f, 8.0f);
+        // Draw a small arc for the "arrow" part of the git logo
+        juce::Path gitPath;
+        gitPath.addCentredArc(
+            static_cast<float>(gitBox_.bounds.getX() + 12),
+            static_cast<float>(gitBox_.bounds.getY() + gitBox_.bounds.getHeight() / 2),
+            6.0f, 6.0f, 0.0,
+            juce::PathAngleUtil::fromDegrees(30.0f), juce::PathAngleUtil::fromDegrees(200.0f));
+        g.setColour(dotCol.withAlpha(0.6f));
+        g.strokePath(gitPath, juce::PathStrokeType(1.5f));
+
+        g.setColour(palette.textPrimary);
+        juce::String text = juce::String::toStdString(gitBranch_).empty()
+            ? "Git: n/a"
+            : ("Git: " + juce::String(gitBranch_));
+        if (gitStagedCount_ > 0)
+            text << " +S" << gitStagedCount_;
+        if (gitUnstagedCount_ > 0)
+            text << " ~" << gitUnstagedCount_;
+        g.drawText(text,
+                   juce::Rectangle<int>(gitBox_.bounds.getX() + 16, gitBox_.bounds.getY(),
+                                        gitBox_.bounds.getWidth() - 16, gitBox_.bounds.getHeight()),
+                   juce::Justification::centredLeft, false);
+    }
+
     // --- Master gain ---
     {
         g.setColour(palette.textPrimary);
@@ -267,6 +315,11 @@ void StatusRibbon::mouseDown(const juce::MouseEvent& e)
     if (lspBox_.bounds.contains(pos) && onLspClicked)
     {
         onLspClicked();
+        return;
+    }
+    if (gitBox_.bounds.contains(pos) && onGitClicked)
+    {
+        onGitClicked();
         return;
     }
 }

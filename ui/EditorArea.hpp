@@ -76,6 +76,9 @@
 // L-4: Terminal panel
 #include "TerminalPanel.hpp"
 
+// L-5: Git source control panel
+#include "SourceControlPanel.hpp"
+
 namespace hathor::ui {
 
 // ---------------------------------------------------------------------------
@@ -400,6 +403,20 @@ public:
         return terminalPanel_.get();
     }
 
+    // -----------------------------------------------------------------------
+    // L-5: Git source control panel
+    // -----------------------------------------------------------------------
+
+    /// Show or hide the source control panel.
+    void showSourceControlPanel();
+    void hideSourceControlPanel();
+
+    /// Get the source control panel (non-owning, for MainWindow ribbon wiring).
+    SourceControlPanel* sourceControlPanel() noexcept
+    {
+        return sourceControlPanel_.get();
+    }
+
     /**
      * Set the workspace root directory for search and quick-open.
      * Called by MainWindow after project loading.
@@ -697,6 +714,9 @@ private:
 
     // L-4: Simple integrated terminal panel (bottom-docked, like ProblemsPanel)
     std::unique_ptr<hathor::ui::TerminalPanel>           terminalPanel_;
+
+    // L-5: Git source control panel (bottom-docked)
+    std::unique_ptr<SourceControlPanel>                  sourceControlPanel_;
 
     std::filesystem::path workspaceRoot_;
 

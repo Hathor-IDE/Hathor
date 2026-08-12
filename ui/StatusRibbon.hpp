@@ -16,9 +16,10 @@
  *   - Transport: play/stop icon + BPM
  *   - Worker: alive/dead (green/red dot)
  *   - LSP: connected/disconnected (blue/grey dot)
+ *   - Git: branch name + change count (git icon)
  *   - Master gain level (text)
  *
- * Requirement references: L-3 §5
+ * Requirement references: L-3 §5, L-5 §Ribbon
  */
 
 #include <juce_gui_extra/juce_gui_extra.h>
@@ -52,6 +53,15 @@ public:
     void setLspConnected(bool connected) noexcept;
     void setMasterGain(float gain) noexcept;
 
+    /// Set the Git status (branch name + change counts). Called by
+    /// SourceControlPanel / EditorArea on refresh.
+    /// @param branch       Current branch name (empty = no repo / detached).
+    /// @param stagedCount  Number of staged changes.
+    /// @param unstagedCount Number of unstaged changes.
+    void setGitStatus(const std::string& branch,
+                      int stagedCount,
+                      int unstagedCount) noexcept;
+
     // -----------------------------------------------------------------------
     // Registry binding — auto-updates error/warning counts when diagnostics change
     // -----------------------------------------------------------------------
@@ -64,6 +74,7 @@ public:
     std::function<void()> onTransportClicked;  ///< toggle play/stop
     std::function<void()> onWorkerClicked;    ///< focus worker status
     std::function<void()> onLspClicked;       ///< focus LSP status
+    std::function<void()> onGitClicked;       ///< open source-control panel (L-5)
 
     // -----------------------------------------------------------------------
     // juce::Component
@@ -98,12 +109,18 @@ private:
     bool  lspConnected_ = false;
     float masterGain_ = 1.0f;
 
+    // Git status
+    std::string gitBranch_;
+    int gitStagedCount_ = 0;
+    int gitUnstagedCount_ = 0;
+
     // Cached indicator rectangles for click hit-testing
     IndicatorBox errorBox_;
     IndicatorBox warningBox_;
     IndicatorBox transportBox_;
     IndicatorBox workerBox_;
     IndicatorBox lspBox_;
+    IndicatorBox gitBox_;
     IndicatorBox gainBox_;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(StatusRibbon)

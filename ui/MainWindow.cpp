@@ -121,6 +121,32 @@ MainWindow::MainWindow(AudioEngine& audio,
         }
     };
 
+    // L-5: Clicking the Git indicator in the StatusRibbon opens the
+    // source-control panel.
+    statusRibbon_->onGitClicked = [this]()
+    {
+        if (editorArea_)
+        {
+            // Close other bottom-docked panels.
+            editorArea_->hideProblemsPanel();
+            editorArea_->hideTerminalPanel();
+
+            const bool wantsOpen = !editorArea_->sourceControlPanel()->isVisible();
+            if (wantsOpen)
+            {
+                editorArea_->showSourceControlPanel();
+                editorArea_->sourceControlPanel()->refresh();
+            }
+            else
+            {
+                editorArea_->hideSourceControlPanel();
+            }
+            activityRibbon_->setActivePanel(
+                wantsOpen ? hathor::ui::Panel::VersionControl : hathor::ui::Panel::None);
+            editorArea_->resized();
+        }
+    };
+
     // Task 3.9: Create real SliderPanel with ControlInterface for dispatching.
     sliderPanel_ = std::make_unique<hathor::ui::SliderPanel>(ci_);
 
@@ -238,6 +264,22 @@ MainWindow::MainWindow(AudioEngine& audio,
                 else
                     editorArea_->hideProblemsPanel();
                 activityRibbon_->setActivePanel(wantsOpen ? hathor::ui::Panel::Problems : hathor::ui::Panel::None);
+                editorArea_->resized(); // re-lay-out editor area
+            }
+
+            // L-5: Version Control panel toggles the bottom-docked source
+            // control panel (Changes/Commit + History with Git graph).
+            if (panel == hathor::ui::Panel::VersionControl)
+            {
+                const bool wantsOpen = (activityRibbon_->activePanel() != hathor::ui::Panel::VersionControl);
+                if (wantsOpen)
+                {
+                    editorArea_->showSourceControlPanel();
+                    editorArea_->sourceControlPanel()->refresh();
+                }
+                else
+                    editorArea_->hideSourceControlPanel();
+                activityRibbon_->setActivePanel(wantsOpen ? hathor::ui::Panel::VersionControl : hathor::ui::Panel::None);
                 editorArea_->resized(); // re-lay-out editor area
             }
         };
@@ -418,6 +460,28 @@ MainWindow::MainWindow(AudioEngine& audio,
               statusRibbon_->setBpm(audio_.getBpm());
               statusRibbon_->setWorkerAlive(audio_.hasWorker());
               statusRibbon_->setLspConnected(editorArea_->isLspConnected());
+
+              // L-5: Git status from the SourceControlPanel's repository model.
+              if (editorArea_->sourceControlPanel())
+              {
+                  auto* repo = editorArea_->sourceControlPanel()->repository();
+                  if (repo && repo->hasRepository())
+                  {
+                      auto entries = repo->getStatusEntries();
+                      int staged = 0, unstaged = 0;
+                      for (const auto& e : entries)
+                      {
+                          if (e.staged == GitStaged::Yes) ++staged;
+                          else ++unstaged;
+                      }
+                      statusRibbon_->setGitStatus(
+                          repo->getCurrentBranch(), staged, unstaged);
+                  }
+                  else
+                  {
+                      statusRibbon_->setGitStatus("", 0, 0);
+                  }
+              }
           }
       };
 

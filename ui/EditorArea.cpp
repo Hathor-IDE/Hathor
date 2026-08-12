@@ -462,6 +462,14 @@ EditorArea::EditorArea(AudioEngine& audio,
     addChildComponent(terminalPanel_.get());
     terminalPanel_->setVisible(false);
 
+    // L-5: Source control panel (bottom-docked, like ProblemsPanel/TerminalPanel).
+    // Initialized with the workspace root (project dir) so Git operations
+    // execute against the correct repository.
+    sourceControlPanel_ = std::make_unique<SourceControlPanel>(
+        workspaceRoot_.empty() ? "." : workspaceRoot_.string());
+    addChildComponent(sourceControlPanel_.get());
+    sourceControlPanel_->setVisible(false);
+
     // StatusRibbon is mounted by MainWindow at the bottom of the window;
     // do NOT addChildComponent here — it stays parented to MainWindow.
 }
@@ -911,12 +919,18 @@ void EditorArea::resized()
         problemsPanel_->setBounds(probArea);
     }
 
-    // L-4: Terminal panel at the bottom (if visible, takes priority over
-    // Problems since it was just opened)
+    // L-4: Terminal panel at the bottom (if visible)
     if (terminalPanel_ && terminalPanel_->isVisible())
     {
         auto termArea = b.removeFromBottom(TerminalPanel::kPanelHeight);
         terminalPanel_->setBounds(termArea);
+    }
+
+    // L-5: Source control panel at the bottom (if visible)
+    if (sourceControlPanel_ && sourceControlPanel_->isVisible())
+    {
+        auto gitArea = b.removeFromBottom(SourceControlPanel::kPanelHeight);
+        sourceControlPanel_->setBounds(gitArea);
     }
 
     // Active tab fills the middle
@@ -2307,6 +2321,31 @@ void EditorArea::hideTerminalPanel()
 }
 
 // ---------------------------------------------------------------------------
+// L-5: Source control panel visibility
+// ---------------------------------------------------------------------------
+
+void EditorArea::showSourceControlPanel()
+{
+    if (sourceControlPanel_)
+        sourceControlPanel_->setVisible(true);
+    // Hide other bottom-docked panels when source control is shown.
+    if (terminalPanel_)
+        terminalPanel_->setVisible(false);
+    if (problemsPanel_)
+        problemsPanel_->setVisible(false);
+    if (workspaceSearchPanel_)
+        workspaceSearchPanel_->setVisible(false);
+    if (symbolSearchPanel_)
+        symbolSearchPanel_->setVisible(false);
+}
+
+void EditorArea::hideSourceControlPanel()
+{
+    if (sourceControlPanel_)
+        sourceControlPanel_->setVisible(false);
+}
+
+// ---------------------------------------------------------------------------
 void EditorArea::registerEditorActions()
 {
     if (!actionRegistry_)
@@ -2409,6 +2448,57 @@ void EditorArea::registerEditorActions()
     actionRegistry_->setCallback("terminal.cancel", [this]() {
         if (terminalPanel_ && terminalPanel_->isRunning())
             terminalPanel_->cancelProcess();
+    });
+
+    // L-5: Git source control actions
+    actionRegistry_->registerAction("git.toggle",          "Toggle Source Control",  "Git",    "Show/hide the Git source control panel");
+    actionRegistry_->registerAction("git.commit",         "Commit",                 "Git",    "Commit staged changes");
+    actionRegistry_->registerAction("git.push",           "Push",                   "Git",    "Push to remote");
+    actionRegistry_->registerAction("git.pull",           "Pull",                   "Git",    "Pull from remote");
+    actionRegistry_->registerAction("git.stageAll",       "Stage All",              "Git",    "Stage all changes");
+    actionRegistry_->registerAction("git.createBranch",   "Create Branch…",         "Git",    "Create a new branch");
+    actionRegistry_->registerAction("git.switchBranch",   "Switch Branch…",         "Git",    "Switch to another branch");
+
+    if (auto k = parseKeyEquivalent("Cmd+Shift+G"))  actionRegistry_->bindKey(*k, "git.toggle");
+
+    actionRegistry_->setCallback("git.toggle", [this]() {
+        if (sourceControlPanel_ && sourceControlPanel_->isVisible())
+        {
+            hideSourceControlPanel();
+            activityRibbon_->setActivePanel(hathor::ui::Panel::None);
+        }
+        else
+        {
+            showSourceControlPanel();
+            if (sourceControlPanel_)
+                sourceControlPanel_->refresh();
+            activityRibbon_->setActivePanel(hathor::ui::Panel::VersionControl);
+        }
+        resized();
+    });
+    actionRegistry_->setCallback("git.commit", [this]() {
+        if (sourceControlPanel_)
+            sourceControlPanel_->commit();
+    });
+    actionRegistry_->setCallback("git.push", [this]() {
+        if (sourceControlPanel_)
+            sourceControlPanel_->push();
+    });
+    actionRegistry_->setCallback("git.pull", [this]() {
+        if (sourceControlPanel_)
+            sourceControlPanel_->pull();
+    });
+    actionRegistry_->setCallback("git.stageAll", [this]() {
+        if (sourceControlPanel_)
+            sourceControlPanel_->stageSelected();
+    });
+    actionRegistry_->setCallback("git.createBranch", [this]() {
+        if (sourceControlPanel_)
+            sourceControlPanel_->createBranch();
+    });
+    actionRegistry_->setCallback("git.switchBranch", [this]() {
+        if (sourceControlPanel_)
+            sourceControlPanel_->switchBranch();
     });
 }
 
