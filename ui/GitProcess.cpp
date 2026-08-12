@@ -92,8 +92,11 @@ GitProcess::runSync(const std::vector<std::string>& argv,
     {
         result.timedOut = true;
         result.exitCode = -1;
-        process_.cancel();
     }
+
+    // Reset the TerminalProcess state so it can be reused for the next call.
+    // shutdown() joins the worker thread and resets state to Idle.
+    process_.shutdown();
 
     return result;
 }
@@ -172,8 +175,10 @@ bool GitProcess::runAsync(const std::vector<std::string>& argv,
         {
             result.timedOut = true;
             result.exitCode = -1;
-            process_.cancel();
         }
+
+        // Reset the TerminalProcess state so it can be reused.
+        process_.shutdown();
 
         // Invoke callback on the worker thread.
         // Callers on the JUCE message thread must marshal this themselves.

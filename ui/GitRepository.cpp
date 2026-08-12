@@ -94,7 +94,8 @@ GitProcess::CompletionResult
 GitRepository::runGit(const std::vector<std::string>& args,
                       int timeoutMs)
 {
-    std::lock_guard lock(dataMutex_);
+    // NOTE: Must be called WHILE HOLDING dataMutex_.
+    // Callers already hold the lock, so we do NOT re-lock here.
     std::string path = repoPath_.empty() ? "." : repoPath_;
     return process_.runSync(args, path, timeoutMs);
 }
@@ -907,25 +908,26 @@ GitRepository::parsePorcelain(const std::string& output) const
 
         GitStatusEntry entry;
 
-        // Parse staged status (X)
+        // Parse staged status (X = line[0]).
         if (line[0] == ' ')
-        {
             entry.staged = GitStaged::No;
-        }
         else
-        {
             entry.staged = GitStaged::Yes;
-        }
 
         // Determine file status from X and Y.
-        // If X is not space, use X; otherwise use Y.
         char statusChar = ' ';
         if (line[0] != ' ')
             statusChar = line[0];
         else if (line.size() > 1 && line[1] != ' ')
             statusChar = line[1];
 
-        if (statusChar == 'M')
+        // Untracked files: "?? path"
+        if (line.size() >= 2 && line[0] == '?' && line[1] == '?')
+        {
+            entry.staged = GitStaged::No;
+            entry.status = GitFileStatus::Untracked;
+        }
+        else if (statusChar == 'M')
             entry.status = GitFileStatus::Modified;
         else if (statusChar == 'A')
             entry.status = GitFileStatus::Added;
@@ -933,14 +935,13 @@ GitRepository::parsePorcelain(const std::string& output) const
             entry.status = GitFileStatus::Deleted;
         else if (statusChar == 'R' || statusChar == 'C')
             entry.status = GitFileStatus::Renamed;
-        else if (line.substr(0, 3) == "??")
-            entry.status = GitFileStatus::Untracked;
-        else if (line.substr(0, 2) == "!!")
+        else if (line.size() >= 2 && line[0] == '!' && line[1] == '!')
             entry.status = GitFileStatus::UntrackedDir;
         else if (statusChar == ' ')
             entry.status = GitFileStatus::Clean;
         else
             entry.status = GitFileStatus::Modified;
+
 
         // Check for conflicts — git uses 'U' for unmerged, or specific
         // pairs like AA, DD, AU, UA, etc.
