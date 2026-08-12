@@ -76,10 +76,6 @@ public:
     explicit ProblemsPanel(hathor::control::DiagnosticRegistry* registry = nullptr);
     ~ProblemsPanel() override;
 
-    // Non-copyable
-    ProblemsPanel(const ProblemsPanel&) = delete;
-    ProblemsPanel& operator=(const ProblemsPanel&) = delete;
-
     // -----------------------------------------------------------------------
     // Visibility
     // -----------------------------------------------------------------------
@@ -127,9 +123,9 @@ public:
     /** Fired when the panel is closed. */
     std::function<void()> onClosePanel;
 
-private:
     // -----------------------------------------------------------------------
-    // Internal helpers (called by listeners defined in the .cpp)
+    // Internal callbacks — invoked by child listeners (public so listeners in
+    // the anonymous namespace can call them)
     // -----------------------------------------------------------------------
     void onSourceFilterChanged();
     void onDoubleClick();
@@ -197,6 +193,7 @@ private:
 
     bool showErrors_    = true;
     bool showWarnings_  = true;
+    bool showInfo_      = false;
     // Source filter (empty string = all sources)
     std::string         sourceFilterStr_; ///< empty = all sources
 

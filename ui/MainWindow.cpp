@@ -463,7 +463,7 @@ void MainWindow::resized()
 
     // L-3: StatusRibbon — 28 px strip at the very bottom
     if (statusRibbon_)
-        statusRibbon_->setBounds(b.removeFromBottom(StatusRibbon::kRibbonHeight));
+        statusRibbon_->setBounds(b.removeFromBottom(hathor::ui::StatusRibbon::kRibbonHeight));
 
     // 4. Editor area — fills the remaining centre region (Req 20.1, 20.3)
     if (editorArea_)

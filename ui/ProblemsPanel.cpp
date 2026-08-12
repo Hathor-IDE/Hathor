@@ -16,8 +16,28 @@
 namespace hathor::ui {
 
 // ---------------------------------------------------------------------------
-// Listener for source filter combo box (must be defined before ProblemsPanel
-// constructor that uses it).
+// Mouse handler for double-click navigation (must be defined before the
+// ProblemsPanel constructor that uses it).
+// ---------------------------------------------------------------------------
+
+namespace {
+
+class ListMouseHandler : public juce::MouseListener
+{
+public:
+    explicit ListMouseHandler(ProblemsPanel& panel) : panel_(panel) {}
+    void mouseDoubleClick(const juce::MouseEvent&) override
+    {
+        panel_.onDoubleClick();
+    }
+private:
+    ProblemsPanel& panel_;
+};
+
+} // namespace
+
+// ---------------------------------------------------------------------------
+// Mouse handler for source filter combo box
 // ---------------------------------------------------------------------------
 
 namespace {
@@ -90,32 +110,12 @@ ProblemsPanel::ProblemsPanel(hathor::control::DiagnosticRegistry* registry)
         auto src = static_cast<hathor::control::DiagSource>(i);
         sourceFilter_->addItem(juce::String(hathor::control::sourceLabel(src).data()), i + 2);
     }
-    sourceFilter_->selectItemWithId(1, juce::dontSendNotification);
+    sourceFilter_->setSelectedId(1, juce::dontSendNotification);
     sourceFilter_->setEditableText(false);
     addAndMakeVisible(sourceFilter_.get());
 
     rebuildRows();
 }
-
-// ---------------------------------------------------------------------------
-// Mouse handler for double-click navigation
-// ---------------------------------------------------------------------------
-
-namespace {
-
-class ListMouseHandler : public juce::MouseListener
-{
-public:
-    explicit ListMouseHandler(ProblemsPanel& panel) : panel_(panel) {}
-    void mouseDoubleClick(const juce::MouseEvent&) override
-    {
-        panel_.onDoubleClick();
-    }
-private:
-    ProblemsPanel& panel_;
-};
-
-} // namespace
 
 // ---------------------------------------------------------------------------
 // Visibility
@@ -190,8 +190,8 @@ void ProblemsPanel::setShowInfo(bool v) noexcept
 
 void ProblemsPanel::setSourceFilter(const std::string& sourceLabel)
 {
-    if (sourceFilter_ == sourceLabel) return;
-    sourceFilter_ = sourceLabel;
+    if (sourceFilterStr_ == sourceLabel) return;
+    sourceFilterStr_ = sourceLabel;
     rebuildRows();
 }
 
@@ -255,8 +255,8 @@ void ProblemsPanel::flattenIntoRows(const std::vector<hathor::control::Diagnosti
             continue;
 
         // Source filter
-        if (!sourceFilter_.empty() &&
-            std::string(hathor::control::sourceLabel(d.source)) != sourceFilter_)
+        if (!sourceFilterStr_.empty() &&
+            std::string(hathor::control::sourceLabel(d.source)) != sourceFilterStr_)
             continue;
 
         if (!current || current->uri != d.uri)
@@ -559,9 +559,9 @@ juce::String ProblemsPanel::buildSummaryText() const
     }
 
     juce::String text = juce::String(rows_.size()) + " problem" + (rows_.size() != 1 ? "s" : "");
-    if (errs > 0)  text << " · " << errs << " error" + (errs > 1 ? "s" : "");
-    if (warns > 0) text << " · " << warns << " warning" + (warns > 1 ? "s" : "");
-    if (infos > 0 && showInfo_) text << " · " << infos << " info";
+    if (errs > 0)  text << " · " << juce::String(errs) << " error" << (errs > 1 ? "s" : "");
+    if (warns > 0) text << " · " << juce::String(warns) << " warning" << (warns > 1 ? "s" : "");
+    if (infos > 0 && showInfo_) text << " · " << juce::String(infos) << " info";
 
     return text;
 }

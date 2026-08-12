@@ -2181,7 +2181,7 @@ void EditorArea::navigateToNextDiagnostic()
     }
 
     // Current cursor position (1-based)
-    const int curLine = tab->editor().getCaretPosition().getLineNumber() + 1;
+    const int curLine = tab->editor().getCaretPos().getLineNumber() + 1;
 
     // Find the first diagnostic at or after the current line
     const hathor::control::Diagnostic* next = nullptr;
@@ -2223,7 +2223,7 @@ void EditorArea::navigateToPrevDiagnostic()
     }
 
     // Current cursor position (1-based)
-    const int curLine = tab->editor().getCaretPosition().getLineNumber() + 1;
+    const int curLine = tab->editor().getCaretPos().getLineNumber() + 1;
 
     // Find the last diagnostic before the current line (reverse iterate)
     const hathor::control::Diagnostic* prev = nullptr;

@@ -39,9 +39,6 @@ public:
     explicit StatusRibbon(hathor::control::DiagnosticRegistry* registry = nullptr);
     ~StatusRibbon() override = default;
 
-    StatusRibbon(const StatusRibbon&) = delete;
-    StatusRibbon& operator=(const StatusRibbon&) = delete;
-
     // -----------------------------------------------------------------------
     // State mutators — called by EditorArea / MainWindow / UITimer
     // -----------------------------------------------------------------------
