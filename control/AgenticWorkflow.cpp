@@ -2973,9 +2973,10 @@ nlohmann::json AgenticWorkflow::executeRevertPlan(
                 action.songFile, action.content);
             r["action"] = "restore_song";
             r["resource_id"] = action.resourceId;
+            const bool ok = r.value("ok", false);
             executed.push_back(std::move(r));
-            if (!r.value("ok", false)) {
-                failure = r;
+            if (!ok) {
+                failure = executed.back();
                 break;
             }
         } else if (action.kind == "remove_asset") {
@@ -2983,9 +2984,10 @@ nlohmann::json AgenticWorkflow::executeRevertPlan(
                 action.assetName);
             r["action"] = "remove_asset";
             r["resource_id"] = action.resourceId;
+            const bool ok = r.value("ok", false);
             executed.push_back(std::move(r));
-            if (!r.value("ok", false)) {
-                failure = r;
+            if (!ok) {
+                failure = executed.back();
                 break;
             }
         } else {
