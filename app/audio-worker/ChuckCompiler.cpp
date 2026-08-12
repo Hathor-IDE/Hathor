@@ -138,16 +138,21 @@ void ChuckCompiler::dispatcherLoop()
         }
 
         // ---------------------------------------------------------------
-        // SERIALIZED CHUCk COMPILATION (K0.5 NO-GO enforced here)
+        // SERIALIZED CHUCk VALIDATION (K0.5 NO-GO enforced here)
         //
-        // At this point, this is the ONLY thread calling any ChucK compile
-        // API for this VM. The VM's run() thread never calls compileCode(),
-        // so there is no concurrency on the ChucK instance.
+        // At this point, this is the ONLY thread calling the ChucK compile
+        // API for diagnostics.  The VM's run() thread never calls
+        // compileCode() concurrently — real compilation for a live VM is
+        // performed on the VM's own thread (ChuckVM::loadShredFromHandoff)
+        // between run() calls, which is the only K0.5-safe placement.
         //
-        // When libchuck is linked, we use the real compiler:
-        //   - validateChuckSource() calls ChucK::compileCode() for diagnostics
-        //   - If valid, we create a transient ChucK instance, compile the
-        //     code, and verify it succeeds (getting real shred IDs).
+        // When libchuck is linked, validateChuckSource() runs the REAL
+        // vendored compiler (ChucK::compileCode on a transient, never-run
+        // instance) and parses EM_lasterror().  We do NOT spork on a
+        // throwaway instance here: a shred compiled on a transient VM that is
+        // destroyed immediately would never execute.  Instead we publish the
+        // validated source; the per-tab VM performs the authoritative
+        // compile + spork and reports the real shred ID.
         //
         // The compile thread publishes results via the existing atomic handoff
         // discipline (std::atomic_store_explicit / std::atomic_load_explicit on
@@ -160,6 +165,7 @@ void ChuckCompiler::dispatcherLoop()
             result->sourceHash = fnv1a(cmd.sourceCode.data(), cmd.sourceCode.size());
             result->sourceCode = cmd.sourceCode;
             result->requestVersion = cmd.requestVersion;
+            result->vmGeneration = cmd.vmGeneration;
 
             // --- ChucK source validation (real diagnostic path, B4-K4) ---
             // validateChuckSource() is the same diagnostic entry point used by
@@ -178,85 +184,28 @@ void ChuckCompiler::dispatcherLoop()
                 continue;
             }
 
-#ifdef CHUCK_AVAILABLE
-            // --- Real compile + shred creation ---
-            // validateChuckSource passed, but we need to verify the shred can
-            // actually be created on a real ChucK VM. We create a transient
-            // ChucK instance (matching the diagnostic path) to perform the
-            // actual compileCode() call with immediate=FALSE (deferred spork).
-            //
-            // This is the K0.5-safe path: compileCode() with immediate=FALSE
-            // queues shreds via libchuck's lock-free FinalRingBuffer, so it
-            // is safe to call from the dispatcher thread while the VM thread
-            // runs. The returned shred ID is valid once the VM consumes it.
-            {
-                // Serialize with the validateChuckSource call (already under
-                // chuckCompileMutex from validateChuckSource, but we re-acquire
-                // here for the compileCode call).
-                ChucK ck;
-                ck.setParam(CHUCK_PARAM_SAMPLE_RATE, 44100);
-                ck.setParam(CHUCK_PARAM_INPUT_CHANNELS, 0);
-                ck.setParam(CHUCK_PARAM_OUTPUT_CHANNELS, 2);
-                ck.setParam(CHUCK_PARAM_VM_HALT, TRUE);
-                ck.setParam(CHUCK_PARAM_IS_REALTIME_AUDIO_HINT, FALSE);
-
-                if (ck.init() && ck.start()) {
-                    EM_reset_msg();
-                    std::vector<t_CKUINT> shredIDs;
-                    t_CKBOOL ok = ck.compileCode(cmd.sourceCode, "", 1, FALSE, &shredIDs, "test.ck");
-
-                    if (ok && !shredIDs.empty()) {
-                        result->loadedShredId = static_cast<int>(shredIDs[0]);
-                    } else {
-                        // compileCode failed at the VM level (semantic error
-                        // that validateChuckSource missed, or VM rejection).
-                        const char* errStr = EM_lasterror();
-                        if (errStr && errStr[0] != '\0') {
-                            result->ok = false;
-                            result->error = errStr;
-                        } else {
-                            result->ok = false;
-                            result->error = "shred creation failed (VM rejected)";
-                        }
-                        if (cmd.onResponse)
-                            cmd.onResponse(result);
-                        continue;
-                    }
-                } else {
-                    result->ok = false;
-                    result->error = "failed to initialize ChucK VM for compilation";
-                    if (cmd.onResponse)
-                        cmd.onResponse(result);
-                    continue;
-                }
-            }
-#endif
-
-            // Validation passed (and real compile succeeded when libchuck
-            // is available). Mark result as ok. When libchuck is NOT
-            // available, validateChuckSource's bracket-balancing heuristic
-            // is the best we can do.
+            // Validation passed (real compiler diagnostics when libchuck is
+            // available; bracket-balancing heuristic otherwise).  The VM's
+            // render thread consumes this and performs the REAL compile+
+            // spork on its own persistent instance, then reports the actual
+            // shred ID.  loadedShredId stays -1 here — it is assigned by the
+            // VM on actual load, never fabricated by the dispatcher.
             result->ok = true;
-            result->loadedShredId = -1; // assigned by the VM on consumption
+            result->loadedShredId = -1;
 
-            if (result->ok) {
-                // -------------------------------------------------------
-                // ATOMIC HANDOFF — matches AudioEngine::storeSlot() pattern.
-                //
-                // Apple-Clang compatibility: std::atomic<shared_ptr<T>> is
-                // NOT specialized in libc++ (no C++20 specialization in the
-                // SDK's headers). We use the C++11 free-function API
-                // (std::atomic_store_explicit / std::atomic_load_explicit)
-                // on a plain shared_ptr member, which provides the same
-                // acquire/release semantics via an internal lock.
-                // -------------------------------------------------------
-                std::atomic_store_explicit(
-                    &vm->handoffShred, result,
-                    std::memory_order_release);
-            } else {
-                // On failure: do NOT publish. The VM keeps its current valid
-                // shred. Only invoke onResponse so the caller gets the error.
-            }
+            // -------------------------------------------------------
+            // ATOMIC HANDOFF — matches AudioEngine::storeSlot() pattern.
+            //
+            // Apple-Clang compatibility: std::atomic<shared_ptr<T>> is
+            // NOT specialized in libc++ (no C++20 specialization in the
+            // SDK's headers). We use the C++11 free-function API
+            // (std::atomic_store_explicit / std::atomic_load_explicit)
+            // on a plain shared_ptr member, which provides the same
+            // acquire/release semantics via an internal lock.
+            // -------------------------------------------------------
+            std::atomic_store_explicit(
+                &vm->handoffShred, result,
+                std::memory_order_release);
 
             if (cmd.onResponse)
                 cmd.onResponse(result);

@@ -386,6 +386,41 @@ include(Catch)
 catch_discover_tests(hathor-b4-k7-ck-eval-tests DISCOVERY_MODE PRE_TEST)
 
 # ---------------------------------------------------------------------------
+# hathor-b4-k4-execution-tests — B4-K4 REAL ChucK execution (end-to-end)
+#
+# Proves that a compiled .ck program is actually executed by the real vendored
+# libchuck VM in the worker and that its audio reaches the shared-memory ring
+# (440 Hz oscillator measurable; stop stops execution; per-tab isolation;
+# runtime failures are not reported as running).  Spawns the real
+# hathor-audio-worker binary.
+# ---------------------------------------------------------------------------
+add_executable(hathor-b4-k4-execution-tests
+    test_b4_k4_execution.cpp
+)
+
+target_compile_features(hathor-b4-k4-execution-tests PRIVATE cxx_std_20)
+target_compile_options(hathor-b4-k4-execution-tests PRIVATE -Wall -Wextra -Werror)
+
+target_include_directories(hathor-b4-k4-execution-tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/app/audio-worker
+    ${CMAKE_SOURCE_DIR}/app
+    ${CMAKE_SOURCE_DIR}/engine/include
+)
+
+target_link_libraries(hathor-b4-k4-execution-tests PRIVATE
+    hathor-audio-worker-lib
+    Catch2::Catch2WithMain
+)
+
+target_compile_definitions(hathor-b4-k4-execution-tests PRIVATE
+    CMAKE_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+    CMAKE_BINARY_DIR="${CMAKE_BINARY_DIR}"
+)
+
+include(Catch)
+catch_discover_tests(hathor-b4-k4-execution-tests DISCOVERY_MODE PRE_TEST)
+
+# ---------------------------------------------------------------------------
 # hathor-b4-k8-hard-gate-tests — B4-K8 hard gate (DoD §6.2)
 #
 # Tests that a hung/crashing .ck file or killed worker never hangs or crashes

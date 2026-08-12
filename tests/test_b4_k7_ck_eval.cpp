@@ -146,8 +146,11 @@ TEST_CASE("B4-K7: invalid .ck source fails validation", "[k7][compile][invalid]"
     auto result = mgr.evaluateCkTab(tab, kInvalidCk);
     REQUIRE_FALSE(result.ok);
     REQUIRE(result.message.find("err") != std::string::npos);
-    // Error should mention the validation issue.
+    // Error should mention the validation issue. The real libchuck compiler
+    // reports "syntax error" for this source; the non-libchuck fallback
+    // heuristic reports the operator/terminator expectation. Accept both.
     const bool hasExpectedMsg =
+        result.message.find("syntax error") != std::string::npos ||
         result.message.find("expected") != std::string::npos ||
         result.message.find("sporking") != std::string::npos ||
         result.message.find(";") != std::string::npos;
@@ -196,7 +199,11 @@ TEST_CASE("B4-K7: unbalanced brackets rejected", "[k7][compile][brackets]")
 
     auto result = mgr.evaluateCkTab(tab, kUnbalancedCk);
     REQUIRE_FALSE(result.ok);
+    // The real libchuck compiler reports "syntax error" for the unterminated
+    // argument list; the non-libchuck fallback heuristic reports the
+    // unbalanced-delimiter expectation. Accept both.
     const bool hasUnbalanced =
+        result.message.find("syntax error") != std::string::npos ||
         result.message.find("unbalanced") != std::string::npos ||
         result.message.find("expected") != std::string::npos;
     REQUIRE(hasUnbalanced);

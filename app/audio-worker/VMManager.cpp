@@ -23,7 +23,13 @@ VMManager::VMManager()
 
 VMManager::~VMManager()
 {
+    shutdownAll();
+}
+
+void VMManager::shutdownAll()
+{
     // Explicitly destroy all VMs to ensure threads are joined before shutdown.
+    // Each VM thread destroys its real ChucK instance on exit.
     std::lock_guard<std::mutex> lock(mutex_);
     for (auto& [tabId, vm] : vms_) {
         if (vm) {
@@ -32,6 +38,8 @@ VMManager::~VMManager()
     }
     vms_.clear();
     lruList_.clear();
+    lastActiveTs_.clear();
+    lastPauseTs_.clear();
 }
 
 // ---------------------------------------------------------------------------

@@ -56,6 +56,18 @@ target_compile_options(hathor-audio-worker PRIVATE -Wall -Wextra -Werror)
 
 target_link_libraries(hathor-audio-worker PRIVATE hathor-audio-worker-lib)
 
+if(CHUCK_AVAILABLE)
+    # The worker calls ChucK::globalCleanup() at shutdown (static, needs the
+    # libchuck header).  The include dir is private to libchuck, so add it here,
+    # along with the same warning suppressions libchuck propagates to its own
+    # consumers (chuck.h triggers deprecated-copy warnings under -Werror).
+    target_include_directories(hathor-audio-worker PRIVATE ${CHUCK_CORE_DIR})
+    target_compile_options(hathor-audio-worker PRIVATE
+        -Wno-deprecated-copy
+        -Wno-deprecated-declarations
+    )
+endif()
+
 # POSIX realtime libraries for shm_open / mmap / posix_spawn
 if(APPLE)
     find_library(LIBRT rt)

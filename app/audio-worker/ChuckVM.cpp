@@ -10,6 +10,12 @@
  */
 
 #include "ChuckVm.hpp"
+#include "ChuckRuntime.hpp"
+
+#ifdef CHUCK_AVAILABLE
+#include "chuck.h"
+#include "chuck_errmsg.h"
+#endif
 
 #include <atomic>
 #include <chrono>
@@ -216,7 +222,10 @@ VMResult ChuckVM::forceDestroy(std::chrono::milliseconds timeout)
         }
     }
 
-    chuckInstance_ = nullptr;
+    // The thread was cancelled — its RAII instance cleanup did not run, so
+    // the real ChucK instance (if any) must be released here.  The thread has
+    // been joined, so no other thread can be inside the instance.
+    destroyChuckInstance();
     heartbeat_.store(0, std::memory_order_release);
     blocksProduced_.store(0, std::memory_order_release);
 
@@ -278,7 +287,9 @@ VMResult ChuckVM::destroy()
         chucKThread_.join();
     }
     chucKThreadId_ = 0;
-    chuckInstance_ = nullptr;
+    // The VM thread's RAII cleanup destroyed the instance on exit; ensure the
+    // member is null regardless (no-op if already cleaned up).
+    destroyChuckInstance();
     heartbeat_.store(0, std::memory_order_release);
     blocksProduced_.store(0, std::memory_order_release);
 
@@ -292,28 +303,46 @@ VMResult ChuckVM::destroy()
 VMResult ChuckVM::compileCode(const std::string& code)
 {
     // K0.5: compileCode() must NOT be called concurrently with run() on the
-    // same VM from a different thread.  The B4-K4 pipeline serializes this:
-    // compilation happens on the worker control thread, and only when the
-    // VM is in a known state.  Here we enforce that the VM is active or
-    // that we're in the suspended state (safe to compile without running).
-    (void)code;  // K3 placeholder — actual libchuck compile lands in B4-K4
+    // same VM from a different thread.  The B4-K7 pipeline routes real
+    // compilation through the VM thread (handoff → loadShredFromHandoff),
+    // which is the only legal compile path while the VM is Active.
     auto currentState = state_.load(std::memory_order_acquire);
 
     if (currentState == VMState::Active) {
-        // K0.5: When the VM is active and running, compile must use the
-        // deferred path (immediate=FALSE).  The actual compile happens on
-        // the VM's own thread via a serialized request mechanism.  For K3,
-        // we record the compile request; the actual libchuck integration
-        // (B4-K4) implements the deferred spork.
-        //
-        // The key invariant: we never call compileCode() from a different
-        // thread while run() is executing on this VM's thread.
-        return {true, 0, "compile deferred to VM thread (K0.5)"};
+        // Compilation must happen on the VM thread between run() calls.
+        return {true, 0, "compile deferred to VM thread (K0.5) — use ck_compile handoff"};
     }
 
-    if (currentState == VMState::Suspended) {
-        // Safe to compile while suspended (VM thread is paused).
-        return {true, 0, "compile queued while suspended"};
+    if (currentState == VMState::Suspended && chuckInstance_) {
+        // The VM thread is paused — safe to compile directly on the instance.
+#ifdef CHUCK_AVAILABLE
+        std::lock_guard<std::mutex> lock(chuckCompileMutex());
+        EM_reset_msg();
+        std::vector<t_CKUINT> shredIDs;
+        t_CKBOOL ok = chuckInstance_->compileCode(code, "", 1, FALSE, &shredIDs, "test.ck");
+        if (ok) {
+            loadedShredId_.store(shredIDs.empty() ? -1 : static_cast<int>(shredIDs[0]),
+                                 std::memory_order_release);
+            loadedSourceHash_.store(0, std::memory_order_release);
+            {
+                std::lock_guard<std::mutex> lock(errorMtx_);
+                lastErrorMsg_.clear();
+                lastError_ = "compiled while suspended";
+            }
+            lastErrorLine_.store(0, std::memory_order_release);
+            return {true, 0, "compiled while suspended"};
+        }
+        const char* err = EM_lasterror();
+        {
+            std::lock_guard<std::mutex> lock(errorMtx_);
+            lastErrorMsg_ = (err && err[0]) ? err : "chuck compile failed";
+            lastError_ = lastErrorMsg_;
+        }
+        return {false, 4, lastErrorMsg_};
+#else
+        (void)code;
+        return {false, 5, "libchuck unavailable (CHUCK_AVAILABLE=0)"};
+#endif
     }
 
     return {false, 3, "vm not available for compile (state="
@@ -349,16 +378,28 @@ void ChuckVM::chucKThreadLoop()
     pthread_setcancelstate(PTHREAD_CANCEL_ENABLE, nullptr);
     pthread_setcanceltype(PTHREAD_CANCEL_DEFERRED, nullptr);
 
-    // This thread is the sole owner of the ChucK instance.  It calls run()
-    // (via the render callback) and handles suspend/resume coordination.
+    // This thread is the sole owner of the real ChucK instance.  It creates
+    // the instance, calls run() to advance ChucK time and synthesize audio,
+    // and — between run() calls — compiles handoff shreds via compileCode()
+    // (K0.5: compileCode() is never called concurrently with run()).
     //
-    // K0.5: compileCode() is serialized — it is either:
-    //   (a) called from this thread directly (when the VM is the only caller), or
-    //   (b) queued via a request pipe and processed here between run() calls.
-    // The B4-K4 implementation will provide the request pipe and deferred
-    // spork mechanism.  For K3, we focus on the lifecycle + thread model.
+    // RAII cleanup: on ANY normal thread exit (destroy, suspend-destroyed,
+    // init failure) the real instance is deleted here.  The forceDestroy()
+    // path (pthread_cancel) does not unwind this scope, so it performs the
+    // same cleanup after joining.
+    struct ChuckInstanceCleanup {
+        ChuckVM& vm;
+        ~ChuckInstanceCleanup() { vm.destroyChuckInstance(); }
+    } cleanup{*this};
 
-    float renderBuf[64 * 2]; // kRenderBlockSize * maxChannels
+    // Render scratch: one ChucK audio block (kRenderBlockSize frames × up to
+    // 2 output channels, interleaved).  This thread is NOT the JUCE audio
+    // thread, so a bounded stack buffer is fine.
+    float renderBuf[kRenderBlockSize * 2];
+
+    // Give the watchdog an immediate first heartbeat: the one-time ChucK
+    // instance init below (~50-100ms) must never be mistaken for a hang.
+    heartbeat_.fetch_add(1, std::memory_order_relaxed);
 
     while (true) {
         // Check for stop / destroy.
@@ -414,26 +455,38 @@ void ChuckVM::chucKThreadLoop()
             // Fall through to normal rendering after hang cleared.
         }
 
-        // Render one audio block via the callback.
-        renderCb_(renderBuf, kRenderBlockSize, channels_);
-
         // -----------------------------------------------------------------
         // B4-K7: Consume any handoff shred that the compile dispatcher
-        // published for this tab.  This is the compile→load→execute path:
-        // the dispatcher compiled the code and published a CompiledShred
-        // via std::atomic_store_explicit; here we load it via the
-        // injected HandoffLoader callback (lock-free atomic load).
-        // The actual shred execution is simulated (placeholder tone above);
-        // when libchuck is linked, loadShred() will spork the shred here.
+        // validated for this tab.  The REAL compile+spork happens here, on
+        // this thread, BETWEEN run() calls (K0.5 — never concurrent with
+        // run()): the dispatcher only ran diagnostics on a transient
+        // instance; the shred is actually loaded into THIS instance now.
+        //
+        // The real ChucK instance is created LAZILY — only when the first
+        // handoff shred arrives.  An idle VM (no shred loaded) never pays
+        // the one-time init cost (~65ms, globally serialized), so its
+        // heartbeat/blocks stay fast for the watchdog and it renders plain
+        // silence.  Init failure at load time is an honest runtime failure:
+        // the VM enters Error state (not reported as successfully running).
         // -----------------------------------------------------------------
         if (handoffLoader_)
         {
             auto shred = handoffLoader_();
             if (shred && shred->ok)
             {
-                loadedShredId_.store(static_cast<int>(shred->loadedShredId),
-                                     std::memory_order_release);
-                loadedSourceHash_.store(shred->sourceHash, std::memory_order_release);
+                if (!chuckInstance_)
+                {
+                    heartbeat_.fetch_add(1, std::memory_order_relaxed);
+                    if (!createChuckInstance())
+                    {
+                        // lastError_ already recorded — surface as Error so
+                        // the watchdog/main process can react honestly.
+                        state_.store(VMState::Error, std::memory_order_release);
+                        return;
+                    }
+                    heartbeat_.fetch_add(1, std::memory_order_relaxed);
+                }
+                loadShredFromHandoff(shred);
             }
             else if (shred && !shred->ok)
             {
@@ -443,6 +496,30 @@ void ChuckVM::chucKThreadLoop()
                 lastError_ = shred->error;
             }
         }
+
+        // -----------------------------------------------------------------
+        // B4-K4: advance ChucK time and synthesize REAL audio into the block.
+        // With zero input channels the input pointer is never dereferenced
+        // (verified against Chuck_VM::run in the vendored source).  With no
+        // loaded shred the VM produces silence (halt=FALSE keeps it running).
+        // -----------------------------------------------------------------
+        if (chuckInstance_)
+        {
+            static const float kSilenceInput[kRenderBlockSize] = {0.0f};
+            chuckInstance_->run(kSilenceInput, renderBuf, kRenderBlockSize);
+        }
+        else
+        {
+            std::memset(renderBuf, 0, sizeof(renderBuf));
+        }
+
+        // Publish the block.  The worker's render callback writes the real
+        // samples into the shared-memory ring (no placeholder synthesis).
+        renderCb_(renderBuf, kRenderBlockSize, channels_);
+
+        // B4-K7: reflect actual execution status — if the loaded shred has
+        // exited (finished or crashed at runtime), stop reporting it as live.
+        refreshShredLiveness();
 
         // Increment heartbeat (for B4-K5 watchdog).
         // Per B4-K5 §HEARTBEAT: use relaxed atomic — the heartbeat is a
@@ -456,6 +533,201 @@ void ChuckVM::chucKThreadLoop()
         // path; the audio thread consumes from the shared-memory ring.
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
+}
+
+// ---------------------------------------------------------------------------
+// B4-K4: Real ChucK instance lifecycle (VM thread only)
+// ---------------------------------------------------------------------------
+
+bool ChuckVM::createChuckInstance()
+{
+#ifdef CHUCK_AVAILABLE
+    // Disable pthread cancellation for the duration of the global-mutex
+    // critical section.  On macOS, pthread cancellation does NOT unwind C++
+    // stack frames, so a cancel delivered while we hold chuckInstanceMutex()
+    // would leave the mutex permanently locked and deadlock every later
+    // instance create/destroy (including watchdog recovery).  Cancellation
+    // is deferred anyway; we just push the delivery point past the lock.
+    int oldCancel = 0;
+    pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &oldCancel);
+    {
+        // Serialize against other instances' construction/destruction —
+        // libchuck's static counters (o_numVMs, o_isGlobalInit) are plain
+        // statics.
+        std::lock_guard<std::mutex> lock(chuckInstanceMutex());
+
+        auto* ck = new ChucK();
+        ck->setParam(CHUCK_PARAM_SAMPLE_RATE, static_cast<t_CKINT>(sampleRate_));
+        ck->setParam(CHUCK_PARAM_INPUT_CHANNELS, 0);
+        // The shared-memory transport carries mono blocks; clamp the VM's dac
+        // to at most 2 channels (stereo is the ChucK norm) and downmix on
+        // publish.
+        const unsigned ckChannels = (channels_ == 0) ? 1u : (channels_ > 2 ? 2u : channels_);
+        ck->setParam(CHUCK_PARAM_OUTPUT_CHANNELS, static_cast<t_CKINT>(ckChannels));
+        ck->setParam(CHUCK_PARAM_VM_HALT, FALSE);       // keep VM running without shreds
+        ck->setParam(CHUCK_PARAM_IS_REALTIME_AUDIO_HINT, FALSE);
+        ck->setParam(CHUCK_PARAM_CHUGIN_ENABLE, FALSE); // no chugins in this build
+
+        if (!ck->init()) {
+            lastError_ = "libchuck init() failed for tab " + std::to_string(tabId_);
+            delete ck;
+            pthread_setcancelstate(oldCancel, nullptr);
+            return false;
+        }
+        if (!ck->start()) {
+            lastError_ = "libchuck start() failed for tab " + std::to_string(tabId_);
+            delete ck;
+            pthread_setcancelstate(oldCancel, nullptr);
+            return false;
+        }
+
+        chuckInstance_ = ck;
+    }
+    pthread_setcancelstate(oldCancel, nullptr);
+    return true;
+#else
+    lastError_ = "libchuck unavailable (CHUCK_AVAILABLE=0); no ChucK execution";
+    return false;
+#endif
+}
+
+void ChuckVM::destroyChuckInstance()
+{
+#ifdef CHUCK_AVAILABLE
+    if (chuckInstance_)
+    {
+        // Same cancellation-disabled window as createChuckInstance(): the
+        // instance delete runs under the global mutex and must not be
+        // interrupted by a cancel that would strand the lock.
+        int oldCancel = 0;
+        pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &oldCancel);
+        {
+            std::lock_guard<std::mutex> lock(chuckInstanceMutex());
+            delete chuckInstance_;
+            chuckInstance_ = nullptr;
+        }
+        pthread_setcancelstate(oldCancel, nullptr);
+    }
+#else
+    chuckInstance_ = nullptr;
+#endif
+}
+
+// ---------------------------------------------------------------------------
+// B4-K7: Real shred load (VM thread only — between run() calls)
+// ---------------------------------------------------------------------------
+
+void ChuckVM::loadShredFromHandoff(const std::shared_ptr<CompiledShred>& shred)
+{
+    if (!shred)
+        return;
+
+    loadedSourceHash_.store(shred->sourceHash, std::memory_order_release);
+
+#ifdef CHUCK_AVAILABLE
+    if (!chuckInstance_)
+        return;
+
+    // Serialize all compileCode() calls across instances — libchuck's error
+    // buffer (EM_reset_msg/EM_lasterror) is a global shared by every ChucK.
+    // Cancellation is disabled while holding the global compile mutex: a
+    // pthread_cancel delivered mid-compile (which can take tens of ms) would
+    // strand the lock and deadlock every later compile (K0.5 recovery path).
+    int oldCancel = 0;
+    pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &oldCancel);
+    {
+        std::lock_guard<std::mutex> lock(chuckCompileMutex());
+
+        EM_reset_msg();
+        std::vector<t_CKUINT> shredIDs;
+        // immediate=FALSE: the shred is queued and sporked by the VM's compute()
+        // on the next time step (the next run() call), entirely on this thread.
+        t_CKBOOL ok = chuckInstance_->compileCode(
+            shred->sourceCode, "", 1, FALSE, &shredIDs, "test.ck");
+
+        if (ok && !shredIDs.empty())
+        {
+            // Replace semantics: remove any previously running shreds.  In the
+            // vendored Chuck_VM::compute(), the remove-all flag is processed at
+            // the TOP of the next compute() — BEFORE the newly queued shred is
+            // sporked — so the old shred is removed and the new one survives.
+            // On failure we do NOT remove the old shred (it keeps running).
+            //
+            // Also guard on shredIDs.empty(): a source that compiles to ZERO
+            // shreds (e.g. a bare function/class definition) must NOT silently
+            // kill the previously running program nor report success.  The old
+            // shred keeps running and the empty result is reported honestly.
+            chuckInstance_->removeAllShreds();
+
+            loadedShredId_.store(static_cast<int>(shredIDs[0]),
+                                 std::memory_order_release);
+            {
+                std::lock_guard<std::mutex> lock(errorMtx_);
+                lastErrorMsg_.clear();
+                lastError_ = "shred loaded (id="
+                             + std::to_string(loadedShredId_.load(std::memory_order_relaxed))
+                             + ")";
+            }
+            lastErrorLine_.store(0, std::memory_order_release);
+        }
+        else if (ok)
+        {
+            // Compiled but produced no shred — do not disturb the running
+            // program and do not report a live shred (B4-K7 honesty).
+            std::lock_guard<std::mutex> lock(errorMtx_);
+            lastErrorMsg_ = "code compiled but produced no runnable shred; "
+                            "previous program left running";
+            lastError_ = lastErrorMsg_;
+            lastErrorLine_.store(0, std::memory_order_release);
+            loadedShredId_.store(-1, std::memory_order_release);
+        }
+        else
+        {
+            // Compile/load failed at the VM level despite passing dispatcher
+            // validation — report honestly; the previous shred (if any) keeps
+            // running and the loaded-shred id is not updated.
+            const char* err = EM_lasterror();
+            const std::string msg = (err && err[0]) ? std::string(err)
+                                                    : "shred load failed (VM rejected)";
+            std::lock_guard<std::mutex> lock(errorMtx_);
+            lastErrorMsg_ = msg;
+            lastError_ = msg;
+            lastErrorLine_.store(0, std::memory_order_release);
+        }
+    }
+    pthread_setcancelstate(oldCancel, nullptr);
+#else
+    // No libchuck: nothing can execute.  Keep loadedShredId_ = -1 so status
+    // reflects that no shred is actually running (no fake success).
+    loadedShredId_.store(-1, std::memory_order_release);
+#endif
+}
+
+void ChuckVM::refreshShredLiveness()
+{
+    const int id = loadedShredId_.load(std::memory_order_relaxed);
+    if (id < 0)
+        return;
+#ifdef CHUCK_AVAILABLE
+    if (!chuckInstance_)
+        return;
+    // Called on the VM thread between run() calls; the shreduler is not
+    // concurrently mutated (no other thread touches this instance).  The
+    // scratch vector is thread_local so it is reused across iterations and
+    // never shared between VM threads.
+    static thread_local std::vector<t_CKUINT> ids;
+    ids.clear();
+    chuckInstance_->vm()->shreduler()->get_all_shred_ids(ids);
+    for (t_CKUINT x : ids)
+    {
+        if (static_cast<int>(x) == id)
+            return; // still running
+    }
+    // The loaded shred exited — finished or crashed at runtime.
+    loadedShredId_.store(-1, std::memory_order_release);
+#else
+    loadedShredId_.store(-1, std::memory_order_release);
+#endif
 }
 
 void ChuckVM::signalPause()

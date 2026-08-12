@@ -21,10 +21,13 @@
  * one dedicated OS thread, one watchdog attachment point.  A failure in one
  * VM never silences another.  Resource policy is data-driven (Decision #24).
  *
- * B4-K4: .ck compilation happens on the ChuckCompiler dispatcher thread.
- * Compiled shreds are published via std::atomic_store_explicit(release)
- * into the per-tab VM's handoffShred slot, and consumed on the next loop
- * iteration via std::atomic_load_explicit(acquire).
+ * B4-K4: .ck source is validated on the ChuckCompiler dispatcher thread
+ * (real vendored-compiler diagnostics) and published via
+ * std::atomic_store_explicit(release) into the per-tab VM's handoffShred
+ * slot.  The VM's render thread consumes it and performs the REAL
+ * compile+spork on its own persistent ChucK instance between run() calls
+ * (K0.5 — compileCode() never concurrent with run()), then advances the
+ * VM via ChucK::run() and publishes the synthesized audio into the ring.
  *
  * Architecture:
  *   - argv[1] = control-plane Unix socket path (passed by parent)
@@ -64,6 +67,10 @@
 #include "VmLifecycle.hpp"
 #include "VmWatchdog.hpp"
 #include "ResourcePolicy.hpp"
+
+#ifdef CHUCK_AVAILABLE
+#include "chuck.h"   // ChucK::globalCleanup() at worker shutdown
+#endif
 
 #include <atomic>
 #include <chrono>
@@ -159,11 +166,16 @@ static void handleSigterm(int /*signum*/) {
 }
 
 // ---------------------------------------------------------------------------
-// Per-tab render callback — used by ChuckVM to produce audio into the ring
+// Per-tab render callback — used by ChuckVM to publish REAL synthesized audio
+// into the ring.
+//
+// B4-K4: the VM thread fills outBuf by advancing its real ChucK instance
+// (ChucK::run).  This callback does NOT synthesize anything — it only
+// transports the VM's output (mono downmix) into the shared-memory ring.
 // ---------------------------------------------------------------------------
 
-static void perTabRenderCallback(TabId tabId, float* /*outBuf*/,
-                                  unsigned numFrames, unsigned /*numChannels*/,
+static void perTabRenderCallback(TabId /*tabId*/, float* outBuf,
+                                  unsigned numFrames, unsigned numChannels,
                                   uint64_t expectedGen)
 {
     // Check generation liveness — if the worker was restarted, return.
@@ -171,7 +183,7 @@ static void perTabRenderCallback(TabId tabId, float* /*outBuf*/,
     if (gen != expectedGen)
         return;
 
-    // Produce a block into the ring buffer (placeholder tone per tab).
+    // Publish one block into the ring buffer (seqlock discipline from K0.6).
     const uint32_t wSeq = gTransport->writeSeq.load(std::memory_order_relaxed);
     const uint32_t rSeq = gTransport->readSeq.load(std::memory_order_acquire);
 
@@ -183,14 +195,22 @@ static void perTabRenderCallback(TabId tabId, float* /*outBuf*/,
     AudioBlock& block = gTransport->blocks[wSeq & kRingMask];
     block.sequence.store((wSeq << 1) | 1u, std::memory_order_release);
 
-    // Placeholder: deterministic tone per tab (silence for non-active tabs).
-    const float basePhase = static_cast<float>(tabId) * 0.1f;
-    const float freq = 220.0f + static_cast<float>(tabId) * 22.0f;
-    const float phaseInc = freq * 2.0f * 3.14159265f / 44100.0f;
-
-    for (uint32_t i = 0; i < numFrames; ++i) {
-        const float phase = basePhase + static_cast<float>(wSeq * kBlockSize + i) * phaseInc;
-        block.samples[i] = std::sin(phase) * 0.05f;
+    // Transport the real ChucK output.  The ring is mono; if the VM's dac has
+    // more than one channel, downmix by averaging.  (numFrames <= kBlockSize
+    // and numChannels <= 2 by construction in ChuckVM.)
+    if (numChannels <= 1)
+    {
+        std::memcpy(block.samples, outBuf, numFrames * sizeof(float));
+    }
+    else
+    {
+        for (uint32_t i = 0; i < numFrames; ++i)
+        {
+            float s = 0.0f;
+            for (unsigned ch = 0; ch < numChannels; ++ch)
+                s += outBuf[i * numChannels + ch];
+            block.samples[i] = s / static_cast<float>(numChannels);
+        }
     }
 
     block.sequence.store((wSeq << 1) + 2u, std::memory_order_release);
@@ -198,43 +218,41 @@ static void perTabRenderCallback(TabId tabId, float* /*outBuf*/,
 }
 
 // ---------------------------------------------------------------------------
-// Audio production — legacy placeholder (used when no VMs are active)
+// Main production loop — worker-level liveness + idle silence
+// ---------------------------------------------------------------------------
+//
+// B4-K4: the placeholder sine production is gone.  Real audio is produced by
+// the per-tab ChuckVM threads (real ChucK execution).  This loop only:
+//   1. keeps the shared-memory worker heartbeat alive (B4-K2 liveness), and
+//   2. publishes SILENT blocks when no per-tab VM is active, so the consumer
+//      keeps receiving a continuous (silent) stream instead of underrunning.
+// When at least one VM is active its threads own the ring writes.
 // ---------------------------------------------------------------------------
 
-static void produceBlock(AudioBlock& block, uint32_t wSeq, uint64_t gen) {
-    block.sequence.store((wSeq << 1) | 1u, std::memory_order_release);
-
-    const float basePhase = static_cast<float>(gen) * 0.01f;
-    const float freq      = 220.0f + static_cast<float>(gen) * 11.0f;
-    const float phaseInc  = freq * 2.0f * 3.14159265f / 44100.0f;
-
-    for (uint32_t i = 0; i < kBlockSize; ++i) {
-        const float phase = basePhase + static_cast<float>(wSeq * kBlockSize + i) * phaseInc;
-        block.samples[i] = std::sin(phase) * 0.1f;
-    }
-
-    block.sequence.store((wSeq << 1) + 2u, std::memory_order_release);
-}
-
-static void placeholderProductionLoop(uint64_t expectedGen) {
+static void workerMainLoop(uint64_t expectedGen) {
     while (gRunning.load(std::memory_order_acquire)) {
-        const uint32_t wSeq = gTransport->writeSeq.load(std::memory_order_relaxed);
-        const uint32_t rSeq = gTransport->readSeq.load(std::memory_order_acquire);
-
-        if (wSeq - rSeq >= kRingCapacity) {
-            const uint32_t newRSeq = wSeq - kRingCapacity + 1u;
-            gTransport->readSeq.store(newRSeq, std::memory_order_release);
-        }
-
         const uint64_t gen = gTransport->generation.load(std::memory_order_acquire);
         if (gen != expectedGen)
             return;
 
-        AudioBlock& block = gTransport->blocks[wSeq & kRingMask];
-        produceBlock(block, wSeq, gen);
-
+        // Worker-level liveness heartbeat (B4-K2 death detection).
+        const uint32_t wSeq = gTransport->writeSeq.load(std::memory_order_relaxed);
         gTransport->lastHeartbeat.store(wSeq, std::memory_order_release);
-        gTransport->writeSeq.store(wSeq + 1u, std::memory_order_release);
+
+        // Publish silence only when no per-tab VM is producing (real audio).
+        if (gVmManager.countActive() == 0) {
+            const uint32_t rSeq = gTransport->readSeq.load(std::memory_order_acquire);
+            if (wSeq - rSeq >= kRingCapacity) {
+                const uint32_t newRSeq = wSeq - kRingCapacity + 1u;
+                gTransport->readSeq.store(newRSeq, std::memory_order_release);
+            }
+
+            AudioBlock& block = gTransport->blocks[wSeq & kRingMask];
+            block.sequence.store((wSeq << 1) | 1u, std::memory_order_release);
+            std::memset(block.samples, 0, sizeof(block.samples));
+            block.sequence.store((wSeq << 1) + 2u, std::memory_order_release);
+            gTransport->writeSeq.store(wSeq + 1u, std::memory_order_release);
+        }
 
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
@@ -954,8 +972,9 @@ int main(int argc, char* argv[]) {
     // Start the control-plane listener thread.
     std::thread ctrlThread(controlPlaneThread);
 
-    // Run production loop (per-tab threads are spawned on vm_activate commands).
-    placeholderProductionLoop(myGen);
+    // Run the worker main loop (heartbeat + idle silence; per-tab threads
+    // are spawned on vm_activate commands and produce the real audio).
+    workerMainLoop(myGen);
 
     // Signal shutdown.
     gRunning.store(false, std::memory_order_release);
@@ -966,10 +985,21 @@ int main(int argc, char* argv[]) {
         gWatchdog.reset();
     }
 
+    // Tear down all per-tab VMs (joins their threads, which destroys their
+    // real ChucK instances on exit).
+    gVmManager.shutdownAll();
+    for (TabId t = 0; t < kNumTabs; ++t)
+        gVmLifecycle.vmDestroy(t);
+
     if (gCompiler) {
         gCompiler->shutdown();
         gCompiler.reset();
     }
+
+#ifdef CHUCK_AVAILABLE
+    // Release libchuck's one-time global resources (all instances are gone).
+    ChucK::globalCleanup();
+#endif
 
     if (gTransport && gTransport != MAP_FAILED) {
         gTransport->workerAlive.store(false, std::memory_order_release);

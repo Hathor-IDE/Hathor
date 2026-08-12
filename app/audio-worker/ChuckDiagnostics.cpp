@@ -17,6 +17,7 @@
  */
 
 #include "ChuckDiagnostics.hpp"
+#include "ChuckRuntime.hpp"
 
 #ifdef CHUCK_AVAILABLE
 #include "chuck.h"
@@ -25,7 +26,6 @@
 
 #include <atomic>
 #include <cstdint>
-#include <mutex>
 #include <regex>
 #include <sstream>
 #include <string>
@@ -40,7 +40,8 @@ namespace hathor::audio_worker {
 // libchuck's error state (g_lasterror in chuck_errmsg.cpp) is a global
 // variable, NOT per-instance. Concurrent calls to compileCode() from multiple
 // threads can clobber the shared error buffer. We serialize all compile
-// calls with a global mutex to ensure correct diagnostics.
+// calls with a global mutex (shared with the B4-K4 VM-thread load path via
+// ChuckRuntime.hpp) to ensure correct diagnostics.
 //
 // This is NOT the performance-sensitive audio path — the per-VM ChuckCompiler
 // dispatcherLoop() already serializes compilation per VM, and the
@@ -48,12 +49,6 @@ namespace hathor::audio_worker {
 // thread. The mutex only matters when multiple tabs compile simultaneously
 // or when AI-2 diagnostics run concurrently with a compile job.
 // ---------------------------------------------------------------------------
-namespace {
-    std::mutex& chuckCompileMutex() {
-        static std::mutex m;
-        return m;
-    }
-}
 
 // ---------------------------------------------------------------------------
 // Error string parsing
@@ -146,12 +141,19 @@ __attribute__((unused))
 #endif
 static ChuckDiagnostic validateWithLibchuck(std::string_view src)
 {
-    // Serialize access to global libchuck error state
+    // Serialize access to global libchuck error state AND instance lifecycle:
+    // the transient ChucK construction/destruction below touches libchuck's
+    // non-thread-safe statics (o_numVMs, o_isGlobalInit) and the global
+    // module/type registries, which the per-tab VM threads also use.  Holding
+    // both mutexes here keeps ALL instance creation + compileCode calls
+    // serialized across the process (B4-K4 / K0.5).
     std::lock_guard<std::mutex> lock(chuckCompileMutex());
+    std::lock_guard<std::mutex> lock2(chuckInstanceMutex());
 
     // Create a transient ChucK instance for compile-only diagnostics.
     // We do NOT start the audio thread — we just need the compiler's
-    // parse → type-check → emit pipeline.
+    // parse → type-check → emit pipeline.  Constructed and destroyed under
+    // the instance mutex (RAII scope).
     ChucK ck;
 
     // Configure for non-realtime, compile-only operation.

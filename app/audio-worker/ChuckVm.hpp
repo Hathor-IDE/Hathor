@@ -41,6 +41,14 @@
 
 #include "audio_ipc.h"
 
+#ifdef CHUCK_AVAILABLE
+// Real libchuck embedding class (declared in the vendored chuck.h).  We only
+// forward-declare it here so ChuckVM's public header never leaks libchuck
+// headers into every consumer (tests, VMManager, etc.).  The instance is
+// created/destroyed exclusively inside ChuckVM.cpp on the VM thread.
+class ChucK;
+#endif
+
 namespace hathor::audio_worker {
 
 /**
@@ -234,9 +242,32 @@ private:
     // Internal: ChucK thread entry point
     // -----------------------------------------------------------------------
 
-    /// The ChucK thread's main loop.  Calls the render callback, increments
-    /// the heartbeat, and publishes audio to the shared-memory ring.
+    /// The ChucK thread's main loop.  Owns the real ChucK instance: creates
+    /// it on first iteration, advances it via ChucK::run(), consumes handoff
+    /// compile requests (real compileCode between run() calls, K0.5), and
+    /// publishes the synthesized audio through the render callback.
     void chucKThreadLoop();
+
+    /// Create + init + start the real ChucK instance on the VM thread.
+    /// Serialized via chuckInstanceMutex() (libchuck statics are not
+    /// thread-safe).  On failure, records lastError_ and leaves
+    /// chuckInstance_ null.  Returns false on failure.
+    bool createChuckInstance();
+
+    /// Delete the real ChucK instance (VM thread exit or force-destroy).
+    /// Serialized via chuckInstanceMutex().
+    void destroyChuckInstance();
+
+    /// Load a validated handoff shred into the real VM: compiles the source
+    /// on THIS thread between run() calls (K0.5 — never concurrent with run())
+    /// and sporks it with replace semantics.  On failure the previous shred
+    /// keeps running and the error is recorded for lastCompileError().
+    void loadShredFromHandoff(const std::shared_ptr<CompiledShred>& shred);
+
+    /// After advancing the VM, check whether the loaded shred is still alive.
+    /// If it exited (finished or crashed at runtime) loadedShredId_ is cleared
+    /// so B4-K7 status reporting reflects actual execution, not just compile.
+    void refreshShredLiveness();
 
     /// Signal the ChucK thread to pause (internal, called from deactivate).
     void signalPause();
@@ -313,17 +344,23 @@ private:
     std::atomic<int>       lastErrorLine_{0};
     std::string            lastErrorMsg_;
 
-    // NOTE: The actual ChucK* instance is not stored here — this is a
-    // forward-compatible design.  When B4-K4 adds libchuck integration,
-    // the ChucK instance will be created here with immediate=FALSE compile
-    // semantics per the K0.5 decision.  For B4-K3 we manage the lifecycle
-    // state machine and thread model, with a placeholder render callback
-    // that produces silence (real ChucK output arrives via B4-K4).
+    // -----------------------------------------------------------------------
+    // B4-K4: Real ChucK runtime
+    // -----------------------------------------------------------------------
 
-    /// Opaque placeholder for the ChucK instance (set when B4-K4 lands).
-    /// While B4-K3 is active, this remains null and the render callback
-    /// is expected to produce silence or a placeholder tone.
-    void* chuckInstance_{nullptr};
+    /// The real ChucK instance, owned and used exclusively by the VM thread.
+    /// Created lazily on the first loop iteration (single-threaded init per
+    /// K0.5); destroyed on thread exit or by forceDestroy after pthread_cancel.
+    ChucK* chuckInstance_{nullptr};
+
+    // (Shred-liveness scratch is a thread_local vector inside ChuckVM.cpp so
+    // libchuck types never leak into this public header.)
+
+    // NOTE: The ChucK instance is created on the VM thread (not the control
+    // thread and never the JUCE audio thread).  All ChucK operations on it
+    // (init/start/run/compileCode/destroy) happen on that single thread,
+    // satisfying the B4-K0.5 NO-GO: compileCode() is never called concurrently
+    // with run() on the same instance.
 
     /// B4-K8 test-mode: hang flag for simulating a hung shred.
     /// When active, the render callback spins without advancing heartbeat.

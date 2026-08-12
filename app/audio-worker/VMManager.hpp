@@ -71,6 +71,10 @@ public:
     ///                 the audio callback thread.
      VMResult forceDestroyVM(TabId tabId, std::chrono::milliseconds timeout = std::chrono::milliseconds(500));
 
+    /// Destroy ALL VMs and join their threads (worker shutdown).
+    /// Each VM thread destroys its real ChucK instance on exit.
+    void shutdownAll();
+
     /// Compile ChucK code for a tab's VM (K0.5 serialized).
     VMResult compileVM(TabId tabId, const std::string& code);
 
