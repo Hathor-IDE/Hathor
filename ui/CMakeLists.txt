@@ -77,6 +77,14 @@ target_sources(hathor-ui
          LspCompletionPopup.cpp        # Completion popup UI
          LspHoverHandler.cpp           # Hover tooltip UI
          LspDiagnosticsDisplay.cpp     # Diagnostics data model
+          LspCompletionLogic.cpp        # Completion merge with metadata fallback
+          # L-2: Navigation & workspace search
+          NavigationHistory.cpp          # L-2: JUCE-free navigation history
+          WorkspaceSearchModel.cpp       # L-2: JUCE-free multi-file search model
+          SymbolSearchModel.cpp          # L-2: JUCE-free symbol search model
+          QuickOpenDialog.cpp            # L-2: Quick-open file dialog (Cmd+P)
+          WorkspaceSearchPanel.cpp       # L-2: Workspace search/replace panel
+          SymbolSearchPanel.cpp          # L-2: Symbol search results panel
          # AI-4: Ghost text (llm-ls inline completion)
          GhostJsonRpc.cpp              # llm-ls JSON-RPC serialization
          GhostProviderConfig.cpp       # provider config (env-var credentials)

@@ -354,7 +354,8 @@ EditorArea::EditorArea(AudioEngine& audio,
         openFile(juce::File(file));
         if (auto* tab = activeTab())
         {
-            tab->editor().setCaretPosition(line, column);
+            juce::CodeDocument::Position pos(tab->document(), line, column);
+            tab->editor().moveCaretTo(pos, false);
         }
     };
     workspaceSearchPanel_->onClosePanel = [this]() {
@@ -368,7 +369,8 @@ EditorArea::EditorArea(AudioEngine& audio,
             openFile(juce::File(result.filePath));
             if (auto* tab = activeTab())
             {
-                tab->editor().setCaretPosition(result.line, result.column);
+                juce::CodeDocument::Position pos(tab->document(), result.line, result.column);
+                tab->editor().moveCaretTo(pos, false);
             }
         }
     };
@@ -801,6 +803,20 @@ void EditorArea::resized()
     {
         auto findArea = b.removeFromBottom(FindReplacePanel::kPanelHeight);
         findReplacePanel_->setBounds(findArea);
+    }
+
+    // L-2: Workspace search panel at the bottom (if visible)
+    if (workspaceSearchPanel_ && workspaceSearchPanel_->isVisible())
+    {
+        auto wsArea = b.removeFromBottom(WorkspaceSearchPanel::kPanelHeight);
+        workspaceSearchPanel_->setBounds(wsArea);
+    }
+
+    // L-2: Symbol search panel at the bottom (if visible)
+    if (symbolSearchPanel_ && symbolSearchPanel_->isVisible())
+    {
+        auto ssArea = b.removeFromBottom(SymbolSearchPanel::kPanelHeight);
+        symbolSearchPanel_->setBounds(ssArea);
     }
 
     // Active tab fills the middle
@@ -1808,7 +1824,261 @@ void EditorArea::toggleSplit()
     }
 }
 
-void EditorArea::registerEditorActions()
+// ---------------------------------------------------------------------------
+// L-2: Navigation & Workspace Search
+// ---------------------------------------------------------------------------
+
+void EditorArea::setWorkspaceRoot(const std::filesystem::path& root)
+{
+    workspaceRoot_ = root;
+    if (workspaceSearchModel_)
+        workspaceSearchModel_ = std::make_unique<WorkspaceSearchModel>(root);
+    if (quickOpenDialog_)
+    {
+        // Rebuild the quick-open file list with the new root
+        quickOpenDialog_.reset();
+        quickOpenDialog_ = std::make_unique<QuickOpenDialog>(root);
+        quickOpenDialog_->onFileSelected = [this](const std::filesystem::path& file) {
+            openFile(juce::File(file));
+        };
+        quickOpenDialog_->onCancelled = [this]() {
+            quickOpenDialog_->setVisible(false);
+        };
+        addChildComponent(quickOpenDialog_.get());
+        quickOpenDialog_->setVisible(false);
+    }
+}
+
+void EditorArea::showQuickOpen()
+{
+    if (!quickOpenDialog_)
+        return;
+
+    juce::Component* topParent = getTopLevelComponent();
+    if (!topParent)
+        topParent = this;
+
+    auto bounds = topParent->getBounds();
+    quickOpenDialog_->setBounds(bounds);
+    topParent->addAndMakeVisible(quickOpenDialog_.get());
+    quickOpenDialog_->setVisible(true);
+    quickOpenDialog_->setFilter({});
+}
+
+void EditorArea::gotoDefinition()
+{
+    HathorTab* tab = activeTab();
+    if (!tab || !lspClient_ || tab->isChuckTab())
+        return;
+
+    auto cursorPos = tab->editor().getCaretPos();
+    juce::String uri = tab->lspDocumentUri();
+    int line = cursorPos.getLineNumber();
+    int column = cursorPos.getIndexInLine();
+
+    // Record current position in navigation history
+    navigationHistory_->navigateTo({
+        uri.toStdString(),
+        line,
+        column
+    });
+
+    lspClient_->requestDefinition(
+        uri.toStdString(), line, column,
+        [this](const lsp::NavigationResult& result) {
+            if (!result.locations.empty())
+            {
+                const auto& loc = result.locations.front();
+                std::string path = loc.uri;
+                const std::string prefix = "file://";
+                if (path.substr(0, prefix.size()) == prefix)
+                    path = path.substr(prefix.size());
+
+                juce::File file(path);
+                openFile(file);
+
+                if (auto* targetTab = activeTab())
+                {
+                    juce::CodeDocument::Position targetPos(targetTab->document(),
+                        static_cast<int>(loc.range.start.line),
+                        static_cast<int>(loc.range.start.character));
+                    targetTab->editor().moveCaretTo(targetPos, false);
+
+                    navigationHistory_->navigateTo({
+                        loc.uri,
+                        static_cast<int>(loc.range.start.line),
+                        static_cast<int>(loc.range.start.character)
+                    });
+                }
+            }
+            else
+            {
+                showStatus("No definition found");
+            }
+        });
+}
+
+void EditorArea::gotoReferences()
+{
+    HathorTab* tab = activeTab();
+    if (!tab || !lspClient_ || tab->isChuckTab())
+        return;
+
+    auto cursorPos = tab->editor().getCaretPos();
+    juce::String uri = tab->lspDocumentUri();
+    int line = cursorPos.getLineNumber();
+    int column = cursorPos.getIndexInLine();
+
+    navigationHistory_->navigateTo({uri.toStdString(), line, column});
+
+    lspClient_->requestReferences(
+        uri.toStdString(), line, column, true,
+        [this](const lsp::NavigationResult& result) {
+            if (result.locations.empty())
+            {
+                showStatus("No references found");
+            }
+            else
+            {
+                const auto& loc = result.locations.front();
+                std::string path = loc.uri;
+                const std::string prefix = "file://";
+                if (path.substr(0, prefix.size()) == prefix)
+                    path = path.substr(prefix.size());
+
+                juce::File file(path);
+                openFile(file);
+
+                if (auto* targetTab = activeTab())
+                {
+                    juce::CodeDocument::Position targetPos(targetTab->document(),
+                        static_cast<int>(loc.range.start.line),
+                        static_cast<int>(loc.range.start.character));
+                    targetTab->editor().moveCaretTo(targetPos, false);
+
+                    navigationHistory_->navigateTo({
+                        loc.uri,
+                        static_cast<int>(loc.range.start.line),
+                        static_cast<int>(loc.range.start.character)
+                    });
+                }
+            }
+        });
+}
+
+void EditorArea::peekDefinition()
+{
+    showStatus("Peek definition not yet implemented");
+}
+
+void EditorArea::navigateBack()
+{
+    auto entry = navigationHistory_->goBack();
+    if (!entry.has_value())
+    {
+        showStatus("No previous location in history");
+        return;
+    }
+
+    std::string path = entry->uri;
+    const std::string prefix = "file://";
+    if (path.substr(0, prefix.size()) == prefix)
+        path = path.substr(prefix.size());
+
+    juce::File file(path);
+    openFile(file);
+
+    if (auto* tab = activeTab())
+    {
+        juce::CodeDocument::Position pos(tab->document(), entry->line, entry->column);
+        tab->editor().moveCaretTo(pos, false);
+    }
+}
+
+void EditorArea::navigateForward()
+{
+    auto entry = navigationHistory_->goForward();
+    if (!entry.has_value())
+    {
+        showStatus("No next location in history");
+        return;
+    }
+
+    std::string path = entry->uri;
+    const std::string prefix = "file://";
+    if (path.substr(0, prefix.size()) == prefix)
+        path = path.substr(prefix.size());
+
+    juce::File file(path);
+    openFile(file);
+
+    if (auto* tab = activeTab())
+    {
+        juce::CodeDocument::Position pos(tab->document(), entry->line, entry->column);
+        tab->editor().moveCaretTo(pos, false);
+    }
+}
+
+void EditorArea::showWorkspaceSearch()
+{
+    if (!workspaceSearchPanel_)
+        return;
+
+    workspaceSearchPanel_->setVisible(true);
+    workspaceSearchPanel_->toFront(true);
+}
+
+void EditorArea::showSymbolSearch()
+{
+    if (!symbolSearchPanel_)
+        return;
+
+    symbolSearchPanel_->setVisible(true);
+    symbolSearchPanel_->toFront(true);
+    symbolSearchPanel_->setQuery({});
+}
+
+void EditorArea::showDocumentSymbols()
+{
+    HathorTab* tab = activeTab();
+    if (!tab)
+        return;
+
+    // For .hathor tabs, use the LSP documentSymbol
+    if (!tab->isChuckTab() && lspClient_)
+    {
+        juce::String uri = tab->lspDocumentUri();
+        lspClient_->requestDocumentSymbols(
+            uri.toStdString(),
+            [this](const lsp::DocumentSymbolResult& result) {
+                // Display symbols — for now, show count in status bar
+                if (result.symbols.empty())
+                {
+                    showStatus("No symbols found in document");
+                }
+                else
+                {
+                    showStatus(juce::String(result.symbols.size()) + " symbols found");
+                }
+            });
+    }
+    else
+    {
+        showStatus("Document symbol search is only available for .hathor tabs");
+    }
+}
+
+void EditorArea::navigateToNextDiagnostic()
+{
+    showStatus("Next diagnostic not yet implemented");
+}
+
+void EditorArea::navigateToPrevDiagnostic()
+{
+    showStatus("Previous diagnostic not yet implemented");
+}
+
+// ---------------------------------------------------------------------------
 {
     if (!actionRegistry_)
         actionRegistry_ = std::make_unique<ActionRegistry>();
@@ -1828,6 +2098,8 @@ void EditorArea::registerEditorActions()
     actionRegistry_->registerAction("file.saveAs",              "Save As…",           "File",       "Save as…");
     actionRegistry_->registerAction("file.reload",              "Reload",             "File",       "Reload from disk");
 
+    // L-1: editor.eval is registered in the AI-4 section above
+
     // Bind key shortcuts (macOS uses Cmd as primary modifier)
     if (auto k = parseKeyEquivalent("Cmd+F"))      actionRegistry_->bindKey(*k, "editor.find");
     if (auto k = parseKeyEquivalent("Cmd+Option+F"))  actionRegistry_->bindKey(*k, "editor.replace");
@@ -1836,7 +2108,44 @@ void EditorArea::registerEditorActions()
     if (auto k = parseKeyEquivalent("Cmd+Shift+T")) actionRegistry_->bindKey(*k, "editor.reopenClosed");
     if (auto k = parseKeyEquivalent("Cmd+Enter")) actionRegistry_->bindKey(*k, "editor.eval");
 
-    // Install callbacks
+    // L-2: Navigation & workspace search actions
+    actionRegistry_->registerAction("editor.quickOpen",         "Quick Open…",      "Go",    "Open file by name");
+    actionRegistry_->registerAction("editor.gotoDefinition",   "Go to Definition", "Go",    "Jump to symbol definition");
+    actionRegistry_->registerAction("editor.peekDefinition",   "Peek Definition",  "Go",    "Peek definition in place");
+    actionRegistry_->registerAction("editor.gotoReferences",   "Find References",  "Go",    "Find all references");
+    actionRegistry_->registerAction("editor.navigateBack",     "Go Back",          "Go",    "Navigate backward");
+    actionRegistry_->registerAction("editor.navigateForward",  "Go Forward",       "Go",    "Navigate forward");
+    actionRegistry_->registerAction("editor.workspaceSearch",  "Search in Files…", "Go",    "Search across workspace");
+    actionRegistry_->registerAction("editor.symbolSearch",     "Go to Symbol…",    "Go",    "Find symbol in workspace");
+    actionRegistry_->registerAction("editor.docSymbols",       "Document Symbols", "Go",    "Symbols in current file");
+    actionRegistry_->registerAction("editor.nextDiagnostic",   "Next Error",       "Go",    "Go to next diagnostic");
+    actionRegistry_->registerAction("editor.prevDiagnostic",   "Previous Error",   "Go",    "Go to previous diagnostic");
+
+    // L-2: Key bindings (macOS)
+    if (auto k = parseKeyEquivalent("Cmd+P"))       actionRegistry_->bindKey(*k, "editor.quickOpen");
+    if (auto k = parseKeyEquivalent("F12"))          actionRegistry_->bindKey(*k, "editor.gotoDefinition");
+    if (auto k = parseKeyEquivalent("Shift+F12"))    actionRegistry_->bindKey(*k, "editor.gotoReferences");
+    if (auto k = parseKeyEquivalent("Cmd+Option+Left"))  actionRegistry_->bindKey(*k, "editor.navigateBack");
+    if (auto k = parseKeyEquivalent("Cmd+Option+Right")) actionRegistry_->bindKey(*k, "editor.navigateForward");
+    if (auto k = parseKeyEquivalent("Cmd+Shift+F"))  actionRegistry_->bindKey(*k, "editor.workspaceSearch");
+    if (auto k = parseKeyEquivalent("Cmd+T"))        actionRegistry_->bindKey(*k, "editor.symbolSearch");
+    if (auto k = parseKeyEquivalent("F8"))            actionRegistry_->bindKey(*k, "editor.nextDiagnostic");
+    if (auto k = parseKeyEquivalent("Shift+F8"))      actionRegistry_->bindKey(*k, "editor.prevDiagnostic");
+
+    // L-2: Callbacks
+    actionRegistry_->setCallback("editor.quickOpen",      [this]() { showQuickOpen(); });
+    actionRegistry_->setCallback("editor.gotoDefinition", [this]() { gotoDefinition(); });
+    actionRegistry_->setCallback("editor.peekDefinition", [this]() { peekDefinition(); });
+    actionRegistry_->setCallback("editor.gotoReferences", [this]() { gotoReferences(); });
+    actionRegistry_->setCallback("editor.navigateBack",   [this]() { navigateBack(); });
+    actionRegistry_->setCallback("editor.navigateForward", [this]() { navigateForward(); });
+    actionRegistry_->setCallback("editor.workspaceSearch", [this]() { showWorkspaceSearch(); });
+    actionRegistry_->setCallback("editor.symbolSearch",   [this]() { showSymbolSearch(); });
+    actionRegistry_->setCallback("editor.docSymbols",     [this]() { showDocumentSymbols(); });
+    actionRegistry_->setCallback("editor.nextDiagnostic", [this]() { navigateToNextDiagnostic(); });
+    actionRegistry_->setCallback("editor.prevDiagnostic", [this]() { navigateToPrevDiagnostic(); });
+
+    // L-1: Install callbacks
     actionRegistry_->setCallback("editor.find", [this]() { showFindReplace(); });
     actionRegistry_->setCallback("editor.commandPalette", [this]() {
         if (commandPalette_)

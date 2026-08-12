@@ -14,6 +14,7 @@
 #include <juce_gui_extra/juce_gui_extra.h>
 
 #include <cctype>
+#include <filesystem>
 #include <string>
 
 // ---------------------------------------------------------------------------
@@ -82,7 +83,7 @@ MainWindow::MainWindow(AudioEngine& audio,
     // -----------------------------------------------------------------------
     activityRibbon_  = std::make_unique<hathor::ui::ActivityRibbon>();
     explorerPanel_   = std::make_unique<hathor::ui::ExplorerPanel>();
-     editorArea_      = std::make_unique<hathor::ui::EditorArea>(audio_, ci_);
+    editorArea_      = std::make_unique<hathor::ui::EditorArea>(audio_, ci_);
 
      // AI-8: Create and wire the editor + LSP context bridges.
      // EditorContextBridge captures editor state (file, cursor, selection)
@@ -112,9 +113,13 @@ MainWindow::MainWindow(AudioEngine& audio,
     // -----------------------------------------------------------------------
      chatSidebar_     = std::make_unique<hathor::ui::ChatSidebar>(audio_, ci_);
 
-     // Determine the project directory (cwd at launch time).
-     const std::string projectDir =
-         juce::File::getCurrentWorkingDirectory().getFullPathName().toStdString();
+      // Determine the project directory (cwd at launch time).
+      const std::string projectDir =
+          juce::File::getCurrentWorkingDirectory().getFullPathName().toStdString();
+
+      // L-2: Set the workspace root for navigation & search components.
+      if (editorArea_)
+          editorArea_->setWorkspaceRoot(std::filesystem::path(projectDir));
 
      // Store MCP path for thread creation and Settings updates (A2).
      hathorMcpPath_ = hathorMcpPath;
