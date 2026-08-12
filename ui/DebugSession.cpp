@@ -4,8 +4,15 @@
 /**
  * DebugSession.cpp — L-6: native/C++ debugging integration implementation.
  *
- * Wraps the platform debugger CLI (LLDB on macOS/Linux, GDB on Linux).
- * On Windows, the session is unsupported and launch() returns an error.
+ * Wraps the platform debugger CLI (LLDB on macOS/Linux, GDB on Linux) as a
+ * child process with a stdin command pipe.  On Windows the session is
+ * unsupported and launch() returns an explicit error — no fake debugger.
+ *
+ * Commands are written to the debugger's stdin (non-blocking) and results
+ * are parsed from stdout/stderr via DebugOutputParser.hpp.  All parsing and
+ * callback delivery happens in pollResults(), which the UI drives from a
+ * timer on the JUCE message thread.  The audio thread never touches this
+ * class.
  *
  * Requirement references: L-6 §Native/C++ Debugging
  */
@@ -14,7 +21,15 @@
 
 #include <cstdlib>
 #include <cstring>
+#include <deque>
+#include <filesystem>
 #include <sstream>
+
+#ifdef _WIN32
+#else
+#  include <signal.h>
+#  include <sys/types.h>
+#endif
 
 namespace hathor::ui {
 
@@ -25,21 +40,18 @@ namespace hathor::ui {
 DebugSession::DebuggerType DebugSession::detectDebugger() noexcept
 {
 #if defined(_WIN32)
-    // Windows: no native GDB/LLDB integration.  This is explicit, not a stub.
+    // Windows: no native GDB/LLDB CLI integration here.  This is explicit,
+    // not a stub — the UI surfaces this message when the panel is opened.
     return DebuggerType::None;
 #else
     // macOS and Linux: prefer LLDB if available, fall back to GDB.
-    // posix_access checks for the executable in $PATH.
-    if (std::getenv("PATH") != nullptr) {
-        // Check for lldb
-        if (std::filesystem::exists("/usr/bin/lldb") ||
-            std::filesystem::exists("/usr/local/bin/lldb"))
-            return DebuggerType::Lldb;
-        // Check for gdb
-        if (std::filesystem::exists("/usr/bin/gdb") ||
-            std::filesystem::exists("/usr/local/bin/gdb"))
-            return DebuggerType::Gdb;
-    }
+    if (std::filesystem::exists("/usr/bin/lldb") ||
+        std::filesystem::exists("/usr/local/bin/lldb") ||
+        std::filesystem::exists("/opt/homebrew/bin/lldb"))
+        return DebuggerType::Lldb;
+    if (std::filesystem::exists("/usr/bin/gdb") ||
+        std::filesystem::exists("/usr/local/bin/gdb"))
+        return DebuggerType::Gdb;
     return DebuggerType::None;
 #endif
 }
@@ -75,7 +87,8 @@ std::string DebugSession::launch(const Config& config)
 
     if (debuggerType_ == DebuggerType::None) {
         std::lock_guard<std::mutex> lock(errMtx_);
-        lastError_ = "No native debugger (LLDB/GDB) available on this platform.";
+        lastError_ = "No native debugger (LLDB/GDB) is available on this platform. "
+                     "Native C++ debugging is not supported here.";
         return lastError_;
     }
 
@@ -87,32 +100,39 @@ std::string DebugSession::launch(const Config& config)
 
     // Build the debugger command vector.
     std::vector<std::string> argv;
-
     if (debuggerType_ == DebuggerType::Lldb) {
-        // LLDB: launch with the target, then run once the user sets breakpoints.
-        // We use -- to separate LLDB args from the target program args.
-        argv = {"lldb"};
-        // Set the target executable
-        argv.push_back("--");
-        argv.push_back(config.executable);
-        argv.insert(argv.end(), config.args.begin(), config.args.end());
+        // lldb -- <target> <args...>   ("--" ends option parsing)
+        argv = {"lldb", "--", config.executable};
     } else {
-        // GDB: similar approach.
-        argv = {"gdb"};
-        argv.push_back("--args");
-        argv.push_back(config.executable);
-        argv.insert(argv.end(), config.args.begin(), config.args.end());
+        // gdb --args <target> <args...>
+        argv = {"gdb", "--args", config.executable};
     }
+    argv.insert(argv.end(), config.args.begin(), config.args.end());
 
-    // Launch via TerminalProcess (which handles the POSIX spawn safely,
-    // on a worker thread, with lock-free output streaming).
-    if (!process_.launch(argv, config.sourceDir)) {
+    // Launch via TerminalProcess with a stdin pipe so we can drive the
+    // debugger interactively.  This is non-blocking — the debugger's
+    // stdout/stderr stream through the lock-free output ring.
+    if (!process_.launch(argv, config.sourceDir, /*needStdin=*/true)) {
         std::lock_guard<std::mutex> lock(errMtx_);
         lastError_ = "Failed to launch debugger: " + process_.lastError();
         return lastError_;
     }
 
     running_.store(true, std::memory_order_relaxed);
+    hasStarted_ = false;
+    pendingStop_ = false;
+    pendingLocals_ = false;
+    pendingFrames_.clear();
+    pendingLocalValues_.clear();
+    pendingWatchLabel_.clear();
+
+    // Send non-interactive-mode init commands (gdb only — lldb does not
+    // paginate when stdin is not a tty).
+    if (debuggerType_ == DebuggerType::Gdb) {
+        sendCommand("set pagination off");
+        sendCommand("set confirm off");
+    }
+
     return {};
 }
 
@@ -123,6 +143,10 @@ void DebugSession::shutdown()
 
     running_.store(false, std::memory_order_relaxed);
     process_.shutdown();
+
+    pendingStop_ = false;
+    pendingLocals_ = false;
+    pendingWatchLabel_.clear();
 }
 
 // ---------------------------------------------------------------------------
@@ -133,26 +157,33 @@ int DebugSession::setBreakpoint(const std::string& file, int line)
 {
     if (!running_.load(std::memory_order_relaxed)) {
         std::lock_guard<std::mutex> lock(errMtx_);
-        lastError_ = "Debugger not running.";
+        lastError_ = "Debugger is not running. Launch a session first.";
         return -1;
     }
 
-    int bpId = nextBpId_++;
+    if (file.empty() || line <= 0) {
+        std::lock_guard<std::mutex> lock(errMtx_);
+        lastError_ = "Breakpoint requires a file and a line number >= 1.";
+        return -1;
+    }
+
+    const int bpId = nextBpId_++;
 
     std::string cmd;
-    if (debuggerType_ == DebuggerType::Lldb) {
-        // lldb: breakpoint set --file <file> --line <line>
-        // We use --file because lldb's --source-regexp is less reliable.
-        cmd = "breakpoint set --file \"" + file + "\" --line " + std::to_string(line) + "\n";
-    } else {
-        // gdb: break <file>:<line>
-        cmd = "break " + file + ":" + std::to_string(line) + "\n";
+    if (debuggerType_ == DebuggerType::Lldb)
+        cmd = "breakpoint set --file \"" + file + "\" --line " + std::to_string(line);
+    else
+        cmd = "break \"" + file + "\":" + std::to_string(line);
+
+    if (!sendCommand(cmd)) {
+        std::lock_guard<std::mutex> lock(errMtx_);
+        lastError_ = "Failed to send breakpoint command to the debugger.";
+        --nextBpId_;
+        return -1;
     }
 
-    if (!sendCommand(cmd))
-        return -1;
-
-    // Store the breakpoint optimistically (confirmed async via output parsing).
+    // Store optimistically; the debugger's confirmation (parsed in
+    // pollResults) carries the authoritative number.
     {
         std::lock_guard<std::mutex> lock(bpMtx_);
         Breakpoint bp;
@@ -161,7 +192,10 @@ int DebugSession::setBreakpoint(const std::string& file, int line)
         bp.line = line;
         bp.enabled = true;
         breakpoints_[bpId] = std::move(bp);
+        pendingBpConfirms_.push_back(bpId);
     }
+    if (onBreakpoints)
+        onBreakpoints(listBreakpoints());
     return bpId;
 }
 
@@ -170,18 +204,29 @@ bool DebugSession::deleteBreakpoint(int id)
     if (!running_.load(std::memory_order_relaxed))
         return false;
 
-    std::string cmd;
-    if (debuggerType_ == DebuggerType::Lldb) {
-        cmd = "breakpoint delete " + std::to_string(id) + "\n";
-    } else {
-        cmd = "delete " + std::to_string(id) + "\n";
+    // Use the debugger-assigned number (may differ from our optimistic id).
+    int debuggerNum = id;
+    {
+        std::lock_guard<std::mutex> lock(bpMtx_);
+        const auto it = breakpoints_.find(id);
+        if (it != breakpoints_.end())
+            debuggerNum = it->second.id;
     }
+
+    const std::string cmd = (debuggerType_ == DebuggerType::Lldb)
+        ? "breakpoint delete " + std::to_string(debuggerNum)
+        : "delete " + std::to_string(debuggerNum);
 
     if (!sendCommand(cmd))
         return false;
 
-    std::lock_guard<std::mutex> lock(bpMtx_);
-    return breakpoints_.erase(id) > 0;
+    {
+        std::lock_guard<std::mutex> lock(bpMtx_);
+        breakpoints_.erase(id);
+    }
+    if (onBreakpoints)
+        onBreakpoints(listBreakpoints());
+    return true;
 }
 
 std::vector<DebugSession::Breakpoint> DebugSession::listBreakpoints() const
@@ -199,10 +244,16 @@ void DebugSession::continue_()
     if (!running_.load(std::memory_order_relaxed))
         return;
 
-    if (debuggerType_ == DebuggerType::Lldb)
-        sendCommand("run\n");
+    // First continue starts the target (run); later ones resume from a stop.
+    if (!hasStarted_)
+    {
+        hasStarted_ = true;
+        sendCommand("run");
+    }
     else
-        sendCommand("run\n");
+    {
+        sendCommand("continue");
+    }
 }
 
 void DebugSession::interrupt()
@@ -210,48 +261,41 @@ void DebugSession::interrupt()
     if (!running_.load(std::memory_order_relaxed))
         return;
 
-    // Send Ctrl-C equivalent (SIGINT to the debugger's child process).
-    // We don't have direct access to the child PID through TerminalProcess's
-    // public API beyond pid(), but the TerminalProcess::cancel() sends
-    // SIGTERM.  For a true interrupt, we'd need signal delivery to the
-    // debugged process — which on POSIX we can do via TerminalProcess::cancel()
-    // as a best-effort.
-    //
-    // A more robust approach would be to send "\x03" (ETX / Ctrl-C) to the
-    // debugger's stdin, but LLDB/GDB in batch mode may not interpret it.
-    // For now, we use cancel() which sends SIGTERM to the debugger process
-    // — this is a known limitation.
-    process_.cancel(500);  // 500ms grace period before SIGKILL
+    if (debuggerType_ == DebuggerType::Lldb) {
+        // Ask lldb to halt the inferior (equivalent to Ctrl-C in a terminal).
+        sendCommand("process interrupt");
+    } else {
+#ifndef _WIN32
+        // gdb: SIGINT to the gdb process is forwarded to the inferior.
+        const int pid = process_.pid();
+        if (pid > 0)
+            ::kill(static_cast<pid_t>(pid), SIGINT);
+#endif
+    }
 }
 
 void DebugSession::stepOver()
 {
     if (!running_.load(std::memory_order_relaxed))
         return;
-    if (debuggerType_ == DebuggerType::Lldb)
-        sendCommand("next\n");
-    else
-        sendCommand("next\n");
+    hasStarted_ = true;
+    sendCommand("next");
 }
 
 void DebugSession::stepInto()
 {
     if (!running_.load(std::memory_order_relaxed))
         return;
-    if (debuggerType_ == DebuggerType::Lldb)
-        sendCommand("step\n");
-    else
-        sendCommand("step\n");
+    hasStarted_ = true;
+    sendCommand("step");
 }
 
 void DebugSession::stepOut()
 {
     if (!running_.load(std::memory_order_relaxed))
         return;
-    if (debuggerType_ == DebuggerType::Lldb)
-        sendCommand("finish\n");
-    else
-        sendCommand("finish\n");
+    hasStarted_ = true;
+    sendCommand("finish");
 }
 
 void DebugSession::requestCallStack()
@@ -259,29 +303,34 @@ void DebugSession::requestCallStack()
     if (!running_.load(std::memory_order_relaxed))
         return;
     if (debuggerType_ == DebuggerType::Lldb)
-        sendCommand("thread backtraces\n");
+        sendCommand("thread backtrace -c 32");
     else
-        sendCommand("bt\n");
+        sendCommand("bt 32");
 }
 
 void DebugSession::requestLocals()
 {
     if (!running_.load(std::memory_order_relaxed))
         return;
+    pendingLocals_ = true;
+    pendingLocalValues_.clear();
     if (debuggerType_ == DebuggerType::Lldb)
-        sendCommand("frame variable\n");
+        sendCommand("frame variable");
     else
-        sendCommand("info locals\n");
+        sendCommand("info locals");
 }
 
 void DebugSession::evaluateWatch(const std::string& expression, const std::string& label)
 {
     if (!running_.load(std::memory_order_relaxed))
         return;
+    if (expression.empty())
+        return;
+    pendingWatchLabel_ = label.empty() ? expression : label;
     if (debuggerType_ == DebuggerType::Lldb)
-        sendCommand("expression -- " + expression + "\n");
+        sendCommand("expression -- " + expression);
     else
-        sendCommand("print " + expression + "\n");
+        sendCommand("print " + expression);
 }
 
 // ---------------------------------------------------------------------------
@@ -297,33 +346,34 @@ void DebugSession::pollResults()
     char buf[4096];
     std::size_t n = process_.drainOutput(buf, sizeof(buf));
     if (n == 0) {
-        // Check if the process exited.
+        // Check if the debugger process exited.
         if (process_.state() == TerminalProcess::State::Done ||
             process_.state() == TerminalProcess::State::Idle) {
+            running_.store(false, std::memory_order_relaxed);
             if (onExited) {
-                onExited();
-                onExited = nullptr;  // fire once
+                auto cb = onExited;
+                onExited = nullptr;   // fire once
+                cb();
             }
         }
         return;
     }
 
+    // Extract complete lines, then process them outside the lock (parsing
+    // may fire callbacks that re-enter this class).
+    std::vector<std::string> lines;
     {
         std::lock_guard<std::mutex> lock(outputMtx_);
         outputBuffer_.append(buf, n);
+        std::size_t pos = 0;
+        while ((pos = outputBuffer_.find('\n')) != std::string::npos) {
+            lines.push_back(outputBuffer_.substr(0, pos));
+            outputBuffer_.erase(0, pos + 1);
+        }
     }
 
-    // Parse the accumulated output for stop events, breakpoint confirms,
-    // variable evaluations, etc.
-    std::string output;
-    {
-        std::lock_guard<std::mutex> lock(outputMtx_);
-        output = std::move(outputBuffer_);
-    }
-
-    parseStopEvent(output);
-    parseBreakpointSet(output);
-    parseEvaluate(output, "");
+    for (const auto& line : lines)
+        handleOutputLine(line);
 }
 
 // ---------------------------------------------------------------------------
@@ -332,43 +382,169 @@ void DebugSession::pollResults()
 
 bool DebugSession::sendCommand(const std::string& cmd)
 {
-    // TerminalProcess doesn't expose a write-to-stdin API directly in the
-    // current header.  The child's stdin is managed internally.
-    //
-    // For now, we note that TerminalProcess::stdinWrite_ exists but is
-    // private.  A full implementation would expose a writeStdin() method
-    // on TerminalProcess.  We handle this gracefully:
-    return true;  // commands are buffered; in a full implementation these
-                  // would be written to the debugger's stdin pipe.
+    if (!running_.load(std::memory_order_relaxed))
+        return false;
+
+    std::string line = cmd;
+    if (line.empty() || line.back() != '\n')
+        line += '\n';
+    return process_.writeStdin(line.data(), line.size());
 }
 
 // ---------------------------------------------------------------------------
 // Internal: output parsing
 // ---------------------------------------------------------------------------
 
-void DebugSession::parseBreakpointSet(const std::string& /*output*/)
+void DebugSession::handleOutputLine(const std::string& rawLine)
 {
-    // LLDB: "Breakpoint N set -- file 'foo.hathor', line M"
-    // GDB: "Breakpoint N at 0x...: file foo.hathor, line M."
-    // In a full implementation, we'd parse the breakpoint number and update
-    // breakpoints_[bpId].  For now, the optimistic storage in setBreakpoint()
-    // is sufficient for UI display.
+    std::string line = rawLine;
+
+    // Strip debugger prompts.
+    static constexpr const char* kLldbPrompt = "(lldb) ";
+    static constexpr const char* kGdbPrompt  = "(gdb) ";
+    if (line.rfind(kLldbPrompt, 0) == 0)
+        line.erase(0, std::strlen(kLldbPrompt));
+    else if (line.rfind(kGdbPrompt, 0) == 0)
+        line.erase(0, std::strlen(kGdbPrompt));
+
+    const bool lldb = (debuggerType_ == DebuggerType::Lldb);
+
+    // A blank line (e.g. after a prompt) is a natural flush point for any
+    // pending stop/locals collections.
+    if (debugTrim(line).empty()) {
+        flushStopEvent();
+        flushLocals();
+        return;
+    }
+
+    if (onOutput)
+        onOutput(line);
+
+    // --- Breakpoint confirmation ---
+    {
+        int bpNum = 0;
+        bool pending = false;
+        if (parseBreakpointConfirm(line, bpNum, pending)) {
+            {
+                std::lock_guard<std::mutex> lock(bpMtx_);
+                if (!pendingBpConfirms_.empty()) {
+                    const int ourId = pendingBpConfirms_.front();
+                    pendingBpConfirms_.pop_front();
+                    auto it = breakpoints_.find(ourId);
+                    if (it != breakpoints_.end())
+                        it->second.id = bpNum;   // authoritative debugger number
+                } else if (bpNum > 0) {
+                    // A confirmation without a pending request — adopt the
+                    // debugger's number into the optimistic entry with that id.
+                    auto it = breakpoints_.find(bpNum);
+                    if (it != breakpoints_.end())
+                        it->second.id = bpNum;
+                }
+            }
+            if (onBreakpoints)
+                onBreakpoints(listBreakpoints());
+            return;
+        }
+    }
+
+    // --- Stop detection (lldb) ---
+    if (lldb) {
+        std::string reason;
+        if (parseLldbStopLine(line, reason) ||
+            (line.rfind("Process ", 0) == 0 && line.find(" stopped") != std::string::npos)) {
+            pendingStop_ = true;
+            pendingFrames_.clear();
+            return;
+        }
+    } else {
+        // --- Stop detection (gdb) ---
+        std::string fn;
+        if (parseGdbStopLine(line, fn) ||
+            line.rfind("Program received signal", 0) == 0 ||
+            line.rfind("Program exited", 0) == 0) {
+            pendingStop_ = true;
+            pendingFrames_.clear();
+            return;
+        }
+    }
+
+    // --- Call-stack frame collection ---
+    if (pendingStop_) {
+        DebugStackFrame frame;
+        const bool ok = lldb ? parseLldbFrameLine(line, frame)
+                             : parseGdbFrameLine(line, frame);
+        if (ok) {
+            pendingFrames_.push_back(frame);
+            return;
+        }
+        // A non-frame line ends the backtrace block.
+        flushStopEvent();
+        // Fall through so the line can still be interpreted below.
+    }
+
+    // --- Locals collection ---
+    if (pendingLocals_) {
+        DebugWatchValue v;
+        const bool ok = lldb ? parseLldbLocalsLine(line, v)
+                             : parseGdbLocalsLine(line, v);
+        if (ok) {
+            pendingLocalValues_.push_back(v);
+            return;
+        }
+        flushLocals();
+    }
+
+    // --- Watch/expression evaluation ---
+    if (!pendingWatchLabel_.empty()) {
+        DebugWatchValue v;
+        const bool ok = lldb ? parseLldbWatchLine(line, v)
+                             : parseGdbWatchLine(line, v);
+        if (ok) {
+            v.name = pendingWatchLabel_;
+            pendingWatchLabel_.clear();
+            if (onWatchValue)
+                onWatchValue(v);
+            return;
+        }
+        if (line.rfind("error:", 0) == 0) {
+            WatchValue v;
+            v.name = pendingWatchLabel_;
+            v.type = "error";
+            v.value = line;
+            pendingWatchLabel_.clear();
+            if (onWatchValue)
+                onWatchValue(v);
+            return;
+        }
+    }
+
+    // --- Generic debugger error ---
+    if (line.rfind("error:", 0) == 0) {
+        if (onError)
+            onError(line);
+    }
 }
 
-void DebugSession::parseStopEvent(const std::string& /*output*/)
+void DebugSession::flushStopEvent()
 {
-    // LLDB: "stop reason: breakpoint 1" / "stop reason: step"
-    // GDB: "Breakpoint 1, main () at ..."
-    //
-    // In a full implementation, we'd parse the stop reason and call
-    // onStopped with a parsed call stack.  For now, the callbacks are
-    // declared and the structure is in place.
+    if (!pendingStop_)
+        return;
+    pendingStop_ = false;
+    std::vector<StackFrame> frames = std::move(pendingFrames_);
+    pendingFrames_.clear();
+    if (!frames.empty() && onStopped)
+        onStopped(std::move(frames));
 }
 
-void DebugSession::parseEvaluate(const std::string& /*output*/, const std::string& /*label*/)
+void DebugSession::flushLocals()
 {
-    // Would parse "expression result = value" (LLDB) or "$N = value" (GDB)
-    // and fire onWatchValue.  Structure is in place for a full implementation.
+    if (!pendingLocals_)
+        return;
+    pendingLocals_ = false;
+    std::vector<WatchValue> values = std::move(pendingLocalValues_);
+    pendingLocalValues_.clear();
+    if (onLocals)
+        onLocals(std::move(values));
 }
 
 } // namespace hathor::ui

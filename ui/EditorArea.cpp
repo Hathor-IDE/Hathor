@@ -470,6 +470,25 @@ EditorArea::EditorArea(AudioEngine& audio,
     addChildComponent(sourceControlPanel_.get());
     sourceControlPanel_->setVisible(false);
 
+    // L-6: Debug & Runtime Inspector panel (bottom-docked, two tabs:
+    // "Debugger" for native C++ debugging, "Runtime" for Hathor runtime
+    // inspection).  Reads deterministic state via the read-only facade and
+    // the L-3 registry — opening it never mutates audio/ChucK state.
+    debugPanel_ = std::make_unique<DebugPanel>(audio_, diagnosticRegistry_.get());
+    debugPanel_->onClosePanel = [this]() {
+        debugPanel_->setVisible(false);
+    };
+    // L-6 ↔ L-3: opening Problems from the runtime inspector reuses the
+    // existing L-3 Problems surface (single diagnostics authority).
+    debugPanel_->onOpenProblems = [this]() {
+        hideTerminalPanel();
+        hideSourceControlPanel();
+        showProblemsPanel();
+        resized();
+    };
+    addChildComponent(debugPanel_.get());
+    debugPanel_->setVisible(false);
+
     // StatusRibbon is mounted by MainWindow at the bottom of the window;
     // do NOT addChildComponent here — it stays parented to MainWindow.
 }
@@ -931,6 +950,13 @@ void EditorArea::resized()
     {
         auto gitArea = b.removeFromBottom(SourceControlPanel::kPanelHeight);
         sourceControlPanel_->setBounds(gitArea);
+    }
+
+    // L-6: Debug & Runtime Inspector panel at the bottom (if visible)
+    if (debugPanel_ && debugPanel_->isVisible())
+    {
+        auto debugArea = b.removeFromBottom(DebugPanel::kPanelHeight);
+        debugPanel_->setBounds(debugArea);
     }
 
     // Active tab fills the middle
@@ -2346,6 +2372,33 @@ void EditorArea::hideSourceControlPanel()
 }
 
 // ---------------------------------------------------------------------------
+// L-6: Debug & Runtime Inspector panel visibility
+// ---------------------------------------------------------------------------
+
+void EditorArea::showDebugPanel()
+{
+    if (debugPanel_)
+        debugPanel_->setVisible(true);
+    // Hide other bottom-docked panels when the debug panel is shown.
+    if (terminalPanel_)
+        terminalPanel_->setVisible(false);
+    if (problemsPanel_)
+        problemsPanel_->setVisible(false);
+    if (sourceControlPanel_)
+        sourceControlPanel_->setVisible(false);
+    if (workspaceSearchPanel_)
+        workspaceSearchPanel_->setVisible(false);
+    if (symbolSearchPanel_)
+        symbolSearchPanel_->setVisible(false);
+}
+
+void EditorArea::hideDebugPanel()
+{
+    if (debugPanel_)
+        debugPanel_->setVisible(false);
+}
+
+// ---------------------------------------------------------------------------
 void EditorArea::registerEditorActions()
 {
     if (!actionRegistry_)
@@ -2460,6 +2513,19 @@ void EditorArea::registerEditorActions()
     actionRegistry_->registerAction("git.switchBranch",   "Switch Branch…",         "Git",    "Switch to another branch");
 
     if (auto k = parseKeyEquivalent("Cmd+Shift+G"))  actionRegistry_->bindKey(*k, "git.toggle");
+
+    // L-6: Debug & Runtime Inspector actions
+    actionRegistry_->registerAction("debug.toggle",   "Toggle Debug & Inspect", "Debug", "Show/hide the Debug & Runtime Inspector panel");
+
+    if (auto k = parseKeyEquivalent("Cmd+Shift+D"))  actionRegistry_->bindKey(*k, "debug.toggle");
+
+    actionRegistry_->setCallback("debug.toggle", [this]() {
+        if (debugPanel_ && debugPanel_->isVisible())
+            hideDebugPanel();
+        else
+            showDebugPanel();
+        resized();
+    });
 
     actionRegistry_->setCallback("git.toggle", [this]() {
         if (sourceControlPanel_ && sourceControlPanel_->isVisible())

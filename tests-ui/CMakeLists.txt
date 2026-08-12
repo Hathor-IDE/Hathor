@@ -91,6 +91,12 @@ add_executable(hathor-ui-tests
       # L-5: Git backend + repository model (JUCE-free)
       ${CMAKE_SOURCE_DIR}/ui/GitProcess.cpp
       ${CMAKE_SOURCE_DIR}/ui/GitRepository.cpp
+      # L-6: Debugging + Hathor runtime inspection (JUCE-free)
+      ${CMAKE_SOURCE_DIR}/ui/DebugSession.cpp
+      ${CMAKE_SOURCE_DIR}/ui/RuntimeInspectorModel.cpp
+      test_debug_output_parser.cpp
+      test_debug_session.cpp
+      test_runtime_inspector_model.cpp
 )
 
 target_compile_features(hathor-ui-tests PRIVATE cxx_std_20)

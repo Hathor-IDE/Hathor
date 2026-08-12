@@ -8,33 +8,32 @@
  *
  * Rather than implementing a custom C++ debugger engine (per PROGRAM.md
  * constraint #2: "native debugging → existing toolchain/debugger facilities"),
- * this class wraps the platform's native debugger CLI:
+ * this class wraps the platform's native debugger CLI over stdio pipes:
  *
- *   - macOS: LLDB via /usr/bin/lldb (command-line mode, --batch or -o pipes)
- *   - Linux: GDB via /usr/bin/gdb (with -i=mi or --batch)
- *   - Windows: not supported (explicitly) — returns a clear error
+ *   - macOS: LLDB (preferred), GDB if lldb is unavailable
+ *   - Linux: LLDB or GDB
+ *   - Windows: not supported (explicitly) — launch() returns a clear error
  *
- * The DebugSession launches the debugger as a child process (using the
- * existing TerminalProcess lifecycle — no new subprocess code) and communicates
- * via stdin/stdout pipes.  It parses the debugger's output to provide a
- * minimal, deterministic command surface:
+ * The debugger runs as a child process via the existing TerminalProcess
+ * lifecycle (no new subprocess code) with a stdin pipe for commands and a
+ * lock-free output ring.  Output is parsed by DebugOutputParser.hpp and
+ * delivered through async callbacks polled from the JUCE message thread:
  *
  *   - breakpoints (set / list / delete)
- *   - continue
- *   - pause (interrupt)
- *   - step over / step into / step out
- *   - call stack
- *   - locals / data inspection
- *   - watches (evaluate an expression)
+ *   - continue / pause (interrupt) / step over / step into / step out
+ *   - call stack, locals/data inspection, watches (expression evaluation)
  *
  * Threading boundary:
- *   - JUCE message thread: calls launch(), setBreakpoint(), continue_(),
- *     stepOver(), stepInto(), stepOut(), callStack(), locals(), evaluate().
- *     These methods are non-blocking — they send a command to the debugger's
- *     stdin and return immediately.  The result is collected async via
- *     pollResults() (called on a timer).
+ *   - JUCE message thread: launch(), setBreakpoint(), continue_(), step*(),
+ *     requestCallStack(), requestLocals(), evaluateWatch(), pollResults().
+ *     Command methods are non-blocking — they write one line to the
+ *     debugger's stdin and return.  Results are delivered asynchronously
+ *     via pollResults() (called on a timer).
  *   - Audio thread: NEVER touches this class.
  *   - Worker thread (owned by TerminalProcess): reads debugger stdout.
+ *
+ * If a capability is not available on the platform (e.g. Windows), the
+ * session reports it explicitly instead of pretending to work.
  *
  * AI restriction (L-6 §AI RESTRICTION):
  *   - There is NO "AI Repair" button.  The debugger remains a deterministic
@@ -45,6 +44,7 @@
  */
 
 #include <atomic>
+#include <deque>
 #include <functional>
 #include <map>
 #include <memory>
@@ -54,15 +54,16 @@
 #include <vector>
 
 #include "TerminalProcess.hpp"
+#include "DebugOutputParser.hpp"
 
 namespace hathor::ui {
 
 /**
  * DebugSession — wraps a native debugger (LLDB/GDB) subprocess.
  *
- * JUCE-free: depends only on TerminalProcess (which is also JUCE-free).
- * Safe to call from any non-audio thread.  All command methods are
- * non-blocking.
+ * JUCE-free: depends only on TerminalProcess + DebugOutputParser (both
+ * JUCE-free).  Safe to call from any non-audio thread.  All command methods
+ * are non-blocking.
  */
 class DebugSession
 {
@@ -71,23 +72,14 @@ public:
     enum class DebuggerType {
         Lldb,   ///< macOS / Linux
         Gdb,    ///< Linux
-        None,   ///< Windows or debugger not found
+        None,   ///< Windows or no debugger found
     };
 
     /// A single source-level frame in the call stack.
-    struct StackFrame {
-        int    line;       ///< 1-based line number
-        int    column;     ///< 1-based column (0 if unknown)
-        std::string function;  ///< function/method name
-        std::string file;      ///< source file path
-    };
+    using StackFrame = DebugStackFrame;
 
-    /// A single local variable or expression value at a breakpoint.
-    struct WatchValue {
-        std::string name;   ///< variable name or watch expression
-        std::string type;   ///< type name (e.g. "int", "std::string")
-        std::string value;  ///< current value (textual repr)
-    };
+    /// A single local variable or expression value.
+    using WatchValue = DebugWatchValue;
 
     /// A breakpoint entry.
     struct Breakpoint {
@@ -136,6 +128,9 @@ public:
     /// Returns the last error message (if any), or empty.
     std::string lastError() const;
 
+    /// Returns the detected debugger type (for UI display).
+    DebuggerType debuggerType() const noexcept { return debuggerType_; }
+
     // -----------------------------------------------------------------------
     // Debug commands (all non-blocking — message thread safe)
     // -----------------------------------------------------------------------
@@ -150,11 +145,12 @@ public:
     /// List all breakpoints.
     std::vector<Breakpoint> listBreakpoints() const;
 
-    /// Continue execution from the current stop point.
+    /// Continue execution from the current stop point (starts the target
+    /// on the first call).
     void continue_();
 
-    /// Interrupt the running target (send SIGINT equivalent to the
-    /// debugger's child process).  Non-blocking.
+    /// Interrupt the running target.  Non-blocking: asks the debugger to
+    /// halt the inferior (lldb `process interrupt` / SIGINT to gdb).
     void interrupt();
 
     /// Step over (next source line in the current function).
@@ -166,16 +162,16 @@ public:
     /// Step out (continue until the current function returns).
     void stepOut();
 
-    /// Request the current call stack.  The result is delivered async
-    /// via onStackFrames().
+    /// Request the current call stack.  Result delivered async via onStopped
+    /// (the stop callback also carries the stack when we stop).
     void requestCallStack();
 
     /// Request the current local variables at the stop point.
-    /// The result is delivered async via onLocals().
+    /// Result delivered async via onLocals().
     void requestLocals();
 
     /// Evaluate a watch expression and get its current value.
-    /// The result is delivered async via onWatchValue().
+    /// Result delivered async via onWatchValue().
     /// @param expression  C++ expression to evaluate (e.g. "myVar.field").
     /// @param label       Optional label for the watch (for display).
     void evaluateWatch(const std::string& expression, const std::string& label);
@@ -186,7 +182,7 @@ public:
 
     /// Poll for async results from the debugger.  Call on a timer
     /// (e.g. 30 Hz) from the message thread.  Processes available output
-    /// and fires the appropriate callback.
+    /// and fires the appropriate callbacks.
     void pollResults();
 
     // -----------------------------------------------------------------------
@@ -197,8 +193,20 @@ public:
     /// Provides the current call stack (top frame first).
     std::function<void(std::vector<StackFrame>)> onStopped;
 
+    /// Fired when local-variable inspection completes.
+    std::function<void(std::vector<WatchValue>)> onLocals;
+
     /// Fired when a watch/expression evaluation completes.
     std::function<void(WatchValue)> onWatchValue;
+
+    /// Fired when the breakpoint list changes (confirmation/removal).
+    std::function<void(std::vector<Breakpoint>)> onBreakpoints;
+
+    /// Fired for every line of raw debugger output (for the output view).
+    std::function<void(std::string line)> onOutput;
+
+    /// Fired on a debugger-side error (e.g. invalid command).
+    std::function<void(std::string error)> onError;
 
     /// Fired when the debugger process exits.
     std::function<void()> onExited;
@@ -207,14 +215,14 @@ private:
     /// Internal: send a command line to the debugger's stdin.
     bool sendCommand(const std::string& cmd);
 
-    /// Parse LLDB output for a breakpoint-set confirmation.
-    void parseBreakpointSet(const std::string& output);
+    /// Process a single complete output line.
+    void handleOutputLine(const std::string& rawLine);
 
-    /// Parse LLDB/GDB output for a stop event + call stack.
-    void parseStopEvent(const std::string& output);
+    /// Fire onStopped with the frames collected for the current stop.
+    void flushStopEvent();
 
-    /// Parse LLDB/GDB output for a variable/watch evaluation.
-    void parseEvaluate(const std::string& output, const std::string& label);
+    /// Fire onLocals with the values collected for the pending request.
+    void flushLocals();
 
     // -----------------------------------------------------------------------
     // Data
@@ -222,20 +230,28 @@ private:
     TerminalProcess process_;
     DebuggerType    debuggerType_ = DebuggerType::None;
     std::atomic<bool> running_{false};
+    bool            hasStarted_ = false;   ///< target has been run once
 
-    // Breakpoints (protected by a simple mutex — only accessed from the
-    // message thread, never from the audio thread).
+    // Breakpoints (message-thread only).
     mutable std::mutex bpMtx_;
     std::map<int, Breakpoint> breakpoints_;
     int nextBpId_ = 1;
+    /// Optimistic ids awaiting the debugger's confirmation (FIFO).
+    std::deque<int> pendingBpConfirms_;
 
-    // Pending async state
     std::string lastError_;
     mutable std::mutex errMtx_;
 
     // Buffer for accumulating debugger output between polls.
     std::string outputBuffer_;
     std::mutex   outputMtx_;
+
+    // --- Async parse state (message thread, set inside pollResults) ---
+    bool pendingStop_ = false;
+    std::vector<StackFrame> pendingFrames_;
+    bool pendingLocals_ = false;
+    std::vector<WatchValue> pendingLocalValues_;
+    std::string pendingWatchLabel_;
 };
 
 } // namespace hathor::ui

@@ -79,6 +79,9 @@
 // L-5: Git source control panel
 #include "SourceControlPanel.hpp"
 
+// L-6: Debug & Runtime Inspector panel
+#include "DebugPanel.hpp"
+
 namespace hathor::ui {
 
 // ---------------------------------------------------------------------------
@@ -417,6 +420,20 @@ public:
         return sourceControlPanel_.get();
     }
 
+    // -----------------------------------------------------------------------
+    // L-6: Debug & Runtime Inspector panel
+    // -----------------------------------------------------------------------
+
+    /// Show or hide the Debug & Runtime Inspector panel.
+    void showDebugPanel();
+    void hideDebugPanel();
+
+    /// Get the debug panel (non-owning, for MainWindow ribbon wiring).
+    DebugPanel* debugPanel() noexcept
+    {
+        return debugPanel_.get();
+    }
+
     /**
      * Set the workspace root directory for search and quick-open.
      * Called by MainWindow after project loading.
@@ -717,6 +734,9 @@ private:
 
     // L-5: Git source control panel (bottom-docked)
     std::unique_ptr<SourceControlPanel>                  sourceControlPanel_;
+
+    // L-6: Debug & Runtime Inspector panel (bottom-docked, two tabs)
+    std::unique_ptr<DebugPanel>                          debugPanel_;
 
     std::filesystem::path workspaceRoot_;
 

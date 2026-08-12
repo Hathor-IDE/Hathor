@@ -262,6 +262,75 @@ TEST_CASE("TerminalProcess can relaunch after shutdown", "[terminal]")
 }
 
 // ---------------------------------------------------------------------------
+// Tests: writeStdin (L-6 debugger command pipe)
+// ---------------------------------------------------------------------------
+
+TEST_CASE("TerminalProcess writeStdin round-trips data to a child", "[terminal]")
+{
+    TerminalProcess proc;
+
+    // `cat` echoes stdin to stdout.  Requires a stdin pipe (needStdin=true),
+    // the same plumbing the L-6 DebugSession uses to drive LLDB/GDB.
+    std::vector<std::string> argv = {"cat"};
+    REQUIRE(proc.launch(argv, "", /*needStdin=*/true));
+    REQUIRE(proc.state() == TerminalProcess::State::Running);
+
+    // Give the child a moment to start.
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
+    const std::string payload = "hello from hathor\n";
+    REQUIRE(proc.writeStdin(payload.data(), payload.size()));
+
+    // Poll until the child echoes the payload back.
+    std::string collected;
+    auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+    while (std::chrono::steady_clock::now() < deadline)
+    {
+        char buf[1024];
+        std::size_t n = proc.drainOutput(buf, sizeof(buf));
+        if (n > 0)
+        {
+            collected.append(buf, n);
+            if (collected.find("hello from hathor") != std::string::npos)
+                break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+
+    REQUIRE(collected.find("hello from hathor") != std::string::npos);
+
+    proc.shutdown();
+}
+
+TEST_CASE("TerminalProcess writeStdin fails when no stdin pipe was requested", "[terminal]")
+{
+    TerminalProcess proc;
+
+    // Launched WITHOUT needStdin — stdinWrite_ is -1.
+    std::vector<std::string> argv = {"cat"};
+    REQUIRE(proc.launch(argv, "", /*needStdin=*/false));
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+
+    const std::string payload = "x\n";
+    REQUIRE_FALSE(proc.writeStdin(payload.data(), payload.size()));
+
+    proc.shutdown();
+}
+
+TEST_CASE("TerminalProcess writeStdin fails after shutdown", "[terminal]")
+{
+    TerminalProcess proc;
+
+    std::vector<std::string> argv = {"cat"};
+    REQUIRE(proc.launch(argv, "", /*needStdin=*/true));
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    proc.shutdown();
+
+    const std::string payload = "x\n";
+    REQUIRE_FALSE(proc.writeStdin(payload.data(), payload.size()));
+}
+
+// ---------------------------------------------------------------------------
 // TaskRunner tests
 // ---------------------------------------------------------------------------
 

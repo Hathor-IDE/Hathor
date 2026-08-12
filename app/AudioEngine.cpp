@@ -1111,6 +1111,9 @@ AudioEngineFacade::SlotInfo AudioEngine::getSlotInfo(int slotIndex) const noexce
 AudioEngineFacade::VmStatus AudioEngine::getVmStatus(int slotIndex) const noexcept
 {
     VmStatus status;
+    // L-6: never leave fields indeterminate — the runtime inspector surfaces
+    // this struct directly.
+    status.generation = 0;
     status.hasWorker = (workerMgr_ != nullptr) && workerMgr_->isWorkerAlive();
 
     // L-6: expose the structured worker status (health/restart/crash state).
@@ -1198,7 +1201,24 @@ int AudioEngine::activeVoiceCount() const noexcept
 
 void AudioEngine::activeVoices(std::vector<AudioEngineFacade::VoiceInfo>& out) const
 {
-    voicePool_.activeVoices(out);
+    // VoicePool exposes its own VoiceInfo value type; convert to the facade's
+    // JUCE-free introspection type (L-6).
+    std::vector<VoicePool::VoiceInfo> poolVoices;
+    voicePool_.activeVoices(poolVoices);
+
+    out.clear();
+    out.reserve(poolVoices.size());
+    for (const auto& v : poolVoices)
+    {
+        AudioEngineFacade::VoiceInfo vi;
+        vi.slotId     = v.slotId;
+        vi.startSample = v.startSample;
+        vi.gain       = v.gain;
+        vi.pan        = v.pan;
+        vi.speed      = v.speed;
+        vi.sampleLen  = v.sampleLen;
+        out.push_back(vi);
+    }
 }
 
 std::vector<AudioEngineFacade::SlotPlayback> AudioEngine::listSlotPlayback() const noexcept

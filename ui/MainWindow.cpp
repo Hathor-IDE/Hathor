@@ -121,6 +121,26 @@ MainWindow::MainWindow(AudioEngine& audio,
         }
     };
 
+    // L-6: Clicking the worker indicator in the StatusRibbon opens the
+    // Debug & Runtime Inspector on the Runtime tab (worker liveness/restart
+    // state, per-tab ChucK VMs, playback).
+    statusRibbon_->onWorkerClicked = [this]()
+    {
+        if (editorArea_)
+        {
+            // Close other bottom-docked panels.
+            editorArea_->hideProblemsPanel();
+            editorArea_->hideTerminalPanel();
+            editorArea_->hideSourceControlPanel();
+
+            editorArea_->showDebugPanel();
+            if (auto* panel = editorArea_->debugPanel())
+                panel->showRuntimeTab();
+            activityRibbon_->setActivePanel(hathor::ui::Panel::Debug);
+            resized();
+        }
+    };
+
     // L-5: Clicking the Git indicator in the StatusRibbon opens the
     // source-control panel.
     statusRibbon_->onGitClicked = [this]()
@@ -280,6 +300,19 @@ MainWindow::MainWindow(AudioEngine& audio,
                 else
                     editorArea_->hideSourceControlPanel();
                 activityRibbon_->setActivePanel(wantsOpen ? hathor::ui::Panel::VersionControl : hathor::ui::Panel::None);
+                editorArea_->resized(); // re-lay-out editor area
+            }
+
+            // L-6: Debug & Runtime Inspector panel toggles the bottom-docked
+            // debug panel (Debugger + Runtime tabs).
+            if (panel == hathor::ui::Panel::Debug)
+            {
+                const bool wantsOpen = (activityRibbon_->activePanel() != hathor::ui::Panel::Debug);
+                if (wantsOpen)
+                    editorArea_->showDebugPanel();
+                else
+                    editorArea_->hideDebugPanel();
+                activityRibbon_->setActivePanel(wantsOpen ? hathor::ui::Panel::Debug : hathor::ui::Panel::None);
                 editorArea_->resized(); // re-lay-out editor area
             }
         };

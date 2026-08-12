@@ -98,6 +98,12 @@ target_sources(hathor-ui
           GitGraph.cpp                   # L-5: native JUCE commit graph
           GitDiffView.cpp                # L-5: native JUCE side-by-side diff view
           SourceControlPanel.cpp         # L-5: Changes/Commit + History panel
+          # L-6: Debugging + Hathor runtime inspection
+          DebugSession.cpp               # L-6: native debugger (LLDB/GDB) subprocess wrapper
+          RuntimeInspectorModel.cpp      # L-6: JUCE-free runtime inspection model
+          RuntimeInspectorPanel.cpp      # L-6: Hathor runtime inspector UI
+          DebuggerPanel.cpp              # L-6: native debugger UI
+          DebugPanel.cpp                 # L-6: Debug | Runtime two-tab container
          # AI-4: Ghost text (llm-ls inline completion)
          GhostJsonRpc.cpp              # llm-ls JSON-RPC serialization
          GhostProviderConfig.cpp       # provider config (env-var credentials)

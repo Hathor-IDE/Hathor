@@ -32,6 +32,7 @@ enum class Panel
     VersionControl,
     Problems,
     Terminal,
+    Debug,      ///< L-6: Debug & Runtime Inspector
     AIAgent
 };
 
@@ -88,11 +89,12 @@ private:
         juce::Rectangle<int> bounds; ///< set in resized()
     };
 
-    std::array<RibbonButton, 6> navButtons_
+    std::array<RibbonButton, 7> navButtons_
  {{
         { Panel::Explorer,       "E", {} },
         { Panel::Search,         "S", {} },
         { Panel::VersionControl, "V", {} },
+        { Panel::Debug,          "D", {} },
         { Panel::Terminal,       ">", {} },
         { Panel::Problems,       "!", {} },
         { Panel::AIAgent,        "A", {} },

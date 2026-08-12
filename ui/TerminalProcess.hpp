@@ -232,10 +232,12 @@ private:
     // Platform-specific spawn
     // -----------------------------------------------------------------------
 #ifdef _WIN32
-    bool spawnWindows(const std::vector<std::string>& argv, const std::string& cwd);
+    bool spawnWindows(const std::vector<std::string>& argv, const std::string& cwd,
+                      bool needStdin);
     void terminateWindows();
 #else
-    bool spawnPosix(const std::vector<std::string>& argv, const std::string& cwd);
+    bool spawnPosix(const std::vector<std::string>& argv, const std::string& cwd,
+                    bool needStdin);
     void terminatePosix(bool force);
 #endif
 

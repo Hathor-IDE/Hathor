@@ -486,6 +486,48 @@ TerminalProcess::ExitStatus TerminalProcess::exitStatus() const
     return s;
 }
 
+bool TerminalProcess::writeStdin(const char* data, std::size_t len) noexcept
+{
+    if (data == nullptr || len == 0)
+        return true;
+
+    // Only meaningful while the child is alive with an open stdin pipe.
+    if (state_.load(std::memory_order_acquire) != State::Running)
+        return false;
+    if (stdinWrite_ < 0)
+        return false;
+
+#ifdef _WIN32
+    HANDLE h = reinterpret_cast<HANDLE>(static_cast<intptr_t>(stdinWrite_));
+    DWORD written = 0;
+    if (!::WriteFile(h, data, static_cast<DWORD>(len), &written, nullptr))
+        return false;
+    return true;
+#else
+    std::size_t off = 0;
+    while (off < len)
+    {
+        ssize_t n = ::write(stdinWrite_, data + off, len - off);
+        if (n > 0)
+        {
+            off += static_cast<std::size_t>(n);
+            continue;
+        }
+        if (n < 0)
+        {
+            if (errno == EINTR)
+                continue;
+            // EAGAIN: child's stdin buffer is full.  Never block the
+            // message thread — drop the remainder.  EPIPE/other: child
+            // closed stdin or died.
+            return false;
+        }
+        break;  // n == 0 — should not happen for pipes
+    }
+    return off > 0;
+#endif
+}
+
 // ---------------------------------------------------------------------------
 // POSIX spawn implementation
 // ---------------------------------------------------------------------------
@@ -558,6 +600,13 @@ bool TerminalProcess::spawnPosix(const std::vector<std::string>& argv,
             ::close(stdoutPipe[1]);
             return false;
         }
+
+        // Make the parent's write end non-blocking so writeStdin() can
+        // never block the message thread when the child's buffer is full.
+        int wflags = ::fcntl(stdinPipe[1], F_GETFL, 0);
+        if (wflags == -1)
+            wflags = 0;
+        ::fcntl(stdinPipe[1], F_SETFL, wflags | O_NONBLOCK);
     }
 
     // Set the stdout read end to non-blocking so our worker thread can poll
@@ -639,7 +688,7 @@ bool TerminalProcess::spawnPosix(const std::vector<std::string>& argv,
         ::close(stdoutPipe[1]);
         stdoutRead_ = stdoutPipe[0];
         stderrRead_ = -1;
-        stdinWrite_ = -1;
+        stdinWrite_ = (needStdin ? stdinPipe[1] : -1);  // L-6: keep the write end for writeStdin()
         pid_.store(static_cast<int>(pid), std::memory_order_release);
         return true;
 #endif
@@ -697,7 +746,7 @@ bool TerminalProcess::spawnPosix(const std::vector<std::string>& argv,
     ::close(stdoutPipe[1]);
     stdoutRead_ = stdoutPipe[0];  // save read end for worker thread
     stderrRead_ = -1;  // merged into stdout
-    stdinWrite_ = -1;  // not using stdin
+    stdinWrite_ = (needStdin ? stdinPipe[1] : -1);  // L-6: keep the write end for writeStdin()
 
     pid_.store(static_cast<int>(pid), std::memory_order_release);
     return true;
@@ -722,7 +771,8 @@ void TerminalProcess::terminatePosix(bool force)
 // ---------------------------------------------------------------------------
 
 bool TerminalProcess::spawnWindows(const std::vector<std::string>& argv,
-                                    const std::string& cwd)
+                                    const std::string& cwd,
+                                    bool /*needStdin*/)
 {
     // Build a command line string from argv.
     std::string cmdLine;
