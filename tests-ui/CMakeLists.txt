@@ -98,11 +98,19 @@ add_executable(hathor-ui-tests
       ${CMAKE_SOURCE_DIR}/ui/PetdexManifestParser.cpp
       ${CMAKE_SOURCE_DIR}/ui/PetdexCacheStore.cpp
       ${CMAKE_SOURCE_DIR}/ui/PetdexAttribution.cpp
+      # Phase G — Petdex (D2–D3): JUCE-free sprite pipeline. PetdexHttp stays
+      # out of the tests — it depends on juce::URL (juce_core).
+      ${CMAKE_SOURCE_DIR}/ui/PetdexFrameGrid.cpp
+      ${CMAKE_SOURCE_DIR}/ui/PetdexAnimation.cpp
+      ${CMAKE_SOURCE_DIR}/ui/PetdexWebpDecoder.cpp
+      ${CMAKE_SOURCE_DIR}/ui/PetdexResourceCache.cpp
       test_debug_output_parser.cpp
       test_debug_session.cpp
       test_runtime_inspector_model.cpp
       # Phase G — Petdex (D1): parser + cache + attribution gate (JUCE-free)
       test_petdex_manifest.cpp
+      # Phase G — Petdex (D2–D3): grid/animation/webp/cache (JUCE-free)
+      test_petdex_sprite.cpp
 )
 
 target_compile_features(hathor-ui-tests PRIVATE cxx_std_20)
@@ -125,6 +133,8 @@ target_link_libraries(hathor-ui-tests
     PRIVATE
         hathor-engine
         Catch2::Catch2WithMain
+        # Phase G / D2: WebP decoding for the sprite pipeline tests (libwebp)
+        webp
 )
 
 # Register all Catch2 tests with CTest.

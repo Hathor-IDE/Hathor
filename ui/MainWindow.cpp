@@ -13,6 +13,9 @@
 // HathorLookAndFeel (CodeEditorComponent lives in juce_gui_extra, not juce_gui_basics).
 #include <juce_gui_extra/juce_gui_extra.h>
 
+// Phase G — Petdex D4 attribution gate (applied at selection/restore time)
+#include "PetdexAttribution.hpp"
+
 #include <cctype>
 #include <filesystem>
 #include <string>
@@ -254,6 +257,14 @@ MainWindow::MainWindow(AudioEngine& audio,
                                       agentExePath_, projectDir, hathorMcpPath_);
                               }
                           };
+
+                          // Phase G (D2–D4): react to an applied Petdex
+                          // selection. Fires on Apply with the committed slug
+                          // (empty string = explicit "no mascot").
+                          settings->onPetSelectionApplied = [this](const std::string& slug)
+                          {
+                              applySelectedPet(slug);
+                          };
                      }
                  }
              }
@@ -396,6 +407,61 @@ MainWindow::MainWindow(AudioEngine& audio,
         audio_.setMasterEqPreset(startupPreset);
     }
 
+    // -----------------------------------------------------------------------
+    // Phase G / D2–D4: Petdex mascot — resource service + D4-gated widget.
+    // The resource service is app-lifetime and shares the manifest cache dir
+    // (<userApplicationDataDirectory>/Hathor/Petdex). It does NO network work
+    // until the user applies a selection, or a previously selected pet is
+    // restored below (disk cache when present — offline launches stay
+    // network-free).
+    // -----------------------------------------------------------------------
+    petdexResourceService_ = std::make_unique<hathor::ui::PetdexResourceService>(
+        juce::File::getSpecialLocation(juce::File::userApplicationDataDirectory)
+            .getChildFile("Hathor/Petdex"));
+
+    petWidget_ = std::make_unique<hathor::ui::PetWidget>();
+    petWidget_->setVisible(false);   // NoPet until a selection exists
+
+    // D3 app-state reactivity: any actively playing pattern slot maps to the
+    // "running" state; otherwise the mascot idles. The probe runs from the
+    // widget's message-thread animation timer and never touches the audio
+    // callback (AudioEngine::isSlotRunning is a plain atomic check).
+    petWidget_->setActivityProbe([this]() -> bool
+    {
+        if (!audio_.isRunning())
+            return false;
+        for (int i = 0; i < AudioEngine::kNumSlots; ++i)
+            if (audio_.isSlotRunning(i))
+                return true;
+        return false;
+    });
+
+    petWidget_->onStatusChanged = [this](hathor::ui::PetWidget::Status status)
+    {
+        if (petWidget_)
+        {
+            petWidget_->setVisible(status != hathor::ui::PetWidget::Status::NoPet);
+            resized();
+        }
+    };
+
+    // Sprite results arrive on the message thread via callAsync; the
+    // SafePointer guard makes the delivery a no-op if the widget is ever
+    // destroyed first (same convention as the D1 manifest service callbacks).
+    petdexResourceService_->setResultCallback(
+        [safeWidget = juce::Component::SafePointer<hathor::ui::PetWidget>(
+             petWidget_.get())](const hathor::ui::PetdexSpriteResult& result)
+        {
+            if (safeWidget)
+                safeWidget->onSpriteResult(result);
+        });
+
+    // Restore a persisted selection ("settings.petSelection"). The D4 gate
+    // re-runs from the persisted attribution snapshot before anything is
+    // drawn; the sprite loads from disk when cached (offline launch) or
+    // completes the explicitly-requested download in the background.
+    restorePetSelection();
+
     // Restore the last-used root directory if one was persisted; otherwise
     // fall back to the project directory (cwd at launch).
     explorerPanel_->restoreLastDirectoryAndRefresh();
@@ -425,6 +491,12 @@ MainWindow::MainWindow(AudioEngine& audio,
 
     // L-3: StatusRibbon — mounted at MainWindow level, below VisualizerPanel.
     content->addAndMakeVisible(*statusRibbon_);
+
+    // Phase G (D2–D4): mascot overlay (bottom-right of the editor area).
+    // Hidden until a pet is selected; setVisible is driven by status changes.
+    content->addAndMakeVisible(*petWidget_);
+    if (petWidget_->status() == hathor::ui::PetWidget::Status::NoPet)
+        petWidget_->setVisible(false);
 
     // L-4: TerminalPanel is owned by EditorArea (bottom-docked, like ProblemsPanel).
     // MainWindow toggles its visibility via the ActivityRibbon Terminal button.
@@ -583,6 +655,16 @@ void MainWindow::resized()
     // 4. Editor area — fills the remaining centre region (Req 20.1, 20.3)
     if (editorArea_)
         editorArea_->setBounds(b);
+
+    // Phase G (D2–D4): mascot overlay — bottom-right corner of the editor
+    // region. Compact display scale with an 8 px margin; the widget hides
+    // itself entirely while NoPet.
+    if (petWidget_)
+    {
+        const int w = hathor::ui::PetWidget::kPetWidth;
+        const int h = hathor::ui::PetWidget::kPetHeight;
+        petWidget_->setBounds(b.getRight() - w - 8, b.getBottom() - h - 8, w, h);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -617,6 +699,104 @@ void MainWindow::closeButtonPressed()
 #endif
 
     juce::JUCEApplication::getInstance()->systemRequestedQuit();
+}
+
+// ---------------------------------------------------------------------------
+// Phase G / D2–D4 — Petdex selection lifecycle
+// ---------------------------------------------------------------------------
+
+void MainWindow::applySelectedPet(const std::string& slug)
+{
+    if (petdexResourceService_ == nullptr || petWidget_ == nullptr)
+        return;
+
+    // "No mascot" is an explicit, valid state (D1 requirement 10).
+    if (slug.empty())
+    {
+        petWidget_->clearPet();
+        return;
+    }
+
+    // Resolve the pet from the currently loaded catalog (the Settings picker
+    // only lists catalog pets, so this is normally found).
+    hathor::ui::PetdexAttributionSnapshot snapshot;
+    bool resolved = false;
+    if (editorArea_ != nullptr)
+    {
+        if (auto* svc = editorArea_->petdexManifestService())
+        {
+            const auto current = svc->current();
+            for (const auto& pet : current.manifest.pets)
+            {
+                if (pet.slug == slug)
+                {
+                    snapshot  = hathor::ui::PetdexAttribution::buildSnapshot(pet);
+                    resolved  = true;
+                    break;
+                }
+            }
+        }
+    }
+
+    if (!resolved)
+    {
+        // D4: attribution cannot be established — the pet must not be drawn.
+        // Surface an explicit blocked state instead of silently rendering.
+        snapshot.slug       = slug;
+        snapshot.canDisplay = false;
+        snapshot.notice     = hathor::ui::PetdexAttribution::kMissingAttributionNotice;
+    }
+
+    // Persist the D4 record beside the pet's cached resources so the gate
+    // re-runs identically on later launches, without the manifest or network.
+    petdexResourceService_->writeAttribution(slug, snapshot);
+
+    petWidget_->setSelectedPet(snapshot);
+
+    if (snapshot.canDisplay && snapshot.spritesheetUrl.rfind("http", 0) == 0)
+        petdexResourceService_->loadPet(slug, snapshot.spritesheetUrl);
+}
+
+void MainWindow::restorePetSelection()
+{
+    if (petdexResourceService_ == nullptr || petWidget_ == nullptr)
+        return;
+
+    const auto* props = appProperties_.getUserSettings();
+    if (props == nullptr)
+        return;
+
+    const std::string savedPet =
+        props->getValue("settings.petSelection").toStdString();
+    if (savedPet.empty())
+        return;
+
+    hathor::ui::PetdexAttributionSnapshot snap;
+    const bool haveSnap = petdexResourceService_->readAttribution(savedPet, snap);
+    if (haveSnap && snap.canDisplay
+        && snap.spritesheetUrl.rfind("http", 0) == 0)
+    {
+        // D4 gate passed from the persisted record: display the pet, then
+        // load the sprite — from disk when cached (offline launch, no
+        // network), or by completing the explicitly-selected download in the
+        // background (never a manifest/catalog fetch).
+        petWidget_->setSelectedPet(snap);
+        petdexResourceService_->loadPet(savedPet, snap.spritesheetUrl);
+    }
+    else
+    {
+        // D4 blocks display. Distinguish an unreadable record (missing/
+        // corrupt snapshot file) from a record whose attribution could not be
+        // established, so the notice explains the actual reason.
+        hathor::ui::PetdexAttributionSnapshot blocked;
+        blocked.slug       = savedPet;
+        blocked.canDisplay = false;
+        blocked.notice     = haveSnap
+            ? hathor::ui::PetdexAttribution::kMissingAttributionNotice
+            : "This pet cannot be displayed: its saved attribution record "
+              "could not be read, so attribution cannot be established.";
+        petWidget_->setSelectedPet(blocked);
+    }
 }
 
 // ---------------------------------------------------------------------------

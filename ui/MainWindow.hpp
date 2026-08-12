@@ -57,6 +57,10 @@
 // L-3: StatusRibbon for unified diagnostic/status display
 #include "StatusRibbon.hpp"
 
+// Phase G — Petdex mascot (D2–D4): sprite acquisition + D4-gated display
+#include "PetWidget.hpp"
+#include "PetdexResourceService.hpp"
+
 // ChatSidebar and AcpAgentSession are now fully implemented (task 5.1).
 #include "ChatSidebar.hpp"
 #include "AcpAgentSession.hpp"
@@ -130,6 +134,19 @@ private:
     /// display — used to decide whether to use stored bounds (Req 20.5).
     static bool boundsIntersectsDisplays(const juce::Rectangle<int>& bounds);
 
+    // -----------------------------------------------------------------------
+    // Phase G (D2–D4) — Petdex selection lifecycle
+    // -----------------------------------------------------------------------
+
+    /// React to an applied Petdex selection from Settings (fires on Apply with
+    /// the committed slug; empty string = explicit "no mascot"). Runs the D4
+    /// attribution gate before anything can be displayed.
+    void applySelectedPet(const std::string& slug);
+
+    /// Restore a persisted pet selection at startup (offline-safe: disk cache
+    /// when present, D4 snapshot gate re-run from disk, never a manifest fetch).
+    void restorePetSelection();
+
     // =========================================================================
     // Layout constants
     // =========================================================================
@@ -165,6 +182,12 @@ private:
     /// Real SliderPanel — created in the constructor with ci_.
     /// Passed to UITimer for bidirectional BPM/gain sync (Req 26.4, 26.9).
     std::unique_ptr<hathor::ui::SliderPanel>       sliderPanel_;
+
+    // Phase G — Petdex (D2–D4): sprite acquisition + D4-gated mascot display.
+    // Declared service-first so destruction order stops the widget's timer
+    // before the service joins its worker thread.
+    std::unique_ptr<hathor::ui::PetdexResourceService> petdexResourceService_;
+    std::unique_ptr<hathor::ui::PetWidget>              petWidget_;
 
     // -----------------------------------------------------------------------
     // L-1: Editor ergonomics — owned by EditorArea, accessed via accessors.

@@ -47,4 +47,18 @@ PetdexAttribution::Info PetdexAttribution::resolve(const PetdexPet& pet)
     return info;
 }
 
+PetdexAttributionSnapshot PetdexAttribution::buildSnapshot(const PetdexPet& pet)
+{
+    const auto info = resolve(pet);
+    PetdexAttributionSnapshot snap;
+    snap.canDisplay     = info.canDisplay;
+    snap.slug           = pet.slug;
+    snap.displayName    = pet.displayName;
+    snap.submitter      = info.submitter;
+    snap.creditLine     = info.creditLine;
+    snap.notice         = info.notice;
+    snap.spritesheetUrl = pet.spritesheetUrl;
+    return snap;
+}
+
 } // namespace hathor::ui

@@ -241,6 +241,14 @@ public:
     /// Number of open tabs.
     int tabCount() const noexcept { return static_cast<int>(tabs_.size()); }
 
+    /// The app-lifetime Petdex manifest service (non-owning; may be null in
+    /// stripped-down builds). MainWindow uses it to resolve the selected pet's
+    /// manifest entry when a selection is applied (Phase G / D2–D4).
+    PetdexManifestService* petdexManifestService() const noexcept
+    {
+        return petdexService_.get();
+    }
+
     /// The currently active tab, or nullptr if no tabs are open.
     HathorTab* activeTab() noexcept;
 

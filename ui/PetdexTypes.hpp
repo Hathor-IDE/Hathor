@@ -60,6 +60,43 @@ struct PetdexManifest
 };
 
 // ---------------------------------------------------------------------------
+// PetdexAttributionSnapshot — the D4 attribution record captured at selection
+// time and persisted beside the pet's cached resources. It lets the mascot
+// display gate re-run the D4 check on every launch WITHOUT needing the
+// manifest or the network (requirement: cached pets must not bypass the gate,
+// and no network access is required merely to launch Hathor). The snapshot is
+// the authoritative attribution data captured when the user selected the pet;
+// it is re-created whenever the selection changes.
+// ---------------------------------------------------------------------------
+
+struct PetdexAttributionSnapshot
+{
+    bool        canDisplay = false;   ///< D4 gate: may this pet be rendered?
+    std::string slug;
+    std::string displayName;
+    std::string submitter;
+    std::string creditLine;           ///< display-ready attribution
+    std::string notice;               ///< license-status note (no per-pet license exists)
+    std::string spritesheetUrl;       ///< where the sprite was (or will be) fetched from
+};
+
+// ---------------------------------------------------------------------------
+// PetdexSpriteResult — a decoded sprite delivered to the UI (D2). RGBA is
+// unpremultiplied R,G,B,A (libwebp output); the widget converts it into a
+// juce::Image with JUCE's premultiplied PixelARGB convention.
+// ---------------------------------------------------------------------------
+
+struct PetdexSpriteResult
+{
+    bool   ok = false;
+    std::string slug;
+    std::string error;                    ///< human-readable, when !ok
+    int    width  = 0;
+    int    height = 0;
+    std::vector<std::uint8_t> rgba;       ///< width*height*4 (R,G,B,A)
+};
+
+// ---------------------------------------------------------------------------
 // PetdexManifestStatus — what the UI shows about the catalog source.
 // ---------------------------------------------------------------------------
 

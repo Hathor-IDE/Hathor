@@ -4,6 +4,7 @@
 #include "PetdexManifestService.hpp"
 
 #include "PetdexCacheStore.hpp"
+#include "PetdexHttp.hpp"
 #include "PetdexManifestParser.hpp"
 #include "PetdexLoadPolicy.hpp"
 
@@ -200,59 +201,33 @@ void PetdexManifestService::runBackground(bool force)
 PetdexManifestResult PetdexManifestService::fetchFromNetwork() const
 {
     PetdexManifestResult result;
+    result.status = PetdexManifestStatus::Offline;
 
-    juce::URL url(manifestUrl_);
-    int statusCode = 0;
-    auto stream = url.createInputStream(
-        juce::URL::InputStreamOptions(juce::URL::ParameterHandling::inAddress)
-            .withConnectionTimeoutMs(kConnectionTimeoutMs)
-            .withNumRedirectsToFollow(4)
-            .withExtraHeaders("User-Agent: Hathor (Petdex)\r\n")
-            .withStatusCode(&statusCode));
-
-    if (stream == nullptr)
+    const auto http = PetdexHttp::get(manifestUrl_, kMaxResponseBytes,
+                                      kConnectionTimeoutMs,
+                                      "Hathor (Petdex manifest)");
+    switch (http.error)
     {
-        result.status  = PetdexManifestStatus::Offline;
-        result.message = "Cannot reach petdex.dev (network unavailable).";
-        return result;
-    }
-
-    if (statusCode != 0 && statusCode != 200)
-    {
-        result.status  = PetdexManifestStatus::Offline;
-        result.message = "Petdex server returned HTTP "
-                       + juce::String(statusCode).toStdString() + ".";
-        return result;
-    }
-
-    std::string body;
-    body.reserve(256 * 1024);
-    char buf[8192];
-    for (;;)
-    {
-        const int n = stream->read(buf, static_cast<int>(sizeof(buf)));
-        if (n <= 0)
-            break;
-        body.append(buf, static_cast<std::size_t>(n));
-        if (body.size() > kMaxResponseBytes)
-        {
-            result.status  = PetdexManifestStatus::Offline;
+        case PetdexHttp::Error::Network:
+            result.message = "Cannot reach petdex.dev (network unavailable).";
+            return result;
+        case PetdexHttp::Error::Http:
+            result.message = "Petdex server returned HTTP "
+                           + std::to_string(http.statusCode) + ".";
+            return result;
+        case PetdexHttp::Error::TooLarge:
             result.message = "Manifest response too large; ignored.";
             return result;
-        }
+        case PetdexHttp::Error::Empty:
+            result.message = "Empty manifest response.";
+            return result;
+        case PetdexHttp::Error::None:
+            break;
     }
 
-    if (body.empty())
-    {
-        result.status  = PetdexManifestStatus::Offline;
-        result.message = "Empty manifest response.";
-        return result;
-    }
-
-    const auto parsed = PetdexManifestParser::parseManifest(body);
+    const auto parsed = PetdexManifestParser::parseManifest(http.body);
     if (!parsed.ok)
     {
-        result.status  = PetdexManifestStatus::Offline;
         result.message = "Malformed manifest: " + parsed.error;
         return result;
     }

@@ -906,6 +906,10 @@ void SettingsComponent::buttonClicked(juce::Button* button)
 
         if (onEqPresetApplied)
             onEqPresetApplied(committed_.eqPreset);
+
+        // Phase G: surface the committed Petdex selection (slug or empty).
+        if (onPetSelectionApplied)
+            onPetSelectionApplied(committed_.petSelection);
     }
     else if (button == &resetButton_)
     {

@@ -104,6 +104,14 @@ public:
     std::function<void(hathor::EqPreset)> onEqPresetApplied;
 
     /**
+       Callback invoked after Apply commits the Petdex selection.
+       Argument is the committed pet slug (stable id), or empty for "(none)".
+       MainWindow uses this to persist the D4 attribution snapshot and drive
+       the mascot widget (Phase G / D2–D4).
+     */
+    std::function<void(const std::string&)> onPetSelectionApplied;
+
+    /**
        Return the display label for the tab bar.
     */
     juce::String tabLabel() const noexcept { return "Settings"; }

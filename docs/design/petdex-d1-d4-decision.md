@@ -2,11 +2,13 @@
 
 ## Status
 
-**Decided / Recorded — D1 + D4 shipped.** This document records the D1 (manifest
-fetch/cache + opt-in picker) and D4 (licensing/attribution gate) implementation
-decisions, the **verified** facts about the live Petdex external dependency, and
-the concrete **D2/D3 implementation decision discovered from the actual package
-format** — the deliverable PROGRAM.md Phase G requires before any sprite work.
+**Decided / Recorded — D1–D4 shipped.** This document records the D1 (manifest
+fetch/cache + opt-in picker), D2 (sprite acquisition + WebP decoding), D3
+(frame slicing + animation) and D4 (licensing/attribution gate) implementation
+decisions, the **verified** facts about the live Petdex external dependency,
+and the concrete **D2/D3 implementation decision discovered from the actual
+package format** — the deliverable PROGRAM.md Phase G requires before any
+sprite work.
 
 Every external claim below was re-verified against live data on **2026-08-12**
 (manifest download, zip download, pet.json inspection, JUCE 8.0.4 source
@@ -148,27 +150,103 @@ none of which is machine-readable per pet.
 
 **The `zipUrl` package does NOT avoid the WebP problem.** Its spritesheet is
 `spritesheet.webp` — the identical WebP format as `spritesheetUrl`. The zip's
-`pet.json` adds nothing (no grid, no animation states, no license).
+`pet.json` adds nothing (no grid, no animation states, no license). **D2
+requires a WebP decoder, and JUCE 8.0.4 provides none** — the dependency below
+is evidence-based (the live asset is WebP), satisfying the "no dependency
+without evidence" rule. The zip is deliberately **not** used: fetching the
+manifest's `spritesheetUrl` directly avoids zip parsing and the `__MACOSX/`
+junk entirely.
 
-**Decision:** D2 **requires** a WebP decoder; JUCE 8.0.4 provides none.
-Recommended approach for D2: vendor/bundle a minimal libwebp (or a single-file
-WebP decode) via the existing FetchContent/static-library pattern and decode
-`spritesheet.webp` into `juce::Image`. The zip URL remains useful as a *single
-download* that bundles `pet.json` + spritesheet, but it is not a
-better-supported image format. Do NOT add a WebP dependency before D2; the
-decision to add it is now **evidence-based** (the live asset is WebP and JUCE
-cannot load it), satisfying the "no dependency without evidence" rule.
+### D2 — sprite acquisition + decoding (implemented)
 
-**Frame grid / animation states (D3):** neither the manifest nor any package
-encodes the 8×9 grid, 192×208 frame size, or state names
-(idle/working/…). The frame layout must be resolved from the **petdex
-convention** (v1 sheets are 8 columns × 9 rows of 192×208 frames; v2 sheets add
-rows) and/or spritesheet dimensions at decode time. This is a **documented
-assumption to verify during D2/D3 against the real spritesheet dimensions** —
-recorded here rather than silently baked in.
+- **Decoder:** libwebp **v1.4.0** (BSD-3), fetched via the existing
+  `FetchContent` pattern (root `CMakeLists.txt`; `WEBP_BUILD_*` extras all
+  OFF, static `webp` target). **Verified** in a scratch build before
+  integration: compiles cleanly and a lossless RGBA encode→decode round-trip
+  is pixel-exact. Linked by `hathor-ui` and `hathor-ui-tests`.
+- **Fetch:** the selected pet's `spritesheetUrl` (WebP) is fetched by
+  `PetdexHttp` (shared `juce::URL` GET helper, 20 s timeout, 32 MB cap — also
+  reused by the D1 manifest service). The sprite bytes are cached raw on disk
+  (`pets/<slug>/sprite.webp`) so later launches decode from disk.
+- **Decode:** `PetdexWebpDecoder` (JUCE-free, libwebp) → unpremultiplied RGBA;
+  `PetWidget` converts to a `juce::Image` with the verified JUCE pixel
+  convention (premultiplied `PixelARGB`, `[B,G,R,A]` byte order) and
+  un-premultiplies by alpha.
+- **Off the audio path:** all download/extract/decode runs on a detached
+  worker thread (`PetdexResourceService`, same discipline as the D1 service);
+  results arrive via `callAsync` guarded by `Component::SafePointer`.
+- **Failure handling:** network/HTTP/oversize/empty responses and decode
+  failures (corrupt, truncated) are reported as a widget `Unavailable` state —
+  never a crash. A corrupt disk cache is detected at decode time, removed,
+  and re-downloaded. Re-decoding the same asset is avoided via a single-slot
+  in-memory decoded-sprite cache.
 
-**Zip hygiene:** packages contain `__MACOSX/` entries; any D2 zip extraction
-must skip them.
+### D3 — frame slicing + animation (implemented)
+
+**Verified against a real pet's decoded sheet and the petdex source**
+(2026-08-12): the live `homelander` spritesheet is exactly **1536 × 1872** =
+8 × 192 columns × 9 × 208 rows; v2 sheets are 8 × 11 rows (1536 × 2288).
+Neither the manifest nor the packages encode this — the grid is derived from
+**decoded sheet dimensions** and the state mapping from the project's own
+`src/lib/pet-states.ts` convention table:
+
+| row | state | frames | durationMs |
+|---|---|---|---|
+| 0 | idle | 6 | 1100 |
+| 1 | running-right | 8 | 1060 |
+| 2 | running-left | 8 | 1060 |
+| 3 | waving | 4 | 700 |
+| 4 | jumping | 5 | 840 |
+| 5 | failed | 8 | 1220 |
+| 6 | waiting | 6 | 1010 |
+| 7 | running | 6 | 820 |
+| 8 | review | 6 | 1030 |
+
+- **`PetdexFrameGrid`** (JUCE-free): analyzes decoded dimensions; sheets not a
+  multiple of 192×208, or with ≠8 columns, are reported invalid (clear error,
+  no garbage slicing). Only rows that exist on the sheet are advertised.
+- **`PetdexAnimation`** (JUCE-free): deterministic timing — frame is a pure
+  function of elapsed time inside the state
+  (`perFrameMs = durationMs / frames`), so the same timeline always produces
+  the same frames. State transitions reset the clock. **Safe fallback:** an
+  unknown state id, a state whose row exceeds the sheet, or a state with zero
+  frames falls back to `idle`; an invalid grid leaves the animation inert.
+- **UI concern only:** `PetWidget` drives `PetdexAnimation` from a 40 ms
+  `juce::Timer` on the message thread (~25 fps); it never runs on the audio
+  thread and performs no allocation in steady state. App-state reactivity is
+  minimal by design: an injected probe ("any pattern slot playing") maps to
+  the `running` state, otherwise `idle` — no invented large state machine.
+- The state mapping is the **petdex convention, not silently invented**: the
+  exact rows/frames/durations above are copied from the project's source and
+  asserted verbatim in the unit tests.
+
+### D4 enforcement at display time (implemented)
+
+- `PetdexAttribution::buildSnapshot()` captures the D4 record at selection
+  time; it is **persisted** (`pets/<slug>/attribution.json`) beside the cached
+  sprite so the gate re-runs on every launch **without the manifest or
+  network** — cached pets cannot bypass it.
+- `PetWidget::setSelectedPet()` is a **blocking gate**: a snapshot with
+  `canDisplay == false` puts the widget in `AttributionBlocked` and the pet is
+  **never drawn**. Every drawn pet shows its credit (submitter · petdex.dev)
+  as a caption plus the no-per-pet-license notice in its tooltip.
+- A missing/corrupt attribution snapshot at startup also blocks display (with
+  the explanatory notice) — the gate fails safe, never silent.
+
+### Launch / lifecycle decisions
+
+- **Startup:** a persisted selection restores from the disk cache when
+  present — **offline launch requires zero network**. If the selection exists
+  but the sprite was never cached (e.g. the earlier download failed), the
+  explicitly-requested download is completed in the background; no *catalog*
+  fetch ever happens at startup, and launching with no selection does no
+  network work at all.
+- **Apply:** selection → resolve the manifest entry → build + persist the D4
+  snapshot → gate → load sprite (memory → disk → network). Changing the
+  selection re-runs the whole chain; the widget ignores results for a slug it
+  no longer shows. Deselecting ("(none)") clears the widget; the persisted
+  slug becomes empty.
+- **Zip:** not used (see above) — `__MACOSX/` hygiene is moot.
 
 ---
 
@@ -186,8 +264,14 @@ must skip them.
 | D4 gate before rendering | `PetdexAttribution::canDisplay` + credit/notice in UI |
 | Package/image format verified from actual data | This document (live downloads + JUCE source inspection) |
 | No WebP/zip dep without evidence | None added in D1; D2 decision above is evidence-based |
-| No faked animation/rendering | No sprite rendering in D1; D3 gate is future work |
-| D2/D3 decision documented | §"D2/D3 implementation decision" above |
+| D4 gate before rendering (blocking) | `PetWidget::setSelectedPet` — non-displayable snapshot is never drawn |
+| Cached pets re-gated on launch | Persisted attribution snapshot + resource cache |
+| Offline launch works | Disk-cached sprite decoded at startup, no network |
+| Corrupt cache / failed download / failed decode | Corrupt cache removed + re-downloaded; widget `Unavailable` state |
+| Animation never touches the audio thread | `PetdexAnimation` driven by a message-thread `juce::Timer` |
+| No default mascot | Widget `NoPet` until an explicit selection exists |
+| No duplicate settings architecture | Same A2 Settings → Petdex section; one selection key |
+| D2/D3 decision documented | §"D2/D3 implementation decision" + tables above |
 
 ## Platform caveats
 

@@ -69,6 +69,14 @@ target_sources(hathor-ui
          PetdexCacheStore.cpp          # D1: manifest cache store + staleness
          PetdexAttribution.cpp         # D4: licensing/attribution gate
          PetdexManifestService.cpp     # D1: async fetch/cache service
+         # Phase G — Petdex (D2–D4): sprite pipeline + D4-gated mascot
+         PetdexHttp.cpp                # D2: shared HTTP GET helper (juce::URL)
+         PetdexFrameGrid.cpp           # D3: verified 8×9/192×208 frame slicing
+         PetdexWebpDecoder.cpp         # D2: libwebp → RGBA decoding
+         PetdexAnimation.cpp           # D3: deterministic animation driver
+         PetdexResourceCache.cpp       # D2: per-pet sprite + attribution cache
+         PetdexResourceService.cpp     # D2: async download → cache → decode
+         PetWidget.cpp                 # D2–D4: D4-gated animated mascot widget
          WindowAppearanceController.mm  # B5
          BakeTargetDialog.cpp          # B8-K6
          BakeProgressDialog.cpp        # B8-K6
@@ -165,6 +173,8 @@ target_link_libraries(hathor-ui
         juce::juce_audio_basics
         juce::juce_core
         nlohmann_json::nlohmann_json
+        # Phase G / D2: WebP decoding (libwebp, BSD-3) — verified required
+        webp
 )
 
 target_compile_definitions(hathor-ui

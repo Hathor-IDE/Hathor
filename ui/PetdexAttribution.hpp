@@ -43,6 +43,9 @@ public:
     /// Resolve attribution for a manifest entry.
     static Info resolve(const PetdexPet& pet);
 
+    /// Build a persisted attribution snapshot from a manifest entry (D4 record).
+    static PetdexAttributionSnapshot buildSnapshot(const PetdexPet& pet);
+
     /// Platform credit appended to every displayed pet.
     static constexpr const char* kPlatformCredit = "Petdex community gallery (petdex.dev)";
 
