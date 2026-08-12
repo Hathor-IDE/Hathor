@@ -258,7 +258,7 @@ TEST_CASE("AI-10.4: every EventType has a stable string name",
         E::StepCompleted, E::StepFailed, E::DiagnosticsDiscovered, E::RepairStarted,
         E::RepairCompleted, E::ConfirmationRequired, E::RenderStarted,
         E::RenderCompleted, E::AssetCommitted, E::SongMutationApplied,
-        E::WorkflowCancelled, E::WorkflowCompleted,
+        E::WorkflowCancelled, E::WorkflowCompleted, E::LifecycleTransition,
     };
     for (const auto e : all) {
         const char* name = AgenticWorkflow::eventTypeName(e);

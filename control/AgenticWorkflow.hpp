@@ -110,15 +110,10 @@ public:
         Queued,          ///< Workflow request received, about to start.
         Planning,        ///< Analysing request and assembling a plan.
         Inspecting,      ///< Running inspect_project / inspect_song / inspect_assets.
-        Editing,         ///< Applying generated content (set_pattern / create session).
-        Validating,      ///< Validating notation / diagnostics.
-        Compiling,       ///< Compiling ChucK source (async job).
-        Auditioning,     ///< Playing pattern / auditioning ChucK instrument.
-        InspectingDiagnostics, ///< Checking diagnostics from compile/audition.
-        Repairing,       ///< Attempting repair (re-generate / re-compile).
-        CreativeRepairing, ///< Applying creative repair (AI-10.5 feedback loop).
-        Rendering,       ///< Rendering ChucK instrument to WAV (async job).
-        Binding,         ///< Committing rendered asset (requires confirmation).
+        Editing,         ///< Generating/modifying pattern, binding assets, rendering.
+        Validating,      ///< Validating notation, compiling ChucK, checking diagnostics.
+        Auditioning,     ///< Playing pattern, auditioning, repairing (re-auditioning).
+        Committing,      ///< Executing a confirmed persistent mutation (AI-10.6).
         UpdatingSong,    ///< Updating song file (requires confirmation).
         WaitingForApproval, ///< Paused pending user confirmation of a destructive op.
         WaitingForUser,  ///< Paused pending user input (e.g. creative feedback).
@@ -181,6 +176,7 @@ public:
         SongMutationApplied,    ///< Song file mutation applied (update_song).
         WorkflowCancelled,      ///< Workflow cancelled; underlying work stopped.
         WorkflowCompleted,      ///< Workflow finished successfully.
+        LifecycleTransition,    ///< State-machine lifecycle transition (AI-10.6).
     };
 
     /**
@@ -230,6 +226,7 @@ public:
         std::string message;
         std::string stepName;
         nlohmann::json data;    ///< Step-specific result data
+        bool interrupted = false; ///< AI-10.6: true if the step was interrupted by cancellation/replan.
     };
 
     // -----------------------------------------------------------------------
@@ -290,6 +287,19 @@ public:
 
     /// AI-10.4: Stable string name for a progress EventType (e.g. for the UI).
     static const char* eventTypeName(EventType t) noexcept;
+
+    /// AI-10.6: Stable string name for a workflow State.
+    static const char* stateName(State s) noexcept;
+
+    /**
+     * AI-10.6: Validate a state-machine transition.
+     *
+     * Returns true if the transition from @p from to @p to is legal.
+     * In dry-run mode, WaitingForApproval and Committing are never reachable.
+     * Terminal states (Completed, Failed, Cancelled) can only transition
+     * back to Idle (via reset()).
+      */
+    static bool canTransition(State from, State to, bool dryRun) noexcept;
 
     /**
      * Start a new workflow.
@@ -414,10 +424,22 @@ public:
     bool isRunning() const noexcept;
 
     /**
-     * Reset to Idle state.  Called after the caller has observed a terminal
-     * state (Completed, Failed, Cancelled).  Allows a new workflow to start.
-     */
+      * Reset to Idle state.  Called after the caller has observed a terminal
+      * state (Completed, Failed, Cancelled).  Allows a new workflow to start.
+      */
     void reset();
+
+    /**
+     * AI-10.6: Replan the running workflow with a new request.
+     *
+     * Swaps the current request, cancels the active change-set, and signals
+     * the workflow thread to restart from Planning via WaitingForUser.
+     * The new request's intent is recorded in the working set.
+     *
+     * @return true if the replan was accepted (workflow was running).
+     *         false if the workflow was Idle or terminal.
+     */
+    bool replan(Request newRequest);
 
     // -----------------------------------------------------------------------
     // AI-10.3: First-class diff / preview / undo for AI changes
@@ -480,6 +502,16 @@ public:
      *         preview:...}.
      */
     nlohmann::json undoChangeSet(int changeSetId, bool confirm = false);
+
+    // -----------------------------------------------------------------------
+    // AI-10.6: Interruption handling
+    // -----------------------------------------------------------------------
+
+    /// AI-10.6: Handle a stop/replan interruption at a step boundary.
+    /// If a replan was requested, sets state to WaitingForUser and returns true
+    /// (the thread loop will restart the workflow).  Otherwise sets Cancelled
+    /// and returns true.  Returns false if no interruption is requested.
+    bool handleInterruption(const char* context = nullptr) noexcept;
 
 private:
     // -----------------------------------------------------------------------
@@ -594,11 +626,12 @@ private:
     // mutations into one coherent, reviewable change-set (diff/preview/undo).
     ChangeSetManager             changeSetManager_;
 
-    // Thread management
-    std::thread      workflowThread_;
-    mutable std::mutex    stateMtx_;
-    std::condition_variable cv_;
-    std::atomic<bool>  stopRequested_{false};
+     // Thread management
+     std::thread      workflowThread_;
+     mutable std::mutex    stateMtx_;
+     std::condition_variable cv_;
+     std::atomic<bool>  stopRequested_{false};
+     std::atomic<bool>  replanRequested_{false};
 
     // Workflow state machine
     State              state_           = State::Idle;

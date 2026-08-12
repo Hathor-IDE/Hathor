@@ -70,30 +70,104 @@ static const char* stepName(AgenticWorkflow::Step s) noexcept
     return "unknown";
 }
 
-static const char* stateName(AgenticWorkflow::State s) noexcept
+const char* AgenticWorkflow::stateName(State s) noexcept
 {
     switch (s) {
-        case AgenticWorkflow::State::Idle:                   return "idle";
-        case AgenticWorkflow::State::Queued:                 return "queued";
-        case AgenticWorkflow::State::Planning:               return "planning";
-        case AgenticWorkflow::State::Inspecting:             return "inspecting";
-        case AgenticWorkflow::State::Editing:                return "editing";
-        case AgenticWorkflow::State::Validating:             return "validating";
-        case AgenticWorkflow::State::Compiling:              return "compiling";
-        case AgenticWorkflow::State::Auditioning:            return "auditioning";
-        case AgenticWorkflow::State::InspectingDiagnostics:  return "inspecting_diagnostics";
-         case AgenticWorkflow::State::Repairing:              return "repairing";
-         case AgenticWorkflow::State::CreativeRepairing:      return "creative_repairing";
-        case AgenticWorkflow::State::Rendering:              return "rendering";
-        case AgenticWorkflow::State::Binding:                return "binding";
-        case AgenticWorkflow::State::UpdatingSong:           return "updating_song";
-        case AgenticWorkflow::State::WaitingForApproval:   return "waiting_for_approval";
-        case AgenticWorkflow::State::WaitingForUser:         return "waiting_for_user";
-        case AgenticWorkflow::State::Completed:              return "completed";
-        case AgenticWorkflow::State::Failed:                 return "failed";
-        case AgenticWorkflow::State::Cancelled:              return "cancelled";
+        case State::Idle:                   return "idle";
+        case State::Queued:                 return "queued";
+        case State::Planning:               return "planning";
+        case State::Inspecting:             return "inspecting";
+        case State::Editing:                return "editing";
+        case State::Validating:             return "validating";
+        case State::Auditioning:            return "auditioning";
+        case State::Committing:             return "committing";
+        case State::UpdatingSong:           return "updating_song";
+        case State::WaitingForApproval:     return "waiting_for_approval";
+        case State::WaitingForUser:         return "waiting_for_user";
+        case State::Completed:              return "completed";
+        case State::Failed:                 return "failed";
+        case State::Cancelled:              return "cancelled";
     }
     return "unknown";
+}
+
+// ---------------------------------------------------------------------------
+// AI-10.6: State-machine transition validation
+// ---------------------------------------------------------------------------
+
+bool AgenticWorkflow::canTransition(State from, State to, bool dryRun) noexcept
+{
+    // Terminal states can only transition to Idle (via reset()).
+    if (from == State::Completed || from == State::Failed || from == State::Cancelled)
+        return to == State::Idle;
+
+    // In dry-run mode, WaitingForApproval and Committing are never reachable.
+    if (dryRun) {
+        if (to == State::WaitingForApproval || to == State::Committing)
+            return false;
+    }
+
+    // Same-state transitions are always allowed (idempotent re-entry).
+    if (from == to)
+        return true;
+
+    // WaitingForUser is reachable from any active (non-terminal) state
+    // (used by replan() to pause and restart).
+    if (to == State::WaitingForUser)
+        return true;
+
+    switch (from) {
+        case State::Idle:
+            return to == State::Queued;
+
+        case State::Queued:
+            return to == State::Planning || to == State::Cancelled;
+
+        case State::Planning:
+            return to == State::Inspecting || to == State::Auditioning ||
+                   to == State::Validating || to == State::Failed ||
+                   to == State::Cancelled;
+
+        case State::Inspecting:
+            return to == State::Editing || to == State::Failed ||
+                   to == State::Cancelled;
+
+        case State::Editing:
+            return to == State::Validating || to == State::Auditioning ||
+                   to == State::UpdatingSong ||
+                   to == State::WaitingForApproval ||
+                   to == State::Failed || to == State::Cancelled;
+
+        case State::Validating:
+            return to == State::Auditioning || to == State::Editing ||
+                   to == State::UpdatingSong ||
+                   to == State::Failed || to == State::Cancelled;
+
+        case State::Auditioning:
+            return to == State::Validating || to == State::Editing ||
+                   to == State::UpdatingSong || to == State::Completed ||
+                   to == State::Failed || to == State::Cancelled;
+
+        case State::Committing:
+            // Committing can only be reached from WaitingForApproval;
+            // once committed, proceed to UpdatingSong or terminal.
+            return to == State::UpdatingSong || to == State::Completed ||
+                   to == State::Failed || to == State::Cancelled;
+
+        case State::UpdatingSong:
+            return to == State::Completed || to == State::Failed ||
+                   to == State::Cancelled || to == State::WaitingForApproval;
+
+        case State::WaitingForApproval:
+            // Approval → Commit, rejection/cancellation → Cancelled.
+            return to == State::Committing || to == State::Cancelled;
+
+        case State::WaitingForUser:
+            return to == State::Planning || to == State::Cancelled;
+
+        default:
+            return false;
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -119,6 +193,7 @@ const char* AgenticWorkflow::eventTypeName(EventType t) noexcept
         case EventType::SongMutationApplied:   return "song_mutation_applied";
         case EventType::WorkflowCancelled:     return "workflow_cancelled";
         case EventType::WorkflowCompleted:     return "workflow_completed";
+        case EventType::LifecycleTransition:   return "lifecycle_transition";
     }
     return "unknown";
 }
@@ -274,7 +349,20 @@ bool AgenticWorkflow::start(Request request,
     }
 
     // Launch the workflow thread.
-    workflowThread_ = std::thread([this] { runWorkflow(); });
+    workflowThread_ = std::thread([this] {
+        while (true) {
+            runWorkflow();
+
+            // AI-10.6: Check if a replan was requested mid-run.
+            if (replanRequested_.load(std::memory_order_acquire)) {
+                // Reset transient flags for the next iteration.
+                stopRequested_.store(false, std::memory_order_release);
+                replanRequested_.store(false, std::memory_order_release);
+                continue;
+            }
+            break;
+        }
+    });
 
     return true;
 }
@@ -433,6 +521,11 @@ void AgenticWorkflow::runWorkflow()
     if (!currentRequest_.targetSlot.empty())
         workingSet_.setActiveSlot(currentRequest_.targetSlot);
 
+    // AI-10.6: If this is a restart after replan(), begin a fresh change-set
+    // (replan() cancels the previous one).  beginChangeSet is idempotent if
+    // one is already active.
+    changeSetManager_.beginChangeSet(currentRequest_.intent);
+
     // AI-10.5: If the request carries creative feedback, branch to the
     // creative repair path instead of the full generation workflow.
     if (!currentRequest_.feedback.empty()) {
@@ -447,10 +540,8 @@ void AgenticWorkflow::runWorkflow()
     }
     emitEvent(EventType::StepStarted, "Planning the approach", true, "planning");
 
-    if (checkCancellation()) {
-        setState(State::Cancelled);
+    if (handleInterruption())
         return;
-    }
 
     // Determine workflow mode: ChucK instrument vs. mini-notation pattern.
     const bool isChuckWorkflow = !currentRequest_.ckSource.empty();
@@ -497,10 +588,8 @@ void AgenticWorkflow::runWorkflow()
                              Step::InspectAssets }) {
         setCurrentStep(step);
 
-        if (checkCancellation()) {
-            setState(State::Cancelled);
+        if (handleInterruption())
             return;
-        }
 
         StepResult result;
         switch (step) {
@@ -519,24 +608,25 @@ void AgenticWorkflow::runWorkflow()
 
         completeStep(stepName(step), result);
 
-        if (checkCancellation()) {
-            setState(State::Cancelled);
+        if (handleInterruption())
             return;
-        }
     }
 
     // Phase 3: EDITING — generate/modify pattern.
     setCurrentStep(Step::GeneratePattern);
     setState(State::Editing);
 
-    if (checkCancellation()) {
-        setState(State::Cancelled);
+    if (handleInterruption())
         return;
-    }
 
     {
         StepResult result = stepGeneratePattern();
         if (!result.ok) {
+            if (result.interrupted) {
+                if (handleInterruption())
+                    return;
+                // Not an interruption — fall through to failure
+            }
             error_ = "generate_pattern: " + result.message;
             setState(State::Failed);
             auditLog("step_generate_pattern", "workflow", false, result.message);
@@ -549,10 +639,8 @@ void AgenticWorkflow::runWorkflow()
     setCurrentStep(Step::Validate);
     setState(State::Validating);
 
-    if (checkCancellation()) {
-        setState(State::Cancelled);
+    if (handleInterruption())
         return;
-    }
 
     {
         StepResult result = stepValidate();
@@ -569,17 +657,20 @@ void AgenticWorkflow::runWorkflow()
     // Phase 5: COMPILE (ChucK workflows only).
     if (isChuckWorkflow) {
         setCurrentStep(Step::Compile);
-        setState(State::Compiling);
+        setState(State::Validating);
 
-        if (checkCancellation()) {
-            setState(State::Cancelled);
+        if (handleInterruption())
             return;
-        }
 
         {
             StepResult result = stepCompile();
             diagnostics_ = result.data;
             if (!result.ok) {
+                if (result.interrupted) {
+                    if (handleInterruption())
+                        return;
+                    goto repair_loop;
+                }
                 // Compile failure — enter repair loop.
                 goto repair_loop;
             }
@@ -591,14 +682,16 @@ void AgenticWorkflow::runWorkflow()
     setCurrentStep(Step::Audition);
     setState(State::Auditioning);
 
-    if (checkCancellation()) {
-        setState(State::Cancelled);
+    if (handleInterruption())
         return;
-    }
 
     {
         StepResult result = stepAudition();
         if (!result.ok) {
+            if (result.interrupted) {
+                if (handleInterruption())
+                    return;
+            }
             error_ = "audition: " + result.message;
             setState(State::Failed);
             auditLog("step_audition", "workflow", false, result.message);
@@ -609,12 +702,10 @@ void AgenticWorkflow::runWorkflow()
 
     // Phase 7: INSPECT DIAGNOSTICS.
     setCurrentStep(Step::InspectDiagnostics);
-    setState(State::InspectingDiagnostics);
+    setState(State::Validating);
 
-    if (checkCancellation()) {
-        setState(State::Cancelled);
+    if (handleInterruption())
         return;
-    }
 
     {
         StepResult result = stepInspectDiagnostics();
@@ -629,10 +720,8 @@ void AgenticWorkflow::runWorkflow()
     // Phase 8: REPAIR LOOP (if needed).
     {
     repair_loop:
-        if (checkCancellation()) {
-            setState(State::Cancelled);
+        if (handleInterruption())
             return;
-        }
 
         // Determine whether repair is possible and needed.
         // The repair loop handles both compile errors and diagnostic errors.
@@ -642,20 +731,23 @@ void AgenticWorkflow::runWorkflow()
             repairAttempts_++;
 
             setCurrentStep(Step::Repair);
-            setState(State::Repairing);
+            setState(State::Auditioning);
             emitEvent(EventType::RepairStarted,
                       "Repair attempt " + std::to_string(repairAttempts_) +
                           " of " + std::to_string(maxAttempts) +
                           " (attempting to fix the last failure)");
 
-            if (checkCancellation()) {
-                setState(State::Cancelled);
+            if (handleInterruption())
                 return;
-            }
 
             {
                 StepResult result = stepRepair();
                 if (!result.ok) {
+                    if (result.interrupted) {
+                        if (handleInterruption())
+                            return;
+                        goto repair_loop;
+                    }
                     error_ = "repair: " + result.message;
                     setState(State::Failed);
                     auditLog("step_repair", "workflow", false, result.message);
@@ -685,11 +777,15 @@ void AgenticWorkflow::runWorkflow()
             // Re-compile (for ChucK workflows) and re-audition.
             if (isChuckWorkflow) {
                 setCurrentStep(Step::Compile);
-                setState(State::Compiling);
+                setState(State::Validating);
 
                 StepResult compileResult = stepCompile();
                 diagnostics_ = compileResult.data;
                 if (!compileResult.ok) {
+                    if (compileResult.interrupted) {
+                        if (handleInterruption())
+                            return;
+                    }
                     completeStep("compile", compileResult);
                     // Loop again for another repair attempt.
                     continue;
@@ -702,6 +798,10 @@ void AgenticWorkflow::runWorkflow()
 
             StepResult auditionResult = stepAudition();
             if (!auditionResult.ok) {
+                if (auditionResult.interrupted) {
+                    if (handleInterruption())
+                        return;
+                }
                 completeStep("audition", auditionResult);
                 continue;  // Try another repair.
             }
@@ -709,7 +809,7 @@ void AgenticWorkflow::runWorkflow()
 
             // Re-check diagnostics.
             setCurrentStep(Step::InspectDiagnostics);
-            setState(State::InspectingDiagnostics);
+            setState(State::Validating);
             StepResult diagResult = stepInspectDiagnostics();
             diagnostics_ = diagResult.data;
             if (diagResult.ok)
@@ -728,17 +828,19 @@ void AgenticWorkflow::runWorkflow()
     // Phase 9: RENDER (ChucK workflows only).
     if (isChuckWorkflow) {
         setCurrentStep(Step::Render);
-        setState(State::Rendering);
+        setState(State::Editing);
 
-        if (checkCancellation()) {
-            setState(State::Cancelled);
+        if (handleInterruption())
             return;
-        }
 
         {
             StepResult result = stepRender();
             renderStatus_ = result.data;
             if (!result.ok) {
+                if (result.interrupted) {
+                    if (handleInterruption())
+                        return;
+                }
                 error_ = "render: " + result.message;
                 setState(State::Failed);
                 auditLog("step_render", "workflow", false, result.message);
@@ -751,12 +853,10 @@ void AgenticWorkflow::runWorkflow()
     // Phase 10: BIND ASSET (ChucK workflows only, requires confirmation).
     if (isChuckWorkflow) {
         setCurrentStep(Step::BindAsset);
-        setState(State::Binding);
+        setState(State::Editing);
 
-        if (checkCancellation()) {
-            setState(State::Cancelled);
+        if (handleInterruption())
             return;
-        }
 
         // Determine if the asset already exists (collision check).
         const auto projectDir = audio_.currentProjectDir();
@@ -776,28 +876,45 @@ void AgenticWorkflow::runWorkflow()
         ckPath.replace_extension(".ck");
         const bool ckExists = std::filesystem::exists(ckPath, ec);
 
-        if (assetExists || ckExists) {
+        // AI-10.6: All non-dry-run persistent ops require approval.
+        if (!currentRequest_.dryRun) {
             nlohmann::json details;
             details["asset_name"] = currentRequest_.assetName;
             details["wav_path"] = resolveResult.path.string();
             details["ck_path"] = ckPath.string();
             details["wav_exists"] = assetExists;
             details["ck_exists"] = ckExists;
+            details["render_job_id"] = renderJobId_;
+
+            const std::string msg = (assetExists || ckExists)
+                ? "An instrument with this name already exists. Overwrite?"
+                : "Commit the rendered asset to the project?";
 
             if (!waitForConfirmation("commit_rendered_asset",
                                      "persistent_mutation",
-                                     "An instrument with this name already exists. Overwrite?",
+                                     msg,
                                      details)) {
-                error_ = "bind_asset: user rejected overwrite confirmation";
+                if (replanRequested_.load(std::memory_order_acquire)) {
+                    setState(State::WaitingForUser);
+                    return;
+                }
+                error_ = "bind_asset: user rejected confirmation";
                 setState(State::Failed);
-                auditLog("step_bind_asset", "workflow", false, "user rejected overwrite");
+                auditLog("step_bind_asset", "workflow", false, "user rejected confirmation");
                 return;
             }
+
+            // AI-10.6: Enter Committing phase after approval.
+            setState(State::Committing);
         }
 
         {
             StepResult result = stepBindAsset();
             if (!result.ok) {
+                if (result.interrupted) {
+                    if (handleInterruption())
+                        return;
+                }
                 error_ = "bind_asset: " + result.message;
                 setState(State::Failed);
                 auditLog("step_bind_asset", "workflow", false, result.message);
@@ -813,10 +930,8 @@ void AgenticWorkflow::runWorkflow()
         setCurrentStep(Step::UpdateSong);
         setState(State::UpdatingSong);
 
-        if (checkCancellation()) {
-            setState(State::Cancelled);
+        if (handleInterruption())
             return;
-        }
 
         // The final song mutation must go through the canonical
         // SongMutationService (AI-7) — never direct file writes (AI-10 requirement).
@@ -838,16 +953,27 @@ void AgenticWorkflow::runWorkflow()
                                      "persistent_mutation",
                                      "Apply this change to the song file (persists to disk)?",
                                      details)) {
+                if (replanRequested_.load(std::memory_order_acquire)) {
+                    setState(State::WaitingForUser);
+                    return;
+                }
                 error_ = "update_song: user rejected confirmation";
                 setState(State::Failed);
                 auditLog("step_update_song", "workflow", false, "user rejected confirmation");
                 return;
             }
+
+            // AI-10.6: Enter Committing phase after approval.
+            setState(State::Committing);
         }
 
         {
             StepResult result = stepUpdateSong();
             if (!result.ok) {
+                if (result.interrupted) {
+                    if (handleInterruption())
+                        return;
+                }
                 error_ = "update_song: " + result.message;
                 setState(State::Failed);
                 auditLog("step_update_song", "workflow", false, result.message);
@@ -1212,6 +1338,7 @@ AgenticWorkflow::StepResult AgenticWorkflow::stepCompile()
 
         const std::string status = jobResult.value("status", std::string("unknown"));
         if (status == "cancelled") {
+            sr.interrupted = true;
             sr.ok = false;
             sr.message = "compile cancelled";
         } else {
@@ -1249,6 +1376,7 @@ AgenticWorkflow::StepResult AgenticWorkflow::stepCompile()
         }
         sr.data["diagnostics"] = std::move(diags);
     } else if (jobResult.value("status", std::string()) == "cancelled") {
+        sr.interrupted = true;
         sr.ok = false;
         sr.message = "compile cancelled";
     } else {
@@ -1492,10 +1620,8 @@ void AgenticWorkflow::runCreativeRepair()
     setState(State::Planning);
     emitEvent(EventType::StepStarted, "Planning creative repair", true, "planning");
 
-    if (checkCancellation()) {
-        setState(State::Cancelled);
+    if (handleInterruption())
         return;
-    }
 
     // Use CreativeRepairEngine to classify feedback, resolve target, and plan.
     const std::string intentContext = currentRequest_.targetSlot.empty()
@@ -1529,22 +1655,20 @@ void AgenticWorkflow::runCreativeRepair()
     changeSetManager_.beginChangeSet(currentRequest_.feedback);
 
     // Phase 2: Execute the repair
-    if (checkCancellation()) {
-        setState(State::Cancelled);
+    if (handleInterruption()) {
         changeSetManager_.cancelCurrent();
         return;
     }
 
     setCurrentStep(Step::CreativeRepair);
-    setState(State::CreativeRepairing);
+    setState(State::Auditioning);
 
     emitEvent(EventType::RepairStarted,
               "Applying creative repair from feedback: \"" +
                   currentRequest_.feedback + "\"",
               true, "creative_repair");
 
-    if (checkCancellation()) {
-        setState(State::Cancelled);
+    if (handleInterruption()) {
         changeSetManager_.cancelCurrent();
         return;
     }
@@ -1552,6 +1676,10 @@ void AgenticWorkflow::runCreativeRepair()
     {
         StepResult result = stepCreativeRepair();
         if (!result.ok) {
+            if (result.interrupted) {
+                changeSetManager_.cancelCurrent();
+                return;
+            }
             error_ = "creative repair: " + result.message;
             setState(State::Failed);
             changeSetManager_.cancelCurrent();
@@ -1659,9 +1787,10 @@ AgenticWorkflow::StepResult AgenticWorkflow::stepCreativeRepair()
                     return confirmationResponded_.load(std::memory_order_acquire);
                 });
 
-                if (checkCancellation()) {
+                if (stopRequested_.load(std::memory_order_acquire)) {
+                    sr.interrupted = true;
                     sr.ok = false;
-                    sr.message = "creative repair cancelled during confirmation";
+                    sr.message = "creative repair interrupted during confirmation";
                     return sr;
                 }
 
@@ -1958,6 +2087,7 @@ AgenticWorkflow::StepResult AgenticWorkflow::stepRender()
                                         : "Render failed or timed out",
                   false, "render", jobResult, false, jobId, currentRequest_.assetName);
         if (status == "cancelled") {
+            sr.interrupted = true;
             sr.ok = false;
             sr.message = "render cancelled";
         } else {
@@ -2243,16 +2373,39 @@ void AgenticWorkflow::setState(State s)
     if (s == State::Failed && stopRequested_.load(std::memory_order_acquire))
         s = State::Cancelled;
 
+    State fromState;
     {
         std::lock_guard<std::mutex> lock(stateMtx_);
+
+        fromState = state_;
+        const bool dryRun = currentRequest_.dryRun;
+
+        // AI-10.6: Validate the transition via canTransition.  Invalid
+        // transitions are rejected and audited — no LifecycleTransition event
+        // is emitted, and state_ is left unchanged.
+        if (!canTransition(fromState, s, dryRun)) {
+            auditLog("state_transition_rejected", "workflow", false,
+                     std::string(stateName(fromState)) + " → " + stateName(s) +
+                     " (dry_run=" + (dryRun ? "true" : "false") + ")");
+            return;
+        }
+
         state_ = s;
     }
+
     // AI-10.3: A failed or cancelled workflow never presents its (possibly
     // partial) change-set as accepted.  Mark any pending change-set cancelled
     // so the composer cannot mistake a failed run for a clean, reviewable one.
     if (s == State::Failed || s == State::Cancelled)
         changeSetManager_.cancelCurrent();
     auditLog("state_change", "workflow", true, stateName(s));
+
+    // AI-10.6: Emit a LifecycleTransition event for every state change.
+    // This is emitted before the terminal-specific events (below).
+    emitEvent(EventType::LifecycleTransition,
+              std::string(stateName(fromState)) + " → " + stateName(s),
+              true, {}, {{"from_state", stateName(fromState)},
+                        {"to_state", stateName(s)}});
 
     // AI-10.4: Emit a typed event for terminal states.
     switch (s) {
@@ -2293,7 +2446,7 @@ void AgenticWorkflow::setState(State s)
             break;
         }
         default:
-            break;  // Non-terminal state — no standalone event.
+            break;  // Non-terminal state — no standalone terminal event.
     }
 }
 
@@ -2338,6 +2491,61 @@ void AgenticWorkflow::completeStep(const std::string& name, const StepResult& re
 bool AgenticWorkflow::checkCancellation()
 {
     return stopRequested_.load(std::memory_order_acquire);
+}
+
+// AI-10.6: handleInterruption — encapsulates the cancellation→Cancelled transition
+// with event emission.  Returns true if the workflow was stopped (interrupted).
+bool AgenticWorkflow::handleInterruption(const char* context) noexcept
+{
+    if (!stopRequested_.load(std::memory_order_acquire))
+        return false;
+
+    // AI-10.6: If a replan was requested, do NOT transition to Cancelled —
+    // the replan restart loop in runWorkflow/start() will handle it.
+    if (replanRequested_.load(std::memory_order_acquire))
+        return true;
+
+    setState(State::Cancelled);
+    emitEvent(EventType::WorkflowCancelled,
+              context ? context : "interrupted",
+              false, {}, {{"reason", "stop_requested"}});
+    return true;
+}
+
+// AI-10.6: replan — restart the workflow's planning phase with a new request.
+// Sets stop flags, swaps the request, cancels the current change-set, and transitions
+// to WaitingForUser so the runWorkflow loop restarts from Planning.
+bool AgenticWorkflow::replan(Request newRequest)
+{
+    {
+        std::lock_guard<std::mutex> lock(stateMtx_);
+        if (state_ == State::Idle)
+            return false;
+
+        stopRequested_.store(true, std::memory_order_release);
+        replanRequested_.store(true, std::memory_order_release);
+        currentRequest_ = std::move(newRequest);
+        currentRequest_.dryRun = false;
+        error_.reset();
+    }  // release stateMtx_ before calling setState()
+
+    // Cancel any pending change-set.
+    changeSetManager_.cancelCurrent();
+
+    // If currently waiting on a confirmation, notify the waiter.
+    {
+        std::lock_guard<std::mutex> lock(confirmMtx_);
+        confirmationResponded_.store(true, std::memory_order_release);
+    }
+    confirmCv_.notify_all();
+
+    setState(State::WaitingForUser);
+
+    emitEvent(EventType::LifecycleTransition,
+              "replan requested",
+              true, {}, {{"state", stateName(State::WaitingForUser)}});
+
+    return true;
 }
 
 void AgenticWorkflow::emitProgress()
@@ -2408,11 +2616,8 @@ bool AgenticWorkflow::waitForConfirmation(const std::string& action,
         confirmationCallback_(req);
     }
 
-    // Update workflow state.
-    {
-        std::lock_guard<std::mutex> lock(stateMtx_);
-        state_ = State::WaitingForApproval;
-    }
+    // AI-10.6: Transition to WaitingForApproval (validated via canTransition).
+    setState(State::WaitingForApproval);
     // AI-10.4: Surface the authorization boundary as an observable event.
     emitEvent(EventType::ConfirmationRequired,
               description,
@@ -2425,14 +2630,21 @@ bool AgenticWorkflow::waitForConfirmation(const std::string& action,
     {
         std::unique_lock<std::mutex> lock(confirmMtx_);
         while (!confirmationResponded_.load(std::memory_order_acquire)) {
-            if (cv_.wait_until(lock, deadline) == std::cv_status::timeout) {
-                // Also check stopRequested.
+            // AI-10.6: Use confirmCv_ (not cv_) so that respondToConfirmation
+            // and replan() can wake us up.
+            std::cv_status cvResult = confirmCv_.wait_until(lock, deadline);
+            if (cvResult == std::cv_status::timeout) {
+                // Also check stopRequested (replan or cancel).
                 if (stopRequested_.load(std::memory_order_acquire)) {
                     {
                         std::lock_guard<std::mutex> l2(stateMtx_);
                         pendingConfirmation_.reset();
                     }
                     confirmationResponded_.store(false, std::memory_order_release);
+                    if (replanRequested_.load(std::memory_order_acquire)) {
+                        // Replan will be handled by the caller; just return false.
+                        return false;
+                    }
                     setState(State::Cancelled);
                     return false;
                 }
@@ -2444,6 +2656,19 @@ bool AgenticWorkflow::waitForConfirmation(const std::string& action,
                 }
                 confirmationResponded_.store(false, std::memory_order_release);
                 setState(State::Failed);
+                return false;
+            }
+            // confirmCv_ notified — check if it was a stop/replan signal.
+            if (stopRequested_.load(std::memory_order_acquire)) {
+                {
+                    std::lock_guard<std::mutex> l2(stateMtx_);
+                    pendingConfirmation_.reset();
+                }
+                confirmationResponded_.store(false, std::memory_order_release);
+                if (replanRequested_.load(std::memory_order_acquire)) {
+                    return false;
+                }
+                setState(State::Cancelled);
                 return false;
             }
         }

@@ -388,6 +388,7 @@ void ControlInterface::dispatch(std::string_view rawLine)
                cmd == "workflow_reject" ||
                cmd == "workflow_plan" ||
                cmd == "workflow_repair" ||
+               cmd == "workflow_replan" ||
                cmd == "working_set" ||
                cmd == "resolve_reference" ||
                cmd == "revert_change" ||
@@ -1488,9 +1489,11 @@ void ControlInterface::handleWorkflowCommand(std::string_view cmd,
         handleWorkflowApprove(rest, false);
      } else if (cmd == "workflow_plan") {
          handleWorkflowPlan(rest);
-     } else if (cmd == "workflow_repair") {
-         handleWorkflowRepair(rest);
-     } else if (cmd == "working_set") {
+    } else if (cmd == "workflow_repair") {
+        handleWorkflowRepair(rest);
+    } else if (cmd == "workflow_replan") {
+        handleWorkflowReplan(rest);
+    } else if (cmd == "working_set") {
         handleWorkingSet(rest);
     } else if (cmd == "resolve_reference") {
         handleResolveReference(rest);
@@ -1786,6 +1789,85 @@ void ControlInterface::handleWorkflowRepair(std::string_view rest)
     emitResponse({
         {"ok", true},
         {"cmd", "workflow_repair"},
+        {"state", agenticWorkflow_->getState()}
+    });
+}
+
+void ControlInterface::handleWorkflowReplan(std::string_view rest)
+{
+    // AI-10.6: Restart the active workflow with a new request.
+    // Format: workflow_replan <json-args>
+    //   json-args: {"intent":"...","target_slot":"d1","notation":"...",
+    //               "ck_source":"...","asset_name":"...","duration_bars":8,
+    //               "dry_run":false}
+    const std::string argsStr = std::string(trim(rest));
+    if (argsStr.empty()) {
+        emitResponse({
+            {"ok", false},
+            {"cmd", "workflow_replan"},
+            {"error", "missing arguments"}
+        });
+        return;
+    }
+
+    nlohmann::json args;
+    try {
+        args = nlohmann::json::parse(argsStr);
+    } catch (const std::exception& e) {
+        emitResponse({
+            {"ok", false},
+            {"cmd", "workflow_replan"},
+            {"error", "invalid JSON arguments"}
+        });
+        return;
+    }
+
+    // Ensure services and workflow are initialized.
+    if (!chuckSessionService_)
+        chuckSessionService_ = std::make_unique<ChuckSessionService>(audio_);
+    if (!renderService_)
+        renderService_ = std::make_unique<RenderService>(audio_, bank_, *chuckSessionService_);
+    if (!agenticWorkflow_) {
+        agenticWorkflow_ = std::make_unique<AgenticWorkflow>(
+            audio_, bank_,
+            *readFacade_,
+            *chuckSessionService_,
+            *renderService_,
+            *songMutationService_);
+    }
+
+    // Build the replacement request from JSON args.
+    AgenticWorkflow::Request req;
+    req.intent = args.value("intent", std::string{});
+    req.targetSlot = args.value("target_slot", std::string{});
+    req.notation = args.value("notation", std::string{});
+    req.ckSource = args.value("ck_source", std::string{});
+    req.assetName = args.value("asset_name", std::string{});
+    req.durationBars = args.value("duration_bars", req.durationBars);
+    req.dryRun = args.value("dry_run", false);
+
+    if (req.intent.empty()) {
+        emitResponse({
+            {"ok", false},
+            {"cmd", "workflow_replan"},
+            {"error", "'intent' is required"}
+        });
+        return;
+    }
+
+    bool accepted = agenticWorkflow_->replan(req);
+    if (!accepted) {
+        emitResponse({
+            {"ok", false},
+            {"cmd", "workflow_replan"},
+            {"error", "workflow is not running (cannot replan an idle/terminal workflow)"}
+        });
+        return;
+    }
+
+    emitResponse({
+        {"ok", true},
+        {"cmd", "workflow_replan"},
         {"state", agenticWorkflow_->getState()}
     });
 }

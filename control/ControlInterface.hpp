@@ -326,9 +326,16 @@ public:
      /// conversational feedback).
      /// Format: workflow_repair <json-args>
      ///   json-args: {"feedback":"make it darker","intent_context":"bass"}
-     void handleWorkflowRepair(std::string_view rest);
+      void handleWorkflowRepair(std::string_view rest);
 
-    /// Handle a workflow_start command (async — starts the agentic workflow).
+      /// Handle a workflow_replan command (AI-10.6: restart workflow with new request).
+      /// Format: workflow_replan <json-args>
+      ///   json-args: {"intent":"...","target_slot":"d1","notation":"...",
+      ///               "ck_source":"...","asset_name":"...","duration_bars":8,
+      ///               "dry_run":false}
+      void handleWorkflowReplan(std::string_view rest);
+
+     /// Handle a workflow_start command (async — starts the agentic workflow).
     /// Format: workflow_start <json-args>
     ///   json-args: {"intent":"...","target_slot":"d1","notation":"...",
     ///               "ck_source":"...","asset_name":"...","duration_bars":8,
