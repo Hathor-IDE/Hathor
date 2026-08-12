@@ -17,13 +17,30 @@
 
 namespace hathor::ui {
 
+class WorkspaceSearchDoubleClickHandler : public juce::MouseListener
+{
+public:
+    explicit WorkspaceSearchDoubleClickHandler(WorkspaceSearchPanel* parent) : parent_(parent) {}
+    void mouseDoubleClick(const juce::MouseEvent&) override {
+        int idx = parent_->selectedIndex_;
+        if (idx >= 0 && idx < static_cast<int>(parent_->displayItems_.size()))
+        {
+            const auto& item = parent_->displayItems_[idx];
+            if (parent_->onNavigateToMatch)
+                parent_->onNavigateToMatch(item.filePath, item.match->line, item.match->column);
+        }
+    }
+private:
+    WorkspaceSearchPanel* parent_;
+};
+
 WorkspaceSearchPanel::WorkspaceSearchPanel(std::filesystem::path workspaceRoot,
                                              WorkspaceSearchModel* model)
     : workspaceRoot_(std::move(workspaceRoot))
     , model_(model)
 {
     searchField_ = std::make_unique<juce::TextEditor>();
-    searchField_->setListener(this);
+    searchField_->addListener(this);
     searchField_->setFont(juce::FontOptions{15.0f});
     searchField_->setColour(juce::TextEditor::backgroundColourId,
                             juce::Colours::black.withAlpha(0.7f));
@@ -92,19 +109,8 @@ WorkspaceSearchPanel::WorkspaceSearchPanel(std::filesystem::path workspaceRoot,
     listBox_->setModel(this);
     listBox_->setColour(juce::ListBox::backgroundColourId, juce::Colours::black.withAlpha(0.9f));
     listBox_->setColour(juce::ListBox::outlineColourId, juce::Colours::white.withAlpha(0.1f));
-    listBox_->setColour(juce::ListBox::selectedRowBackgroundColourId, juce::Colours::white.withAlpha(0.15f));
     listBox_->setRowSelectedOnMouseDown(true);
-    listBox_->setRowSelectedOnMouseUp(true);
-    listBox_->onDoubleClick = [this]() {
-        if (selectedIndex_ >= 0 && selectedIndex_ < static_cast<int>(displayItems_.size()))
-        {
-            const auto& item = displayItems_[selectedIndex_];
-            if (onNavigateToMatch)
-                onNavigateToMatch(item.filePath,
-                                  item.match->line,
-                                  item.match->column);
-        }
-    };
+    listBox_->addMouseListener(new WorkspaceSearchDoubleClickHandler(this), true);
     addAndMakeVisible(listBox_.get());
 }
 

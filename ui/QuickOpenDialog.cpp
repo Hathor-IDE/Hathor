@@ -20,11 +20,20 @@
 
 namespace hathor::ui {
 
+class QuickOpenDialogDoubleClickHandler : public juce::MouseListener
+{
+public:
+    explicit QuickOpenDialogDoubleClickHandler(QuickOpenDialog* parent) : parent_(parent) {}
+    void mouseDoubleClick(const juce::MouseEvent&) override { parent_->confirmSelection(); }
+private:
+    QuickOpenDialog* parent_;
+};
+
 QuickOpenDialog::QuickOpenDialog(const std::filesystem::path& workspaceRoot)
     : workspaceRoot_(workspaceRoot)
 {
     filterField_ = std::make_unique<juce::TextEditor>();
-    filterField_->setListener(this);
+    filterField_->addListener(this);
     filterField_->setFont(juce::FontOptions{16.0f});
     filterField_->setColour(juce::TextEditor::backgroundColourId,
                             juce::Colours::black.withAlpha(0.6f));
@@ -42,18 +51,12 @@ QuickOpenDialog::QuickOpenDialog(const std::filesystem::path& workspaceRoot)
 
     listBox_ = std::make_unique<juce::ListBox>();
     listBox_->setModel(this);
-    listBox_->setFont(juce::FontOptions{15.0f});
+    listBox_->setRowSelectedOnMouseDown(true);
     listBox_->setColour(juce::ListBox::backgroundColourId, juce::Colours::black.withAlpha(0.8f));
     listBox_->setColour(juce::ListBox::outlineColourId, juce::Colours::white.withAlpha(0.2f));
-    listBox_->setColour(juce::ListBox::selectedRowBackgroundColourId, juce::Colours::white.withAlpha(0.2f));
-    listBox_->setRowSelectedOnMouseDown(true);
-    listBox_->setRowSelectedOnMouseUp(true);
     addAndMakeVisible(listBox_.get());
 
-    // Double-click to select a file
-    listBox_->onDoubleClick = [this]() {
-        confirmSelection();
-    };
+    listBox_->addMouseListener(new QuickOpenDialogDoubleClickHandler(this), true);
 
     collectFiles(workspaceRoot_);
     filteredFiles_ = allFiles_;
@@ -253,7 +256,7 @@ void QuickOpenDialog::textEditorEscapeKeyPressed(juce::TextEditor& /*editor*/)
 
 bool QuickOpenDialog::keyPressed(const juce::KeyPress& key)
 {
-    if (key == juce::KeyPress::returnKey || key == juce::KeyPress::enterKey)
+    if (key == juce::KeyPress::returnKey)
     {
         if (confirmSelection())
             return true;
@@ -268,7 +271,6 @@ bool QuickOpenDialog::keyPressed(const juce::KeyPress& key)
         selectDown();
         return true;
     }
-    return false;
     return false;
 }
 

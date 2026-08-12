@@ -741,12 +741,13 @@ void HathorLspClient::handleResponse(int id,
                                  }
                              }
                          }
-                     }
-                 }
-                 if (req.renameCb)
-                     req.renameCb(renameResult);
-             }
-             break;
+            }
+                  }
+                }
+                if (req.renameCb)
+                    req.renameCb(renameResult);
+              }
+              break;
          }
          case PendingRequest::PrepareRename:
          {

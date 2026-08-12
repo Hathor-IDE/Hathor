@@ -13,11 +13,28 @@
 
 namespace hathor::ui {
 
+class SymbolSearchDoubleClickHandler : public juce::MouseListener
+{
+public:
+    explicit SymbolSearchDoubleClickHandler(SymbolSearchPanel* parent) : parent_(parent) {}
+    void mouseDoubleClick(const juce::MouseEvent&) override {
+        int idx = parent_->selectedIndex_;
+        if (idx >= 0 && idx < static_cast<int>(parent_->displayResults_.size()))
+        {
+            if (parent_->onSymbolSelected)
+                parent_->onSymbolSelected(parent_->displayResults_[idx]);
+            parent_->setVisible(false);
+        }
+    }
+private:
+    SymbolSearchPanel* parent_;
+};
+
 SymbolSearchPanel::SymbolSearchPanel(SymbolSearchModel* model)
     : model_(model)
 {
     searchField_ = std::make_unique<juce::TextEditor>();
-    searchField_->setListener(this);
+    searchField_->addListener(this);
     searchField_->setFont(juce::FontOptions{16.0f});
     searchField_->setColour(juce::TextEditor::backgroundColourId,
                             juce::Colours::black.withAlpha(0.7f));
@@ -35,20 +52,10 @@ SymbolSearchPanel::SymbolSearchPanel(SymbolSearchModel* model)
 
     listBox_ = std::make_unique<juce::ListBox>();
     listBox_->setModel(this);
-    listBox_->setFont(juce::FontOptions{15.0f});
     listBox_->setColour(juce::ListBox::backgroundColourId, juce::Colours::black.withAlpha(0.9f));
     listBox_->setColour(juce::ListBox::outlineColourId, juce::Colours::white.withAlpha(0.1f));
-    listBox_->setColour(juce::ListBox::selectedRowBackgroundColourId, juce::Colours::white.withAlpha(0.15f));
     listBox_->setRowSelectedOnMouseDown(true);
-    listBox_->setRowSelectedOnMouseUp(true);
-    listBox_->onDoubleClick = [this]() {
-        if (selectedIndex_ >= 0 && selectedIndex_ < static_cast<int>(displayResults_.size()))
-        {
-            if (onSymbolSelected)
-                onSymbolSelected(displayResults_[selectedIndex_]);
-            setVisible(false);
-        }
-    };
+    listBox_->addMouseListener(new SymbolSearchDoubleClickHandler(this), true);
     addAndMakeVisible(listBox_.get());
 
     closeBtn_ = std::make_unique<juce::TextButton>("x");
@@ -106,7 +113,7 @@ void SymbolSearchPanel::clear()
     if (listBox_)
     {
         listBox_->updateContent();
-        listBox_->selectedRowsChanged(-1);
+        listBox_->deselectAllRows();
     }
 }
 
@@ -211,7 +218,7 @@ void SymbolSearchPanel::paintListBoxItem(int row, juce::Graphics& g,
 
         // Left: symbol name
         g.setColour(juce::Colours::white);
-        g.setFont(juce::FontOptions{15.0f}.withBold());
+        g.setFont(juce::Font(juce::FontOptions{15.0f}).boldened());
         juce::String nameText = juce::String(sym.name.c_str());
         g.drawText(nameText, bounds.removeFromLeft(width / 3).reduced(4, 2),
                    juce::Justification::centredLeft, false);

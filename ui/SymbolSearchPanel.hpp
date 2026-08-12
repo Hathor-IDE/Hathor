@@ -75,6 +75,8 @@ private:
     /** Flatten model results into a display list. */
     void reloadResults();
 
+    friend class SymbolSearchDoubleClickHandler;
+
     SymbolSearchModel* model_{nullptr};
     std::vector<SymbolSearchResult> displayResults_;
     int selectedIndex_ = 0;

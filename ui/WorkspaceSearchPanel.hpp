@@ -68,6 +68,7 @@ private:
     void selectedRowsChanged(int lastSelectedRow) override;
 
     /** Flatten results into a list of displayable items. */
+    friend class WorkspaceSearchDoubleClickHandler;
     struct DisplayItem {
         std::filesystem::path filePath;
         std::string relativePath;
