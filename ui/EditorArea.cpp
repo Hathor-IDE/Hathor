@@ -333,6 +333,55 @@ EditorArea::EditorArea(AudioEngine& audio,
     addChildComponent(commandPalette_.get());
     findReplacePanel_->setVisible(false);
     commandPalette_->setVisible(false);
+
+    // -----------------------------------------------------------------------
+    // L-2: Create navigation & workspace search components
+    // -----------------------------------------------------------------------
+    navigationHistory_ = std::make_unique<NavigationHistory>();
+    workspaceSearchModel_ = std::make_unique<WorkspaceSearchModel>(workspaceRoot_);
+    symbolSearchModel_ = std::make_unique<SymbolSearchModel>(&metadata_);
+
+    quickOpenDialog_ = std::make_unique<QuickOpenDialog>(workspaceRoot_);
+    quickOpenDialog_->onFileSelected = [this](const std::filesystem::path& file) {
+        openFile(juce::File(file));
+    };
+    quickOpenDialog_->onCancelled = [this]() {
+        quickOpenDialog_->setVisible(false);
+    };
+
+    workspaceSearchPanel_ = std::make_unique<WorkspaceSearchPanel>(workspaceRoot_, workspaceSearchModel_.get());
+    workspaceSearchPanel_->onNavigateToMatch = [this](const std::filesystem::path& file, int line, int column) {
+        openFile(juce::File(file));
+        if (auto* tab = activeTab())
+        {
+            tab->editor().setCaretPosition(line, column);
+        }
+    };
+    workspaceSearchPanel_->onClosePanel = [this]() {
+        workspaceSearchPanel_->setVisible(false);
+    };
+
+    symbolSearchPanel_ = std::make_unique<SymbolSearchPanel>(symbolSearchModel_.get());
+    symbolSearchPanel_->onSymbolSelected = [this](const SymbolSearchResult& result) {
+        if (!result.isBuiltin && !result.filePath.empty())
+        {
+            openFile(juce::File(result.filePath));
+            if (auto* tab = activeTab())
+            {
+                tab->editor().setCaretPosition(result.line, result.column);
+            }
+        }
+    };
+    symbolSearchPanel_->onClosePanel = [this]() {
+        symbolSearchPanel_->setVisible(false);
+    };
+
+    addChildComponent(quickOpenDialog_.get());
+    addChildComponent(workspaceSearchPanel_.get());
+    addChildComponent(symbolSearchPanel_.get());
+    quickOpenDialog_->setVisible(false);
+    workspaceSearchPanel_->setVisible(false);
+    symbolSearchPanel_->setVisible(false);
 }
 
 EditorArea::~EditorArea()
