@@ -48,7 +48,11 @@ add_executable(hathor-ui-tests
          test_ghost_state_isolation.cpp
          test_ghost_candidates.cpp
           test_ghost_partial_accept.cpp
-          test_ghost_completion_telemetry.cpp
+         test_ghost_completion_telemetry.cpp
+       test_find_replace_model.cpp
+       test_tab_reorder_model.cpp
+       test_recently_closed_tabs.cpp
+       test_action_registry.cpp
       ${CMAKE_SOURCE_DIR}/ui/HathorFileParser.cpp
      ${CMAKE_SOURCE_DIR}/ui/ExplorerFileTypes.cpp
      ${CMAKE_SOURCE_DIR}/ui/TreeBuilder.cpp
@@ -62,6 +66,10 @@ add_executable(hathor-ui-tests
         ${CMAKE_SOURCE_DIR}/ui/GhostTriggerPolicy.cpp
         ${CMAKE_SOURCE_DIR}/ui/CompletionCoordinator.cpp
         ${CMAKE_SOURCE_DIR}/ui/GhostCompletionTelemetry.cpp
+       ${CMAKE_SOURCE_DIR}/ui/FindReplaceModel.cpp
+       ${CMAKE_SOURCE_DIR}/ui/TabReorderModel.cpp
+       ${CMAKE_SOURCE_DIR}/ui/RecentlyClosedTabs.cpp
+       ${CMAKE_SOURCE_DIR}/ui/ActionRegistry.cpp
        ${CMAKE_SOURCE_DIR}/app/LiveJamSessionManager.cpp
 )
 

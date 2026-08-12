@@ -29,9 +29,7 @@ bool FindReplaceModel::compilePattern()
     try
     {
         std::regex::flag_type rf = std::regex::ECMAScript | std::regex::optimize;
-        if (hasFlag(flags_, FindFlags::CaseSensitive))
-            rf = rf;  // no icase
-        else
+        if (!hasFlag(flags_, FindFlags::CaseSensitive))
             rf |= std::regex::icase;
 
         regex_ = std::regex(search_, rf);
@@ -108,9 +106,9 @@ std::optional<FindMatch> FindReplaceModel::findNext(const std::string& doc,
 
     if (hasFlag(flags_, FindFlags::UseRegex))
     {
-        std::regex_iterator<char> it(doc.begin() + std::clamp(pos, size_t{0}, docLen),
+        std::regex_iterator<std::string::const_iterator> it(doc.begin() + std::clamp(pos, size_t{0}, docLen),
                                      doc.end(), regex_);
-        std::regex_iterator<char> end;
+        std::regex_iterator<std::string::const_iterator> end;
 
         if (it != end)
         {
@@ -127,7 +125,7 @@ std::optional<FindMatch> FindReplaceModel::findNext(const std::string& doc,
         if (hasFlag(flags_, FindFlags::WrapAround) && fromOffset > 0)
         {
             pos = 0;
-            std::regex_iterator<char> it2(doc.begin(), doc.end(), regex_);
+            std::regex_iterator<std::string::const_iterator> it2(doc.begin(), doc.end(), regex_);
             if (it2 != end)
             {
                 const auto& m = *it2;
@@ -248,8 +246,8 @@ std::vector<FindMatch> FindReplaceModel::findAll(const std::string& doc) const
 
     if (hasFlag(flags_, FindFlags::UseRegex))
     {
-        std::regex_iterator<char> it(doc.begin(), doc.end(), regex_);
-        std::regex_iterator<char> end;
+        std::regex_iterator<std::string::const_iterator> it(doc.begin(), doc.end(), regex_);
+        std::regex_iterator<std::string::const_iterator> end;
 
         while (it != end)
         {

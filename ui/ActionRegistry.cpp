@@ -181,14 +181,21 @@ const ParsedMod modTable[] = {
     { ModFlag::Shift, "Shift", 5 },
 };
 
-std::string normalizeKey(std::string_view k)
+const char* namedKeys[] = {
+    "Enter", "Tab", "Escape", "Backspace", "Delete",
+    "Home", "End", "PageUp", "PageDown", "Space",
+    "Up", "Down", "Left", "Right",
+    "F1", "F2", "F3", "F4", "F5", "F6", "F7", "F8", "F9", "F10", "F11", "F12"
+};
+
+bool isNamedKey(std::string_view k)
 {
-    // Lowercase the key for comparison, but preserve case for character keys.
-    // For named keys like "Enter", "Tab", we lowercase them for canonical comparison.
-    std::string result(k);
-    std::transform(result.begin(), result.end(), result.begin(),
-                   [](unsigned char c) { return std::tolower(c); });
-    return result;
+    for (const char* n : namedKeys)
+    {
+        if (k == n)
+            return true;
+    }
+    return false;
 }
 
 } // namespace
@@ -218,6 +225,8 @@ std::optional<KeyEquivalent> parseKeyEquivalent(std::string_view text)
         return std::nullopt;
 
     KeyEquivalent ke;
+    uint8_t modValue = 0;
+
     // Last part is the key; earlier parts are modifiers.
     for (size_t i = 0; i < parts.size(); ++i)
     {
@@ -243,6 +252,12 @@ std::optional<KeyEquivalent> parseKeyEquivalent(std::string_view text)
                                           std::tolower(static_cast<unsigned char>(b));
                                }))
                 {
+                    ModFlag thisFlag = m.flag;
+                    uint8_t thisVal = static_cast<uint8_t>(thisFlag);
+                    // Reject duplicate modifiers
+                    if (modValue & thisVal)
+                        return std::nullopt;
+                    modValue |= thisVal;
                     ke.modifiers = ke.modifiers | m.flag;
                     matched = true;
                     break;
@@ -254,9 +269,20 @@ std::optional<KeyEquivalent> parseKeyEquivalent(std::string_view text)
         else
         {
             // This is the key token
-            if (p.size() > 1)
-                return std::nullopt;  // single character only for key token
-            ke.key = normalizeKey(p);
+            if (p.size() == 1)
+            {
+                // Single character key — preserve case
+                ke.key = std::string(p);
+            }
+            else if (isNamedKey(p))
+            {
+                // Named key — preserve original case
+                ke.key = std::string(p);
+            }
+            else
+            {
+                return std::nullopt;
+            }
         }
     }
 

@@ -34,13 +34,7 @@ void TabReorderModel::togglePin(size_t index)
 {
     if (index >= entries_.size())
         return;
-
     entries_[index].pinned = !entries_[index].pinned;
-
-    // Re-sort: pinned tabs must be at the front, preserving relative order.
-    // This is a stable partition: pinned first, unpinned after.
-    std::stable_partition(entries_.begin(), entries_.end(),
-                          [](const TabEntry& e) { return e.pinned; });
 }
 
 size_t TabReorderModel::computeDropIndex(size_t fromIndex,

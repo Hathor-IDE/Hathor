@@ -198,6 +198,7 @@ public:
 
 private:
     void refreshTabBar();
+    std::vector<EnhancedTabBar::TabDisplayInfo> buildTabDisplayInfos() const;
     std::vector<HathorTab*> buildHathorTabPointers() const;
 
     // -----------------------------------------------------------------------

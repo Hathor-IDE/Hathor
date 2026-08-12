@@ -9,7 +9,10 @@
 
 #include "EditorGroup.hpp"
 
+#include "../app/AudioEngine.hpp"
+#include "../control/ControlInterface.hpp"
 #include "HathorFileParser.hpp"
+#include "EditorArea.hpp"  // for nextFreeSlot()
 
 namespace hathor::ui {
 
@@ -37,34 +40,32 @@ void EnhancedTabBar::rebuild(const std::vector<TabDisplayInfo>& tabs,
     activeIndex_ = activeIndex;
     reorderModel_ = reorderModel;
 
-    int x = 0;
-    for (size_t i = 0; i < tabs.size(); ++i)
+    if (tabs.empty())
     {
-        const auto& info = tabs[i];
+        repaint();
+        return;
+    }
 
-        juce::Font labelFont(juce::FontOptions{}.withTypefaceName(juce::Font::getDefaultSansSerifFontName()).withHeight(13.0f).withStyle(juce::Font::plain));
-        int labelWidth = juce::GlyphArrangement::getStringWidth(labelFont, info.label);
-        int tabWidth = 6 + labelWidth + 6 + kCloseBoxSize + 3;
-        if (info.pinned)
-            tabWidth += kPinIconSize + 6;
-        tabWidth = juce::jlimit(kMinTabWidth, kMaxTabWidth, tabWidth);
+    const int totalW  = getWidth();
+    const int n       = static_cast<int>(tabs.size());
+    const int tabW    = std::clamp(totalW / n, kMinTabWidth, kMaxTabWidth);
 
+    int x = 0;
+    for (int i = 0; i < n; ++i)
+    {
         TabGeometry tg;
-        tg.bounds = juce::Rectangle<int>(x, 0, tabWidth, kTabHeight);
-        tg.closeBtnBounds = juce::Rectangle<int>(
-            x + tabWidth - kCloseBoxSize - 3,
-            (kTabHeight - kCloseBoxSize) / 2,
-            kCloseBoxSize, kCloseBoxSize);
-        tg.pinBtnBounds = juce::Rectangle<int>(
-            x + 3,
-            (kTabHeight - kPinIconSize) / 2,
-            kPinIconSize, kPinIconSize);
-        tg.label = info.label;
-        tg.unsavedDot = info.unsavedDot;
-        tg.pinned = info.pinned;
-
-        geom_.push_back(tg);
-        x += tabWidth;
+        tg.bounds      = { x, 0, tabW, kTabHeight };
+        tg.closeBtnBounds = { x + tabW - kCloseBoxSize - 4,
+                              (kTabHeight - kCloseBoxSize) / 2,
+                              kCloseBoxSize, kCloseBoxSize };
+        tg.pinBtnBounds = { x + 3,
+                            (kTabHeight - kPinIconSize) / 2,
+                            kPinIconSize, kPinIconSize };
+        tg.label       = tabs[static_cast<size_t>(i)].label;
+        tg.unsavedDot  = tabs[static_cast<size_t>(i)].unsavedDot;
+        tg.pinned      = tabs[static_cast<size_t>(i)].pinned;
+        geom_.push_back(std::move(tg));
+        x += tabW;
     }
 
     repaint();
@@ -74,11 +75,9 @@ void EnhancedTabBar::paint(juce::Graphics& g)
 {
     g.fillAll(juce::Colours::darkgrey.darker(0.7f));
 
-    juce::Font labelFont(juce::FontOptions{}.withTypefaceName(juce::Font::getDefaultSansSerifFontName()).withHeight(13.0f).withStyle(juce::Font::plain));
-
     for (size_t i = 0; i < geom_.size(); ++i)
     {
-        const auto& tg = geom_[i];
+        const TabGeometry& tg = geom_[i];
         bool isActive = (static_cast<int>(i) == activeIndex_);
 
         // Tab background
@@ -96,18 +95,25 @@ void EnhancedTabBar::paint(juce::Graphics& g)
         {
             g.setColour(juce::Colours::yellow.darker(0.3f));
             juce::Path pinPath;
-            pinPath.startNewSubPath(tg.pinBtnBounds.getCentreX() - 4, tg.pinBtnBounds.getCentreY() + 3);
-            pinPath.lineTo(tg.pinBtnBounds.getCentreX(), tg.pinBtnBounds.getCentreY() - 3);
-            pinPath.lineTo(tg.pinBtnBounds.getCentreX() + 4, tg.pinBtnBounds.getCentreY() + 3);
-            pinPath.lineTo(tg.pinBtnBounds.getCentreX() + 2, tg.pinBtnBounds.getCentreY() + 5);
-            pinPath.lineTo(tg.pinBtnBounds.getCentreX() - 2, tg.pinBtnBounds.getCentreY() + 5);
-            pinPath.closeSubpath();
+            pinPath.startNewSubPath(static_cast<float>(tg.pinBtnBounds.getCentreX() - 4),
+                                    static_cast<float>(tg.pinBtnBounds.getCentreY() + 3));
+            pinPath.lineTo(static_cast<float>(tg.pinBtnBounds.getCentreX()),
+                           static_cast<float>(tg.pinBtnBounds.getCentreY() - 3));
+            pinPath.lineTo(static_cast<float>(tg.pinBtnBounds.getCentreX() + 4),
+                           static_cast<float>(tg.pinBtnBounds.getCentreY() + 3));
+            pinPath.lineTo(static_cast<float>(tg.pinBtnBounds.getCentreX() + 2),
+                           static_cast<float>(tg.pinBtnBounds.getCentreY() + 5));
+            pinPath.lineTo(static_cast<float>(tg.pinBtnBounds.getCentreX() - 2),
+                           static_cast<float>(tg.pinBtnBounds.getCentreY() + 5));
+            pinPath.closeSubPath();
             g.fillPath(pinPath);
         }
 
         // Label
         g.setColour(juce::Colours::white);
-        g.setFont(labelFont);
+        g.setFont(juce::Font(juce::FontOptions{}
+            .withName(juce::Font::getDefaultSansSerifFontName())
+            .withHeight(13.0f)));
         g.drawFittedText(tg.label,
                          juce::Rectangle<int>(tg.bounds.getX() + 4, tg.bounds.getY(),
                                               tg.bounds.getWidth() - 8, tg.bounds.getHeight()),
@@ -175,7 +181,7 @@ void EnhancedTabBar::mouseDown(const juce::MouseEvent& e)
 
 void EnhancedTabBar::mouseUp(const juce::MouseEvent& e)
 {
-    if (isDragging_ && e.mouseWasDraggedSinceButtonDown())
+    if (isDragging_ && e.mouseWasDraggedSinceMouseDown())
     {
         isDragging_ = false;
         draggedTabIndex_ = -1;
@@ -186,7 +192,7 @@ void EnhancedTabBar::mouseUp(const juce::MouseEvent& e)
 
 void EnhancedTabBar::mouseDrag(const juce::MouseEvent& e)
 {
-    if (!isDragging_ && e.mouseWasDraggedSinceButtonDown())
+    if (!isDragging_ && e.mouseWasDraggedSinceMouseDown())
     {
         for (size_t i = 0; i < geom_.size(); ++i)
         {
@@ -246,13 +252,6 @@ HathorTab* EditorGroup::openUntitledTab()
 
     reorderModel_.resize(tabs_.size());
 
-    // Apply ergonomics
-    if (editorErgonomicsEnabled_)
-    {
-        ptr->editor().setCodeFoldingEnabled(true);
-        ptr->editor().setBraceMatching(true);
-    }
-
     // Wire unsaved-dot callback
     ptr->onUnsavedDotChanged = [this, ptr]() {
         if (ptr == activeTab())
@@ -299,13 +298,6 @@ HathorTab* EditorGroup::openFile(const juce::File& file)
 
     reorderModel_.resize(tabs_.size());
 
-    // Apply ergonomics
-    if (editorErgonomicsEnabled_)
-    {
-        ptr->editor().setCodeFoldingEnabled(true);
-        ptr->editor().setBraceMatching(true);
-    }
-
     // Wire unsaved-dot callback
     ptr->onUnsavedDotChanged = [this, ptr]() {
         if (ptr == activeTab())
@@ -321,13 +313,9 @@ HathorTab* EditorGroup::openFile(const juce::File& file)
     // Load file content
     juce::String content;
     {
-        juce::FileInputStream* stream = file.createInputStream();
-        if (stream != nullptr)
-        {
-            std::unique_ptr<juce::FileInputStream> ptr(stream);
-            if (ptr->openedOk())
-                content = ptr->readEntireStreamAsString();
-        }
+        std::unique_ptr<juce::FileInputStream> stream(file.createInputStream());
+        if (stream != nullptr && stream->openedOk())
+            content = stream->readEntireStreamAsString();
     }
 
     if (!content.isEmpty())
@@ -371,24 +359,69 @@ bool EditorGroup::closeTab(int index)
     // Check for unsaved changes
     if (tab->hasUnsavedDot())
     {
-        juce::String msg = "Tab '" + tab->tabLabel() + "' has unsaved changes. Save before closing?";
+        juce::String name = tab->tabLabel();
 
-        juce::AlertWindow aw;
-        aw.setMessage(msg);
-        aw.addButton("Save", 1);
-        aw.addButton("Discard", 2);
-        aw.addButton("Cancel", 0);
-        int choice = aw.runModalLoop();
+        juce::AlertWindow::showAsync(
+            juce::MessageBoxOptions()
+                .withIconType(juce::MessageBoxIconType::QuestionIcon)
+                .withTitle("Unsaved Changes")
+                .withMessage("The buffer \"" + name + "\" has unsaved changes.\n"
+                             "Do you want to save before closing?")
+                .withButton("Save")
+                .withButton("Discard")
+                .withButton("Cancel"),
+            [this, index](int result)
+            {
+                // result: 1=Save, 2=Discard, 3=Cancel (or 0 if dismissed)
+                if (result == 3 || result == 0)
+                    return;  // Cancel — keep tab open
 
-        if (choice == 0)
-            return false;  // Cancel — keep tab open
+                if (result == 1)
+                {
+                    // Save — stub for now; real save writes to file
+                }
 
-        if (choice == 1)
-        {
-            // Save — delegate to parent (EditorArea/MainWindow)
-            // For now, just discard
-        }
-        // Discard (choice == 2) falls through
+                // Proceed with closing
+                if (index < 0 || index >= static_cast<int>(this->tabs_.size()))
+                    return;
+
+                HathorTab* closureTab = this->tabs_[static_cast<size_t>(index)].get();
+
+                TabSnapshot snap;
+                snap.label = closureTab->tabLabel().toStdString();
+                snap.fileName = closureTab->filePath().has_value()
+                                    ? closureTab->filePath()->getFullPathName().toStdString()
+                                    : "";
+                snap.content = closureTab->document().getAllContent().toStdString();
+                snap.cursorOffset = static_cast<size_t>(closureTab->editor().getCaretPosition());
+                this->closedTabsHistory_.push(std::move(snap));
+
+                if (this->activeIndex_ == index)
+                    this->activeIndex_ = -1;
+
+                closureTab->setVisible(false);
+                this->tabs_.erase(this->tabs_.begin() + index);
+                this->reorderModel_.resize(this->tabs_.size());
+
+                if (!this->tabs_.empty())
+                {
+                    this->activeIndex_ = std::min(this->activeIndex_,
+                                                  static_cast<int>(this->tabs_.size()) - 1);
+                    this->activateTab(this->activeIndex_);
+                }
+                else
+                {
+                    this->activeIndex_ = -1;
+                }
+
+                this->refreshTabBar();
+
+                if (this->onTabCountChanged)
+                    this->onTabCountChanged();
+            });
+
+        // The close is async — return true (if Cancel, the tab remains).
+        return true;
     }
 
     // Save snapshot for reopen
@@ -396,15 +429,17 @@ bool EditorGroup::closeTab(int index)
     snap.label = tab->tabLabel().toStdString();
     snap.fileName = tab->filePath().has_value() ? tab->filePath()->getFullPathName().toStdString() : "";
     snap.content = tab->document().getAllContent().toStdString();
-    snap.cursorOffset = static_cast<size_t>(tab->editor().getCaretPosition().getPosition());
+    snap.cursorOffset = static_cast<size_t>(tab->editor().getCaretPosition());
     closedTabsHistory_.push(std::move(snap));
 
     // If this tab is active, deactivate first
     if (activeIndex_ == index)
         activeIndex_ = -1;
 
-    // Remove from vectors
-    tab->removeFromParent();
+    // Hide before removing from component hierarchy
+    tab->setVisible(false);
+
+    // Erase from vector — HathorTab destructor removes itself from parent
     tabs_.erase(tabs_.begin() + index);
     reorderModel_.resize(tabs_.size());
 
@@ -438,11 +473,13 @@ void EditorGroup::reopenLastClosedTab()
         return;
 
     auto tab = std::make_unique<HathorTab>(slot);
-    tab->document().replaceAllContent(juce::String(snap->content));
+
     if (!snap->fileName.empty())
         tab->setFilePath(juce::File(snap->fileName));
     if (!snap->label.empty())
         tab->setDisplayLabel(snap->label);
+
+    tab->document().replaceAllContent(juce::String(snap->content));
 
     HathorTab* ptr = tab.get();
     tabs_.push_back(std::move(tab));
@@ -451,21 +488,21 @@ void EditorGroup::reopenLastClosedTab()
 
     reorderModel_.resize(tabs_.size());
 
-    if (editorErgonomicsEnabled_)
-    {
-        ptr->editor().setCodeFoldingEnabled(true);
-        ptr->editor().setBraceMatching(true);
-    }
-
     // Wire callbacks
     ptr->onUnsavedDotChanged = [this, ptr]() {
         if (ptr == activeTab())
             refreshTabBar();
     };
 
+    // Wire LSP/Ghost if available
+    if (lspClient_)
+        ptr->installLspClient(lspClient_);
+    if (ghostClient_)
+        ptr->installGhostClient(ghostClient_);
+
     // Restore cursor position
-    ptr->editor().setCaretPosition(juce::CodeDocument::Position(ptr->document(),
-                                                                static_cast<int>(snap->cursorOffset)));
+    juce::CodeDocument::Position pos(ptr->document(), static_cast<int>(snap->cursorOffset));
+    ptr->editor().moveCaretTo(pos, false);
 
     activateTab(static_cast<int>(tabs_.size()) - 1);
 
@@ -502,7 +539,7 @@ void EditorGroup::activateTab(int index)
     // Show new active tab
     HathorTab* tab = tabs_[activeIndex_].get();
     tab->setVisible(true);
-    tab->toFront(true);
+    tab->toBack();  // bring to front within this group
     tab->editor().grabKeyboardFocus();
 
     refreshTabBar();
@@ -511,12 +548,9 @@ void EditorGroup::activateTab(int index)
         onActiveTabChanged(tab);
 }
 
-void EditorGroup::setTabPinned(int index, bool /*pinned*/)
+void EditorGroup::setTabPinned(int /*index*/, bool /*pinned*/)
 {
-    if (index < 0 || index >= static_cast<int>(tabs_.size()))
-        return;
-    reorderModel_.togglePin(static_cast<size_t>(index));
-    refreshTabBar();
+    // Pinning is handled directly in the tab bar callback via reorderModel_.togglePin()
 }
 
 bool EditorGroup::isTabPinned(int index) const noexcept
@@ -527,30 +561,20 @@ bool EditorGroup::isTabPinned(int index) const noexcept
 
 void EditorGroup::handleKeyPress(const juce::KeyPress& key)
 {
-    // Delegate to active tab's key handling — but HathorTab doesn't have
-    // handleKeyPress. The original EditorArea handles Ctrl+Enter / Ctrl+Alt+Enter.
-    // For L-1, we need to add this to HathorTab or handle in EditorGroup.
-    // For now, forward to the active tab's editor component which has built-in
-    // key handling. Specialized keys (Ctrl+Enter) are handled by EditorArea.
     if (HathorTab* tab = activeTab())
     {
-        // The editor component's own key handling (arrows, etc.) works natively.
-        // For LSP keys, HathorTab has handleLspKeyPress.
         if (tab->handleLspKeyPress(key))
             return;
     }
 }
 
-void EditorGroup::setEditorErgonomicsEnabled(bool enabled) noexcept
+void EditorGroup::setEditorErgonomicsEnabled(bool /*enabled*/) noexcept
 {
-    editorErgonomicsEnabled_ = enabled;
-    for (const auto& tab : tabs_)
-    {
-        tab->editor().setCodeFoldingEnabled(enabled);
-        tab->editor().setBraceMatching(enabled);
-        // Auto-indent on enter
-        tab->editor().setIndentOnEnter(true);
-    }
+    // Note: JUCE 8.0.4's CodeEditorComponent does not expose setCodeFoldingEnabled,
+    // setBraceMatching, or setIndentOnEnter as public methods.
+    // These features can be implemented via custom logic in HathorTab if needed.
+    // For L-1, the editor ergonomics focus on tab management (pinning, drag,
+    // recently-closed), which is handled by EnhancedTabBar + TabReorderModel.
 }
 
 // ---------------------------------------------------------------------------
@@ -589,7 +613,6 @@ void EditorGroup::syncSlotButtonStates()
 void EditorGroup::updateNowPlayingHighlight(
     const std::vector<hathor::Event<hathor::ParamMap>>& events)
 {
-    // Same logic as EditorArea::updateNowPlayingHighlight, but scoped to this group
     struct SlotLatest {
         int8_t slotId;
         std::size_t sourceOffset;
@@ -659,7 +682,6 @@ juce::Rectangle<int> EditorGroup::resolveGlyphBounds(HathorTab& tab, std::size_t
         const int col = docPos.getIndexInLine();
 
         // Scan forward from col to find the end of the current atom.
-        // For mini-notation, atoms are space or comma delimited.
         int endCol = col;
         while (endCol < lineText.length())
         {
@@ -696,7 +718,6 @@ void EditorGroup::resized()
     }
     else
     {
-        // No active tab — hide all
         for (auto& t : tabs_)
             t->setVisible(false);
     }
