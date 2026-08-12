@@ -452,8 +452,124 @@ void HathorTab::lookAndFeelChanged()
         diagnosticsOverlay_.repaint();
 
     // AI-4: repaint ghost overlay to refresh ghost text colour.
-    if (ghostOverlay_ && ghostOverlay_->isVisible())
-        ghostOverlay_->repaint();
+     if (ghostOverlay_ && ghostOverlay_->isVisible())
+         ghostOverlay_->repaint();
+}
+
+// ---------------------------------------------------------------------------
+// L-1 §5: Context menu
+// ---------------------------------------------------------------------------
+
+juce::PopupMenu HathorTab::prepareEditorContextMenu()
+{
+    enum {
+        cmdUndo = 1,
+        cmdRedo,
+        cmdCut,
+        cmdCopy,
+        cmdPaste,
+        cmdDelete,
+        cmdSelectAll,
+        cmdFind,
+        cmdReplace,
+        cmdGoToLine,
+        cmdCommentSelection,
+        cmdDuplicateLine,
+        cmdEvalLine,
+        cmdEvalBlock,
+    };
+
+    juce::PopupMenu menu;
+
+    // Undo / Redo
+    menu.addItem(cmdUndo, "Undo", true);
+    menu.addItem(cmdRedo, "Redo", true);
+
+    menu.addSeparator();
+
+    // Cut / Copy / Paste / Delete
+    menu.addItem(cmdCut,   "Cut",       true);
+    menu.addItem(cmdCopy,  "Copy",      true);
+    menu.addItem(cmdPaste, "Paste",     true);
+    menu.addItem(cmdDelete,"Delete",    true);
+
+    menu.addSeparator();
+
+    // Select All
+    menu.addItem(cmdSelectAll, "Select All", true);
+
+    menu.addSeparator();
+
+    // Navigation
+    menu.addItem(cmdGoToLine, "Go to Line…", true);
+
+    menu.addSeparator();
+
+    // Editing
+    menu.addItem(cmdCommentSelection, "Toggle Comment", true);
+    menu.addItem(cmdDuplicateLine,    "Duplicate Line", true);
+
+    menu.addSeparator();
+
+    // Language-specific eval (only for active tabs)
+    if (isChuckTab())
+    {
+        menu.addItem(cmdEvalLine, "Eval Line (Ctrl+Enter)");
+        menu.addItem(cmdEvalBlock, "Eval Block (Ctrl+Alt+Enter)");
+    }
+    else
+    {
+        menu.addItem(cmdEvalLine,  "Eval Line (Ctrl+Enter)");
+        menu.addItem(cmdEvalBlock, "Eval Block (Ctrl+Alt+Enter)");
+    }
+
+    menu.addSeparator();
+
+    // Find / Replace
+    menu.addItem(cmdFind,    "Find…", true);
+    menu.addItem(cmdReplace, "Replace…", true);
+
+    return menu;
+}
+
+void HathorTab::editorContextMenuSelected(int menuItemID)
+{
+    switch (menuItemID)
+    {
+        case 1:  editor_.undo(); break;
+        case 2:  editor_.redo(); break;
+        case 3:  editor_.cutToClipboard(); break;
+        case 4:  editor_.copyToClipboard(); break;
+        case 5:  editor_.pasteFromClipboard(); break;
+        case 6:  editor_.removeSelectedText(); break;
+        case 7:  editor_.selectAll(); break;
+        case 8:  onShowFindPanel(); break;
+        case 9:  onShowReplacePanel(); break;
+        case 10: onGoToLine(); break;
+        case 11: onToggleComment(); break;
+        case 12: onDuplicateLine(); break;
+        case 13: onEvalLine(); break;
+        case 14: onEvalBlock(); break;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// L-1 §5: Context menu — mouse handler
+// ---------------------------------------------------------------------------
+
+void HathorTab::mouseUp(const juce::MouseEvent& e)
+{
+    if (e.button == juce::MouseButton::right)
+    {
+        juce::PopupMenu menu = prepareEditorContextMenu();
+        auto mousePos = e.getScreenPosition().roundToInt();
+        menu.showMenuAsync(
+            juce::PopupMenu::Options()
+                .withTargetScreenArea(juce::Rectangle<int>(mousePos.x + 10, mousePos.y + 10, 1, 1))
+                .withOnItemSelected([this](int itemID) {
+                    editorContextMenuSelected(itemID);
+                }));
+    }
 }
 
 // ---------------------------------------------------------------------------

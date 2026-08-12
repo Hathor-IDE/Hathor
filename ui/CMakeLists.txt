@@ -44,9 +44,14 @@ target_sources(hathor-ui
         HathorTab.cpp         # task 3.4
          EditorArea.cpp        # task 3.4
          EditorGroup.cpp       # L-1: extracted tab management
+         EditorSplitSurface.cpp  # L-1: split layout container
+         EditorSplitSurface.cpp  # L-1: split layout container
          TabReorderModel.cpp   # L-1: JUCE-free tab reorder model
          RecentlyClosedTabs.cpp # L-1: JUCE-free tab close history
          ActionRegistry.cpp    # L-1: JUCE-free action/keystroke registry
+        FindReplacePanel.cpp  # L-1: find/replace UI
+        CommandPalette.cpp    # L-1: command palette UI
+        BreadcrumbsBar.cpp    # L-1: breadcrumbs navigation bar
         MiniNotationTokeniser.cpp # task 3.5
         ChuckTokeniser.cpp       # A5 — ChucK syntax highlighting
         ChuckKeywords.cpp       # A5 — JUCE-free ChucK keyword/class sets

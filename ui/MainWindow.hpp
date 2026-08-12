@@ -107,7 +107,11 @@ public:
     /// Persist window bounds before closing (Req 20.5).
     void closeButtonPressed() override;
 
+    /// Handle global keyboard shortcuts (L-1 §5).
+    bool keyPressed(const juce::KeyPress& key) override;
+
 private:
+
     // -----------------------------------------------------------------------
     // Helpers
     // -----------------------------------------------------------------------
@@ -155,6 +159,11 @@ private:
     /// Real SliderPanel — created in the constructor with ci_.
     /// Passed to UITimer for bidirectional BPM/gain sync (Req 26.4, 26.9).
     std::unique_ptr<hathor::ui::SliderPanel>       sliderPanel_;
+
+    // -----------------------------------------------------------------------
+    // L-1: Editor ergonomics — owned by EditorArea, accessed via accessors.
+    // MainWindow just triggers actions and adds the components to its layout.
+    // -----------------------------------------------------------------------
 
     /// ACP agent session config — used to start chat threads (B6).
     /// The agentExePath_ can be updated via Settings (A2).

@@ -317,6 +317,22 @@ EditorArea::EditorArea(AudioEngine& audio,
 
     // Status clear timer (heap, owned via raw ptr — stopped & deleted in destructor)
     statusClearTimer_ = new StatusClearTimer(statusBar_);
+
+    // -----------------------------------------------------------------------
+    // L-1: Create editor ergonomics components
+    // -----------------------------------------------------------------------
+    actionRegistry_ = std::make_unique<ActionRegistry>();
+    findReplacePanel_ = std::make_unique<FindReplacePanel>();
+    commandPalette_ = std::make_unique<CommandPalette>();
+    commandPalette_->setActionRegistry(actionRegistry_.get());
+    breadcrumbsBar_ = std::make_unique<BreadcrumbsBar>();
+    editorSplitSurface_ = std::make_unique<EditorSplitSurface>(audio_, ci_);
+
+    // Add L-1 components to EditorArea's hierarchy (hidden by default)
+    addChildComponent(findReplacePanel_.get());
+    addChildComponent(commandPalette_.get());
+    findReplacePanel_->setVisible(false);
+    commandPalette_->setVisible(false);
 }
 
 EditorArea::~EditorArea()
@@ -382,6 +398,7 @@ bool EditorArea::openUntitledTab()
     auto tab = std::make_unique<HathorTab>(slot);
     wireUnsavedCallback(*tab);
     wirePlayStopCallback(*tab);
+    wireContextMenuCallbacks(*tab);
     installKeyListenerForTab(*tab);
 
      // AI-4: Install LSP client on the tab (for .hathor tabs)
@@ -715,11 +732,27 @@ void EditorArea::resized()
 {
     auto b = getLocalBounds();
 
-    // Tab bar at the top
+    // L-1: Breadcrumbs bar at the very top
+    if (breadcrumbsBar_)
+        breadcrumbsBar_->setVisible(true);  // always visible
+    if (breadcrumbsBar_)
+    {
+        auto crumbArea = b.removeFromTop(BreadcrumbsBar::kBarHeight);
+        breadcrumbsBar_->setBounds(crumbArea);
+    }
+
+    // Tab bar below breadcrumbs
     tabBar_.setBounds(b.removeFromTop(kTabBarHeight));
 
     // Status bar at the bottom
     statusBar_.setBounds(b.removeFromBottom(kStatusBarHeight));
+
+    // L-1: Find/replace panel at the bottom (above status bar)
+    if (findReplacePanel_ && findReplacePanel_->isVisible())
+    {
+        auto findArea = b.removeFromBottom(FindReplacePanel::kPanelHeight);
+        findReplacePanel_->setBounds(findArea);
+    }
 
     // Active tab fills the middle
     for (int i = 0; i < static_cast<int>(tabs_.size()); ++i)
@@ -1011,6 +1044,70 @@ void EditorArea::wirePlayStopCallback(HathorTab& tab)
                 ci.dispatch(cmd);
             }).detach();
         }
+    };
+}
+
+void EditorArea::wireContextMenuCallbacks(HathorTab& tab)
+{
+    tab.onShowFindPanel = [this]() {
+        showFindReplace();
+    };
+    tab.onShowReplacePanel = [this]() {
+        showFindReplace();
+        if (findReplacePanel_)
+            findReplacePanel_->toBack();  // TODO: focus replace field
+    };
+    tab.onGoToLine = [this]() {
+        showStatus("Go to line: not yet implemented");
+    };
+    tab.onToggleComment = [this, &tab]() {
+        tab.editor().performCommand(juce::CommandIDs::cmd_Cut);
+        // Toggle line comment — use the editor's built-in command
+        // For .hathor and .ck, use // prefix
+        auto& ed = tab.editor();
+        auto caret = ed.getCaretPos();
+        auto doc = ed.getMappedDocument();
+        if (!doc) return;
+        juce::String line = doc->getLine(caret.getLineNumber());
+        if (line.trimStart().startsWith("//"))
+        {
+            // Uncomment
+            int indent = line.indexOfNonWhitespace();
+            doc->deleteSection(juce::Range<int>(caret.getLineStartIndex() + indent,
+                                                 caret.getLineStartIndex() + indent + 2));
+        }
+        else
+        {
+            // Comment
+            int indent = line.indexOfNonWhitespace();
+            doc->insertText(juce::String("//"), caret.getLineStartIndex() + indent);
+        }
+    };
+    tab.onDuplicateLine = [this, &tab]() {
+        auto& ed = tab.editor();
+        auto caret = ed.getCaretPos();
+        int lineStart = caret.getLineStartIndex();
+        int lineEnd = caret.getLineEndIndex();
+        auto doc = ed.getMappedDocument();
+        if (!doc) return;
+        juce::String lineText = doc->getTextSection(lineStart, lineEnd);
+        doc->insertText(lineText + "\n", lineEnd);
+    };
+    tab.onEvalLine = [this, &tab]() {
+        if (tab.isChuckTab())
+            evalOnWorkerThread(&tab, "slot" + std::to_string(tab.slotIndex()), tab.document().getAllContent());
+        else
+            bakeActiveTab();
+    };
+    tab.onEvalBlock = [this, &tab]() {
+        // Eval selected text (or current line if no selection)
+        juce::String text = tab.editor().getHighlightedText();
+        if (text.isEmpty())
+            text = tab.document().getLine(tab.editor().getCaretPos().getLineNumber());
+        if (tab.isChuckTab())
+            evalOnWorkerThread(&tab, "slot" + std::to_string(tab.slotIndex()), text);
+        else
+            bakeActiveTab();
     };
 }
 
@@ -1599,5 +1696,112 @@ void EditorArea::loadTelemetry(const std::string& filePath)
     }
 }
 #endif
+
+// ---------------------------------------------------------------------------
+// L-1: Editor ergonomics — find/replace, split, breadcrumbs
+// ---------------------------------------------------------------------------
+
+void EditorArea::showFindReplace()
+{
+    if (!findReplacePanel_)
+        findReplacePanel_ = std::make_unique<FindReplacePanel>();
+    findReplacePanel_->setVisible(true);
+    findReplacePanel_->toFront(true);
+    HathorTab* tab = activeTab();
+    if (tab)
+        findReplacePanel_->setTargetEditor(&tab->editor(), &tab->document());
+    resized();
+}
+
+void EditorArea::hideFindReplace()
+{
+    if (findReplacePanel_)
+        findReplacePanel_->setVisible(false);
+}
+
+void EditorArea::findNextInActiveTab()
+{
+    if (!activeTab() || !findReplacePanel_)
+        return;
+    findReplacePanel_->setTargetEditor(&activeTab()->editor(), &activeTab()->document());
+}
+
+void EditorArea::findPrevInActiveTab()
+{
+    if (!activeTab() || !findReplacePanel_)
+        return;
+    findReplacePanel_->setTargetEditor(&activeTab()->editor(), &activeTab()->document());
+}
+
+void EditorArea::replaceInActiveTab()
+{
+    // Single replace is handled by the FindReplacePanel callback
+}
+
+void EditorArea::replaceAllInActiveTab()
+{
+    // Replace all is handled by the FindReplacePanel callback
+}
+
+void EditorArea::toggleSplit()
+{
+    if (!editorSplitSurface_)
+    {
+        editorSplitSurface_ = std::make_unique<EditorSplitSurface>(audio_, ci_);
+        addChildComponent(editorSplitSurface_.get());
+        // Hide the original EditorArea content area when split is active
+    }
+    else
+    {
+        editorSplitSurface_->setVisible(!editorSplitSurface_->isVisible());
+    }
+}
+
+void EditorArea::registerEditorActions()
+{
+    if (!actionRegistry_)
+        actionRegistry_ = std::make_unique<ActionRegistry>();
+
+    // Register L-1 editor actions with their key bindings
+    actionRegistry_->registerAction("editor.find",              "Find…",              "Editor",     "Find in file");
+    actionRegistry_->registerAction("editor.replace",           "Replace…",             "Editor",     "Replace in file");
+    actionRegistry_->registerAction("editor.toggleSplit",       "Toggle Split",        "Window",     "Split editor");
+    actionRegistry_->registerAction("editor.commandPalette",    "Command Palette…",    "General",    "Run a command");
+    actionRegistry_->registerAction("editor.reopenClosed",      "Reopen Closed Tab",   "Editor",     "Reopen last closed tab");
+    actionRegistry_->registerAction("editor.togglePin",         "Toggle Pin",          "Editor",     "Pin/unpin tab");
+    actionRegistry_->registerAction("tab.close",                "Close Tab",           "Editor",     "Close active tab");
+    actionRegistry_->registerAction("tab.new",                  "New Tab",             "Editor",     "Open new untitled tab");
+    actionRegistry_->registerAction("tab.gotoDefinition",       "Go to Definition",   "Go",         "Jump to definition");
+    actionRegistry_->registerAction("tab.peekDefinition",       "Peek Definition",    "Go",         "Peek definition");
+    actionRegistry_->registerAction("file.save",                "Save",               "File",       "Save current file");
+    actionRegistry_->registerAction("file.saveAs",              "Save As…",           "File",       "Save as…");
+    actionRegistry_->registerAction("file.reload",              "Reload",             "File",       "Reload from disk");
+
+    // Bind key shortcuts (macOS uses Cmd as primary modifier)
+    if (auto k = parseKeyEquivalent("Cmd+F"))      actionRegistry_->bindKey(*k, "editor.find");
+    if (auto k = parseKeyEquivalent("Cmd+Option+F"))  actionRegistry_->bindKey(*k, "editor.replace");
+    if (auto k = parseKeyEquivalent("Cmd+\\"))    actionRegistry_->bindKey(*k, "editor.toggleSplit");
+    if (auto k = parseKeyEquivalent("Cmd+Shift+P")) actionRegistry_->bindKey(*k, "editor.commandPalette");
+    if (auto k = parseKeyEquivalent("Cmd+Shift+T")) actionRegistry_->bindKey(*k, "editor.reopenClosed");
+    if (auto k = parseKeyEquivalent("Cmd+Enter")) actionRegistry_->bindKey(*k, "editor.eval");
+
+    // Install callbacks
+    actionRegistry_->setCallback("editor.find", [this]() { showFindReplace(); });
+    actionRegistry_->setCallback("editor.commandPalette", [this]() {
+        if (commandPalette_)
+        {
+            juce::Component* topParent = getTopLevelComponent();
+            commandPalette_->show(topParent);
+        }
+    });
+    actionRegistry_->setCallback("editor.reopenClosed", []() {
+        // Reopen last closed tab — handled by the active EditorGroup
+    });
+    actionRegistry_->setCallback("editor.toggleSplit", [this]() { toggleSplit(); });
+    actionRegistry_->setCallback("tab.new", [this]() { openUntitledTab(); });
+    actionRegistry_->setCallback("editor.togglePin", []() {
+        // Pin toggle is handled at the EditorGroup/EnhancedTabBar level
+    });
+}
 
 } // namespace hathor::ui

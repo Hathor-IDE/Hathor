@@ -52,6 +52,15 @@
 #include "EditorContextBridge.hpp"
 #include "LspContextBridge.hpp"
 #include "GhostLlmClient.hpp"
+// L-1: Editor ergonomics
+#include "ActionRegistry.hpp"
+#include "FindReplaceModel.hpp"
+#include "TabReorderModel.hpp"
+#include "RecentlyClosedTabs.hpp"
+#include "FindReplacePanel.hpp"
+#include "CommandPalette.hpp"
+#include "BreadcrumbsBar.hpp"
+#include "EditorSplitSurface.hpp"
 
 namespace hathor::ui {
 
@@ -260,6 +269,58 @@ public:
       */
     bool handleKeyPress(const juce::KeyPress& key, HathorTab* tab);
 
+    // -----------------------------------------------------------------------
+    // L-1: Editor ergonomics — find/replace, split, breadcrumbs
+    // -----------------------------------------------------------------------
+
+    /// Show the find/replace panel and focus the find field.
+    void showFindReplace();
+
+    /// Hide the find/replace panel.
+    void hideFindReplace();
+
+    /// Find next match in the active tab.
+    void findNextInActiveTab();
+
+    /// Find previous match in the active tab.
+    void findPrevInActiveTab();
+
+    /// Replace current match in the active tab.
+    void replaceInActiveTab();
+
+    /// Replace all matches in the active tab.
+    void replaceAllInActiveTab();
+
+    /// Toggle a vertical split of the active editor group.
+    void toggleSplit();
+
+    /// Get the action registry (non-owning).
+    hathor::ui::ActionRegistry* actionRegistry() noexcept
+    {
+        return actionRegistry_.get();
+    }
+
+    /// Get the find/replace panel (non-owning).
+    hathor::ui::FindReplacePanel* findReplacePanel() noexcept
+    {
+        return findReplacePanel_.get();
+    }
+
+    /// Get the breadcrumbs bar (non-owning).
+    hathor::ui::BreadcrumbsBar* breadcrumbsBar() noexcept
+    {
+        return breadcrumbsBar_.get();
+    }
+
+    /// Get the command palette (non-owning).
+    hathor::ui::CommandPalette* commandPalette() noexcept
+    {
+        return commandPalette_.get();
+    }
+
+    /// Register all L-1 editor actions with their key bindings.
+    void registerEditorActions();
+
     /**
         * Sync all tabs' Play/Stop button visuals to the engine's slot state (B1).
         * Called from UITimer at 60 Hz so the UI reflects engine state changes
@@ -343,7 +404,11 @@ private:
     void wireUnsavedCallback(HathorTab& tab);
 
     /// Wire up the onPlayStopClicked callback for a tab (B1).
+     /// Wire up the onPlayStopClicked callback for a tab (B1).
     void wirePlayStopCallback(HathorTab& tab);
+
+    /// L-1 §5: Wire context menu callbacks for a tab (find, replace, eval, etc.).
+    void wireContextMenuCallbacks(HathorTab& tab);
 
     /// Build a pointer list of HathorTab only (excludes Settings tab).
     std::vector<HathorTab*> buildHathorTabPointers() const;
@@ -492,6 +557,15 @@ private:
 
     // Timer for clearing the status bar message
     juce::Timer* statusClearTimer_{ nullptr };
+
+    // -----------------------------------------------------------------------
+    // L-1: Editor ergonomics components (non-owning access via accessors)
+    // -----------------------------------------------------------------------
+    std::unique_ptr<hathor::ui::ActionRegistry>   actionRegistry_;
+    std::unique_ptr<hathor::ui::FindReplacePanel> findReplacePanel_;
+    std::unique_ptr<hathor::ui::CommandPalette>   commandPalette_;
+    std::unique_ptr<hathor::ui::BreadcrumbsBar>   breadcrumbsBar_;
+    std::unique_ptr<hathor::ui::EditorSplitSurface> editorSplitSurface_;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(EditorArea)
 };

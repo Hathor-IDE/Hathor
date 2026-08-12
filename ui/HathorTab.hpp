@@ -369,10 +369,21 @@ public:
     /// (used to clear hover state).
     std::function<void(const juce::String&)> onStatusMessage;
 
-     /// Callback fired when the cursor position changes (AI-8).
-     /// Called from handleCursorMove() and on key events that move the caret.
-     /// Installed by EditorArea to refresh the editor context snapshot.
-     std::function<void()> onCursorMoved;
+      /// Callback fired when the cursor position changes (AI-8).
+      /// Called from handleCursorMove() and on key events that move the caret.
+      /// Installed by EditorArea to refresh the editor context snapshot.
+      std::function<void()> onCursorMoved;
+
+      // -----------------------------------------------------------------------
+      // L-1 §5: Context menu callbacks (installed by EditorArea)
+      // -----------------------------------------------------------------------
+      std::function<void()> onShowFindPanel;
+      std::function<void()> onShowReplacePanel;
+      std::function<void()> onGoToLine;
+      std::function<void()> onToggleComment;
+      std::function<void()> onDuplicateLine;
+      std::function<void()> onEvalLine;
+      std::function<void()> onEvalBlock;
 
      // -----------------------------------------------------------------------
      // AI-8: Authoring context provider for ghost text (FIM)
@@ -390,11 +401,25 @@ public:
       // -----------------------------------------------------------------------
       void resized() override;
 
+      /// L-1 §5: Right-click shows the editor context menu.
+      void mouseUp(const juce::MouseEvent& e) override;
+
     /// Re-apply palette-derived editor colours + syntax scheme on theme switch.
     /// JUCE's CodeEditorComponent::lookAndFeelChanged() does not refresh the
     /// syntax colour scheme, so the active tokeniser's scheme is rebuilt from
     /// the current palette here too (B1, B3).
     void lookAndFeelChanged() override;
+
+    /// L-1 §5: Show an editor context menu with common editing/navigation actions.
+    /// Called on right-click in the editor.  Populates the menu with:
+    ///   Undo, Redo, Cut, Copy, Paste, Delete, Select All,
+    ///   Find, Replace, Go to Line, Comment Selection, Duplicate Line,
+    ///   and language-specific actions (Eval Line, Eval Block).
+    juce::PopupMenu prepareEditorContextMenu();
+
+    /// L-1 §5: Handle a context menu selection.
+    /// Called by the enhanced tab bar's context menu handler.
+    void editorContextMenuSelected(int menuItemID);
 
 private:
     // -----------------------------------------------------------------------

@@ -13,6 +13,9 @@
 // HathorLookAndFeel (CodeEditorComponent lives in juce_gui_extra, not juce_gui_basics).
 #include <juce_gui_extra/juce_gui_extra.h>
 
+#include <cctype>
+#include <string>
+
 // ---------------------------------------------------------------------------
 // AI-8: Context bridges
 // ---------------------------------------------------------------------------
@@ -104,9 +107,9 @@ MainWindow::MainWindow(AudioEngine& audio,
     // Task 3.9: Create real SliderPanel with ControlInterface for dispatching.
     sliderPanel_ = std::make_unique<hathor::ui::SliderPanel>(ci_);
 
-     // -----------------------------------------------------------------------
-     // Create and wire chat sidebar (B6: multi-thread tabs, C2: per-thread reconnect)
-     // -----------------------------------------------------------------------
+    // -----------------------------------------------------------------------
+    // Create and wire chat sidebar (B6: multi-thread tabs, C2: per-thread reconnect)
+    // -----------------------------------------------------------------------
      chatSidebar_     = std::make_unique<hathor::ui::ChatSidebar>(audio_, ci_);
 
      // Determine the project directory (cwd at launch time).
@@ -196,6 +199,43 @@ MainWindow::MainWindow(AudioEngine& audio,
             if (editorArea_)
                 editorArea_->openFile(file);
         };
+
+    // -----------------------------------------------------------------------
+    // L-1: Register editor actions (creates ergonomics components in EditorArea)
+    // -----------------------------------------------------------------------
+    if (editorArea_)
+        editorArea_->registerEditorActions();
+
+    // Wire breadcrumbs callbacks (accessed via EditorArea)
+    editorArea_->breadcrumbsBar()->onCommandPaletteClicked = [this]() {
+        editorArea_->commandPalette()->show(getContentComponent());
+    };
+    editorArea_->breadcrumbsBar()->onFindClicked = [this]() {
+        editorArea_->showFindReplace();
+    };
+    editorArea_->breadcrumbsBar()->onSplitClicked = [this]() {
+        editorArea_->toggleSplit();
+    };
+    editorArea_->breadcrumbsBar()->onBreadcrumbClicked = [this](const juce::File& file) {
+        editorArea_->openFile(file);
+    };
+
+    // Wire find/replace panel callbacks
+    editorArea_->findReplacePanel()->onFindNext = [this]() {
+        editorArea_->findNextInActiveTab();
+    };
+    editorArea_->findReplacePanel()->onFindPrev = [this]() {
+        editorArea_->findPrevInActiveTab();
+    };
+    editorArea_->findReplacePanel()->onReplace = [this]() {
+        editorArea_->replaceInActiveTab();
+    };
+    editorArea_->findReplacePanel()->onReplaceAll = [this]() {
+        editorArea_->replaceAllInActiveTab();
+    };
+    editorArea_->findReplacePanel()->onClosePanel = [this]() {
+        editorArea_->hideFindReplace();
+    };
 
     // Set up ApplicationProperties early so the ExplorerPanel can persist
     // and restore its last-used root directory (A4).
@@ -481,6 +521,69 @@ bool MainWindow::boundsIntersectsDisplays(const juce::Rectangle<int>& bounds)
         // (including any menu bar / taskbar region) to avoid falsely
         // treating a window just off the bottom of the dock as off-screen.
         if (d.totalArea.intersects(bounds))
+            return true;
+    }
+
+    return false;
+}
+
+// ---------------------------------------------------------------------------
+// keyPressed — L-1 global keyboard shortcuts (Req §5)
+// ---------------------------------------------------------------------------
+
+bool MainWindow::keyPressed(const juce::KeyPress& key)
+{
+    if (!editorArea_)
+        return false;
+
+    // Try the action registry first (L-1: keyboard shortcut/action registry)
+    if (auto* reg = editorArea_->actionRegistry())
+    {
+        // Convert JUCE KeyPress to our portable KeyEquivalent
+        hathor::ui::KeyEquivalent ke;
+        if (key.getModifiers().isCtrlDown())
+            ke.modifiers = ke.modifiers | hathor::ui::ModFlag::Ctrl;
+        if (key.getModifiers().isCommandDown())
+            ke.modifiers = ke.modifiers | hathor::ui::ModFlag::Cmd;
+        if (key.getModifiers().isAltDown())
+            ke.modifiers = ke.modifiers | hathor::ui::ModFlag::Alt;
+        if (key.getModifiers().isShiftDown())
+            ke.modifiers = ke.modifiers | hathor::ui::ModFlag::Shift;
+
+        // Map JUCE key codes to our key strings
+        if (key.getKeyCode() >= 'A' && key.getKeyCode() <= 'Z')
+        {
+            char c = static_cast<char>(key.getKeyCode());
+            if (key.getModifiers().isShiftDown())
+                ke.key = std::string(1, c);  // uppercase letter
+            else
+                ke.key = std::string(1, static_cast<char>(std::tolower(c)));
+        }
+        else if (key.getKeyCode() >= 'a' && key.getKeyCode() <= 'z')
+        {
+            ke.key = std::string(1, static_cast<char>(key.getKeyCode()));
+        }
+        else if (key.getKeyCode() >= 0xF700 && key.getKeyCode() <= 0xF70B)  // F1-F12
+        {
+            ke.key = "F" + std::to_string(key.getKeyCode() - 0xF700 + 1);
+        }
+        else
+        {
+            int kc = key.getKeyCode();
+            if (kc == juce::KeyPress::returnKey)    ke.key = "Enter";
+            else if (kc == juce::KeyPress::tabKey)  ke.key = "Tab";
+            else if (kc == juce::KeyPress::escapeKey) ke.key = "Escape";
+            else if (kc == juce::KeyPress::backspaceKey) ke.key = "Backspace";
+            else if (kc == juce::KeyPress::deleteKey) ke.key = "Delete";
+            else if (kc == juce::KeyPress::upKey)   ke.key = "Up";
+            else if (kc == juce::KeyPress::downKey) ke.key = "Down";
+            else if (kc == juce::KeyPress::leftKey) ke.key = "Left";
+            else if (kc == juce::KeyPress::rightKey) ke.key = "Right";
+            else if (kc == juce::KeyPress::spaceKey) ke.key = "Space";
+            else return false;
+        }
+
+        if (reg->dispatchKey(ke))
             return true;
     }
 
