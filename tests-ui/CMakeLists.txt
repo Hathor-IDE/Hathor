@@ -61,6 +61,9 @@ add_executable(hathor-ui-tests
         test_diagnostic_registry.cpp
         # L-4: Terminal process + task runner unit tests (JUCE-free)
         test_terminal_process.cpp
+        # L-5: Git process + repository unit tests (JUCE-free)
+        test_git_process.cpp
+        test_git_repository.cpp
         ${CMAKE_SOURCE_DIR}/ui/HathorFileParser.cpp
      ${CMAKE_SOURCE_DIR}/ui/ExplorerFileTypes.cpp
      ${CMAKE_SOURCE_DIR}/ui/TreeBuilder.cpp

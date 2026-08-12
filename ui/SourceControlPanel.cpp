@@ -399,19 +399,22 @@ void SourceControlPanel::discardSelected()
     if (changeRows_.empty())
         return;
 
-    // Show confirmation dialog and check the result synchronously.
-    bool ok = juce::AlertWindow::showOkCancelBox(
-        juce::AlertWindow::QuestionIcon,
-        "Discard Changes?",
-        "This will discard all unstaged changes. This cannot be undone. Continue?",
-        "OK", "Cancel", nullptr);
-    if (!ok)
-        return;
-
-    // Discard each unstaged file.
-    for (const auto& row : changeRows_)
-        repository_->discardFile(row.path, [](bool) {});
-    refreshStatusAsync();
+    // Show confirmation dialog (async to support all JUCE configurations).
+    juce::AlertWindow::showAsync(
+        juce::MessageBoxOptions()
+            .withTitle("Discard Changes?")
+            .withMessage("This will discard all unstaged changes. This cannot be undone. Continue?")
+            .withButton("OK")
+            .withButton("Cancel"),
+        [this](int result)
+        {
+            if (result != 1)  // not OK
+                return;
+            // Discard each unstaged file.
+            for (const auto& row : changeRows_)
+                repository_->discardFile(row.path, [](bool) {});
+            refreshStatusAsync();
+        });
 }
 
 void SourceControlPanel::commit()
@@ -432,7 +435,7 @@ void SourceControlPanel::commit()
                 }
                 else
                 {
-                    juce::AlertWindow::showMessageBox(juce::AlertWindow::WarningIcon,
+                    juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::WarningIcon,
                         "Commit failed", juce::String(error), "OK", nullptr);
                 }
             });
@@ -446,7 +449,7 @@ void SourceControlPanel::push()
         juce::MessageManager::callAsync([this, success, output]()
         {
             if (!success)
-                juce::AlertWindow::showMessageBox(juce::AlertWindow::WarningIcon,
+                juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::WarningIcon,
                     "Push failed", juce::String(output), "OK", nullptr);
             else
                 refresh();
@@ -463,7 +466,7 @@ void SourceControlPanel::pull()
             if (success)
                 refresh();
             else
-                juce::AlertWindow::showMessageBox(juce::AlertWindow::WarningIcon,
+                juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::WarningIcon,
                     "Pull failed", juce::String(output), "OK", nullptr);
         });
     });
@@ -478,7 +481,7 @@ void SourceControlPanel::fetch()
             if (success)
                 refresh();
             else
-                juce::AlertWindow::showMessageBox(juce::AlertWindow::WarningIcon,
+                juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::WarningIcon,
                     "Fetch failed", juce::String(output), "OK", nullptr);
         });
     });
@@ -492,7 +495,7 @@ void SourceControlPanel::createBranch()
     auto* window = new juce::AlertWindow("Create Branch",
                                          "Enter branch name:",
                                          juce::AlertWindow::QuestionIcon);
-    window->addTextEditor("branchName", juce::String(), juce::dontSendNotification);
+    window->addTextEditor("branchName", juce::String());
     window->addButton("OK", 1);
     window->addButton("Cancel", 0);
 
@@ -533,7 +536,7 @@ void SourceControlPanel::switchBranch()
                     if (success)
                         refresh();
                     else
-                        juce::AlertWindow::showMessageBox(juce::AlertWindow::WarningIcon,
+                        juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::WarningIcon,
                             "Checkout failed", "Could not switch branch.", "OK", nullptr);
                 });
             });
@@ -552,14 +555,14 @@ void SourceControlPanel::mergeBranch()
                 {
                     if (hasConflicts)
                     {
-                        juce::AlertWindow::showMessageBox(juce::AlertWindow::WarningIcon,
+                        juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::WarningIcon,
                             "Merge conflicts", "Merge completed with conflicts. Resolve in the editor.", "OK", nullptr);
                         refresh();
                     }
                     else if (success)
                         refresh();
                     else
-                        juce::AlertWindow::showMessageBox(juce::AlertWindow::WarningIcon,
+                        juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::WarningIcon,
                             "Merge failed", juce::String(output), "OK", nullptr);
                 });
             });
@@ -819,7 +822,7 @@ void SourceControlPanel::paintListBoxItem(int row, juce::Graphics& g,
 
 void SourceControlPanel::selectedRowsChanged(int lastSelectedRow)
 {
-    if (activeTabInternal_ == Tab::History && lastSelectedRow >= 0
+    if (activeTab_ == GitPanelTab::History && lastSelectedRow >= 0
         && lastSelectedRow < static_cast<int>(history_.size()))
     {
         selectedCommit_ = history_[lastSelectedRow];
