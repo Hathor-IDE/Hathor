@@ -649,10 +649,11 @@ void HathorLspClient::handleResponse(int id,
                  if (req.documentSymbolCb)
                      req.documentSymbolCb({});
                  break;
-             case PendingRequest::WorkspaceSymbol:
-                 if (req.workspaceSymbolCb)
-                     req.workspaceSymbolCb({});
-                 break;
+              case PendingRequest::WorkspaceSymbol:
+                  if (req.workspaceSymbolCb)
+                      req.workspaceSymbolCb({});
+                  break;
+        }
         return;
     }
 

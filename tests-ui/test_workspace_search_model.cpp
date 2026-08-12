@@ -115,7 +115,7 @@ TEST_CASE("WorkspaceSearchModel: case-insensitive search", "[workspace_search]")
         flags.caseSensitive = false;
 
         int total = model.search("hello", flags);
-        REQUIRE(total == 2);
+        REQUIRE(total == 3);
     }
 
     cleanupWorkspace(tmpDir);

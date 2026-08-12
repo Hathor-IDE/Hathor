@@ -53,6 +53,7 @@ public:
     // juce::Component
     void resized() override;
     void paint(juce::Graphics& g) override;
+    bool keyPressed(const juce::KeyPress& key) override;
 
     // Callbacks — installed by EditorArea
     std::function<void(const SymbolSearchResult&)> onSymbolSelected;
@@ -61,7 +62,8 @@ public:
 private:
     // TextEditor::Listener
     void textEditorTextChanged(juce::TextEditor& editor) override;
-    void textEditorKeyPress(const juce::KeyPress& key) override;
+    void textEditorEscapeKeyPressed(juce::TextEditor& editor) override;
+    void textEditorReturnKeyPressed(juce::TextEditor& editor) override;
     void textEditorFocusLost(juce::TextEditor&) override {}
 
     // ListBoxModel
@@ -69,9 +71,6 @@ private:
     void paintListBoxItem(int row, juce::Graphics& g, int width, int height,
                           bool isSelected) override;
     void selectedRowsChanged(int lastSelectedRow) override;
-    void paintRowBackground(juce::Graphics& g, int width, int height,
-                            bool isSelected, int row) override;
-    void deleteKeyPressed(int lastRowSelected) override;
 
     /** Flatten model results into a display list. */
     void reloadResults();

@@ -80,7 +80,7 @@ public:
     const std::vector<SymbolSearchResult>& results() const noexcept { return results_; }
 
     /** Clear all results. */
-    void clear() noexcept { results_.clear(); lspResultsValid_ = false; }
+    void clear() noexcept { results_.clear(); metadataResults_.clear(); fileResults_.clear(); lspResults_.clear(); lspResultsValid_ = false; }
 
     /** Returns true if LSP results have been set. */
     bool hasLspResults() const noexcept { return lspResultsValid_; }

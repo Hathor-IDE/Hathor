@@ -343,7 +343,7 @@ EditorArea::EditorArea(AudioEngine& audio,
 
     quickOpenDialog_ = std::make_unique<QuickOpenDialog>(workspaceRoot_);
     quickOpenDialog_->onFileSelected = [this](const std::filesystem::path& file) {
-        openFile(juce::File(file));
+        openFile(juce::File(file.string()));
     };
     quickOpenDialog_->onCancelled = [this]() {
         quickOpenDialog_->setVisible(false);
@@ -351,7 +351,7 @@ EditorArea::EditorArea(AudioEngine& audio,
 
     workspaceSearchPanel_ = std::make_unique<WorkspaceSearchPanel>(workspaceRoot_, workspaceSearchModel_.get());
     workspaceSearchPanel_->onNavigateToMatch = [this](const std::filesystem::path& file, int line, int column) {
-        openFile(juce::File(file));
+        openFile(juce::File(file.string()));
         if (auto* tab = activeTab())
         {
             juce::CodeDocument::Position pos(tab->document(), line, column);
@@ -366,7 +366,7 @@ EditorArea::EditorArea(AudioEngine& audio,
     symbolSearchPanel_->onSymbolSelected = [this](const SymbolSearchResult& result) {
         if (!result.isBuiltin && !result.filePath.empty())
         {
-            openFile(juce::File(result.filePath));
+            openFile(juce::File(result.filePath.string()));
             if (auto* tab = activeTab())
             {
                 juce::CodeDocument::Position pos(tab->document(), result.line, result.column);
@@ -1839,7 +1839,7 @@ void EditorArea::setWorkspaceRoot(const std::filesystem::path& root)
         quickOpenDialog_.reset();
         quickOpenDialog_ = std::make_unique<QuickOpenDialog>(root);
         quickOpenDialog_->onFileSelected = [this](const std::filesystem::path& file) {
-            openFile(juce::File(file));
+            openFile(juce::File(file.string()));
         };
         quickOpenDialog_->onCancelled = [this]() {
             quickOpenDialog_->setVisible(false);
@@ -2079,6 +2079,7 @@ void EditorArea::navigateToPrevDiagnostic()
 }
 
 // ---------------------------------------------------------------------------
+void EditorArea::registerEditorActions()
 {
     if (!actionRegistry_)
         actionRegistry_ = std::make_unique<ActionRegistry>();

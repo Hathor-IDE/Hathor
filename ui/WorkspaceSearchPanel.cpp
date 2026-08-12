@@ -211,38 +211,16 @@ void WorkspaceSearchPanel::textEditorTextChanged(juce::TextEditor& /*editor*/)
     // Could auto-search on change, but for now require explicit search button
 }
 
-void WorkspaceSearchPanel::textEditorKeyPress(const juce::KeyPress& key)
+void WorkspaceSearchPanel::textEditorEscapeKeyPressed(juce::TextEditor& /*editor*/)
 {
-    if (key == juce::KeyPress::escapeKey)
-    {
-        setVisible(false);
-        if (onClosePanel)
-            onClosePanel();
-        return;
-    }
-    if (key == juce::KeyPress::returnKey || key == juce::KeyPress::enterKey)
-    {
-        startSearch(searchField_->getText(), currentFlags());
-        return;
-    }
-    if (key == juce::KeyPress::upKey)
-    {
-        if (selectedIndex_ > 0)
-        {
-            selectedIndex_--;
-            listBox_->selectRow(selectedIndex_);
-        }
-        return;
-    }
-    if (key == juce::KeyPress::downKey)
-    {
-        if (selectedIndex_ < static_cast<int>(displayItems_.size()) - 1)
-        {
-            selectedIndex_++;
-            listBox_->selectRow(selectedIndex_);
-        }
-        return;
-    }
+    setVisible(false);
+    if (onClosePanel)
+        onClosePanel();
+}
+
+void WorkspaceSearchPanel::textEditorReturnKeyPressed(juce::TextEditor& /*editor*/)
+{
+    startSearch(searchField_->getText(), currentFlags());
 }
 
 // ---------------------------------------------------------------------------
@@ -286,28 +264,9 @@ void WorkspaceSearchPanel::paintListBoxItem(int row, juce::Graphics& g,
     }
 }
 
-void WorkspaceSearchPanel::paintRowBackground(juce::Graphics& g, int /*width*/, int /*height*/,
-                                               bool isSelected, int /*row*/)
-{
-    if (isSelected)
-        g.fillAll(juce::Colours::white.withAlpha(0.15f));
-}
-
 void WorkspaceSearchPanel::selectedRowsChanged(int lastSelectedRow)
 {
     selectedIndex_ = lastSelectedRow;
-}
-
-juce::Component::SafePointer<juce::Component>
-WorkspaceSearchPanel::refreshComponentForRow(int /*row*/, int /*width*/, int /*height*/,
-                                              bool /*isSelected*/)
-{
-    return nullptr;
-}
-
-juce::var WorkspaceSearchPanel::getDragSourceDetails(const juce::SparseSet<int>& /*rows*/)
-{
-    return juce::var();
 }
 
 } // namespace hathor::ui

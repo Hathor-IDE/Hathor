@@ -155,43 +155,44 @@ void SymbolSearchPanel::textEditorTextChanged(juce::TextEditor& /*editor*/)
     }
 }
 
-void SymbolSearchPanel::textEditorKeyPress(const juce::KeyPress& key)
+void SymbolSearchPanel::textEditorEscapeKeyPressed(juce::TextEditor& /*editor*/)
 {
-    if (key == juce::KeyPress::escapeKey)
+    setVisible(false);
+    if (onClosePanel)
+        onClosePanel();
+}
+
+void SymbolSearchPanel::textEditorReturnKeyPressed(juce::TextEditor& /*editor*/)
+{
+    if (selectedIndex_ >= 0 && selectedIndex_ < static_cast<int>(displayResults_.size()))
     {
+        if (onSymbolSelected)
+            onSymbolSelected(displayResults_[selectedIndex_]);
         setVisible(false);
-        if (onClosePanel)
-            onClosePanel();
-        return;
     }
-    if (key == juce::KeyPress::returnKey || key == juce::KeyPress::enterKey)
-    {
-        if (selectedIndex_ >= 0 && selectedIndex_ < static_cast<int>(displayResults_.size()))
-        {
-            if (onSymbolSelected)
-                onSymbolSelected(displayResults_[selectedIndex_]);
-            setVisible(false);
-        }
-        return;
-    }
+}
+
+bool SymbolSearchPanel::keyPressed(const juce::KeyPress& key)
+{
     if (key == juce::KeyPress::upKey)
     {
         if (selectedIndex_ > 0)
         {
             selectedIndex_--;
-            listBox_->selectRow(selectedIndex_);
+            if (listBox_)
+                listBox_->selectRow(selectedIndex_);
         }
-        return;
     }
-    if (key == juce::KeyPress::downKey)
+    else if (key == juce::KeyPress::downKey)
     {
         if (selectedIndex_ < static_cast<int>(displayResults_.size()) - 1)
         {
             selectedIndex_++;
-            listBox_->selectRow(selectedIndex_);
+            if (listBox_)
+                listBox_->selectRow(selectedIndex_);
         }
-        return;
     }
+    return false;
 }
 
 void SymbolSearchPanel::paintListBoxItem(int row, juce::Graphics& g,
@@ -233,21 +234,9 @@ void SymbolSearchPanel::paintListBoxItem(int row, juce::Graphics& g,
     }
 }
 
-void SymbolSearchPanel::paintRowBackground(juce::Graphics& g, int /*width*/, int /*height*/,
-                                           bool isSelected, int /*row*/)
-{
-    if (isSelected)
-        g.fillAll(juce::Colours::white.withAlpha(0.15f));
-}
-
 void SymbolSearchPanel::selectedRowsChanged(int lastSelectedRow)
 {
     selectedIndex_ = lastSelectedRow;
-}
-
-void SymbolSearchPanel::deleteKeyPressed(int /*lastRowSelected*/)
-{
-    // No action on delete for symbol search
 }
 
 } // namespace hathor::ui

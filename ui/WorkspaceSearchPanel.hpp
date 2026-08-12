@@ -57,7 +57,8 @@ public:
 private:
     // TextEditor::Listener
     void textEditorTextChanged(juce::TextEditor& editor) override;
-    void textEditorKeyPress(const juce::KeyPress& key) override;
+    void textEditorEscapeKeyPressed(juce::TextEditor& editor) override;
+    void textEditorReturnKeyPressed(juce::TextEditor& editor) override;
     void textEditorFocusLost(juce::TextEditor&) override {}
 
     // ListBoxModel
@@ -65,12 +66,6 @@ private:
     void paintListBoxItem(int row, juce::Graphics& g, int width, int height,
                           bool isSelected) override;
     void selectedRowsChanged(int lastSelectedRow) override;
-    void paintRowBackground(juce::Graphics& g, int width, int height,
-                            bool isSelected, int row) override;
-    juce::Component::SafePointer<juce::Component>
-    refreshComponentForRow(int row, int width, int height,
-                           bool isSelected) override;
-    juce::var getDragSourceDetails(const juce::SparseSet<int>& rows) override;
 
     /** Flatten results into a list of displayable items. */
     struct DisplayItem {

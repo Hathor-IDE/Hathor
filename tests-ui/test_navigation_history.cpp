@@ -149,10 +149,14 @@ TEST_CASE("NavigationHistory: goBack with empty stack returns nullopt", "[naviga
 TEST_CASE("NavigationHistory: clear empties everything", "[navigation]")
 {
     NavigationHistory history;
-    history.navigateTo({"file:///a.hathor", 0, 0});
-    history.navigateTo({"file:///b.hathor", 5, 10});
-    history.goBack();
+    NavigationEntry e1{"file:///a.hathor", 0, 0};
+    NavigationEntry e2{"file:///b.hathor", 5, 10};
+    NavigationEntry e3{"file:///c.hathor", 3, 7};
 
+    history.navigateTo(e1);
+    history.navigateTo(e2);
+    history.navigateTo(e3);
+    history.goBack();  // at e2, back=[e1], forward=[e3]
     REQUIRE(history.canGoBack());
     REQUIRE(history.canGoForward());
 

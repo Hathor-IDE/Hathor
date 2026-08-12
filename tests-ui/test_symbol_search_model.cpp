@@ -119,7 +119,10 @@ TEST_CASE("SymbolSearchModel: empty query returns empty", "[symbol_search]")
 TEST_CASE("SymbolSearchModel: clear empties results", "[symbol_search]")
 {
     hathor::language::LanguageMetadata metadata;
-    metadata.functions.push_back({});
+
+    hathor::language::MiniNotationFunction fn;
+    fn.name = "anything";
+    metadata.functions.push_back(fn);
 
     SymbolSearchModel model(&metadata);
     model.searchMetadata("anything");

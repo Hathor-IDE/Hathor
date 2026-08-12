@@ -294,7 +294,7 @@ TEST_CASE("LspJsonRpc: parseDocumentSymbolResult maps kind correctly", "[lsp][na
                                  {"end", {{"line", 0}, {"character", 5}}}}}}}
     }));
     j.push_back(nlohmann::json::object({
-        {"name", "MyClass"}, {"kind", 7},
+        {"name", "MyClass"}, {"kind", 5},
         {"location", {{"uri", "file:///a.hathor"},
                       {"range", {{"start", {{"line", 0}, {"character", 0}}},
                                  {"end", {{"line", 0}, {"character", 5}}}}}}}

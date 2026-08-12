@@ -246,28 +246,30 @@ void QuickOpenDialog::textEditorTextChanged(juce::TextEditor& /*editor*/)
     refreshFiltered();
 }
 
-void QuickOpenDialog::textEditorKeyPress(const juce::KeyPress& key)
+void QuickOpenDialog::textEditorEscapeKeyPressed(juce::TextEditor& /*editor*/)
 {
-    if (key == juce::KeyPress::escapeKey)
-    {
-        hide();
-        return;
-    }
+    hide();
+}
+
+bool QuickOpenDialog::keyPressed(const juce::KeyPress& key)
+{
     if (key == juce::KeyPress::returnKey || key == juce::KeyPress::enterKey)
     {
-        confirmSelection();
-        return;
+        if (confirmSelection())
+            return true;
     }
     if (key == juce::KeyPress::upKey)
     {
         selectUp();
-        return;
+        return true;
     }
     if (key == juce::KeyPress::downKey)
     {
         selectDown();
-        return;
+        return true;
     }
+    return false;
+    return false;
 }
 
 // ---------------------------------------------------------------------------
@@ -302,13 +304,6 @@ void QuickOpenDialog::paintListBoxItem(int row, juce::Graphics& g,
     g.setColour(juce::Colours::white);
     g.setFont(juce::FontOptions{15.0f});
     g.drawText(displayText, bounds.reduced(4, 2), juce::Justification::centredLeft, false);
-}
-
-void QuickOpenDialog::paintRowBackground(juce::Graphics& g, int /*width*/, int /*height*/,
-                                         bool isSelected, int /*row*/)
-{
-    if (isSelected)
-        g.fillAll(juce::Colours::white.withAlpha(0.15f));
 }
 
 void QuickOpenDialog::selectedRowsChanged(int lastSelectedRow)
