@@ -453,6 +453,15 @@ EditorArea::EditorArea(AudioEngine& audio,
     symbolSearchPanel_->setVisible(false);
     problemsPanel_->setVisible(false);
 
+    // L-4: Simple integrated terminal panel (bottom-docked, like ProblemsPanel).
+    // Created with the workspace root (project dir) so tasks like build/test
+    // resolve against the correct project. The task runner's buildDir is
+    // "<projectDir>/build" by default.
+    terminalPanel_ = std::make_unique<TerminalPanel>(
+        workspaceRoot_.empty() ? "." : workspaceRoot_.string());
+    addChildComponent(terminalPanel_.get());
+    terminalPanel_->setVisible(false);
+
     // StatusRibbon is mounted by MainWindow at the bottom of the window;
     // do NOT addChildComponent here — it stays parented to MainWindow.
 }
@@ -900,6 +909,14 @@ void EditorArea::resized()
     {
         auto probArea = b.removeFromBottom(ProblemsPanel::kPanelHeight);
         problemsPanel_->setBounds(probArea);
+    }
+
+    // L-4: Terminal panel at the bottom (if visible, takes priority over
+    // Problems since it was just opened)
+    if (terminalPanel_ && terminalPanel_->isVisible())
+    {
+        auto termArea = b.removeFromBottom(TerminalPanel::kPanelHeight);
+        terminalPanel_->setBounds(termArea);
     }
 
     // Active tab fills the middle
@@ -2264,6 +2281,29 @@ void EditorArea::hideProblemsPanel()
 {
     if (problemsPanel_)
         problemsPanel_->setVisible(false);
+}
+
+// ---------------------------------------------------------------------------
+// L-4: Terminal panel visibility
+// ---------------------------------------------------------------------------
+
+void EditorArea::showTerminalPanel()
+{
+    if (terminalPanel_)
+        terminalPanel_->setVisible(true);
+    // Hide other bottom-docked panels when terminal is shown.
+    if (problemsPanel_)
+        problemsPanel_->setVisible(false);
+    if (workspaceSearchPanel_)
+        workspaceSearchPanel_->setVisible(false);
+    if (symbolSearchPanel_)
+        symbolSearchPanel_->setVisible(false);
+}
+
+void EditorArea::hideTerminalPanel()
+{
+    if (terminalPanel_)
+        terminalPanel_->setVisible(false);
 }
 
 // ---------------------------------------------------------------------------

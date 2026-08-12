@@ -73,6 +73,9 @@
 #include "control/Diagnostic.hpp"
 #include "control/DiagnosticRegistry.hpp"
 
+// L-4: Terminal panel
+#include "TerminalPanel.hpp"
+
 namespace hathor::ui {
 
 // ---------------------------------------------------------------------------
@@ -383,6 +386,20 @@ public:
         return problemsPanel_.get();
     }
 
+    // -----------------------------------------------------------------------
+    // L-4: Simple integrated terminal panel
+    // -----------------------------------------------------------------------
+
+    /// Show or hide the terminal panel.
+    void showTerminalPanel();
+    void hideTerminalPanel();
+
+    /// Get the terminal panel (non-owning, for MainWindow ribbon wiring).
+    hathor::ui::TerminalPanel* terminalPanel() noexcept
+    {
+        return terminalPanel_.get();
+    }
+
     /**
      * Set the workspace root directory for search and quick-open.
      * Called by MainWindow after project loading.
@@ -677,6 +694,9 @@ private:
     // -----------------------------------------------------------------------
     std::unique_ptr<hathor::control::DiagnosticRegistry> diagnosticRegistry_;
     std::unique_ptr<hathor::ui::ProblemsPanel>           problemsPanel_;
+
+    // L-4: Simple integrated terminal panel (bottom-docked, like ProblemsPanel)
+    std::unique_ptr<hathor::ui::TerminalPanel>           terminalPanel_;
 
     std::filesystem::path workspaceRoot_;
 

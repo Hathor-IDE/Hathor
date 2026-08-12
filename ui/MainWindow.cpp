@@ -336,6 +336,9 @@ MainWindow::MainWindow(AudioEngine& audio,
     // L-3: StatusRibbon — mounted at MainWindow level, below VisualizerPanel.
     content->addAndMakeVisible(*statusRibbon_);
 
+    // L-4: TerminalPanel is owned by EditorArea (bottom-docked, like ProblemsPanel).
+    // MainWindow toggles its visibility via the ActivityRibbon Terminal button.
+
     // Explorer starts hidden; opens when the user clicks the Explorer button
     // in the ActivityRibbon (H1).
     explorerPanel_->setVisible(false);

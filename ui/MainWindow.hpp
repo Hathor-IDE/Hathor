@@ -57,6 +57,9 @@
 // L-3: StatusRibbon for unified diagnostic/status display
 #include "StatusRibbon.hpp"
 
+// L-4: Terminal panel (simple integrated terminal)
+#include "TerminalPanel.hpp"
+
 // ChatSidebar and AcpAgentSession are now fully implemented (task 5.1).
 #include "ChatSidebar.hpp"
 #include "AcpAgentSession.hpp"
@@ -161,6 +164,9 @@ private:
 
     // L-3: Unified Problems / Diagnostics status ribbon (bottom of window)
     std::unique_ptr<hathor::ui::StatusRibbon>        statusRibbon_;
+
+    // L-4: Simple integrated terminal panel (bottom-docked in EditorArea)
+    std::unique_ptr<hathor::ui::TerminalPanel>       terminalPanel_;
 
     /// Real SliderPanel — created in the constructor with ci_.
     /// Passed to UITimer for bidirectional BPM/gain sync (Req 26.4, 26.9).

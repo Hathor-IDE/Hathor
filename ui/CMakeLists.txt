@@ -88,6 +88,10 @@ target_sources(hathor-ui
           # L-3: Unified Problems / Diagnostics surface
           ProblemsPanel.cpp              # L-3: Problems panel
           StatusRibbon.cpp               # L-3: bottom status ribbon
+          # L-4: Tasks + simple integrated terminal
+          TerminalProcess.cpp            # L-4: subprocess lifecycle (JUCE-free)
+          TaskRunner.cpp                 # L-4: lightweight task runner
+          TerminalPanel.cpp              # L-4: native JUCE terminal UI
          # AI-4: Ghost text (llm-ls inline completion)
          GhostJsonRpc.cpp              # llm-ls JSON-RPC serialization
          GhostProviderConfig.cpp       # provider config (env-var credentials)
