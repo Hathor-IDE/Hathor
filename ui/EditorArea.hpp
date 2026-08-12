@@ -68,6 +68,11 @@
 #include "QuickOpenDialog.hpp"
 #include "WorkspaceSearchPanel.hpp"
 #include "SymbolSearchPanel.hpp"
+// L-3: Problems panel + status ribbon
+#include "ProblemsPanel.hpp"
+#include "StatusRibbon.hpp"
+#include "control/Diagnostic.hpp"
+#include "control/DiagnosticRegistry.hpp"
 
 namespace hathor::ui {
 
@@ -353,6 +358,43 @@ public:
     {
         return symbolSearchModel_.get();
     }
+
+    // -----------------------------------------------------------------------
+    // L-3: Unified Problems / Diagnostics surface
+    // -----------------------------------------------------------------------
+
+    /// The shared diagnostic registry (non-owning to callers).
+    hathor::control::DiagnosticRegistry* diagnosticRegistry() noexcept
+    {
+        return diagnosticRegistry_.get();
+    }
+
+    /// Show or hide the Problems panel.
+    void showProblemsPanel();
+
+    /// Hide the Problems panel.
+    void hideProblemsPanel();
+
+    /// Get the problems panel (non-owning, for MainWindow ribbon wiring).
+    ProblemsPanel* problemsPanel() noexcept
+    {
+        return problemsPanel_.get();
+    }
+
+    /// Get the status ribbon (non-owning, for MainWindow).
+    StatusRibbon* statusRibbon() noexcept
+    {
+        return statusRibbon_.get();
+    }
+
+    /// Sync transport state to the status ribbon.
+    void setStatusRibbonTransport(bool running, double bpm) noexcept;
+
+    /// Sync ChucK worker state to the status ribbon.
+    void setStatusRibbonWorker(bool alive) noexcept;
+
+    /// Sync LSP connection state to the status ribbon.
+    void setStatusRibbonLsp(bool connected) noexcept;
 
     /**
      * Set the workspace root directory for search and quick-open.
@@ -642,6 +684,13 @@ private:
     std::unique_ptr<hathor::ui::QuickOpenDialog>        quickOpenDialog_;
     std::unique_ptr<hathor::ui::WorkspaceSearchPanel>   workspaceSearchPanel_;
     std::unique_ptr<hathor::ui::SymbolSearchPanel>      symbolSearchPanel_;
+
+    // -----------------------------------------------------------------------
+    // L-3: Unified Problems / Diagnostics surface
+    // -----------------------------------------------------------------------
+    std::unique_ptr<hathor::control::DiagnosticRegistry> diagnosticRegistry_;
+    std::unique_ptr<hathor::ui::ProblemsPanel>           problemsPanel_;
+    std::unique_ptr<hathor::ui::StatusRibbon>            statusRibbon_;
 
     std::filesystem::path workspaceRoot_;
 

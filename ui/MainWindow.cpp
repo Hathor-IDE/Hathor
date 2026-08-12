@@ -161,7 +161,7 @@ MainWindow::MainWindow(AudioEngine& audio,
                 activityRibbon_->setActivePanel(wantsOpen ? hathor::ui::Panel::Explorer : hathor::ui::Panel::None);
                 resized(); // re-lay-out editor area
             }
-             else if (panel == hathor::ui::Panel::None)
+              else if (panel == hathor::ui::Panel::None)
              {
                  // Settings button: open or focus the Settings tab (A2).
                  if (editorArea_)
@@ -194,6 +194,18 @@ MainWindow::MainWindow(AudioEngine& audio,
              }
             // Other panels (Search, VersionControl, AIAgent) are not yet
             // implemented — do nothing, preserving active state.
+
+            // L-3: Problems panel toggles the bottom-docked problems panel.
+            if (panel == hathor::ui::Panel::Problems)
+            {
+                const bool wantsOpen = (activityRibbon_->activePanel() != hathor::ui::Panel::Problems);
+                if (wantsOpen)
+                    editorArea_->showProblemsPanel();
+                else
+                    editorArea_->hideProblemsPanel();
+                activityRibbon_->setActivePanel(wantsOpen ? hathor::ui::Panel::Problems : hathor::ui::Panel::None);
+                editorArea_->resized(); // re-lay-out editor area
+            }
         };
 
     // Wire ExplorerPanel file clicks → EditorArea::openFile (H1)

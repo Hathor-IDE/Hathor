@@ -30,6 +30,7 @@ enum class Panel
     Explorer,
     Search,
     VersionControl,
+    Problems,
     AIAgent
 };
 
@@ -86,11 +87,12 @@ private:
         juce::Rectangle<int> bounds; ///< set in resized()
     };
 
-    std::array<RibbonButton, 4> navButtons_
-    {{
+    std::array<RibbonButton, 5> navButtons_
+ {{
         { Panel::Explorer,       "E", {} },
         { Panel::Search,         "S", {} },
         { Panel::VersionControl, "V", {} },
+        { Panel::Problems,       "!", {} },
         { Panel::AIAgent,        "A", {} },
     }};
 

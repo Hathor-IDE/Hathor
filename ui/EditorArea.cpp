@@ -33,6 +33,28 @@
 
 namespace hathor::ui {
 
+// ---------------------------------------------------------------------------
+// L-3: Conversion from lsp::Diagnostic to control::Diagnostic
+// ---------------------------------------------------------------------------
+
+static hathor::control::Diagnostic toControlDiag(
+    const lsp::Diagnostic& lspDiag,
+    hathor::control::DiagSource source)
+{
+    hathor::control::Diagnostic d;
+    d.severity = static_cast<hathor::control::DiagSeverity>(
+        lspDiag.severity.value_or(lsp::DiagnosticSeverity::Error));
+    d.source  = source;
+    d.sourceLabel = std::string(hathor::control::sourceLabel(source));
+    d.code  = lspDiag.code.value_or("");
+    d.message = lspDiag.message;
+    d.uri = "";  // set by caller (the uri is the publish key)
+    d.line = lspDiag.range.start.line + 1;    // LSP is 0-based, control is 1-based
+    d.column = lspDiag.range.start.character + 1;
+    d.relatedInfo = lspDiag.source.value_or("");
+    return d;
+}
+
 // ===========================================================================
 // nextFreeSlot (Req 22.6, 24.4)
 // ===========================================================================
@@ -265,11 +287,23 @@ EditorArea::EditorArea(AudioEngine& audio,
         &metadata_,
         &metadataCompat_);
 
-     // Wire diagnostics callback — forward to the active tab and to the
-     // AI-8 LSP context bridge (for authoring context assembly).
+    // Wire diagnostics callback — forward to: (1) the active tab for
+    // squiggly underlines, (2) the AI-8 LSP context bridge, and (3) the
+    // L-3 unified DiagnosticRegistry for the Problems panel / StatusRibbon.
     lspClient_->setDiagnosticsCallback([this](const std::string& uri,
                                                const std::vector<lsp::Diagnostic>& diags)
     {
+        // L-3: Publish to the unified diagnostic store
+        std::vector<hathor::control::Diagnostic> controlDiags;
+        controlDiags.reserve(diags.size());
+        for (const auto& ld : diags)
+        {
+            auto cd = toControlDiag(ld, hathor::control::DiagSource::StrudelLsp);
+            cd.uri = uri;
+            controlDiags.push_back(std::move(cd));
+        }
+        diagnosticRegistry_->setDiagnostics(hathor::control::DiagSource::StrudelLsp, uri, controlDiags);
+
         for (auto& tab : tabs_)
         {
             if (tab && !tab->isChuckTab())
@@ -378,12 +412,48 @@ EditorArea::EditorArea(AudioEngine& audio,
         symbolSearchPanel_->setVisible(false);
     };
 
+    // =======================================================================
+    // L-3: Unified Problems / Diagnostics surface
+    // =======================================================================
+
+    diagnosticRegistry_ = std::make_unique<hathor::control::DiagnosticRegistry>();
+
+    problemsPanel_ = std::make_unique<ProblemsPanel>(diagnosticRegistry_.get());
+    problemsPanel_->onDiagnosticSelected = [this](const std::string& uri, int line, int column) {
+        // Navigate to the diagnostic's source location via the existing
+        // L-2 editor navigation — open the file and move the caret.
+        std::string path = uri;
+        const std::string prefix = "file://";
+        if (path.substr(0, prefix.size()) == prefix)
+            path = path.substr(prefix.size());
+
+        juce::File file(path);
+        openFile(file);
+
+        if (auto* tab = activeTab())
+        {
+            juce::CodeDocument::Position pos(tab->document(), line, column);
+            tab->editor().moveCaretTo(pos, false);
+
+            // Record in navigation history (L-2 integration)
+            navigationHistory_->navigateTo({uri, line, column});
+        }
+    };
+    problemsPanel_->onClosePanel = [this]() {
+        problemsPanel_->setVisible(false);
+    };
+
+    statusRibbon_ = std::make_unique<StatusRibbon>(diagnosticRegistry_.get());
+    statusRibbon_->onErrorsClicked = [this]() { showProblemsPanel(); };
+
     addChildComponent(quickOpenDialog_.get());
     addChildComponent(workspaceSearchPanel_.get());
     addChildComponent(symbolSearchPanel_.get());
+    addChildComponent(problemsPanel_.get());
     quickOpenDialog_->setVisible(false);
     workspaceSearchPanel_->setVisible(false);
     symbolSearchPanel_->setVisible(false);
+    problemsPanel_->setVisible(false);
 }
 
 EditorArea::~EditorArea()
@@ -819,6 +889,13 @@ void EditorArea::resized()
         symbolSearchPanel_->setBounds(ssArea);
     }
 
+    // L-3: Problems panel at the bottom (if visible)
+    if (problemsPanel_ && problemsPanel_->isVisible())
+    {
+        auto probArea = b.removeFromBottom(ProblemsPanel::kPanelHeight);
+        problemsPanel_->setBounds(probArea);
+    }
+
     // Active tab fills the middle
     for (int i = 0; i < static_cast<int>(tabs_.size()); ++i)
     {
@@ -1039,11 +1116,23 @@ void EditorArea::wireUnsavedCallback(HathorTab& tab)
             editorContextBridge_->refresh();
     };
 
-    // AI-G7: Forward ChucK compiler diagnostics to the LspContextBridge
-    // so they are included in the AI-8 authoring context for .ck files.
+    // Forward ChucK compiler diagnostics to: (1) the AI-8 LSP context bridge
+    // for .ck file authoring context, and (2) the L-3 unified DiagnosticRegistry
+    // for the Problems panel / StatusRibbon.
     tab.onChuckDiagnostics = [this](const std::string& uri,
                                     const std::vector<lsp::Diagnostic>& diags)
     {
+        // L-3: Publish to the unified diagnostic store
+        std::vector<hathor::control::Diagnostic> controlDiags;
+        controlDiags.reserve(diags.size());
+        for (const auto& ld : diags)
+        {
+            auto cd = toControlDiag(ld, hathor::control::DiagSource::ChuckCompiler);
+            cd.uri = uri;
+            controlDiags.push_back(std::move(cd));
+        }
+        diagnosticRegistry_->setDiagnostics(hathor::control::DiagSource::ChuckCompiler, uri, controlDiags);
+
         if (lspContextBridge_ != nullptr)
             lspContextBridge_->setLspDiagnostics(uri, diags);
     };
@@ -2070,12 +2159,117 @@ void EditorArea::showDocumentSymbols()
 
 void EditorArea::navigateToNextDiagnostic()
 {
-    showStatus("Next diagnostic not yet implemented");
+    auto* tab = activeTab();
+    if (!tab)
+    {
+        showStatus("No active editor");
+        return;
+    }
+
+    const std::string uri = tab->lspDocumentUri().toStdString();
+    auto diagnostics = diagnosticRegistry_->diagnosticsForUri(uri);
+    if (diagnostics.empty())
+    {
+        showStatus("No diagnostics in this editor");
+        return;
+    }
+
+    // Current cursor position (1-based)
+    const int curLine = tab->editor().getCaretPosition().getLineNumber() + 1;
+
+    // Find the first diagnostic at or after the current line
+    const hathor::control::Diagnostic* next = nullptr;
+    for (const auto* d : diagnostics)
+    {
+        if (d->line >= curLine)
+        {
+            next = d;
+            break;
+        }
+    }
+    if (!next)
+        next = diagnostics.front();
+
+    juce::CodeDocument::Position pos(tab->document(), next->line - 1, next->column - 1);
+    tab->editor().moveCaretTo(pos, false);
+    navigationHistory_->navigateTo({uri, next->line, next->column});
+    showStatus("Navigated to: " + juce::String(next->message));
 }
 
 void EditorArea::navigateToPrevDiagnostic()
 {
-    showStatus("Previous diagnostic not yet implemented");
+    auto* tab = activeTab();
+    if (!tab)
+    {
+        showStatus("No active editor");
+        return;
+    }
+
+    const std::string uri = tab->lspDocumentUri().toStdString();
+    auto diagnostics = diagnosticRegistry_->diagnosticsForUri(uri);
+    if (diagnostics.empty())
+    {
+        showStatus("No diagnostics in this editor");
+        return;
+    }
+
+    // Current cursor position (1-based)
+    const int curLine = tab->editor().getCaretPosition().getLineNumber() + 1;
+
+    // Find the last diagnostic before the current line (reverse iterate)
+    const hathor::control::Diagnostic* prev = nullptr;
+    for (auto it = diagnostics.rbegin(); it != diagnostics.rend(); ++it)
+    {
+        if ((*it)->line < curLine)
+        {
+            prev = *it;
+            break;
+        }
+    }
+    if (!prev)
+        prev = diagnostics.back();
+
+    juce::CodeDocument::Position pos(tab->document(), prev->line - 1, prev->column - 1);
+    tab->editor().moveCaretTo(pos, false);
+    navigationHistory_->navigateTo({uri, prev->line, prev->column});
+    showStatus("Navigated to: " + juce::String(prev->message));
+}
+
+// ---------------------------------------------------------------------------
+// L-3: Panel visibility + StatusRibbon sync
+
+void EditorArea::showProblemsPanel()
+{
+    if (problemsPanel_)
+        problemsPanel_->setVisible(true);
+    if (workspaceSearchPanel_)
+        workspaceSearchPanel_->setVisible(false);
+    if (symbolSearchPanel_)
+        symbolSearchPanel_->setVisible(false);
+}
+
+void EditorArea::hideProblemsPanel()
+{
+    if (problemsPanel_)
+        problemsPanel_->setVisible(false);
+}
+
+void EditorArea::setStatusRibbonTransport(bool running, double bpm) noexcept
+{
+    if (statusRibbon_)
+        statusRibbon_->setTransport(running, bpm);
+}
+
+void EditorArea::setStatusRibbonWorker(bool alive) noexcept
+{
+    if (statusRibbon_)
+        statusRibbon_->setWorker(alive);
+}
+
+void EditorArea::setStatusRibbonLsp(bool connected) noexcept
+{
+    if (statusRibbon_)
+        statusRibbon_->setLsp(connected);
 }
 
 // ---------------------------------------------------------------------------
