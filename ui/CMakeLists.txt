@@ -64,6 +64,11 @@ target_sources(hathor-ui
         ChatThread.cpp                # B6: per-thread session + connection state
         MessageHistoryView.cpp        # extracted from ChatSidebar (B6)
          SettingsComponent.cpp         # A2
+         # Phase G — Petdex (D1): JUCE-free core + service glue
+         PetdexManifestParser.cpp      # D1: robust manifest/envelope parsing
+         PetdexCacheStore.cpp          # D1: manifest cache store + staleness
+         PetdexAttribution.cpp         # D4: licensing/attribution gate
+         PetdexManifestService.cpp     # D1: async fetch/cache service
          WindowAppearanceController.mm  # B5
          BakeTargetDialog.cpp          # B8-K6
          BakeProgressDialog.cpp        # B8-K6

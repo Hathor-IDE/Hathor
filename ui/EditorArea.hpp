@@ -48,6 +48,7 @@
 #include "HathorTab.hpp"
 #include "HathorLookAndFeel.hpp"
 #include "SettingsComponent.hpp"
+#include "PetdexManifestService.hpp"
 #include "BakeOrchestrator.hpp"
 #include "EditorContextBridge.hpp"
 #include "LspContextBridge.hpp"
@@ -670,6 +671,11 @@ private:
     /// When active, it occupies the same content area as HathorTab tabs.
     std::unique_ptr<SettingsComponent>       settingsTab_;
     bool                                     settingsActive_{ false };
+
+    /// Petdex manifest service (Phase G / D1) — app-lifetime so the Settings
+    /// tab can be opened/closed without losing catalog state. Does no network
+    /// work until the Settings tab requests a load (opt-in).
+    std::unique_ptr<PetdexManifestService>   petdexService_;
 
     /// One key-listener per tab (parallel to tabs_); owns the listener objects.
     std::vector<std::unique_ptr<TabKeyListener>> keyListeners_;

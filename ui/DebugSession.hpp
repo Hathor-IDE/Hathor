@@ -221,8 +221,10 @@ private:
     /// Fire onStopped with the frames collected for the current stop.
     void flushStopEvent();
 
-    /// Fire onLocals with the values collected for the pending request.
-    void flushLocals();
+    /// Fire onLocals with the values collected for the pending request,
+    /// but only once the debugger has echoed the request (proving the
+    /// results follow) or values were already collected.
+    void flushLocalsIfComplete();
 
     // -----------------------------------------------------------------------
     // Data
@@ -252,6 +254,29 @@ private:
     bool pendingLocals_ = false;
     std::vector<WatchValue> pendingLocalValues_;
     std::string pendingWatchLabel_;
+
+    /// The last command sent to the debugger.  Debugger CLIs echo our own
+    /// command back when stdin is not a tty; we skip that echo so it is not
+    /// mistaken for a result block terminator (e.g. flushing locals early).
+    std::string lastCommand_;
+
+    /// True once the debugger has echoed the pending command (lastCommand_).
+    /// Used to distinguish a command echo (which is glued to the next
+    /// prompt) from a stale bare prompt left over from a previous stop.
+    bool lastCommandEchoed_ = false;
+
+    /// The debugger command that started the pending locals request
+    /// ("frame variable" / "info locals").  When the echo of a DIFFERENT
+    /// command arrives, the previous request's results block has ended and
+    /// any collected values are delivered (even if the list is empty — the
+    /// debugger processed the request, so a stuck state must be avoided).
+    std::string pendingLocalsCmd_;
+
+    /// Consecutive polls that produced no new output while a collection is
+    /// pending.  lldb/gdb write no trailing prompt after a result block
+    /// when stdin is a pipe, so a short quiet period is the reliable
+    /// end-of-results marker for locals requests and gdb stop events.
+    int quietPolls_ = 0;
 };
 
 } // namespace hathor::ui

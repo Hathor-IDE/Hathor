@@ -40,9 +40,13 @@
 #include "WindowAppearanceController.hpp"
 #include "MasterEq.hpp"
 
+#include "PetdexTypes.hpp"
+
 class AudioEngineFacade;
 
 namespace hathor::ui {
+
+class PetdexManifestService;
 
 class SettingsComponent : public juce::Component,
                            public juce::Slider::Listener,
@@ -59,9 +63,14 @@ public:
       * @param audio    AudioEngineFacade for applying B7-K2 EQ preset changes live (B7-K3).
       *                 May be nullptr — in which case the EQ preset selector is inert
       *                 (loads/persists only, does not call setMasterEqPreset).
+      * @param petdex   App-lifetime PetdexManifestService (Phase G / D1). May be nullptr
+      *                 — in which case the Petdex section shows an unavailable state.
+      *                 The service is not contacted until this component is built,
+      *                 i.e. only when the user actually opens the Settings tab (opt-in).
       */
     explicit SettingsComponent(juce::ApplicationProperties* props,
-                               AudioEngineFacade* audio = nullptr);
+                               AudioEngineFacade* audio = nullptr,
+                               PetdexManifestService* petdex = nullptr);
 
     ~SettingsComponent() override;
 
@@ -184,9 +193,13 @@ private:
     juce::Label*     agentPathLabel_ = nullptr;
     juce::Label      mcpPathLabel_;
 
-    // Petdex section
+    // Petdex section (Phase G / D1)
     juce::ComboBox   petCombo_;
     juce::Label      petLabel_;
+    juce::TextEditor petSearchEditor_;
+    juce::Label      petStatusLabel_;
+    juce::Label      petAttributionLabel_;
+    juce::TextButton petRefreshButton_;
 
     // Appearance — Audio subsection (B7-K3)
     juce::ComboBox   eqPresetCombo_;
@@ -207,6 +220,7 @@ private:
     juce::ApplicationProperties* appProperties_;
     WindowAppearanceController* appearanceController_ = nullptr;
     AudioEngineFacade*           audioEngine_ = nullptr;  // B7-K3: for setMasterEqPreset
+    PetdexManifestService*       petdexService_ = nullptr; // Phase G / D1 (app-lifetime, not owned)
 
     // -----------------------------------------------------------------------
     // State
@@ -215,6 +229,13 @@ private:
     bool pendingChanges_ = false;
     bool opacitySupported_ = true;   ///< false on Linux without compositor (B5)
     bool blurSupported_    = true;   ///< false on Linux without blur protocol
+
+    // Phase G / D1: Petdex catalog state (selection itself lives in
+    // SettingsModel::petSelection — a slug — and persists via the A2 model).
+    PetdexManifest       manifest_;            ///< last manifest delivered by the service
+    PetdexManifestStatus manifestStatus_ = PetdexManifestStatus::Idle;
+    std::string          petStatusMessage_;
+    std::vector<std::string> petComboSlugs_;   ///< slug per combo item (parallel, after "(none)")
 
     // -----------------------------------------------------------------------
     // Internal helpers
@@ -247,8 +268,23 @@ private:
     /** Build the Apply/Reset buttons. */
     void buildActionButtons();
 
-    /** Populate the pet selection combo box with known mascots. */
-    void populatePetList();
+    /** Rebuild the pet combo from manifest_ + the search filter. */
+    void rebuildPetList();
+
+    /** Select the combo entry matching @p slug (or "(none)"). */
+    void selectPetInCombo(const std::string& slug);
+
+    /** Handle a manifest result delivered by PetdexManifestService (message thread). */
+    void onPetdexManifest(const PetdexManifestResult& result);
+
+    /** Update the catalog status label from manifestStatus_/petStatusMessage_. */
+    void updatePetdexStatusLabel();
+
+    /** Update the D4 attribution/licensing label for the selected pet. */
+    void updatePetAttribution();
+
+    /** Find a pet in manifest_ by slug, or nullptr. */
+    const PetdexPet* findPet(const std::string& slug) const noexcept;
 
     /** Refresh pendingChanges_ flag and update button states. */
     void updateDirtyFlag();

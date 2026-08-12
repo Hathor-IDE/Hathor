@@ -153,10 +153,16 @@ TEST_CASE("DebugSession drives real LLDB end-to-end", "[debug-session-lldb]")
         gotStop = true;
         stopFrames = std::move(frames);
     };
+    std::string localsDiag;   // for failure diagnostics
     session.onLocals = [&](std::vector<DebugSession::WatchValue> values) {
+        localsDiag += "[onLocals n=" + std::to_string(values.size()) + "]";
         for (const auto& v : values)
+        {
+            localsDiag += " '" + v.name + "'=" + v.value;
             if (v.name == "y")   // compute()'s local, should be 42
                 gotLocals = true;
+        }
+        localsDiag += "\n";
     };
     session.onWatchValue = [&](DebugSession::WatchValue v) {
         if (v.name == "y" && v.value.find("42") != std::string::npos)
@@ -206,7 +212,14 @@ TEST_CASE("DebugSession drives real LLDB end-to-end", "[debug-session-lldb]")
         session.pollResults();
         std::this_thread::sleep_for(std::chrono::milliseconds(20));
     }
-    REQUIRE(gotLocals);
+    if (!gotLocals)
+    {
+        session.shutdown();
+        const std::string diag = "Locals never arrived. Output:\n" + sessionOutput +
+                                 "\nLocals diag:\n" + localsDiag;
+        fs::remove_all(tmp);
+        FAIL(diag);
+    }
 
     // Watch evaluation (y should be 42 at line 3).
     session.evaluateWatch("y", "y");
@@ -218,10 +231,11 @@ TEST_CASE("DebugSession drives real LLDB end-to-end", "[debug-session-lldb]")
     }
     REQUIRE(gotWatch);
 
-    // Continue to completion; the debugger process stays alive (lldb shell).
+    // Continue to completion.  The debugger shell itself stays alive, so
+    // just verify the command round-trips without error, then shut down.
     session.continue_();
-    deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
-    while (session.isRunning() && std::chrono::steady_clock::now() < deadline)
+    deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    while (std::chrono::steady_clock::now() < deadline)
     {
         session.pollResults();
         std::this_thread::sleep_for(std::chrono::milliseconds(20));

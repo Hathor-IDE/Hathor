@@ -13,6 +13,8 @@
 
 #include "MasterEq.hpp"
 #include "AudioEngineFacade.hpp"
+#include "PetdexManifestService.hpp"
+#include "PetdexAttribution.hpp"
 
 namespace hathor::ui {
 
@@ -21,9 +23,11 @@ namespace hathor::ui {
 // ---------------------------------------------------------------------------
 
 SettingsComponent::SettingsComponent(juce::ApplicationProperties* props,
-                                       AudioEngineFacade* audio)
+                                       AudioEngineFacade* audio,
+                                       PetdexManifestService* petdex)
     : appProperties_(props)
     , audioEngine_(audio)
+    , petdexService_(petdex)
 {
     setInterceptsMouseClicks(true, true);
 
@@ -489,6 +493,33 @@ void SettingsComponent::buildPetdexSection()
 
     y += kControlHeight + 8;
 
+    // --- Catalog status ---
+    petStatusLabel_.setBounds(0, y, contentW, kControlHeight * 2);
+    petStatusLabel_.setFont(HathorLookAndFeel::fontRegular(HathorLookAndFeel::Typography::bodySm));
+    petStatusLabel_.setColour(juce::Label::textColourId, palette.textMuted);
+    petStatusLabel_.setJustificationType(juce::Justification::centredLeft);
+    petStatusLabel_.setInterceptsMouseClicks(false, false);
+    contentPanel_->addAndMakeVisible(petStatusLabel_);
+
+    y += kControlHeight * 2 + 8;
+
+    // --- Catalog search filter (browse a dynamic catalog, no manual config) ---
+    auto* searchLabel = new juce::Label();
+    searchLabel->setText("Search:", juce::dontSendNotification);
+    searchLabel->setFont(HathorLookAndFeel::fontMedium(HathorLookAndFeel::Typography::bodySm));
+    searchLabel->setColour(juce::Label::textColourId, palette.textSecondary);
+    searchLabel->setJustificationType(juce::Justification::centredRight);
+    searchLabel->setBounds(0, y, labelW, kControlHeight);
+    contentPanel_->addAndMakeVisible(searchLabel);
+
+    petSearchEditor_.setBounds(controlX, y, controlW, kControlHeight);
+    petSearchEditor_.setText("", juce::dontSendNotification);
+    petSearchEditor_.setTooltip("Filter the Petdex catalog by name, kind, slug, or submitter.");
+    petSearchEditor_.addListener(this);
+    contentPanel_->addAndMakeVisible(petSearchEditor_);
+
+    y += kControlHeight + 12;
+
     // --- Pet selection combo ---
     petLabel_.setBounds(0, y, labelW, kControlHeight);
     petLabel_.setText("Mascot:", juce::dontSendNotification);
@@ -499,31 +530,59 @@ void SettingsComponent::buildPetdexSection()
 
     petCombo_.setBounds(controlX, y, controlW, kControlHeight);
     petCombo_.setEditableText(false);
-
-    populatePetList();
-
-    if (!pending_.petSelection.empty())
-    {
-        for (int i = 1; i <= petCombo_.getNumItems(); ++i)
-        {
-            if (petCombo_.getItemText(i - 1) == juce::String(pending_.petSelection))
-            {
-                petCombo_.setSelectedId(i, juce::dontSendNotification);
-                break;
-            }
-        }
-    }
-    else
-    {
-        petCombo_.setText("(none)", juce::dontSendNotification);
-    }
-
+    rebuildPetList();
     petCombo_.addListener(this);
     contentPanel_->addAndMakeVisible(petCombo_);
 
-    y += kControlHeight + 24;
+    y += kControlHeight + 8;
+
+    // --- Manual refresh (cache invalidation) ---
+    petRefreshButton_.setButtonText("Refresh catalog");
+    petRefreshButton_.setBounds(controlX, y, 140, kControlHeight);
+    petRefreshButton_.addListener(this);
+    contentPanel_->addAndMakeVisible(petRefreshButton_);
+
+    y += kControlHeight + 12;
+
+    // --- D4 attribution / licensing status for the selected pet ---
+    petAttributionLabel_.setBounds(0, y, contentW, kControlHeight * 3);
+    petAttributionLabel_.setFont(HathorLookAndFeel::fontRegular(HathorLookAndFeel::Typography::bodySm));
+    petAttributionLabel_.setColour(juce::Label::textColourId, palette.textMuted);
+    petAttributionLabel_.setJustificationType(juce::Justification::topLeft);
+    petAttributionLabel_.setInterceptsMouseClicks(false, false);
+    contentPanel_->addAndMakeVisible(petAttributionLabel_);
+
+    y += kControlHeight * 3 + 8;
 
     contentPanel_->setBounds(0, 0, contentW, y);
+
+    // -----------------------------------------------------------------------
+    // Kick off the catalog load. This is the ONLY trigger: the Petdex section
+    // exists only when the user has opened the Settings tab, so nothing is
+    // downloaded merely because Hathor started (decision #5 / D1 opt-in).
+    // -----------------------------------------------------------------------
+    if (petdexService_ != nullptr)
+    {
+        petStatusMessage_ = "Loading Petdex catalog\xE2\x80\xA6";
+        petdexService_->setResultCallback(
+            [safe = juce::Component::SafePointer<SettingsComponent>(this)](
+                const PetdexManifestResult& result)
+            {
+                if (safe != nullptr)
+                    safe->onPetdexManifest(result);
+            });
+        petdexService_->start();
+    }
+    else
+    {
+        petStatusMessage_ = "Petdex is unavailable in this build.";
+        petCombo_.setEnabled(false);
+        petSearchEditor_.setEnabled(false);
+        petRefreshButton_.setEnabled(false);
+    }
+
+    updatePetdexStatusLabel();
+    updatePetAttribution();
 }
 
 void SettingsComponent::buildChuckPlaceholder()
@@ -609,13 +668,137 @@ void SettingsComponent::buildActionButtons()
     addAndMakeVisible(resetButton_);
 }
 
-void SettingsComponent::populatePetList()
+void SettingsComponent::rebuildPetList()
 {
+    const juce::String search = petSearchEditor_.getText().trim().toLowerCase();
+
     petCombo_.clear();
+    petComboSlugs_.clear();
     petCombo_.addItem("(none)", 1);
 
-    if (pending_.petSelection.empty())
-        petCombo_.setText("(none)", juce::dontSendNotification);
+    for (const auto& pet : manifest_.pets)
+    {
+        const juce::String name = juce::String(pet.displayName);
+        if (search.isNotEmpty())
+        {
+            const juce::String kind = juce::String(pet.kind);
+            const juce::String slug = juce::String(pet.slug);
+            const juce::String sub  = juce::String(pet.submittedBy);
+            if (!name.toLowerCase().contains(search)
+                && !kind.toLowerCase().contains(search)
+                && !slug.toLowerCase().contains(search)
+                && !sub.toLowerCase().contains(search))
+            {
+                continue;
+            }
+        }
+
+        petComboSlugs_.push_back(pet.slug);
+
+        juce::String label = name;
+        if (!pet.kind.empty())
+            label += " (" + juce::String(pet.kind) + ")";
+        petCombo_.addItem(label, static_cast<int>(petComboSlugs_.size()) + 1);
+    }
+
+    selectPetInCombo(pending_.petSelection);
+}
+
+void SettingsComponent::selectPetInCombo(const std::string& slug)
+{
+    if (slug.empty())
+    {
+        petCombo_.setSelectedId(1, juce::dontSendNotification);
+        return;
+    }
+    for (std::size_t i = 0; i < petComboSlugs_.size(); ++i)
+    {
+        if (petComboSlugs_[i] == slug)
+        {
+            petCombo_.setSelectedId(static_cast<int>(i) + 2, juce::dontSendNotification);
+            return;
+        }
+    }
+    petCombo_.setSelectedId(1, juce::dontSendNotification);
+}
+
+void SettingsComponent::onPetdexManifest(const PetdexManifestResult& result)
+{
+    manifest_         = result.manifest;
+    manifestStatus_   = result.status;
+    petStatusMessage_ = result.message;
+
+    rebuildPetList();
+    updatePetdexStatusLabel();
+    updatePetAttribution();
+}
+
+void SettingsComponent::updatePetdexStatusLabel()
+{
+    juce::String text = juce::String(petStatusMessage_);
+    if (text.isEmpty())
+    {
+        switch (manifestStatus_)
+        {
+            case PetdexManifestStatus::Idle:
+            case PetdexManifestStatus::Loading:
+                text = "Loading Petdex catalog\xE2\x80\xA6";
+                break;
+            case PetdexManifestStatus::Ready:
+                text = "Petdex catalog ready \xE2\x80\x94 "
+                     + juce::String(manifest_.total) + " pets available.";
+                break;
+            case PetdexManifestStatus::UsingCache:
+                text = "Showing cached Petdex catalog.";
+                break;
+            case PetdexManifestStatus::Offline:
+                text = "Cannot reach Petdex and no cached catalog is available.";
+                break;
+        }
+    }
+    petStatusLabel_.setText(text, juce::dontSendNotification);
+}
+
+void SettingsComponent::updatePetAttribution()
+{
+    juce::String text;
+    const std::string& slug = pending_.petSelection;
+
+    if (slug.empty())
+    {
+        // Opt-in default (decision #5): no mascot, nothing downloaded/displayed.
+        text = "No mascot selected \xE2\x80\x94 nothing is downloaded or displayed "
+               "until you explicitly choose a pet.";
+    }
+    else if (const PetdexPet* pet = findPet(slug))
+    {
+        const auto info = PetdexAttribution::resolve(*pet);
+        if (info.canDisplay)
+        {
+            text = juce::String("Selected: ") + pet->displayName
+                 + " \xE2\x80\x94 " + juce::String(info.creditLine)
+                 + ". " + juce::String(info.notice);
+        }
+        else
+        {
+            text = juce::String(info.notice);
+        }
+    }
+    else
+    {
+        text = "Saved selection \"" + juce::String(slug)
+             + "\" is not present in the current Petdex catalog.";
+    }
+
+    petAttributionLabel_.setText(text, juce::dontSendNotification);
+}
+
+const PetdexPet* SettingsComponent::findPet(const std::string& slug) const noexcept
+{
+    for (const auto& pet : manifest_.pets)
+        if (pet.slug == slug)
+            return &pet;
+    return nullptr;
 }
 
 // ---------------------------------------------------------------------------
@@ -728,6 +911,17 @@ void SettingsComponent::buttonClicked(juce::Button* button)
     {
         resetToCommitted();
     }
+    else if (button == &petRefreshButton_)
+    {
+        // Manual cache invalidation / refresh (D1). The catalog refresh is not
+        // a setting edit — the persisted selection is untouched.
+        if (petdexService_ != nullptr)
+        {
+            petdexService_->refresh();
+            petStatusMessage_ = "Refreshing Petdex catalog\xE2\x80\xA6";
+            updatePetdexStatusLabel();
+        }
+    }
     else if (button == &acrylicButton_)
     {
         // Toggle Acrylic state (B5)
@@ -765,11 +959,19 @@ void SettingsComponent::comboBoxChanged(juce::ComboBox* comboBox)
     }
     else if (comboBox == &petCombo_)
     {
-        if (comboBox->getSelectedId() == 1)
-            pending_.petSelection = "";
-        else
-            pending_.petSelection = comboBox->getText().toStdString();
+        // Selection is persisted as the pet's stable slug (or empty = none).
+        const int selectedId = comboBox->getSelectedId();
+        if (selectedId == 1)
+        {
+            pending_.petSelection.clear();
+        }
+        else if (selectedId >= 2
+                 && static_cast<std::size_t>(selectedId - 2) < petComboSlugs_.size())
+        {
+            pending_.petSelection = petComboSlugs_[static_cast<std::size_t>(selectedId - 2)];
+        }
 
+        updatePetAttribution();
         updateDirtyFlag();
     }
     else if (comboBox == &eqPresetCombo_)
@@ -793,6 +995,11 @@ void SettingsComponent::textEditorTextChanged(juce::TextEditor& editor)
     {
         pending_.agentExePath = editor.getText().toStdString();
         updateDirtyFlag();
+    }
+    else if (&editor == &petSearchEditor_)
+    {
+        // Filtering the catalog never changes the (pending) selection itself.
+        rebuildPetList();
     }
 }
 
@@ -909,21 +1116,9 @@ void SettingsComponent::resetToCommitted()
     agentPathEditor_.setText(juce::String(pending_.agentExePath),
                              juce::dontSendNotification);
 
-    if (!pending_.petSelection.empty())
-    {
-        for (int i = 1; i <= petCombo_.getNumItems(); ++i)
-        {
-            if (petCombo_.getItemText(i - 1) == juce::String(pending_.petSelection))
-            {
-                petCombo_.setSelectedId(i, juce::dontSendNotification);
-                break;
-            }
-        }
-    }
-    else
-    {
-        petCombo_.setText("(none)", juce::dontSendNotification);
-    }
+    // Restore the committed pet selection (by stable slug) — D1.
+    selectPetInCombo(pending_.petSelection);
+    updatePetAttribution();
 
     // B7-K3: Restore the EQ preset combo to the committed (last-applied) value.
     // Reset does NOT push to the engine — the live audio stays on the applied preset.

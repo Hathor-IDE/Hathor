@@ -489,6 +489,16 @@ EditorArea::EditorArea(AudioEngine& audio,
     addChildComponent(debugPanel_.get());
     debugPanel_->setVisible(false);
 
+    // -----------------------------------------------------------------------
+    // Phase G / D1: Petdex manifest service.
+    // App-lifetime, but strictly lazy: the service performs no network or
+    // cache work until SettingsComponent (opened only by explicit user
+    // action) calls start(). Starting Hathor never downloads anything.
+    // -----------------------------------------------------------------------
+    petdexService_ = std::make_unique<PetdexManifestService>(
+        juce::File::getSpecialLocation(juce::File::userApplicationDataDirectory)
+            .getChildFile("Hathor/Petdex"));
+
     // StatusRibbon is mounted by MainWindow at the bottom of the window;
     // do NOT addChildComponent here — it stays parented to MainWindow.
 }
@@ -865,8 +875,10 @@ SettingsComponent* EditorArea::openSettingsTab(juce::ApplicationProperties* prop
         return settingsTab_.get();
     }
 
-    // Create the Settings tab (A2).
-    settingsTab_ = std::make_unique<SettingsComponent>(props, &audio_);
+    // Create the Settings tab (A2). The app-lifetime Petdex service is passed
+    // so the Petdex section can browse/select the catalog (Phase G / D1).
+    settingsTab_ = std::make_unique<SettingsComponent>(props, &audio_,
+                                                       petdexService_.get());
     addAndMakeVisible(*settingsTab_);
     settingsTab_->setVisible(false);  // will be shown by activateTab
 

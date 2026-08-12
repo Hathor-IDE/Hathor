@@ -125,6 +125,9 @@ std::string DebugSession::launch(const Config& config)
     pendingFrames_.clear();
     pendingLocalValues_.clear();
     pendingWatchLabel_.clear();
+    lastCommand_.clear();
+    pendingLocalsCmd_.clear();
+    quietPolls_ = 0;
 
     // Send non-interactive-mode init commands (gdb only — lldb does not
     // paginate when stdin is not a tty).
@@ -314,10 +317,14 @@ void DebugSession::requestLocals()
         return;
     pendingLocals_ = true;
     pendingLocalValues_.clear();
-    if (debuggerType_ == DebuggerType::Lldb)
+    quietPolls_ = 0;
+    if (debuggerType_ == DebuggerType::Lldb) {
+        pendingLocalsCmd_ = "frame variable";
         sendCommand("frame variable");
-    else
+    } else {
+        pendingLocalsCmd_ = "info locals";
         sendCommand("info locals");
+    }
 }
 
 void DebugSession::evaluateWatch(const std::string& expression, const std::string& label)
@@ -346,6 +353,21 @@ void DebugSession::pollResults()
     char buf[4096];
     std::size_t n = process_.drainOutput(buf, sizeof(buf));
     if (n == 0) {
+        // No new output this poll.  lldb/gdb write no trailing prompt after
+        // a result block when stdin is a pipe, so a short quiet period is
+        // the only reliable end-of-results marker for pending collections
+        // (locals requests, and gdb stop events without a terminating line).
+        const bool pendingCollection =
+            pendingStop_ || (pendingLocals_ && !pendingLocalValues_.empty());
+        if (pendingCollection) {
+            if (++quietPolls_ >= 3) {
+                flushStopEvent();
+                flushLocalsIfComplete();
+            }
+        } else {
+            quietPolls_ = 0;
+        }
+
         // Check if the debugger process exited.
         if (process_.state() == TerminalProcess::State::Done ||
             process_.state() == TerminalProcess::State::Idle) {
@@ -358,6 +380,9 @@ void DebugSession::pollResults()
         }
         return;
     }
+
+    // New output arrived — reset the quiet-period counter.
+    quietPolls_ = 0;
 
     // Extract complete lines, then process them outside the lock (parsing
     // may fire callbacks that re-enter this class).
@@ -374,6 +399,24 @@ void DebugSession::pollResults()
 
     for (const auto& line : lines)
         handleOutputLine(line);
+
+    // A bare debugger prompt with no trailing newline (lldb/gdb write
+    // "(lldb) " and wait) marks the end of a command-result block.  Treat
+    // it as a flush point so pending stop/locals collections complete even
+    // when the results were not followed by a blank line.
+    bool promptSeen = false;
+    {
+        std::lock_guard<std::mutex> lock(outputMtx_);
+        const std::string tail = debugTrim(outputBuffer_);
+        if (tail == "(lldb)" || tail == "(gdb)") {
+            outputBuffer_.clear();
+            promptSeen = true;
+        }
+    }
+    if (promptSeen) {
+        flushStopEvent();
+        flushLocalsIfComplete();
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -384,6 +427,10 @@ bool DebugSession::sendCommand(const std::string& cmd)
 {
     if (!running_.load(std::memory_order_relaxed))
         return false;
+
+    // Remember what we sent so we can skip the debugger's echo of it.
+    lastCommand_ = debugTrim(cmd);
+    lastCommandEchoed_ = false;
 
     std::string line = cmd;
     if (line.empty() || line.back() != '\n')
@@ -413,7 +460,28 @@ void DebugSession::handleOutputLine(const std::string& rawLine)
     // pending stop/locals collections.
     if (debugTrim(line).empty()) {
         flushStopEvent();
-        flushLocals();
+        flushLocalsIfComplete();
+        return;
+    }
+
+    // Skip the debugger's echo of our own command (lldb/gdb echo the
+    // command line back when stdin is not a tty).  This must not be treated
+    // as a result block terminator, or pending collections would flush
+    // before the real results arrive.
+    if (!lastCommand_.empty() && line == lastCommand_) {
+        // The echo of a NEW command (different from the one that started a
+        // pending locals request) proves the previous request's results
+        // block has ended — deliver them before consuming this echo.
+        if (pendingLocals_ && !pendingLocalsCmd_.empty() &&
+            lastCommand_ != pendingLocalsCmd_) {
+            pendingLocals_ = false;
+            std::vector<WatchValue> values = std::move(pendingLocalValues_);
+            pendingLocalValues_.clear();
+            if (onLocals)
+                onLocals(std::move(values));
+        }
+        lastCommand_.clear();
+        lastCommandEchoed_ = true;
         return;
     }
 
@@ -491,7 +559,7 @@ void DebugSession::handleOutputLine(const std::string& rawLine)
             pendingLocalValues_.push_back(v);
             return;
         }
-        flushLocals();
+        flushLocalsIfComplete();
     }
 
     // --- Watch/expression evaluation ---
@@ -536,11 +604,20 @@ void DebugSession::flushStopEvent()
         onStopped(std::move(frames));
 }
 
-void DebugSession::flushLocals()
+void DebugSession::flushLocalsIfComplete()
 {
+    // Only deliver a locals result once values were actually collected.
+    // A blank line or debugger prompt arriving between the command echo and
+    // the results (e.g. gdb writes its "(gdb) " prompt as a blank line)
+    // must not flush an empty locals list and drop the real results that
+    // follow.  The echo-of-a-different-command path deliberately delivers
+    // an empty list instead, to avoid leaving the request stuck.
+    if (pendingLocalValues_.empty())
+        return;
     if (!pendingLocals_)
         return;
     pendingLocals_ = false;
+    lastCommandEchoed_ = false;
     std::vector<WatchValue> values = std::move(pendingLocalValues_);
     pendingLocalValues_.clear();
     if (onLocals)
