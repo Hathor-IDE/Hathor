@@ -42,7 +42,11 @@ target_sources(hathor-ui
         TreeBuilder.cpp
         HathorFileParser.cpp
         HathorTab.cpp         # task 3.4
-        EditorArea.cpp        # task 3.4
+         EditorArea.cpp        # task 3.4
+         EditorGroup.cpp       # L-1: extracted tab management
+         TabReorderModel.cpp   # L-1: JUCE-free tab reorder model
+         RecentlyClosedTabs.cpp # L-1: JUCE-free tab close history
+         ActionRegistry.cpp    # L-1: JUCE-free action/keystroke registry
         MiniNotationTokeniser.cpp # task 3.5
         ChuckTokeniser.cpp       # A5 — ChucK syntax highlighting
         ChuckKeywords.cpp       # A5 — JUCE-free ChucK keyword/class sets

@@ -28,14 +28,14 @@ namespace hathor::ui {
 // ---------------------------------------------------------------------------
 
 GhostTextOverlay::GhostTextOverlay()
+    : ghostFont_(HathorLookAndFeel::fontRegular(
+          HathorLookAndFeel::Typography::codeDefault))
 {
     setInterceptsMouseClicks(false, false);
     setVisible(false);
 
-    // Default font + colour — updated in paint() from the palette
+    // Default colour — updated in paint() from the palette
     const auto& palette = HathorLookAndFeel::fromComponent(*this).getPalette();
-    ghostFont_ = HathorLookAndFeel::fontRegular(
-        HathorLookAndFeel::Typography::codeDefault);
     ghostColour_ = palette.textSecondary.withAlpha(0.4f);
 }
 
@@ -91,7 +91,7 @@ void GhostTextOverlay::paint(juce::Graphics& g)
 
         // Dimmed part — lower opacity to indicate it's existing text
         g.setColour(ghostColour_.withAlpha(0.2f));
-        float dimmedWidth = font.getStringWidthFloat(dimmedPart);
+        float dimmedWidth = juce::GlyphArrangement::getStringWidth(font, dimmedPart);
         g.drawText(dimmedPart,
                    startX, startY,
                    static_cast<int>(dimmedWidth), rowHeight,
@@ -101,7 +101,7 @@ void GhostTextOverlay::paint(juce::Graphics& g)
 
         // Normal part — standard ghost opacity
         g.setColour(ghostColour_);
-        float normalWidth = font.getStringWidthFloat(normalPart);
+        float normalWidth = juce::GlyphArrangement::getStringWidth(font, normalPart);
         g.drawText(normalPart,
                    textEndX, startY,
                    static_cast<int>(normalWidth), rowHeight,
@@ -112,7 +112,7 @@ void GhostTextOverlay::paint(juce::Graphics& g)
     else
     {
         // No dimming needed — draw the entire ghost text at standard opacity
-        float fullWidth = font.getStringWidthFloat(ghostStr);
+        float fullWidth = juce::GlyphArrangement::getStringWidth(font, ghostStr);
         g.drawText(ghostStr,
                    startX, startY,
                    static_cast<int>(fullWidth), rowHeight,
@@ -127,7 +127,7 @@ void GhostTextOverlay::paint(juce::Graphics& g)
     if (candidateCount_ > 1)
     {
         juce::String badge = juce::String(selectedCandidate_ + 1) + "/" + juce::String(candidateCount_);
-        float badgeWidth = font.getStringWidthFloat(badge);
+        float badgeWidth = juce::GlyphArrangement::getStringWidth(font, badge);
         g.setColour(ghostColour_.withAlpha(0.6f));
         g.drawText(badge,
                    textEndX + 4, startY,

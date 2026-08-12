@@ -241,12 +241,9 @@ MainWindow::MainWindow(AudioEngine& audio,
 #ifdef HATHOR_ENABLE_GHOST_TELEMETRY
     if (editorArea_)
     {
-        juce::File telemetryFile = appProperties_.getStorageParameters()
-            ? juce::File(appProperties_.getStorageParameters()->getPath())
-            : juce::File();
-        if (!telemetryFile.isFile())
-            telemetryFile = telemetryFile.getParentDirectory();
-        telemetryFile = telemetryFile.getChildFile("ghost-telemetry.json");
+        juce::File appDataDir = juce::File::getSpecialLocation(
+            juce::File::userApplicationDataDirectory);
+        juce::File telemetryFile = appDataDir.getChildFile("Hathor/ghost-telemetry.json");
         editorArea_->loadTelemetry(telemetryFile.getFullPathName().toStdString());
     }
 #endif
@@ -402,12 +399,9 @@ void MainWindow::closeButtonPressed()
 #ifdef HATHOR_ENABLE_GHOST_TELEMETRY
     if (editorArea_)
     {
-        juce::File telemetryFile = appProperties_.getStorageParameters()
-            ? juce::File(appProperties_.getStorageParameters()->getPath())
-            : juce::File();
-        if (!telemetryFile.isFile())
-            telemetryFile = telemetryFile.getParentDirectory();
-        telemetryFile = telemetryFile.getChildFile("ghost-telemetry.json");
+        juce::File appDataDir = juce::File::getSpecialLocation(
+            juce::File::userApplicationDataDirectory);
+        juce::File telemetryFile = appDataDir.getChildFile("Hathor/ghost-telemetry.json");
         editorArea_->saveTelemetry(telemetryFile.getFullPathName().toStdString());
     }
 #endif

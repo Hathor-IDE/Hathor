@@ -23,7 +23,7 @@ target_include_directories(hathor-chuck-diagnostics
 target_compile_features(hathor-chuck-diagnostics PUBLIC cxx_std_20)
 
 if(CHUCK_AVAILABLE)
-    target_link_libraries(hathor-chuck-diagnostics PUBLIC libchuck)
+    target_link_libraries(hathor-chuck-diagnostics PRIVATE libchuck)
     target_compile_definitions(hathor-chuck-diagnostics PUBLIC CHUCK_AVAILABLE=1)
 else()
     target_compile_definitions(hathor-chuck-diagnostics PUBLIC CHUCK_AVAILABLE=0)

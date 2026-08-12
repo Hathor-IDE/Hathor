@@ -168,6 +168,12 @@ if(CHUCK_AVAILABLE)
 
     target_include_directories(libchuck PUBLIC
         ${CHUCK_CORE_DIR}
+    )
+    # lo/ contains config.h which redefines macros that conflict with JUCE's
+    # bundled libpng/jpegfl. Keep it PRIVATE so it does not leak into JUCE
+    # module compilation (which happens via hathor-ui → hathor-control →
+    # hathor-chuck-diagnostics → libchuck).
+    target_include_directories(libchuck PRIVATE
         ${CHUCK_CORE_DIR}/lo
     )
 
