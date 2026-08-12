@@ -85,6 +85,9 @@ target_sources(hathor-ui
           QuickOpenDialog.cpp            # L-2: Quick-open file dialog (Cmd+P)
           WorkspaceSearchPanel.cpp       # L-2: Workspace search/replace panel
           SymbolSearchPanel.cpp          # L-2: Symbol search results panel
+          # L-3: Unified Problems / Diagnostics surface
+          ProblemsPanel.cpp              # L-3: Problems panel
+          StatusRibbon.cpp               # L-3: bottom status ribbon
          # AI-4: Ghost text (llm-ls inline completion)
          GhostJsonRpc.cpp              # llm-ls JSON-RPC serialization
          GhostProviderConfig.cpp       # provider config (env-var credentials)

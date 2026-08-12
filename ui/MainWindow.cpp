@@ -105,6 +105,22 @@ MainWindow::MainWindow(AudioEngine& audio,
     chatSidebar_     = std::make_unique<hathor::ui::ChatSidebar>(audio_, ci_);
     visualizerPanel_ = std::make_unique<hathor::ui::VisualizerPanel>(audio_);
 
+    // L-3: Create StatusRibbon, wired to the shared DiagnosticRegistry
+    // (owned by EditorArea) so the ribbon and Problems panel stay in sync.
+    statusRibbon_ = std::make_unique<hathor::ui::StatusRibbon>(
+        editorArea_->diagnosticRegistry());
+
+    // L-3: Clicking the Problems indicator in the StatusRibbon opens the Problems panel.
+    statusRibbon_->onErrorsClicked = [this]()
+    {
+        if (editorArea_)
+        {
+            editorArea_->showProblemsPanel();
+            activityRibbon_->setActivePanel(hathor::ui::Panel::Problems);
+            resized();
+        }
+    };
+
     // Task 3.9: Create real SliderPanel with ControlInterface for dispatching.
     sliderPanel_ = std::make_unique<hathor::ui::SliderPanel>(ci_);
 
@@ -156,6 +172,9 @@ MainWindow::MainWindow(AudioEngine& audio,
             // Only the Explorer is wired in H1; other panels are no-ops for now.
             if (panel == hathor::ui::Panel::Explorer)
             {
+                // Close Problems panel when switching to another panel
+                if (editorArea_)
+                    editorArea_->hideProblemsPanel();
                 const bool wantsOpen = (activityRibbon_->activePanel() != hathor::ui::Panel::Explorer);
                 explorerPanel_->setVisible(wantsOpen);
                 activityRibbon_->setActivePanel(wantsOpen ? hathor::ui::Panel::Explorer : hathor::ui::Panel::None);
@@ -314,6 +333,9 @@ MainWindow::MainWindow(AudioEngine& audio,
     content->addAndMakeVisible(*chatSidebar_);
     content->addAndMakeVisible(*visualizerPanel_);
 
+    // L-3: StatusRibbon — mounted at MainWindow level, below VisualizerPanel.
+    content->addAndMakeVisible(*statusRibbon_);
+
     // Explorer starts hidden; opens when the user clicks the Explorer button
     // in the ActivityRibbon (H1).
     explorerPanel_->setVisible(false);
@@ -362,14 +384,26 @@ MainWindow::MainWindow(AudioEngine& audio,
 
      // C1: Now-playing highlight — route drained events to the editor area
      // so it can resolve sourceOffset → glyph bounds and paint the overlay.
-     uiTimer_->onUpdateNowPlaying = [this](
-         const std::vector<hathor::Event<hathor::ParamMap>>& events)
-     {
-         if (editorArea_)
-             editorArea_->updateNowPlayingHighlight(events);
-     };
+      uiTimer_->onUpdateNowPlaying = [this](
+          const std::vector<hathor::Event<hathor::ParamMap>>& events)
+      {
+          if (editorArea_)
+              editorArea_->updateNowPlayingHighlight(events);
+      };
 
-     setVisible(true);
+      // L-3: StatusRibbon — sync transport/worker/LSP state at 60 Hz
+      uiTimer_->onSyncStatusRibbon = [this]()
+      {
+          if (statusRibbon_)
+          {
+              statusRibbon_->setTransportRunning(audio_.isRunning());
+              statusRibbon_->setBpm(audio_.getBpm());
+              statusRibbon_->setWorkerAlive(audio_.hasWorker());
+              statusRibbon_->setLspConnected(editorArea_->isLspConnected());
+          }
+      };
+
+      setVisible(true);
 }
 
 MainWindow::~MainWindow()
@@ -426,6 +460,10 @@ void MainWindow::resized()
         const int vizH = std::max(b.getHeight() / 4, 120);
         visualizerPanel_->setBounds(b.removeFromBottom(vizH));
     }
+
+    // L-3: StatusRibbon — 28 px strip at the very bottom
+    if (statusRibbon_)
+        statusRibbon_->setBounds(b.removeFromBottom(StatusRibbon::kRibbonHeight));
 
     // 4. Editor area — fills the remaining centre region (Req 20.1, 20.3)
     if (editorArea_)

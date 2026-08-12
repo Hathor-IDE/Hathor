@@ -96,6 +96,13 @@ public:
     // active editor tab's ghost-text debounce and timeout logic fires on schedule.
     std::function<void()> onGhostTick;
 
+    // -----------------------------------------------------------------------
+    // L-3: StatusRibbon sync
+    // -----------------------------------------------------------------------
+    // Installed by MainWindow after construction. Called at 60 Hz to push
+    // transport / worker / LSP state to the bottom StatusRibbon.
+    std::function<void()> onSyncStatusRibbon;
+
     // juce::Timer override — three-step drain/sync logic.
     void timerCallback() override;
 

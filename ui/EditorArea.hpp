@@ -68,9 +68,8 @@
 #include "QuickOpenDialog.hpp"
 #include "WorkspaceSearchPanel.hpp"
 #include "SymbolSearchPanel.hpp"
-// L-3: Problems panel + status ribbon
+// L-3: Problems panel
 #include "ProblemsPanel.hpp"
-#include "StatusRibbon.hpp"
 #include "control/Diagnostic.hpp"
 #include "control/DiagnosticRegistry.hpp"
 
@@ -235,6 +234,9 @@ public:
     /// The currently active tab, or nullptr if no tabs are open.
     HathorTab* activeTab() noexcept;
 
+    /// Returns true if the Strudel LSP server process is running.
+    bool isLspConnected() const noexcept;
+
     // -----------------------------------------------------------------------
     // AI-8: Editor/LSP context bridges
     // -----------------------------------------------------------------------
@@ -380,21 +382,6 @@ public:
     {
         return problemsPanel_.get();
     }
-
-    /// Get the status ribbon (non-owning, for MainWindow).
-    StatusRibbon* statusRibbon() noexcept
-    {
-        return statusRibbon_.get();
-    }
-
-    /// Sync transport state to the status ribbon.
-    void setStatusRibbonTransport(bool running, double bpm) noexcept;
-
-    /// Sync ChucK worker state to the status ribbon.
-    void setStatusRibbonWorker(bool alive) noexcept;
-
-    /// Sync LSP connection state to the status ribbon.
-    void setStatusRibbonLsp(bool connected) noexcept;
 
     /**
      * Set the workspace root directory for search and quick-open.
@@ -690,7 +677,6 @@ private:
     // -----------------------------------------------------------------------
     std::unique_ptr<hathor::control::DiagnosticRegistry> diagnosticRegistry_;
     std::unique_ptr<hathor::ui::ProblemsPanel>           problemsPanel_;
-    std::unique_ptr<hathor::ui::StatusRibbon>            statusRibbon_;
 
     std::filesystem::path workspaceRoot_;
 

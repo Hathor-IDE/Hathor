@@ -166,8 +166,14 @@ void UITimer::timerCallback()
      // sourceOffset → glyph bounds per-event, route by slotId, and apply
      // the highlight overlay on the correct tab.
      // -----------------------------------------------------------------------
-     if (onUpdateNowPlaying && !firedEvents_.empty())
-         onUpdateNowPlaying(firedEvents_);
- }
+    if (onUpdateNowPlaying && !firedEvents_.empty())
+        onUpdateNowPlaying(firedEvents_);
+
+    // -----------------------------------------------------------------------
+    // (g) L-3: Sync StatusRibbon — transport, worker, LSP state
+    // -----------------------------------------------------------------------
+    if (onSyncStatusRibbon)
+        onSyncStatusRibbon();
+}
 
 } // namespace hathor::ui

@@ -422,6 +422,7 @@ EditorArea::EditorArea(AudioEngine& audio,
     problemsPanel_->onDiagnosticSelected = [this](const std::string& uri, int line, int column) {
         // Navigate to the diagnostic's source location via the existing
         // L-2 editor navigation — open the file and move the caret.
+        // Diagnostic line/column are 1-based; CodeDocument::Position is 0-based.
         std::string path = uri;
         const std::string prefix = "file://";
         if (path.substr(0, prefix.size()) == prefix)
@@ -432,19 +433,16 @@ EditorArea::EditorArea(AudioEngine& audio,
 
         if (auto* tab = activeTab())
         {
-            juce::CodeDocument::Position pos(tab->document(), line, column);
+            juce::CodeDocument::Position pos(tab->document(), line - 1, column - 1);
             tab->editor().moveCaretTo(pos, false);
 
             // Record in navigation history (L-2 integration)
-            navigationHistory_->navigateTo({uri, line, column});
+            navigationHistory_->navigateTo({uri, line - 1, column - 1});
         }
     };
     problemsPanel_->onClosePanel = [this]() {
         problemsPanel_->setVisible(false);
     };
-
-    statusRibbon_ = std::make_unique<StatusRibbon>(diagnosticRegistry_.get());
-    statusRibbon_->onErrorsClicked = [this]() { showProblemsPanel(); };
 
     addChildComponent(quickOpenDialog_.get());
     addChildComponent(workspaceSearchPanel_.get());
@@ -454,6 +452,9 @@ EditorArea::EditorArea(AudioEngine& audio,
     workspaceSearchPanel_->setVisible(false);
     symbolSearchPanel_->setVisible(false);
     problemsPanel_->setVisible(false);
+
+    // StatusRibbon is mounted by MainWindow at the bottom of the window;
+    // do NOT addChildComponent here — it stays parented to MainWindow.
 }
 
 EditorArea::~EditorArea()
@@ -843,6 +844,11 @@ HathorTab* EditorArea::activeTab() noexcept
     if (activeIndex_ < 0 || activeIndex_ >= static_cast<int>(tabs_.size()))
         return nullptr;
     return tabs_[static_cast<std::size_t>(activeIndex_)].get();
+}
+
+bool EditorArea::isLspConnected() const noexcept
+{
+    return lspClient_ != nullptr && lspClient_->isRunning();
 }
 
 // ---------------------------------------------------------------------------
@@ -2179,20 +2185,23 @@ void EditorArea::navigateToNextDiagnostic()
 
     // Find the first diagnostic at or after the current line
     const hathor::control::Diagnostic* next = nullptr;
-    for (const auto* d : diagnostics)
+    for (const auto& d : diagnostics)
     {
-        if (d->line >= curLine)
+        if (d.line >= curLine)
         {
-            next = d;
+            next = &d;
             break;
         }
     }
+    // If none at or after, wrap to the first diagnostic
     if (!next)
-        next = diagnostics.front();
+    {
+        next = &diagnostics.front();
+    }
 
     juce::CodeDocument::Position pos(tab->document(), next->line - 1, next->column - 1);
     tab->editor().moveCaretTo(pos, false);
-    navigationHistory_->navigateTo({uri, next->line, next->column});
+    navigationHistory_->navigateTo({uri, next->line - 1, next->column - 1});
     showStatus("Navigated to: " + juce::String(next->message));
 }
 
@@ -2220,18 +2229,21 @@ void EditorArea::navigateToPrevDiagnostic()
     const hathor::control::Diagnostic* prev = nullptr;
     for (auto it = diagnostics.rbegin(); it != diagnostics.rend(); ++it)
     {
-        if ((*it)->line < curLine)
+        if (it->line < curLine)
         {
-            prev = *it;
+            prev = &(*it);
             break;
         }
     }
+    // If none before, wrap to the last diagnostic
     if (!prev)
-        prev = diagnostics.back();
+    {
+        prev = &diagnostics.back();
+    }
 
     juce::CodeDocument::Position pos(tab->document(), prev->line - 1, prev->column - 1);
     tab->editor().moveCaretTo(pos, false);
-    navigationHistory_->navigateTo({uri, prev->line, prev->column});
+    navigationHistory_->navigateTo({uri, prev->line - 1, prev->column - 1});
     showStatus("Navigated to: " + juce::String(prev->message));
 }
 
@@ -2252,24 +2264,6 @@ void EditorArea::hideProblemsPanel()
 {
     if (problemsPanel_)
         problemsPanel_->setVisible(false);
-}
-
-void EditorArea::setStatusRibbonTransport(bool running, double bpm) noexcept
-{
-    if (statusRibbon_)
-        statusRibbon_->setTransport(running, bpm);
-}
-
-void EditorArea::setStatusRibbonWorker(bool alive) noexcept
-{
-    if (statusRibbon_)
-        statusRibbon_->setWorker(alive);
-}
-
-void EditorArea::setStatusRibbonLsp(bool connected) noexcept
-{
-    if (statusRibbon_)
-        statusRibbon_->setLsp(connected);
 }
 
 // ---------------------------------------------------------------------------

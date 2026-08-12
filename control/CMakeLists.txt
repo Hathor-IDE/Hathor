@@ -60,6 +60,7 @@ add_library(hathor-control OBJECT
      WorkingSet.cpp
      ChangeSet.cpp
      AgenticWorkflow.cpp
+    DiagnosticRegistry.cpp
 )
 
 target_include_directories(hathor-control

@@ -54,6 +54,9 @@
 // Task 3.9: SliderPanel is now implemented — include the real header.
 #include "SliderPanel.hpp"
 
+// L-3: StatusRibbon for unified diagnostic/status display
+#include "StatusRibbon.hpp"
+
 // ChatSidebar and AcpAgentSession are now fully implemented (task 5.1).
 #include "ChatSidebar.hpp"
 #include "AcpAgentSession.hpp"
@@ -155,6 +158,9 @@ private:
     std::unique_ptr<hathor::ui::ChatSidebar>       chatSidebar_;
     std::unique_ptr<hathor::ui::VisualizerPanel>   visualizerPanel_;
     std::unique_ptr<hathor::ui::UITimer>            uiTimer_;
+
+    // L-3: Unified Problems / Diagnostics status ribbon (bottom of window)
+    std::unique_ptr<hathor::ui::StatusRibbon>        statusRibbon_;
 
     /// Real SliderPanel — created in the constructor with ci_.
     /// Passed to UITimer for bidirectional BPM/gain sync (Req 26.4, 26.9).

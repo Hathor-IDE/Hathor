@@ -197,14 +197,13 @@ private:
 
     bool showErrors_    = true;
     bool showWarnings_  = true;
-    bool showInfo_      = false;
-    std::string         sourceFilter_;  ///< empty = all sources
+    // Source filter (empty string = all sources)
+    std::string         sourceFilterStr_; ///< empty = all sources
 
     // Row height constants
     static constexpr int kRowHeight       = 22;
     static constexpr int kHeaderHeight    = 28;
     static constexpr int kFieldHeight     = 24;
-    static constexpr int kPanelHeight     = 220;
     static constexpr int kMargin          = 8;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(ProblemsPanel)

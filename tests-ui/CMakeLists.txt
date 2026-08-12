@@ -56,8 +56,10 @@ add_executable(hathor-ui-tests
        test_workspace_search_model.cpp
        test_symbol_search_model.cpp
        test_lsp_jsonrpc_navigation.cpp
-       test_action_registry.cpp
-      ${CMAKE_SOURCE_DIR}/ui/HathorFileParser.cpp
+        test_action_registry.cpp
+        # L-3: Diagnostic registry unit tests
+        test_diagnostic_registry.cpp
+        ${CMAKE_SOURCE_DIR}/ui/HathorFileParser.cpp
      ${CMAKE_SOURCE_DIR}/ui/ExplorerFileTypes.cpp
      ${CMAKE_SOURCE_DIR}/ui/TreeBuilder.cpp
      ${CMAKE_SOURCE_DIR}/ui/ChuckKeywords.cpp
@@ -73,11 +75,12 @@ add_executable(hathor-ui-tests
      ${CMAKE_SOURCE_DIR}/ui/FindReplaceModel.cpp
        ${CMAKE_SOURCE_DIR}/ui/TabReorderModel.cpp
        ${CMAKE_SOURCE_DIR}/ui/RecentlyClosedTabs.cpp
-       ${CMAKE_SOURCE_DIR}/ui/ActionRegistry.cpp
-       ${CMAKE_SOURCE_DIR}/ui/NavigationHistory.cpp
-       ${CMAKE_SOURCE_DIR}/ui/WorkspaceSearchModel.cpp
-       ${CMAKE_SOURCE_DIR}/ui/SymbolSearchModel.cpp
-     ${CMAKE_SOURCE_DIR}/app/LiveJamSessionManager.cpp
+      ${CMAKE_SOURCE_DIR}/ui/ActionRegistry.cpp
+        ${CMAKE_SOURCE_DIR}/ui/NavigationHistory.cpp
+        ${CMAKE_SOURCE_DIR}/ui/WorkspaceSearchModel.cpp
+        ${CMAKE_SOURCE_DIR}/ui/SymbolSearchModel.cpp
+      ${CMAKE_SOURCE_DIR}/control/DiagnosticRegistry.cpp
+      ${CMAKE_SOURCE_DIR}/app/LiveJamSessionManager.cpp
 )
 
 target_compile_features(hathor-ui-tests PRIVATE cxx_std_20)
@@ -93,6 +96,7 @@ target_include_directories(hathor-ui-tests
         ${CMAKE_SOURCE_DIR}/app
         ${CMAKE_SOURCE_DIR}/engine/include
         ${CMAKE_SOURCE_DIR}/ui
+        ${CMAKE_SOURCE_DIR}/control
 )
 
 target_link_libraries(hathor-ui-tests
