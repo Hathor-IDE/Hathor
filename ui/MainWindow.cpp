@@ -161,8 +161,8 @@ MainWindow::MainWindow(AudioEngine& audio,
                 activityRibbon_->setActivePanel(wantsOpen ? hathor::ui::Panel::Explorer : hathor::ui::Panel::None);
                 resized(); // re-lay-out editor area
             }
-              else if (panel == hathor::ui::Panel::None)
-             {
+            else if (panel == hathor::ui::Panel::None)
+            {
                  // Settings button: open or focus the Settings tab (A2).
                  if (editorArea_)
                  {
