@@ -135,7 +135,8 @@ TerminalProcess::~TerminalProcess()
 // -----------------------------------------------------------------------
 
 bool TerminalProcess::launch(const std::vector<std::string>& argv,
-                             const std::string& cwd)
+                             const std::string& cwd,
+                             bool needStdin)
 {
     if (argv.empty())
     {
@@ -158,9 +159,9 @@ bool TerminalProcess::launch(const std::vector<std::string>& argv,
 
     // Spawn the platform-specific process.
 #ifdef _WIN32
-    if (!spawnWindows(argv, cwd))
+    if (!spawnWindows(argv, cwd, needStdin))
 #else
-    if (!spawnPosix(argv, cwd))
+    if (!spawnPosix(argv, cwd, needStdin))
 #endif
     {
         std::lock_guard<std::mutex> lk(errorMutex_);
@@ -530,7 +531,8 @@ std::string TerminalProcess::resolvePath(const std::string& name)
 }
 
 bool TerminalProcess::spawnPosix(const std::vector<std::string>& argv,
-                                  const std::string& cwd)
+                                  const std::string& cwd,
+                                  bool needStdin)
 {
     // Create a pipe for the child's stdout (stderr is merged into stdout).
     // stdoutPipe_[0] = read end (parent), stdoutPipe_[1] = write end (child)
@@ -541,6 +543,21 @@ bool TerminalProcess::spawnPosix(const std::vector<std::string>& argv,
         std::lock_guard<std::mutex> lk(errorMutex_);
         lastError_ = "pipe() failed: " + std::string(std::strerror(errno));
         return false;
+    }
+
+    // Optionally create a stdin pipe so the parent can write commands to
+    // the child (used by L-6 DebugSession).
+    int stdinPipe[2] = {-1, -1};
+    if (needStdin)
+    {
+        if (::pipe(stdinPipe) != 0)
+        {
+            std::lock_guard<std::mutex> lk(errorMutex_);
+            lastError_ = "stdin pipe() failed: " + std::string(std::strerror(errno));
+            ::close(stdoutPipe[0]);
+            ::close(stdoutPipe[1]);
+            return false;
+        }
     }
 
     // Set the stdout read end to non-blocking so our worker thread can poll
@@ -559,9 +576,20 @@ bool TerminalProcess::spawnPosix(const std::vector<std::string>& argv,
     // Child stderr → stdoutPipe[1] (merge stderr into stdout)
     ::posix_spawn_file_actions_adddup2(&fileActions, stdoutPipe[1], STDERR_FILENO);
 
+    // If stdin pipe was created, wire child's stdin to stdinPipe[0].
+    if (needStdin)
+    {
+        ::posix_spawn_file_actions_adddup2(&fileActions, stdinPipe[0], STDIN_FILENO);
+    }
+
     // Close all pipe ends in the child (after dup2).
     ::posix_spawn_file_actions_addclose(&fileActions, stdoutPipe[0]);
     ::posix_spawn_file_actions_addclose(&fileActions, stdoutPipe[1]);
+    if (needStdin)
+    {
+        ::posix_spawn_file_actions_addclose(&fileActions, stdinPipe[0]);
+        ::posix_spawn_file_actions_addclose(&fileActions, stdinPipe[1]);
+    }
 
     // Optionally set the working directory.
     // On macOS/BSD and glibc, addchdir_np is available.

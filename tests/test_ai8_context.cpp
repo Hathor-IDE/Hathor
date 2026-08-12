@@ -172,9 +172,12 @@ public:
     }
     VmStatus getVmStatus(int) const noexcept override      { return VmStatus{}; }
     AudioStatus getAudioStatus() const noexcept override {
-        return AudioStatus{running_, bpm_, 44100, gain_, "flat", 0, true, 0};
+        return AudioStatus{running_, bpm_, 44100, gain_, "flat", 0, true, 0, 0.0, 0};
     }
-    std::vector<SlotPlayback> listSlotPlayback() const noexcept override { return {}; }
+    int activeVoiceCount() const noexcept override { return 0; }
+    void activeVoices(std::vector<VoiceInfo>& out) const override { (void)out; }
+
+        std::vector<SlotPlayback> listSlotPlayback() const noexcept override { return {}; }
     std::vector<InstrumentInfo> listChuckInstruments(
         const std::filesystem::path&) const noexcept override { return {}; }
     std::filesystem::path studioInstrumentsDir(

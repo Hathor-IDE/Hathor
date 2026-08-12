@@ -125,12 +125,16 @@ public:
     /**
      * Launch a command.
      *
-     * @param argv  Argument vector: argv[0] = program name, argv[1..] = args.
-     * @param cwd   Working directory for the child process (empty = inherit parent).
+     * @param argv      Argument vector: argv[0] = program name, argv[1..] = args.
+     * @param cwd       Working directory for the child process (empty = inherit parent).
+     * @param needStdin If true, create a stdin pipe for the child so the
+     *                  parent can write commands via writeStdin().  Used by
+     *                  the L-6 DebugSession to drive a native debugger CLI.
      * @return true on successful spawn; false and sets lastError() otherwise.
      */
     bool launch(const std::vector<std::string>& argv,
-                const std::string& cwd = {});
+                const std::string& cwd = {},
+                bool needStdin = false);
 
     /**
      * Request graceful cancellation of the running process.
@@ -197,6 +201,14 @@ public:
     // -----------------------------------------------------------------------
 
     TerminalRingBuffer& outputRing() noexcept { return outputRing_; }
+
+    // -----------------------------------------------------------------------
+    // Write to the child's stdin (L-6: debugger command integration)
+    // -----------------------------------------------------------------------
+    // Sends data to the child process's stdin.  Non-blocking on the JUCE
+    // message thread.  Returns true if the write succeeded (child stdin open),
+    // false otherwise (child exited or stdin not available).
+    bool writeStdin(const char* data, std::size_t len) noexcept;
 
 private:
     // -----------------------------------------------------------------------

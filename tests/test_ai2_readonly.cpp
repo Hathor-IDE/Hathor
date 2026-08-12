@@ -280,6 +280,7 @@ public:
     VmStatus getVmStatus(int idx) const noexcept override {
         VmStatus status;
         status.hasWorker = workerAlive_;
+        status.workerStatus = workerAlive_ ? "healthy" : "not_started";
         if (idx >= 0 && idx < kNumSlots) {
             if (vmStates_[idx].non_empty_) {
                 status.state = vmStates_[idx].message;
@@ -296,9 +297,15 @@ public:
         return AudioStatus{
             running_, bpm_, sampleRate_, gain_,
             hathor::presetName(eqPreset_), sampleClock_,
-            deviceOpen_, 0
+            deviceOpen_, 0,
+            0.0,  // cyclePos
+            0   // currentBeat
         };
     }
+
+    // L-6: active voice inspection (test facade — no real voices)
+    int activeVoiceCount() const noexcept override { return 0; }
+    void activeVoices(std::vector<VoiceInfo>& out) const override { (void)out; }
 
     std::vector<SlotPlayback> listSlotPlayback() const noexcept override {
         std::vector<SlotPlayback> result;

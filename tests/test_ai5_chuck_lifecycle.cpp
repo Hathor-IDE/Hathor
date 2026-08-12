@@ -237,8 +237,10 @@ public:
     // --- AI-2 read-only stubs (needed for ControlInterface construction) ---
     AudioStatus getAudioStatus() const noexcept override {
         return AudioStatus{running_, bpm_, 44100, gain_,
-                            hathor::presetName(eqPreset_), 0, true, 0};
+                            hathor::presetName(eqPreset_), 0, true, 0, 0.0, 0};
     }
+    int activeVoiceCount() const noexcept override { return 0; }
+    void activeVoices(std::vector<VoiceInfo>& out) const override { (void)out; }
     std::vector<AudioEngineFacade::SlotInfo> listSlots() const noexcept override { return {}; }
     AudioEngineFacade::SlotInfo getSlotInfo(int) const noexcept override { return {}; }
     VmStatus getVmStatus(int) const noexcept override { return {}; }

@@ -4,8 +4,10 @@
 #pragma once
 
 #include <array>
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <vector>
 
 #include "SampleBank.hpp"
 #include "hathor/ParamMap.hpp"
@@ -19,9 +21,12 @@
 // ---------------------------------------------------------------------------
 
 struct Voice {
-    enum class State { Free, Playing };
+    enum class State : uint8_t { Free, Playing };
 
-    State       state       = State::Free;
+    /// Atomic so the message thread can read active-voice count without
+    /// blocking the audio callback (L-6).  The audio thread remains the
+    /// sole writer; the message thread only does relaxed loads.
+    std::atomic<State> state     {State::Free};
     uint64_t    startSample = 0;       ///< Absolute sample when voice was triggered
     int64_t     cutGroup    = -1;      ///< -1 = no cut group
     int8_t      slotId      = -1;      ///< Originating slot index (-1 = no owner)
@@ -113,6 +118,36 @@ public:
 
     /// Immediately silence all Playing voices belonging to @p slotId (A3).
     void silenceSlot(int8_t slotId) noexcept;
+
+    // -----------------------------------------------------------------------
+    // L-6: Read-only active-voice inspection
+    // -----------------------------------------------------------------------
+    // These accessors let the runtime inspector surface enumerate active
+    // voices without blocking the audio callback.  They perform only
+    // relaxed atomic loads on Voice::state (the only field guaranteed
+    // to be updated from the audio thread).  All other fields (slotId,
+    // startSample, gain, pan, speed) are set once at trigger time and
+    // never mutated mid-voice, so relaxed reads are safe.
+    // -----------------------------------------------------------------------
+
+    /// Snapshot of an active voice for inspection (L-6).
+    struct VoiceInfo {
+        int8_t   slotId;       ///< Originating slot index (-1 = none)
+        uint64_t startSample;  ///< Absolute sample when the voice was triggered
+        float    gain;
+        float    pan;
+        double   speed;
+        std::size_t sampleLen; ///< Total interleaved float samples
+    };
+
+    /// Returns the number of currently-playing voices (≤ kVoices).
+    /// RT-safe: only relaxed atomic loads, no allocation, no blocking.
+    int activeVoiceCount() const noexcept;
+
+    /// Copies a snapshot of all active voices into the provided vector.
+    /// May allocate — call only from the message or control thread, never
+    /// from the audio callback.  Performs relaxed loads on Voice::state.
+    void activeVoices(std::vector<VoiceInfo>& out) const;
 
 private:
     std::array<Voice, kVoices> voices_{};

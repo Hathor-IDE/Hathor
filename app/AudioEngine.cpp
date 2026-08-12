@@ -1113,6 +1113,21 @@ AudioEngineFacade::VmStatus AudioEngine::getVmStatus(int slotIndex) const noexce
     VmStatus status;
     status.hasWorker = (workerMgr_ != nullptr) && workerMgr_->isWorkerAlive();
 
+    // L-6: expose the structured worker status (health/restart/crash state).
+    if (workerMgr_)
+        status.workerStatus = [this]() -> std::string {
+            const auto ws = workerMgr_->status();
+            switch (ws) {
+                case hathor::AudioWorkerManager::WorkerStatus::Healthy:          return "healthy";
+                case hathor::AudioWorkerManager::WorkerStatus::ShuttingDown:     return "shutting_down";
+                case hathor::AudioWorkerManager::WorkerStatus::Dead:             return "dead";
+                case hathor::AudioWorkerManager::WorkerStatus::StaleGeneration:  return "stale_generation";
+                case hathor::AudioWorkerManager::WorkerStatus::NotStarted:       return "not_started";
+                case hathor::AudioWorkerManager::WorkerStatus::StartError:       return "start_error";
+            }
+            return "unknown";
+        }();
+
     if (slotIndex < 0 || slotIndex >= kNumSlots) {
         if (!status.hasWorker)
             status.state = "not_started";
@@ -1147,7 +1162,43 @@ AudioEngineFacade::AudioStatus AudioEngine::getAudioStatus() const noexcept
     s.sampleClock = sampleClock_.load(std::memory_order_relaxed);
     s.deviceOpen = (s.sampleRate > 0);  // sample rate set when device opens
     s.activeRenders = activeRenderCount();
+
+    // L-6: Compute cycle position and beat from sample clock + BPM.
+    // This mirrors the formula in the audio callback (Req 9.4) but is
+    // computed from atomics — no audio-thread blocking.
+    //   cyclePos = (sampleClock * bpm) / (sampleRate * 60)
+    // The fractional part is [0, 1) within the current bar/cycle.
+    // Beat is 1-based within the bar (assuming 4/4 time, 4 beats per bar).
+    if (s.sampleRate > 0 && s.bpm > 0.0) {
+        const double cyclePos =
+            (static_cast<double>(s.sampleClock) * s.bpm) /
+            (static_cast<double>(s.sampleRate) * 60.0);
+        // Fractional part within the current cycle (bar).
+        s.cyclePos = cyclePos - std::floor(cyclePos);
+        // Beat within the bar, 1-based (4/4 time → 4 beats per bar).
+        // beat = floor(cyclePos * 4) mod 4, then +1.
+        s.currentBeat = static_cast<int>(std::floor(s.cyclePos * 4.0)) + 1;
+        if (s.currentBeat > 4) s.currentBeat = 1;
+        if (s.currentBeat < 1) s.currentBeat = 1;
+    } else {
+        s.cyclePos = 0.0;
+        s.currentBeat = 0;
+    }
     return s;
+}
+
+// ---------------------------------------------------------------------------
+// L-6: Active-voice inspection (delegates to VoicePool)
+// ---------------------------------------------------------------------------
+
+int AudioEngine::activeVoiceCount() const noexcept
+{
+    return voicePool_.activeVoiceCount();
+}
+
+void AudioEngine::activeVoices(std::vector<AudioEngineFacade::VoiceInfo>& out) const
+{
+    voicePool_.activeVoices(out);
 }
 
 std::vector<AudioEngineFacade::SlotPlayback> AudioEngine::listSlotPlayback() const noexcept

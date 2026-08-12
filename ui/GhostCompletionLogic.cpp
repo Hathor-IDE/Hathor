@@ -419,6 +419,7 @@ std::optional<GhostResult> GhostCompletionLogic::onProviderFailure()
 
 std::optional<AcceptCompletionParams> GhostCompletionLogic::onAccept(int64_t nowMs)
 {
+    (void)nowMs;
     if (!activeGhost_.has_value())
         return std::nullopt;
 
@@ -458,6 +459,7 @@ std::optional<AcceptCompletionParams> GhostCompletionLogic::onAccept(int64_t now
 
 std::optional<PartialAcceptResult> GhostCompletionLogic::onPartialAccept(size_t acceptLen, int64_t nowMs)
 {
+    (void)nowMs;
     if (!activeGhost_.has_value())
         return std::nullopt;
 
@@ -547,6 +549,7 @@ size_t GhostCompletionLogic::findNextTokenBoundary(std::string_view text) noexce
 
 std::optional<RejectCompletionParams> GhostCompletionLogic::onReject(int64_t nowMs)
 {
+    (void)nowMs;
     if (!activeGhost_.has_value())
         return std::nullopt;
 

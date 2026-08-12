@@ -545,7 +545,9 @@ nlohmann::json ProjectReadFacade::getAudioStatus() const
         {"eq_preset",     audioStatus.eqPreset},
         {"sample_clock",  audioStatus.sampleClock},
         {"device_open",   audioStatus.deviceOpen},
-        {"active_renders", audioStatus.activeRenders}
+        {"active_renders", audioStatus.activeRenders},
+        {"cycle_pos",     audioStatus.cyclePos},
+        {"current_beat",  audioStatus.currentBeat}
     };
 
     // Per-slot playback state
@@ -570,7 +572,15 @@ nlohmann::json ProjectReadFacade::getAudioStatus() const
     const auto vmStatus = audio_.getVmStatus(0);
     nlohmann::json worker = {
         {"alive",       vmStatus.hasWorker},
-        {"generation",  vmStatus.generation}
+        {"generation",  vmStatus.generation},
+        {"status",      vmStatus.workerStatus},
+        {"last_error",  vmStatus.lastError}
+    };
+
+    // L-6: Active voice count
+    nlohmann::json voices = {
+        {"count", audio_.activeVoiceCount()},
+        {"max",   AudioEngineFacade::kMaxVoices}
     };
 
     return nlohmann::json{
@@ -578,6 +588,7 @@ nlohmann::json ProjectReadFacade::getAudioStatus() const
         {"transport",  std::move(transport)},
         {"slots",      std::move(slotsJson)},
         {"worker",     std::move(worker)},
+        {"voices",     std::move(voices)},
         {"timestamp",  isoTimestamp()}
     };
 }

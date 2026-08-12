@@ -256,9 +256,12 @@ public:
     AudioStatus getAudioStatus() const noexcept override {
         return AudioStatus{running_, bpm_, sampleRate_, gain_,
                            hathor::presetName(eqPreset_), sampleClock_,
-                           deviceOpen_, 0};
+                           deviceOpen_, 0, 0.0, 0};
     }
-    std::vector<SlotPlayback> listSlotPlayback() const noexcept override {
+    int activeVoiceCount() const noexcept override { return 0; }
+    void activeVoices(std::vector<VoiceInfo>& out) const override { (void)out; }
+
+        std::vector<SlotPlayback> listSlotPlayback() const noexcept override {
         std::vector<SlotPlayback> result;
         result.reserve(kNumSlots);
         for (int i = 0; i < kNumSlots; ++i) {

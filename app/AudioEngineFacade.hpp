@@ -290,6 +290,10 @@ public:
         std::string  shredInfo;      ///< e.g. "shred_id=5 source_hash=0x1234" (from queryTabVM)
         uint64_t     generation;     ///< VM generation counter (0 if none)
         std::string  lastError;      ///< last error message (empty if none)
+        /// Worker process status: "healthy" | "shutting_down" | "dead" |
+        /// "stale_generation" | "not_started" | "start_error" | "unknown"
+        /// (L-6: worker liveness / restart / crash state)
+        std::string  workerStatus;
     };
 
     /// Query the ChucK VM status for a tab/slot.
@@ -307,6 +311,11 @@ public:
         uint64_t     sampleClock;   ///< current sample clock value (monotonic)
         bool         deviceOpen;    ///< true if the audio device is open
         int          activeRenders; ///< number of in-flight bake renders
+        /// Current cycle position [0, 1) within the active bar, computed from
+        /// sampleClock + bpm + sampleRate (L-6).  0.0 when transport stopped.
+        double       cyclePos;
+        /// Current beat within the bar (1-based), derived from cyclePos (L-6).
+        int          currentBeat;
     };
 
     /// Snapshot of the current audio transport / engine state.
@@ -323,6 +332,28 @@ public:
 
     /// Per-slot playback status for all registered slots.
     virtual std::vector<SlotPlayback> listSlotPlayback() const noexcept = 0;
+
+    /// L-6: Information about one active voice (sample playback).
+    /// Source of truth: VoicePool::voices_[] (audio-thread-owned).
+    struct VoiceInfo {
+        int8_t   slotId;          ///< originating slot index (-1 = none)
+        uint64_t startSample;     ///< absolute sample when the voice was triggered
+        float    gain;
+        float    pan;
+        double   speed;
+        std::size_t sampleLen;    ///< total interleaved float samples
+    };
+
+    /// L-6: Maximum number of concurrent voices (matches VoicePool::kVoices).
+    static constexpr int kMaxVoices = 32;
+
+    /// L-6: Number of currently-playing voices (≤ 32).
+    /// RT-safe: only relaxed atomic loads, no allocation or blocking.
+    virtual int activeVoiceCount() const noexcept = 0;
+
+    /// L-6: Copy active-voice snapshots into @p out.
+    /// May allocate — call from the message or control thread only.
+    virtual void activeVoices(std::vector<VoiceInfo>& out) const = 0;
 
     /// Instrument asset lifecycle information (B8-K1/K2/K3/K4).
     struct InstrumentInfo {

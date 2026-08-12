@@ -313,6 +313,12 @@ public:
     /// Read-only audio transport/engine state snapshot.
     AudioStatus getAudioStatus() const noexcept override;
 
+    /// L-6: Number of currently-playing voices (≤ 32). RT-safe.
+    int activeVoiceCount() const noexcept override;
+
+    /// L-6: Copy active-voice snapshots into @p out. May allocate.
+    void activeVoices(std::vector<VoiceInfo>& out) const override;
+
     /// Read-only per-slot playback status.
     std::vector<SlotPlayback> listSlotPlayback() const noexcept override;
 

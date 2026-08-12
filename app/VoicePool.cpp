@@ -70,7 +70,7 @@ int VoicePool::findVoiceSlot(int64_t newCutGroup, uint64_t /*absoluteStart*/) no
 {
     // Step 1: free voice
     for (int i = 0; i < kVoices; ++i) {
-        if (voices_[i].state == Voice::State::Free)
+        if (voices_[i].state.load(std::memory_order_relaxed) == Voice::State::Free)
             return i;
     }
 
@@ -79,7 +79,7 @@ int VoicePool::findVoiceSlot(int64_t newCutGroup, uint64_t /*absoluteStart*/) no
     uint64_t oldest2Start = std::numeric_limits<uint64_t>::max();
     for (int i = 0; i < kVoices; ++i) {
         const Voice& v = voices_[i];
-        if (v.state == Voice::State::Playing && v.cutGroup != newCutGroup) {
+        if (v.state.load(std::memory_order_relaxed) == Voice::State::Playing && v.cutGroup != newCutGroup) {
             if (v.startSample < oldest2Start) {
                 oldest2Start = v.startSample;
                 oldest2      = i;
@@ -94,7 +94,7 @@ int VoicePool::findVoiceSlot(int64_t newCutGroup, uint64_t /*absoluteStart*/) no
     uint64_t oldest3Start = std::numeric_limits<uint64_t>::max();
     for (int i = 0; i < kVoices; ++i) {
         const Voice& v = voices_[i];
-        if (v.state == Voice::State::Playing) {
+        if (v.state.load(std::memory_order_relaxed) == Voice::State::Playing) {
             if (v.startSample < oldest3Start) {
                 oldest3Start = v.startSample;
                 oldest3      = i;
@@ -204,11 +204,11 @@ void VoicePool::trigger(const hathor::ParamMap& params,
     if (cutGroup > 0) {
         for (int i = 0; i < kVoices; ++i) {
             Voice& v = voices_[i];
-            if (v.state == Voice::State::Playing && v.cutGroup == cutGroup) {
+            if (v.state.load(std::memory_order_relaxed) == Voice::State::Playing && v.cutGroup == cutGroup) {
                 // Silence at sampleOffset — for this Phase 1 implementation
                 // we set the voice Free immediately (Req 10.5 says "immediately silence")
                 (void)sampleOffset; // offset noted; instant silence is compliant
-                v.state = Voice::State::Free;
+                v.state.store(Voice::State::Free, std::memory_order_relaxed);
             }
         }
     }
@@ -234,7 +234,7 @@ void VoicePool::trigger(const hathor::ParamMap& params,
     // Flush filter state so each voice starts with zeroed delays.
     resetFilterState(voice);
 
-    voice.state         = Voice::State::Playing;
+    voice.state.store(Voice::State::Playing, std::memory_order_relaxed);
     voice.startSample   = absoluteStart;
     voice.cutGroup      = cutGroup;
     voice.slotId        = slotId;
@@ -267,7 +267,7 @@ void VoicePool::mix(float* left, float* right, int numSamples, int sampleRate)
 
     for (int vi = 0; vi < kVoices; ++vi) {
         Voice& v = voices_[vi];
-        if (v.state != Voice::State::Playing)
+        if (v.state.load(std::memory_order_relaxed) != Voice::State::Playing)
             continue;
 
         // Pre-compute per-voice gain/pan values
@@ -290,7 +290,7 @@ void VoicePool::mix(float* left, float* right, int numSamples, int sampleRate)
 
         for (int s = 0; s < numSamples; ++s) {
             if (v.readPos >= static_cast<double>(endFrame)) {
-                v.state = Voice::State::Free;
+                v.state.store(Voice::State::Free, std::memory_order_relaxed);
                 break;
             }
 
@@ -300,7 +300,7 @@ void VoicePool::mix(float* left, float* right, int numSamples, int sampleRate)
 
             // Clamp frame0 to valid range
             if (frame0 >= totalFrames) {
-                v.state = Voice::State::Free;
+                v.state.store(Voice::State::Free, std::memory_order_relaxed);
                 break;
             }
 
@@ -357,7 +357,7 @@ void VoicePool::mix(float* left, float* right, int numSamples, int sampleRate)
 void VoicePool::silenceAll() noexcept
 {
     for (Voice& v : voices_)
-        v.state = Voice::State::Free;
+        v.state.store(Voice::State::Free, std::memory_order_relaxed);
 }
 
 // ---------------------------------------------------------------------------
@@ -368,5 +368,36 @@ void VoicePool::silenceSlot(int8_t slotId) noexcept
 {
     for (Voice& v : voices_)
         if (v.slotId == slotId)
-            v.state = Voice::State::Free;
+            v.state.store(Voice::State::Free, std::memory_order_relaxed);
+}
+
+// ---------------------------------------------------------------------------
+// L-6: Active-voice inspection (read-only, RT-safe)
+// ---------------------------------------------------------------------------
+
+int VoicePool::activeVoiceCount() const noexcept
+{
+    int count = 0;
+    for (const Voice& v : voices_)
+        if (v.state.load(std::memory_order_relaxed) == Voice::State::Playing)
+            ++count;
+    return count;
+}
+
+void VoicePool::activeVoices(std::vector<VoiceInfo>& out) const
+{
+    for (const Voice& v : voices_)
+    {
+        if (v.state.load(std::memory_order_relaxed) != Voice::State::Playing)
+            continue;
+
+        VoiceInfo info;
+        info.slotId       = v.slotId;
+        info.startSample  = v.startSample;
+        info.gain         = v.gain;
+        info.pan          = v.pan;
+        info.speed        = v.speed;
+        info.sampleLen    = v.sampleLen;
+        out.push_back(std::move(info));
+    }
 }

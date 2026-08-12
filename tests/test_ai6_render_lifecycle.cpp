@@ -168,12 +168,15 @@ public:
         uint64_t clock = sampleClock_.fetch_add(1, std::memory_order_relaxed);
         return AudioStatus{true, bpm_, 44100, gain_,
                           hathor::presetName(eqPreset_),
-                          clock, true, 1};
+                          clock, true, 1, 0.0, 0};
     }
     std::vector<SlotInfo> listSlots() const noexcept override { return {}; }
     SlotInfo getSlotInfo(int) const noexcept override { return {}; }
     VmStatus getVmStatus(int) const noexcept override { return {}; }
-    std::vector<SlotPlayback> listSlotPlayback() const noexcept override { return {}; }
+    int activeVoiceCount() const noexcept override { return 0; }
+    void activeVoices(std::vector<VoiceInfo>& out) const override { (void)out; }
+
+        std::vector<SlotPlayback> listSlotPlayback() const noexcept override { return {}; }
     std::vector<InstrumentInfo> listChuckInstruments(
         const fs::path&) const noexcept override { return {}; }
     fs::path studioInstrumentsDir(const fs::path& projectDir) const noexcept override {

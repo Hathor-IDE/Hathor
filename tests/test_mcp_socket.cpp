@@ -217,8 +217,11 @@ public:
      VmStatus getVmStatus(int) const noexcept override { return VmStatus{}; }
      AudioStatus getAudioStatus() const noexcept override
      {
-         return AudioStatus{false, 120.0, 0, 1.0f, "flat", 0, false, 0};
+         return AudioStatus{false, 120.0, 0, 1.0f, "flat", 0, false, 0, 0.0, 0};
      }
+
+     int activeVoiceCount() const noexcept override { return 0; }
+     void activeVoices(std::vector<VoiceInfo>& out) const override { (void)out; }
      std::vector<SlotPlayback> listSlotPlayback() const noexcept override { return {}; }
      std::vector<InstrumentInfo> listChuckInstruments(
          const std::filesystem::path&) const noexcept override { return {}; }
