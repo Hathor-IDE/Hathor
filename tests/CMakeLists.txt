@@ -625,6 +625,47 @@ include(Catch)
 catch_discover_tests(hathor-b8-k4-sample-registration-tests DISCOVERY_MODE PRE_TEST)
 
 # ---------------------------------------------------------------------------
+# hathor-b8-real-audio-bake-tests — B8 end-to-end REAL-audio bake verification
+#
+# Proves the baked .wav contains the ChucK instrument's ACTUAL generated
+# audio (frequency + amplitude analysis distinguishing it from the legacy
+# placeholder tone), that the real WAV binds into SampleBank and resolves via
+# .hathor mini-notation without a live VM, that the .hathor_assets
+# .ck/.wav pair persists, that silent programs fail honestly, and that
+# baking one tab leaves another tab's real execution untouched.
+# Spawns the real hathor-audio-worker binary.
+#
+# JUCE-free: links hathor-audio-worker-lib + hathor-engine + Catch2.
+# ---------------------------------------------------------------------------
+add_executable(hathor-b8-real-audio-bake-tests
+    test_b8_real_audio_bake.cpp
+    ${CMAKE_SOURCE_DIR}/app/ChuckRenderWriter.cpp
+)
+
+target_compile_features(hathor-b8-real-audio-bake-tests PRIVATE cxx_std_20)
+target_compile_options(hathor-b8-real-audio-bake-tests PRIVATE -Wall -Wextra -Werror)
+
+target_include_directories(hathor-b8-real-audio-bake-tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/app
+    ${CMAKE_SOURCE_DIR}/app/audio-worker
+    ${CMAKE_SOURCE_DIR}/engine/include
+)
+
+target_link_libraries(hathor-b8-real-audio-bake-tests PRIVATE
+    hathor-audio-worker-lib
+    hathor-engine
+    Catch2::Catch2WithMain
+)
+
+target_compile_definitions(hathor-b8-real-audio-bake-tests PRIVATE
+    CMAKE_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+    CMAKE_BINARY_DIR="${CMAKE_BINARY_DIR}"
+)
+
+include(Catch)
+catch_discover_tests(hathor-b8-real-audio-bake-tests DISCOVERY_MODE PRE_TEST)
+
+# ---------------------------------------------------------------------------
 # Integration tests (require the full hathor binary; skipped if app is off)
 # ---------------------------------------------------------------------------
 add_subdirectory(integration)

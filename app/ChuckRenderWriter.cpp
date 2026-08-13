@@ -537,14 +537,136 @@ void ChuckRenderWriter::runRender(std::shared_ptr<detail::RenderJob> job)
     }
 
     // -----------------------------------------------------------------------
+    // B4-K4: Wait for the shred to actually START EXECUTING in the real VM.
+    //
+    // evaluateCkTab() returns as soon as the dispatcher has validated the
+    // source — the shred is compiled+sporked asynchronously on the per-tab
+    // VM thread (instance creation + compile + first run() step can take
+    // ~50-200 ms).  Draining immediately would capture only pre-execution
+    // silence.  We poll vm_query until the VM reports a real loaded shred id
+    // (>= 0).  A program that compiles but never starts executing must NOT
+    // be reported as a successful bake (B4-K7 / audit honesty requirement).
+    //
+    // Fresh-VM assumption: the bake flow activates the render's own tab VM
+    // (or recreates one) and destroys it after every render, so the shred id
+    // observed here belongs to THIS render's program (the VM's removeAllShreds
+    // replace semantics also guarantee the previous shred is gone before the
+    // new one sporks).  Reusing a tab that still hosts a live shred is not a
+    // supported render flow.
+    // -----------------------------------------------------------------------
+    {
+        const uint64_t genBeforeWait = worker_->generation();
+        auto loadDeadline = std::chrono::steady_clock::now()
+            + std::chrono::seconds(10);
+        bool loaded = false;
+        bool cancelledDuringWait = false;
+        bool workerDiedDuringWait = false;
+        while (std::chrono::steady_clock::now() < loadDeadline) {
+            if (job->cancelFlag->load(std::memory_order_acquire)) {
+                cancelledDuringWait = true;
+                break;
+            }
+            // Short-circuit if the worker dies or restarts mid-load: polling
+            // a dead worker would otherwise burn the full 10 s budget.
+            if (!worker_->isWorkerAlive() ||
+                worker_->generation() != genBeforeWait) {
+                workerDiedDuringWait = true;
+                break;
+            }
+            std::string q = worker_->queryTabVM(tabId).message;
+            auto pos = q.find("shred_id=");
+            if (pos != std::string::npos) {
+                try {
+                    if (std::stol(q.substr(pos + 9)) >= 0) {
+                        loaded = true;
+                        break;
+                    }
+                } catch (...) { /* keep polling */ }
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(25));
+        }
+        if (!loaded && workerDiedDuringWait) {
+            result.success = false;
+            result.state = RenderState::Failed;
+            result.errorMessage = "audio worker died or restarted while loading the "
+                                  "ChucK program";
+            job->state->store(RenderState::Failed, std::memory_order_release);
+            worker_->destroyTabVM(tabId);
+            if (job->onComplete)
+                job->onComplete(result);
+            return;
+        }
+        if (!loaded) {
+            // B8-K2 §12: cancellation during the load wait must surface as
+            // Cancelled (not Failed) and never publish a partial WAV.
+            if (cancelledDuringWait) {
+                job->state->store(RenderState::Cancelled, std::memory_order_release);
+                worker_->destroyTabVM(tabId);
+                if (job->onComplete) {
+                    result.success = false;
+                    result.state = RenderState::Cancelled;
+                    result.errorMessage = "render cancelled by caller";
+                    result.samplesWritten = 0;
+                    job->onComplete(result);
+                }
+                return;
+            }
+            result.success = false;
+            result.state = RenderState::Failed;
+            result.errorMessage = "ChucK program compiled but did not start executing "
+                                  "(shred never loaded)";
+            job->state->store(RenderState::Failed, std::memory_order_release);
+            worker_->destroyTabVM(tabId);
+            if (job->onComplete)
+                job->onComplete(result);
+            return;
+        }
+    }
+
+    // -----------------------------------------------------------------------
     // B8-K2 §1: Drain audio from the shared-memory ring.
     // -----------------------------------------------------------------------
     const uint64_t gen = worker_->generation();
 
+    // -----------------------------------------------------------------------
+    // B4-K4: discard stale PRE-EXECUTION silence.  Between evaluateCkTab()
+    // and the shred's first real output, the VM thread produces silence
+    // blocks (instance creation + compile can take ~50-200 ms).  Those
+    // blocks sit in the ring and would otherwise lead the WAV (or, for a
+    // short render, fill it entirely).  After the shred is confirmed loaded,
+    // discard silent blocks until we reach the first non-silent block — which
+    // is SAVED and becomes the head of the WAV — or a bounded discard budget
+    // is exhausted (keeps the render honest and bounded even for instruments
+    // with a genuine silent intro).
+    // -----------------------------------------------------------------------
     std::vector<float> pcmBuffer;
-    pcmBuffer.reserve(static_cast<std::size_t>(numSamples) * channels);
+    pcmBuffer.reserve(static_cast<std::size_t>(numSamples) * channels + kBlockSize);
+    {
+        constexpr float kSilenceThreshold = 1e-5f;
+        // Upper bound on how much stale silence we are willing to skip:
+        // generous (up to ~4 s of transport time) but finite.
+        constexpr uint64_t kMaxDiscardSamples = 4u * 44100u;
+        uint64_t discarded = 0;
+        while (discarded < kMaxDiscardSamples &&
+               !job->cancelFlag->load(std::memory_order_acquire)) {
+            float blockBuf[kBlockSize];
+            if (!worker_->tryReadAudioBlock(blockBuf, kBlockSize, gen))
+                break; // ring currently empty — start collecting as-is
+            float peak = 0.0f;
+            for (unsigned i = 0; i < kBlockSize; ++i) {
+                const float a = (blockBuf[i] < 0.0f) ? -blockBuf[i] : blockBuf[i];
+                if (a > peak) peak = a;
+            }
+            if (peak >= kSilenceThreshold) {
+                // First real audio — save it as the head of the WAV.
+                pcmBuffer.insert(pcmBuffer.end(), blockBuf, blockBuf + kBlockSize);
+                break;
+            }
+            discarded += kBlockSize;
+        }
+    }
 
-    uint64_t samplesCollected = 0;
+    uint64_t samplesCollected = static_cast<uint64_t>(pcmBuffer.size());
 
     while (samplesCollected < numSamples && !job->cancelFlag->load(std::memory_order_acquire)) {
         // Check generation liveness — if the worker was restarted, stop.
@@ -596,6 +718,32 @@ void ChuckRenderWriter::runRender(std::shared_ptr<detail::RenderJob> job)
         const uint64_t padCount = numSamples - samplesCollected;
         pcmBuffer.insert(pcmBuffer.end(), padCount, 0.0f);
         samplesCollected = numSamples;
+    }
+
+    // -----------------------------------------------------------------------
+    // B4-K7 / audit: a bake must not silently succeed with a silent WAV.
+    // If the whole captured region is digital silence, the instrument
+    // produced no audible output (e.g. crashed at runtime, or nothing was
+    // routed to dac).  Surface it as a render failure instead of publishing
+    // unrelated/silent audio.
+    // -----------------------------------------------------------------------
+    {
+        float peak = 0.0f;
+        for (float s : pcmBuffer) {
+            const float a = (s < 0.0f) ? -s : s;
+            if (a > peak) peak = a;
+        }
+        if (peak < 1e-5f) {
+            result.success = false;
+            result.state = RenderState::Failed;
+            result.errorMessage = "ChucK program produced no audio output "
+                                  "(render captured silence)";
+            job->state->store(RenderState::Failed, std::memory_order_release);
+            worker_->destroyTabVM(tabId);
+            if (job->onComplete)
+                job->onComplete(result);
+            return;
+        }
     }
 
     job->samplesProduced->store(samplesCollected, std::memory_order_release);

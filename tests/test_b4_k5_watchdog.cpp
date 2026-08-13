@@ -641,9 +641,13 @@ TEST_CASE("B4-K5: duplicate detection — only one recovery", "[k5][race][idempo
     watchdog.registerVM(tabId, gen);
     watchdog.start();
 
-    // Wait for detection + recovery.
+    // Wait for detection + recovery.  Recovery runs asynchronously on the
+    // watchdog thread AFTER the detection callback (detect -> recover ->
+    // onRecoveryComplete), so waiting on detection alone would race the
+    // `newGen > gen` assertion below: the detection callback can fire before
+    // vmCreate() has produced the replacement generation.  Wait for both.
     auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
-    while (detectionCount.load() == 0 &&
+    while ((detectionCount.load() == 0 || recoveryCount.load() == 0) &&
            std::chrono::steady_clock::now() < deadline) {
         std::this_thread::sleep_for(std::chrono::milliseconds(50));
     }
