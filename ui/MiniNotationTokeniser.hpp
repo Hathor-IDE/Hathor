@@ -12,6 +12,7 @@
 
 #include <juce_gui_extra/juce_gui_extra.h>
 #include <hathor/MiniTokeniser.hpp>
+#include "TokenColourMap.hpp"
 
 #include <string>
 #include <vector>
@@ -74,12 +75,9 @@ private:
     // Helpers
     // -----------------------------------------------------------------------
 
-    /// Read the text from the current iterator position to end-of-line
+     /// Read the text from the current iterator position to end-of-line
     /// using a *copy* of the iterator so the real iterator is not advanced.
     static juce::String peekLineText(juce::CodeDocument::Iterator it);
-
-    /// Map a hathor::TokenKind to a JUCE colour index.
-    static int colourIndexForKind(hathor::TokenKind kind) noexcept;
 
     /// Return true if the line looks like a front-matter line
     /// (i.e. "[hathor]" header or "key = value" / "key=value" pair).

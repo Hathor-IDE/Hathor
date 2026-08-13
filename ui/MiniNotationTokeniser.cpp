@@ -27,26 +27,6 @@ juce::String MiniNotationTokeniser::peekLineText(juce::CodeDocument::Iterator it
     return line;
 }
 
-int MiniNotationTokeniser::colourIndexForKind(hathor::TokenKind kind) noexcept
-{
-    using K = hathor::TokenKind;
-    switch (kind)
-    {
-        case K::TK_ATOM:                        return 0;
-        case K::TK_INT:                         return 1;
-        case K::TK_TILDE:                       return 2;
-        case K::TK_LBRACKET: case K::TK_RBRACKET:
-        case K::TK_LANGLE:   case K::TK_RANGLE: return 3;
-        case K::TK_STAR: case K::TK_SLASH:
-        case K::TK_BANG:                        return 4;
-        case K::TK_LPAREN: case K::TK_RPAREN:
-        case K::TK_COMMA:                       return 5;
-        case K::TK_ERROR:                       return 6;
-        case K::TK_EOF:
-        default:                                return 0;
-    }
-}
-
 bool MiniNotationTokeniser::isFrontMatterLine(const juce::String& line) noexcept
 {
     // Trim leading whitespace for the check
@@ -192,7 +172,7 @@ int MiniNotationTokeniser::readNextToken(juce::CodeDocument::Iterator& iterator)
             for (int i = 0; i < len; ++i)
                 iterator.nextChar();
 
-            return colourIndexForKind(tok.kind);
+            return tokenKindToColourIndex(tok.kind);
         }
     }
 
