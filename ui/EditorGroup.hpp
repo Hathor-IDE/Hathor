@@ -212,7 +212,6 @@ private:
     // -----------------------------------------------------------------------
     std::vector<std::unique_ptr<HathorTab>> tabs_;
     int activeIndex_{ -1 };
-    bool editorErgonomicsEnabled_{ true };
 
     // JUCE-free models
     TabReorderModel reorderModel_;

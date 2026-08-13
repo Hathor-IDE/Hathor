@@ -218,6 +218,11 @@ EditorGroup::EditorGroup(AudioEngine& audio,
       audio_(audio),
       ci_(ci)
 {
+    // ci_ is retained for future editor↔control wiring (see completion audit,
+    // EditorGroup.hpp:222). No editor↔control calls are wired yet — suppressing
+    // the unused-private-field warning locally until Phase 1 implements them.
+    (void)ci_;
+
     addAndMakeVisible(tabBar_);
     addAndMakeVisible(statusBar_);
 
