@@ -62,6 +62,9 @@ nlohmann::json JobTracker::queryJob(uint64_t jobId) const
         {"status", toString(entry->state)}
     };
 
+    if (entry->externJobId > 0)
+        result["extern_job_id"] = entry->externJobId;
+
     if (entry->state == JobState::Succeeded) {
         result["success"] = true;
         nlohmann::json diags = nlohmann::json::array();

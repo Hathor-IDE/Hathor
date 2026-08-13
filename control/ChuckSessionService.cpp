@@ -264,16 +264,37 @@ AsyncJobHandle ChuckSessionService::compileChuck(
             // dispatcher thread in the worker process. We fire-and-forget:
             // the callback updates the job entry when the shred is loaded.
             //
-            // We capture the entry weak_ptr so the callback can update it.
-             std::weak_ptr<JobEntry> weakEntry = entry;
-             audio_.startAsyncCkCompile(tabId, sourceCopy,
-                 [weakEntry, onComplete, sourceCopy](bool success, const std::string& response) {
-                     // This callback fires on the background thread spawned by
-                     // startAsyncCkCompile (via evaluateCkTab IPC). Update the
-                     // job entry if it still exists.
-                     if (auto entry = weakEntry.lock()) {
-                         CompileResult cr;
-                         cr.success = success;
+             // We capture the entry weak_ptr so the callback can update it.
+              std::weak_ptr<JobEntry> weakEntry = entry;
+              uint64_t ckJobId = audio_.startAsyncCkCompile(tabId, sourceCopy,
+                  [weakEntry, onComplete, sourceCopy](bool success, const std::string& response) {
+                      // This callback fires on the background thread spawned by
+                      // startAsyncCkCompile (via evaluateCkTab IPC). Update the
+                      // job entry if it still exists.
+                      if (auto entry = weakEntry.lock()) {
+                          // Check if the job was cancelled while waiting for the
+                          // worker's compile response. If so, do NOT mark as
+                          // Succeeded/Failed — the canonical state becomes Cancelled.
+                          if (entry->cancelRequested.load(std::memory_order_acquire)) {
+                              CompileResult cr;
+                              cr.success = false;
+                              cr.errorMessage = "job cancelled";
+                              cr.diagnostics.push_back({
+                                  "warning", "CK_CANCELLED",
+                                  "Compilation job was cancelled", 0, 0
+                              });
+                              {
+                                  std::lock_guard<std::mutex> lock(entry->resultMtx);
+                                  entry->result = cr;
+                                  entry->state.store(JobState::Cancelled, std::memory_order_release);
+                              }
+                              if (onComplete)
+                                  onComplete(cr);
+                              return;
+                          }
+
+                          CompileResult cr;
+                          cr.success = success;
                          cr.sourceHash = "compiled";
                          cr.shredId = -1;
 
@@ -319,7 +340,11 @@ AsyncJobHandle ChuckSessionService::compileChuck(
                          if (onComplete)
                              onComplete(cr);
                      }
-                 });
+                  });
+
+            // Store the AudioEngine-level job ID for cross-layer cancellation
+            // (cancelJob → audio_.cancelCkJob).
+            entry->externJobId = ckJobId;
 
             // Return immediately — the job will be marked complete by the
             // callback above. The job tracker reports "running" status until
@@ -460,7 +485,20 @@ nlohmann::json ChuckSessionService::getJobStatus(uint64_t jobId) const
 
 bool ChuckSessionService::cancelJob(uint64_t jobId)
 {
-    return jobTracker_->cancelJob(jobId);
+    // Cancel the high-level job in the JobTracker (sets cancelRequested flag,
+    // marks queued jobs as Cancelled immediately).
+    bool cancelled = jobTracker_->cancelJob(jobId);
+
+    // Propagate cancellation to the AudioEngine's low-level job tracker so the
+    // background compile thread can abort instead of marking as Succeeded.
+    if (cancelled) {
+        auto json = jobTracker_->queryJob(jobId);
+        uint64_t externId = json.value("extern_job_id", 0ULL);
+        if (externId > 0)
+            audio_.cancelCkJob(externId);
+    }
+
+    return cancelled;
 }
 
 } // namespace hathor::control

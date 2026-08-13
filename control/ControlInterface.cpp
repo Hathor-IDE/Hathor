@@ -1107,14 +1107,48 @@ void ControlInterface::handleCompileChuck(std::string_view rest)
     }
 
     // Compile is asynchronous — returns immediately with a job_id.
+    //
+    // Capture the response sink by value before entering the async callback.
+    // g_responseSink is thread_local, so it is NOT visible on JobTracker's
+    // worker thread where the completion callback fires.  This mirrors the
+    // handleSetPattern() pattern (line 670).
+    auto sink = g_responseSink;
+
     const auto handle = chuckSessionService_->compileChuck(
         sessionIdStr, source,
-        [](const CompileResult& result) {
-            // The completion callback is invoked on the job tracker's
-            // worker thread. We cannot emitResponse() here because we don't
-            // have access to ControlInterface. The caller must poll
-            // get_chuck_job to check completion.
-            (void)result;
+        [sink, sessionIdStr](const CompileResult& result) {
+            // Completion callback — fires on JobTracker's worker thread.
+            // Deliver the result via the captured sink if one was active on the
+            // caller's thread; otherwise the result is available via
+            // get_chuck_job polling.
+            if (sink) {
+                nlohmann::json j;
+                j["ok"] = true;
+                j["cmd"] = "compile_chuck";
+                j["session_id"] = std::string(sessionIdStr);
+                j["completed"] = true;
+                j["result"] = {
+                    {"success",     result.success},
+                    {"source_hash", result.sourceHash},
+                    {"shred_id",    result.shredId}
+                };
+                if (!result.success)
+                    j["result"]["error"] = result.errorMessage;
+
+                nlohmann::json diags = nlohmann::json::array();
+                for (const auto& d : result.diagnostics) {
+                    diags.push_back({
+                        {"severity", d.severity},
+                        {"code",     d.code},
+                        {"message",  d.message},
+                        {"line",     d.line},
+                        {"column",   d.column}
+                    });
+                }
+                j["result"]["diagnostics"] = std::move(diags);
+
+                sink(j);
+            }
         });
 
     emitResponse({

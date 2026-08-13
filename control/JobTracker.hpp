@@ -45,6 +45,7 @@ struct JobEntry {
     CompileResult         result{};
     std::string           errorMessage;
     std::function<void()> onCancel;  ///< optional cancellation cleanup callback
+    uint64_t              externJobId{0};  ///< AudioEngine job ID for cross-layer cancellation
 
     JobEntry(uint64_t id) : jobId(id) {}
 

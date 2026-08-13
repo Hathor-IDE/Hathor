@@ -116,6 +116,18 @@ void AudioEngine::shutdownWorker() noexcept
         renderWriter_->shutdown();
         renderWriter_.reset();
     }
+
+    // Join all active CkCompileJob background threads before destroying the
+    // worker manager, so threads do not race with workerMgr_ teardown.
+    {
+        std::lock_guard<std::mutex> lock(ckJobsMtx_);
+        for (auto& [id, entry] : ckJobs_) {
+            entry->cancelRequested.store(true, std::memory_order_release);
+            if (entry->workerThread && entry->workerThread->joinable())
+                entry->workerThread->join();
+        }
+    }
+
     if (workerMgr_) {
         workerMgr_->shutdown();
         workerMgr_.reset();
@@ -1327,8 +1339,8 @@ std::filesystem::path AudioEngine::currentProjectDir() const noexcept
 // ---------------------------------------------------------------------------
 
 uint64_t AudioEngine::startAsyncCkCompile(int                                        slotIdx,
-                                           const std::string&                         code,
-                                           std::function<void(bool, const std::string&)> onComplete)
+                                            const std::string&                         code,
+                                            std::function<void(bool, const std::string&)> onComplete)
 {
     // B4-K7: validate slot range before doing any work.
     if (slotIdx < 0 || slotIdx >= kNumSlots) {
@@ -1353,44 +1365,115 @@ uint64_t AudioEngine::startAsyncCkCompile(int                                   
     const uint8_t  tabId      = static_cast<uint8_t>(slotIdx);
     const std::string sourceCopy = code;  // ensure lifetime on the background thread
 
-    // Spawn a detached background thread. The thread captures `this` (AudioEngine),
-    // but the only member it touches is workerMgr_ (for evaluateCkTab / isWorkerAlive).
-    // workerMgr_ is not destroyed until shutdownWorker() is called, and the
-    // background thread completes its IPC call quickly (bounded by the worker's
-    // IPC timeout). This mirrors the ChuckRenderWriter pattern.
-    std::thread([this, tabId, sourceCopy, onComplete, entry]() mutable {
-        // Check worker liveness before attempting compilation.
-        if (!workerMgr_) {
-            entry->status.store(3, std::memory_order_release); // Failed
-            entry->response = "audio worker is not running";
+    // Spawn a background thread that performs the compile IPC. The thread is
+    // stored in the entry's workerThread so that shutdownWorker() can join
+    // all active threads before tearing down workerMgr_. This mirrors the
+    // ChuckRenderWriter pattern (which joins render threads in shutdown()).
+    entry->workerThread = std::make_unique<std::thread>(
+        [this, tabId, sourceCopy, onComplete, entry]() mutable {
+            // Check worker liveness before attempting compilation.
+            if (!workerMgr_) {
+                entry->status.store(3, std::memory_order_release); // Failed
+                entry->response = "audio worker is not running";
+                if (onComplete)
+                    onComplete(false, entry->response);
+                return;
+            }
+
+            if (!workerMgr_->isWorkerAlive()) {
+                entry->status.store(3, std::memory_order_release); // Failed
+                entry->response = "audio worker is not running";
+                if (onComplete)
+                    onComplete(false, entry->response);
+                return;
+            }
+
+            // Submit to the existing worker infrastructure via the same IPC path
+            // as ckEval() (B4-K7). evaluateCkTab() blocks until the worker responds
+            // (bounded by the worker's IPC timeout), so this thread is non-UI.
+            auto result = workerMgr_->evaluateCkTab(tabId, sourceCopy);
+
+            // Check if cancellation was requested while we were blocked on IPC.
+            // If so, mark the job as Cancelled and let the caller's callback
+            // handle the cancelled state — do NOT mark as Succeeded/Failed.
+            if (entry->cancelRequested.load(std::memory_order_acquire)) {
+                entry->status.store(4, std::memory_order_release); // Cancelled
+                entry->response = "job cancelled";
+                if (onComplete)
+                    onComplete(false, "job cancelled");
+                return;
+            }
+
+            // Update job tracking state (for future queryCkJob / Phase 2B).
+            entry->response = result.message;
+            entry->status.store(result.ok ? 2 : 3, std::memory_order_release);
+
+            // Fire the completion callback. This fires on the background thread,
+            // not the caller's thread or the audio thread.
             if (onComplete)
-                onComplete(false, entry->response);
-            return;
-        }
-
-        if (!workerMgr_->isWorkerAlive()) {
-            entry->status.store(3, std::memory_order_release); // Failed
-            entry->response = "audio worker is not running";
-            if (onComplete)
-                onComplete(false, entry->response);
-            return;
-        }
-
-        // Submit to the existing worker infrastructure via the same IPC path
-        // as ckEval() (B4-K7). evaluateCkTab() blocks until the worker responds
-        // (bounded by the worker's IPC timeout), so this thread is non-UI.
-        auto result = workerMgr_->evaluateCkTab(tabId, sourceCopy);
-
-        // Update job tracking state (for future queryCkJob / Phase 2B).
-        entry->response = result.message;
-        entry->status.store(result.ok ? 2 : 3, std::memory_order_release);
-
-        // Fire the completion callback. This fires on the background thread,
-        // not the caller's thread or the audio thread.
-        if (onComplete)
-            onComplete(result.ok, result.message);
-    }).detach();
+                onComplete(result.ok, result.message);
+        });
 
     return jobId;
+}
+
+// ---------------------------------------------------------------------------
+// AI-5: Job status query (Phase 2B)
+// ---------------------------------------------------------------------------
+
+nlohmann::json AudioEngine::queryCkJob(uint64_t jobId) const
+{
+    std::lock_guard<std::mutex> lock(ckJobsMtx_);
+    auto it = ckJobs_.find(jobId);
+    if (it == ckJobs_.end()) {
+        return nlohmann::json::object({
+            {"job_id",          jobId},
+            {"status",          "unknown"},
+            {"ok",              false},
+            {"cancel_requested", false}
+        });
+    }
+
+    const auto& entry = it->second;
+    const int   status = entry->status.load(std::memory_order_acquire);
+
+    const char* statusStr = "unknown";
+    switch (status) {
+        case 0: statusStr = "queued";    break;
+        case 1: statusStr = "running";   break;
+        case 2: statusStr = "succeeded"; break;
+        case 3: statusStr = "failed";    break;
+        case 4: statusStr = "cancelled"; break;
+    }
+
+    return nlohmann::json::object({
+        {"job_id",           jobId},
+        {"status",            statusStr},
+        {"ok",                status == 2},
+        {"cancel_requested",  entry->cancelRequested.load(std::memory_order_acquire)},
+        {"response",          entry->response}
+    });
+}
+
+// ---------------------------------------------------------------------------
+// AI-5: Job cancellation (Phase 2C)
+// ---------------------------------------------------------------------------
+
+bool AudioEngine::cancelCkJob(uint64_t jobId)
+{
+    std::lock_guard<std::mutex> lock(ckJobsMtx_);
+    auto it = ckJobs_.find(jobId);
+    if (it == ckJobs_.end())
+        return false;
+
+    const auto& entry = it->second;
+    const int   status = entry->status.load(std::memory_order_acquire);
+
+    // Can only cancel if the job is queued or running.
+    if (status >= 2)
+        return false;
+
+    entry->cancelRequested.store(true, std::memory_order_release);
+    return true;
 }
 

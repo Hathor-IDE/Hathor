@@ -4,9 +4,11 @@
 #pragma once
 
 #include <atomic>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <string>
+#include <thread>
 #include <unordered_map>
 #include <vector>
 #include <cstdint>
@@ -510,15 +512,18 @@ private:
      // Monotonic job-ID counter (same pattern as ChuckRenderWriter::nextJobId_).
      std::atomic<uint64_t> nextCkJobId_{1};
 
-     /// Per-job tracking entry stored in ckJobs_ for future query (Phase 2B) and
-     /// cancellation (Phase 2C).
-     struct CkJobEntry {
-         uint64_t            jobId;
-         std::atomic<int>    status{0};       ///< 0=queued, 1=running, 2=succeeded, 3=failed, 4=cancelled
-         std::string         response;        ///< worker response message (for queryCkJob)
-         std::atomic<bool>   cancelRequested{false};
-     };
+      /// Per-job tracking entry stored in ckJobs_ for future query (Phase 2B) and
+      /// cancellation (Phase 2C).  The workerThread is stored here so that
+      /// shutdownWorker() can join all active compile threads before tearing
+      /// down the AudioWorkerManager.
+      struct CkJobEntry {
+          uint64_t            jobId;
+          std::atomic<int>    status{0};       ///< 0=queued, 1=running, 2=succeeded, 3=failed, 4=cancelled
+          std::string         response;        ///< worker response message (for queryCkJob)
+          std::atomic<bool>   cancelRequested{false};
+          std::unique_ptr<std::thread> workerThread;  ///< joinable background thread
+      };
 
-     std::mutex                                          ckJobsMtx_;
-     std::unordered_map<uint64_t, std::shared_ptr<CkJobEntry>> ckJobs_;
+      mutable std::mutex                                      ckJobsMtx_;
+      std::unordered_map<uint64_t, std::shared_ptr<CkJobEntry>> ckJobs_;
 };
