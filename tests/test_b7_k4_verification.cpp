@@ -155,10 +155,9 @@ void operator delete[](void* ptr, std::size_t) noexcept { std::free(ptr); }
 
 /// Build a SampleBank with a single named mono sample containing
 /// a deterministic ramp [0, 1, 2, 3, …] scaled to [−1, 1].
-static SampleBank makeRampBank(const std::string& name, int64_t index,
-                               std::size_t numFrames, int sampleRate)
+static void makeRampBank(SampleBank& bank, const std::string& name, int64_t index,
+                         std::size_t numFrames, int sampleRate)
 {
-    SampleBank bank;
     SampleEntry entry;
     entry.name = name;
     entry.index = index;
@@ -168,15 +167,13 @@ static SampleBank makeRampBank(const std::string& name, int64_t index,
     for (std::size_t i = 0; i < numFrames; ++i)
         entry.data[i] = -1.0f + 2.0f * static_cast<float>(i) / static_cast<float>(numFrames - 1);
     bank.addTestEntry(std::move(entry));
-    return bank;
 }
 
 /// A broadband "white-like" sample: sum of many sine waves so that
 /// filtering produces a clearly audible/frequency-content difference.
-static SampleBank makeBroadbandBank(const std::string& name, int64_t index,
-                                    std::size_t numFrames, int sampleRate)
+static void makeBroadbandBank(SampleBank& bank, const std::string& name, int64_t index,
+                              std::size_t numFrames, int sampleRate)
 {
-    SampleBank bank;
     SampleEntry entry;
     entry.name = name;
     entry.index = index;
@@ -203,14 +200,12 @@ static SampleBank makeBroadbandBank(const std::string& name, int64_t index,
         entry.data[i * 2 + 1] = val; // R
     }
     bank.addTestEntry(std::move(entry));
-    return bank;
 }
 
 /// Generate a sine-tone sample bank (mono) at a specific frequency.
-static SampleBank makeSineBank(const std::string& name, int64_t index,
-                               std::size_t numFrames, int sampleRate, double freqHz)
+static void makeSineBank(SampleBank& bank, const std::string& name, int64_t index,
+                         std::size_t numFrames, int sampleRate, double freqHz)
 {
-    SampleBank bank;
     SampleEntry entry;
     entry.name = name;
     entry.index = index;
@@ -222,7 +217,6 @@ static SampleBank makeSineBank(const std::string& name, int64_t index,
                                                    static_cast<double>(i) / static_cast<double>(sampleRate)));
     }
     bank.addTestEntry(std::move(entry));
-    return bank;
 }
 
 /// Compute the RMS energy of a buffer.
@@ -278,7 +272,8 @@ int main(int /*argc*/, char* /*argv*/[])
     std::printf("--- SECTION 1: Per-sound filtering verification ---\n");
 
     // Create a broadband sample (rich in harmonics across the spectrum).
-    auto broadbandBank = makeBroadbandBank("bb", 0, kTotalFrames, kRate);
+    SampleBank broadbandBank;
+    makeBroadbandBank(broadbandBank, "bb", 0, kTotalFrames, kRate);
     VoicePool pool;
 
     // Voice A: very low cutoff (200 Hz) — should heavily attenuate everything above 200 Hz
@@ -486,7 +481,8 @@ int main(int /*argc*/, char* /*argv*/[])
 
     // Reuse the original pool (three voices) and check that mix() allocates nothing.
     VoicePool allocPool;
-    auto rampBank = makeRampBank("bd", 0, 441, kRate);
+    SampleBank rampBank;
+    makeRampBank(rampBank, "bd", 0, 441, kRate);
     hathor::ParamMap paramsAlloc;
     paramsAlloc.set(hathor::keys::kS, hathor::Value{std::string{"bd"}});
     paramsAlloc.set(hathor::keys::kCutoff, 500.0);
@@ -845,7 +841,8 @@ int main(int /*argc*/, char* /*argv*/[])
     // --- Allocation check during EQ processing ---
     std::printf("  Checking allocation-free audio path with EQ...\n");
     VoicePool eqAllocPool;
-    auto sineBank = makeSineBank("tone", 0, 882, kRate, 8000.0);
+    SampleBank sineBank;
+    makeSineBank(sineBank, "tone", 0, 882, kRate, 8000.0);
     hathor::ParamMap eqParams;
     eqParams.set(hathor::keys::kS, hathor::Value{std::string{"tone"}});
     eqAllocPool.trigger(eqParams, sineBank, 0, 0, kRate);

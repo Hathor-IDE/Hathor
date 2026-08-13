@@ -49,7 +49,7 @@
 // Fake AudioEngineFacade (JUCE-free stand-in)
 // ---------------------------------------------------------------------------
 
-class FakeFacade final : public AudioEngineFacade {
+class McpFakeFacade final : public AudioEngineFacade {
 public:
     void play() noexcept override { running_ = true; }
     void stop() noexcept override { running_ = false; }
@@ -324,7 +324,7 @@ struct AcceptServer {
 TEST_CASE("H0: sync command reaches dispatch layer and returns a response",
           "[h0][socket][control]")
 {
-    FakeFacade audio;
+    McpFakeFacade audio;
     SampleBank bank;
     hathor::control::ControlInterface ci(audio, bank);
 
@@ -363,7 +363,7 @@ TEST_CASE("H0: sync command reaches dispatch layer and returns a response",
 
 TEST_CASE("h0: async set-pattern returns a response via the worker thread", "[h0][socket][control]")
 {
-    FakeFacade facade;
+    McpFakeFacade facade;
     SampleBank bank;
     hathor::control::ControlInterface ci(facade, bank);
 
@@ -400,7 +400,7 @@ TEST_CASE("h0: async set-pattern returns a response via the worker thread", "[h0
 
 TEST_CASE("[h0] multiple commands/connections do not corrupt processing", "[h0][socket][control]")
 {
-    FakeFacade facade;
+    McpFakeFacade facade;
     SampleBank bank;
     hathor::control::ControlInterface ci(facade, bank);
 
@@ -448,7 +448,7 @@ TEST_CASE("[h0] multiple commands/connections do not corrupt processing", "[h0][
 
 TEST_CASE("[h0] shutdown stops the loop promptly and cleans up the socket", "[h0][socket][control]")
 {
-    FakeFacade facade;
+    McpFakeFacade facade;
     SampleBank bank;
     hathor::control::ControlInterface ci(facade, bank);
 

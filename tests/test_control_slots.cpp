@@ -26,7 +26,7 @@
 
 namespace {
 
-class FakeFacade final : public AudioEngineFacade {
+class ControlSlotsFakeFacade final : public AudioEngineFacade {
 public:
     void play() noexcept override {}
     void stop() noexcept override {}
@@ -192,7 +192,7 @@ void runCmd(hathor::control::ControlInterface& ci,
 TEST_CASE("A3: slot-stop on a valid slot succeeds and sets running=false",
           "[a3][control]")
 {
-    FakeFacade audio;
+    ControlSlotsFakeFacade audio;
     SampleBank bank;
     hathor::control::ControlInterface ci(audio, bank);
 
@@ -209,7 +209,7 @@ TEST_CASE("A3: slot-stop on a valid slot succeeds and sets running=false",
 TEST_CASE("A3: slot-play sets running=true without affecting other slots",
           "[a3][control]")
 {
-    FakeFacade audio;
+    ControlSlotsFakeFacade audio;
     SampleBank bank;
     hathor::control::ControlInterface ci(audio, bank);
 
@@ -234,7 +234,7 @@ TEST_CASE("A3: slot-play sets running=true without affecting other slots",
 TEST_CASE("A3: slot-stop does not affect other slots",
           "[a3][control]")
 {
-    FakeFacade audio;
+    ControlSlotsFakeFacade audio;
     SampleBank bank;
     hathor::control::ControlInterface ci(audio, bank);
 
@@ -257,7 +257,7 @@ TEST_CASE("A3: slot-stop does not affect other slots",
 TEST_CASE("A3: slot-stop with missing slot name returns error",
           "[a3][control]")
 {
-    FakeFacade audio;
+    ControlSlotsFakeFacade audio;
     SampleBank bank;
     hathor::control::ControlInterface ci(audio, bank);
 
@@ -272,7 +272,7 @@ TEST_CASE("A3: slot-stop with missing slot name returns error",
 TEST_CASE("A3: slot-play with missing slot name returns error",
           "[a3][control]")
 {
-    FakeFacade audio;
+    ControlSlotsFakeFacade audio;
     SampleBank bank;
     hathor::control::ControlInterface ci(audio, bank);
 
@@ -287,7 +287,7 @@ TEST_CASE("A3: slot-play with missing slot name returns error",
 TEST_CASE("A3: unknown command still rejected",
           "[a3][control]")
 {
-    FakeFacade audio;
+    ControlSlotsFakeFacade audio;
     SampleBank bank;
     hathor::control::ControlInterface ci(audio, bank);
 
@@ -305,7 +305,7 @@ TEST_CASE("A3: unknown command still rejected",
 TEST_CASE("B1: dispatchSlotPlayStop issues slot-play and sets running=true",
           "[b1][control]")
 {
-    FakeFacade audio;
+    ControlSlotsFakeFacade audio;
     SampleBank bank;
     hathor::control::ControlInterface ci(audio, bank);
 
@@ -325,7 +325,7 @@ TEST_CASE("B1: dispatchSlotPlayStop issues slot-play and sets running=true",
 TEST_CASE("B1: dispatchSlotPlayStop issues slot-stop and sets running=false",
           "[b1][control]")
 {
-    FakeFacade audio;
+    ControlSlotsFakeFacade audio;
     SampleBank bank;
     hathor::control::ControlInterface ci(audio, bank);
 
@@ -346,7 +346,7 @@ TEST_CASE("B1: dispatchSlotPlayStop issues slot-stop and sets running=false",
 TEST_CASE("B1: dispatchSlotPlayStop on d1 does not affect d2",
           "[b1][control]")
 {
-    FakeFacade audio;
+    ControlSlotsFakeFacade audio;
     SampleBank bank;
     hathor::control::ControlInterface ci(audio, bank);
 

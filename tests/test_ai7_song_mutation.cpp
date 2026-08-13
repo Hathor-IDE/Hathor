@@ -16,7 +16,7 @@
  *   9. Audit logging — stderr entries for every mutation
  *  10. MCP routing — edit_song routes through SongMutationService
  *
- * Architecture: tests use TrackingFakeFacade (same pattern as test_ai2_readonly)
+ * Architecture: tests use Ai7FakeFacade (same pattern as test_ai2_readonly)
  * for mutation tracking, plus a TempDir for real .hathor file I/O.  The service
  * uses the real parseMini() and serialiseHathorFile() — no mocks for the
  * parser/serializer.
@@ -67,10 +67,10 @@ using hathor::control::ControlInterface;
 namespace fs = std::filesystem;
 
 // ===========================================================================
-// TrackingFakeFacade — reuses the same pattern as test_ai2_readonly.cpp
+// Ai7FakeFacade — reuses the same pattern as test_ai2_readonly.cpp
 // ===========================================================================
 
-class TrackingFakeFacade final : public AudioEngineFacade {
+class Ai7FakeFacade final : public AudioEngineFacade {
 public:
     struct MutationLog {
         std::string action;
@@ -370,7 +370,7 @@ TEST_CASE("AI-7: replace_pattern replaces body and validates via parseMini",
         "\n"
         "bd sn");
 
-    TrackingFakeFacade audio;
+    Ai7FakeFacade audio;
     SampleBank bank;
     audio.setProjectDir(dir.path);
     SongMutationService svc(audio, bank);
@@ -411,7 +411,7 @@ TEST_CASE("AI-7: replace_pattern rejects invalid notation",
         "\n"
         "bd sn");
 
-    TrackingFakeFacade audio;
+    Ai7FakeFacade audio;
     SampleBank bank;
     audio.setProjectDir(dir.path);
     SongMutationService svc(audio, bank);
@@ -444,7 +444,7 @@ TEST_CASE("AI-7: replace_pattern requires confirmation when body exists",
         "\n"
         "bd sn");
 
-    TrackingFakeFacade audio;
+    Ai7FakeFacade audio;
     SampleBank bank;
     audio.setProjectDir(dir.path);
     SongMutationService svc(audio, bank);
@@ -479,7 +479,7 @@ TEST_CASE("AI-7: insert with prepend extends body",
         "\n"
         "sn hh");
 
-    TrackingFakeFacade audio;
+    Ai7FakeFacade audio;
     SampleBank bank;
     audio.setProjectDir(dir.path);
     SongMutationService svc(audio, bank);
@@ -513,7 +513,7 @@ TEST_CASE("AI-7: insert with append extends body",
         "\n"
         "bd sn");
 
-    TrackingFakeFacade audio;
+    Ai7FakeFacade audio;
     SampleBank bank;
     audio.setProjectDir(dir.path);
     SongMutationService svc(audio, bank);
@@ -546,7 +546,7 @@ TEST_CASE("AI-7: insert into empty body sets notation",
         "\n"
         "");
 
-    TrackingFakeFacade audio;
+    Ai7FakeFacade audio;
     SampleBank bank;
     audio.setProjectDir(dir.path);
     SongMutationService svc(audio, bank);
@@ -579,7 +579,7 @@ TEST_CASE("AI-7: insert rejects invalid notation",
         "\n"
         "bd");
 
-    TrackingFakeFacade audio;
+    Ai7FakeFacade audio;
     SampleBank bank;
     audio.setProjectDir(dir.path);
     SongMutationService svc(audio, bank);
@@ -610,7 +610,7 @@ TEST_CASE("AI-7: set_meta updates bpm, label, color, slot atomically",
         "\n"
         "bd sn");
 
-    TrackingFakeFacade audio;
+    Ai7FakeFacade audio;
     SampleBank bank;
     audio.setProjectDir(dir.path);
     SongMutationService svc(audio, bank);
@@ -653,7 +653,7 @@ TEST_CASE("AI-7: set_meta rejects invalid BPM",
     SongTempDir dir;
     dir.writeSong("test.hathor", "[hathor]\n\n" "bd");
 
-    TrackingFakeFacade audio;
+    Ai7FakeFacade audio;
     SampleBank bank;
     audio.setProjectDir(dir.path);
     SongMutationService svc(audio, bank);
@@ -674,7 +674,7 @@ TEST_CASE("AI-7: set_meta rejects invalid slot name",
     SongTempDir dir;
     dir.writeSong("test.hathor", "[hathor]\n\n" "bd");
 
-    TrackingFakeFacade audio;
+    Ai7FakeFacade audio;
     SampleBank bank;
     audio.setProjectDir(dir.path);
     SongMutationService svc(audio, bank);
@@ -699,7 +699,7 @@ TEST_CASE("AI-7: set_meta requires at least one field",
         "\n"
         "bd sn");
 
-    TrackingFakeFacade audio;
+    Ai7FakeFacade audio;
     SampleBank bank;
     audio.setProjectDir(dir.path);
     SongMutationService svc(audio, bank);
@@ -728,7 +728,7 @@ TEST_CASE("AI-7: clear_pattern clears body and runtime slot",
         "\n"
         "bd sn hh cp");
 
-    TrackingFakeFacade audio;
+    Ai7FakeFacade audio;
     SampleBank bank;
     audio.setProjectDir(dir.path);
     SongMutationService svc(audio, bank);
@@ -770,7 +770,7 @@ TEST_CASE("AI-7: clear_pattern requires confirmation when body is non-empty",
         "\n"
         "bd sn");
 
-    TrackingFakeFacade audio;
+    Ai7FakeFacade audio;
     SampleBank bank;
     audio.setProjectDir(dir.path);
     SongMutationService svc(audio, bank);
@@ -805,7 +805,7 @@ TEST_CASE("AI-7: delete_song removes file when confirmed",
         "\n"
         "bd sn");
 
-    TrackingFakeFacade audio;
+    Ai7FakeFacade audio;
     SampleBank bank;
     audio.setProjectDir(dir.path);
     SongMutationService svc(audio, bank);
@@ -826,7 +826,7 @@ TEST_CASE("AI-7: delete_song requires confirmation",
     SongTempDir dir;
     dir.writeSong("test.hathor", "bd sn");
 
-    TrackingFakeFacade audio;
+    Ai7FakeFacade audio;
     SampleBank bank;
     audio.setProjectDir(dir.path);
     SongMutationService svc(audio, bank);
@@ -856,7 +856,7 @@ TEST_CASE("AI-7: transactional — all ops validated before any mutation",
         "\n"
         "bd sn");
 
-    TrackingFakeFacade audio;
+    Ai7FakeFacade audio;
     SampleBank bank;
     audio.setProjectDir(dir.path);
     SongMutationService svc(audio, bank);
@@ -893,7 +893,7 @@ TEST_CASE("AI-7: transactional — batch of valid ops all applied",
         "\n"
         "bd sn");
 
-    TrackingFakeFacade audio;
+    Ai7FakeFacade audio;
     SampleBank bank;
     audio.setProjectDir(dir.path);
     SongMutationService svc(audio, bank);
@@ -936,7 +936,7 @@ TEST_CASE("AI-7: replace_pattern into empty body does not require confirmation",
         "\n"
         "");
 
-    TrackingFakeFacade audio;
+    Ai7FakeFacade audio;
     SampleBank bank;
     audio.setProjectDir(dir.path);
     SongMutationService svc(audio, bank);
@@ -954,7 +954,7 @@ TEST_CASE("AI-7: edit_song on nonexistent file returns error",
           "[ai7][confirmation][file_not_found]")
 {
     SongTempDir dir;
-    TrackingFakeFacade audio;
+    Ai7FakeFacade audio;
     SampleBank bank;
     audio.setProjectDir(dir.path);
     SongMutationService svc(audio, bank);
@@ -985,7 +985,7 @@ TEST_CASE("AI-7: atomic write preserves file on parse error",
         "bd sn hh cp";
     dir.writeSong("test.hathor", original);
 
-    TrackingFakeFacade audio;
+    Ai7FakeFacade audio;
     SampleBank bank;
     audio.setProjectDir(dir.path);
     SongMutationService svc(audio, bank);
@@ -1012,7 +1012,7 @@ TEST_CASE("AI-7: path traversal in song file name is rejected",
           "[ai7][atomic_io][path_traversal]")
 {
     SongTempDir dir;
-    TrackingFakeFacade audio;
+    Ai7FakeFacade audio;
     SampleBank bank;
     audio.setProjectDir(dir.path);
     SongMutationService svc(audio, bank);
@@ -1031,7 +1031,7 @@ TEST_CASE("AI-7: song file without .hathor extension is rejected",
           "[ai7][atomic_io][extension]")
 {
     SongTempDir dir;
-    TrackingFakeFacade audio;
+    Ai7FakeFacade audio;
     SampleBank bank;
     audio.setProjectDir(dir.path);
     SongMutationService svc(audio, bank);
@@ -1064,7 +1064,7 @@ TEST_CASE("AI-7: successful mutation produces audit log entry on stderr",
         "\n"
         "bd sn");
 
-    TrackingFakeFacade audio;
+    Ai7FakeFacade audio;
     SampleBank bank;
     audio.setProjectDir(dir.path);
     SongMutationService svc(audio, bank);
@@ -1101,7 +1101,7 @@ TEST_CASE("AI-7: MCP routes edit_song through ControlInterface to SongMutationSe
         "\n"
         "bd sn");
 
-    TrackingFakeFacade audio;
+    Ai7FakeFacade audio;
     SampleBank bank;
     audio.setProjectDir(dir.path);
 
@@ -1139,7 +1139,7 @@ TEST_CASE("AI-7: MCP edit_song returns parse error for invalid JSON ops",
     SongTempDir dir;
     dir.writeSong("test.hathor", "bd sn");
 
-    TrackingFakeFacade audio;
+    Ai7FakeFacade audio;
     SampleBank bank;
     audio.setProjectDir(dir.path);
 
@@ -1163,7 +1163,7 @@ TEST_CASE("AI-7: set_meta with no existing front matter creates front matter",
     SongTempDir dir;
     dir.writeSong("test.hathor", "bd sn");
 
-    TrackingFakeFacade audio;
+    Ai7FakeFacade audio;
     SampleBank bank;
     audio.setProjectDir(dir.path);
     SongMutationService svc(audio, bank);
@@ -1195,7 +1195,7 @@ TEST_CASE("AI-7: unknown operation type rejected",
     SongTempDir dir;
     dir.writeSong("test.hathor", "bd sn");
 
-    TrackingFakeFacade audio;
+    Ai7FakeFacade audio;
     SampleBank bank;
     audio.setProjectDir(dir.path);
     SongMutationService svc(audio, bank);
@@ -1216,7 +1216,7 @@ TEST_CASE("AI-7: empty ops array rejected",
     SongTempDir dir;
     dir.writeSong("test.hathor", "bd sn");
 
-    TrackingFakeFacade audio;
+    Ai7FakeFacade audio;
     SampleBank bank;
     audio.setProjectDir(dir.path);
     SongMutationService svc(audio, bank);

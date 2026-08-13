@@ -68,7 +68,7 @@ using hathor::control::LspContextProvider;
 // Fake AudioEngineFacade (JUCE-free stand-in)
 // ---------------------------------------------------------------------------
 
-class Ai8FakeFacade final : public AudioEngineFacade {
+class Ai8ContextFakeFacade final : public AudioEngineFacade {
 public:
     void play() noexcept override                       { running_ = true; }
     void stop() noexcept override                         { running_ = false; }
@@ -360,7 +360,7 @@ TEST_CASE("AI-8: context assembly for .hathor files includes relevant sections",
     auto metaResult = loadTestMetadata();
     REQUIRE(metaResult.compatibility.compatible);
 
-    Ai8FakeFacade audio;
+    Ai8ContextFakeFacade audio;
     SampleBank bank;
     bank.addTestEntry(SampleEntry{"bd", 0, {}, 1, 44100.0, "bd.wav"});
     bank.addTestEntry(SampleEntry{"sn", 1, {}, 1, 44100.0, "sn.wav"});
@@ -435,7 +435,7 @@ TEST_CASE("AI-8: context assembly for .ck files includes relevant sections",
     auto metaResult = loadTestMetadata();
     REQUIRE(metaResult.compatibility.compatible);
 
-    Ai8FakeFacade audio;
+    Ai8ContextFakeFacade audio;
     SampleBank bank;
 
     hathor::control::ProjectReadFacade readFacade(audio, bank);
@@ -488,7 +488,7 @@ TEST_CASE("AI-8: cursor and selection changes are reflected in context",
           "[ai8][cursor][selection]")
 {
     auto metaResult = loadTestMetadata();
-    Ai8FakeFacade audio;
+    Ai8ContextFakeFacade audio;
     SampleBank bank;
     hathor::control::ProjectReadFacade readFacade(audio, bank);
     AuthoringContext ctx(readFacade, nullptr, nullptr,
@@ -555,7 +555,7 @@ TEST_CASE("AI-8: metadata version is identified in context response",
     auto metaResult = loadTestMetadata();
     REQUIRE(metaResult.compatibility.compatible);
 
-    Ai8FakeFacade audio;
+    Ai8ContextFakeFacade audio;
     SampleBank bank;
     hathor::control::ProjectReadFacade readFacade(audio, bank);
     AuthoringContext ctx(readFacade, nullptr, nullptr,
@@ -581,7 +581,7 @@ TEST_CASE("AI-8: runtime state changes (BPM, samples) are reflected dynamically"
           "[ai8][runtime-dynamics]")
 {
     auto metaResult = loadTestMetadata();
-    Ai8FakeFacade audio;
+    Ai8ContextFakeFacade audio;
     SampleBank bank;
     bank.addTestEntry(SampleEntry{"bd", 0, {}, 1, 44100.0, "bd.wav"});
     hathor::control::ProjectReadFacade readFacade(audio, bank);
@@ -626,7 +626,7 @@ TEST_CASE("AI-8: LSP diagnostics are included when LSP is available",
           "[ai8][lsp-diagnostics]")
 {
     auto metaResult = loadTestMetadata();
-    Ai8FakeFacade audio;
+    Ai8ContextFakeFacade audio;
     SampleBank bank;
     hathor::control::ProjectReadFacade readFacade(audio, bank);
     AuthoringContext ctx(readFacade, nullptr, nullptr,
@@ -673,7 +673,7 @@ TEST_CASE("AI-8: missing LSP provider degrades gracefully",
           "[ai8][lsp-missing]")
 {
     auto metaResult = loadTestMetadata();
-    Ai8FakeFacade audio;
+    Ai8ContextFakeFacade audio;
     SampleBank bank;
     hathor::control::ProjectReadFacade readFacade(audio, bank);
     AuthoringContext ctx(readFacade, nullptr, nullptr,
@@ -692,7 +692,7 @@ TEST_CASE("AI-8: LSP unavailable (server not running) is surfaced explicitly",
           "[ai8][lsp-unavailable]")
 {
     auto metaResult = loadTestMetadata();
-    Ai8FakeFacade audio;
+    Ai8ContextFakeFacade audio;
     SampleBank bank;
     hathor::control::ProjectReadFacade readFacade(audio, bank);
     AuthoringContext ctx(readFacade, nullptr, nullptr,
@@ -717,7 +717,7 @@ TEST_CASE("AI-8: LSP unavailable (server not running) is surfaced explicitly",
 TEST_CASE("AI-8: missing metadata is surfaced explicitly",
           "[ai8][metadata-missing]")
 {
-    Ai8FakeFacade audio;
+    Ai8ContextFakeFacade audio;
     SampleBank bank;
     hathor::control::ProjectReadFacade readFacade(audio, bank);
     // No metadata (nullptr).
@@ -738,7 +738,7 @@ TEST_CASE("AI-8: missing metadata is surfaced explicitly",
 TEST_CASE("AI-8: incompatible metadata is surfaced explicitly",
           "[ai8][metadata-incompatible]")
 {
-    Ai8FakeFacade audio;
+    Ai8ContextFakeFacade audio;
     SampleBank bank;
     hathor::control::ProjectReadFacade readFacade(audio, bank);
 
@@ -777,7 +777,7 @@ TEST_CASE("AI-8: explicit scope limits sections to what is requested",
           "[ai8][targeted]")
 {
     auto metaResult = loadTestMetadata();
-    Ai8FakeFacade audio;
+    Ai8ContextFakeFacade audio;
     SampleBank bank;
     hathor::control::ProjectReadFacade readFacade(audio, bank);
     AuthoringContext ctx(readFacade, nullptr, nullptr,
@@ -826,7 +826,7 @@ TEST_CASE("AI-8: context assembly is read-only — no state mutations",
           "[ai8][read-only]")
 {
     auto metaResult = loadTestMetadata();
-    Ai8FakeFacade audio;
+    Ai8ContextFakeFacade audio;
     SampleBank bank;
     bank.addTestEntry(SampleEntry{"bd", 0, {}, 1, 44100.0, "bd.wav"});
     hathor::control::ProjectReadFacade readFacade(audio, bank);
@@ -877,7 +877,7 @@ TEST_CASE("AI-8: get-context command routes through ControlInterface",
     auto metaResult = loadTestMetadata();
     REQUIRE(metaResult.compatibility.compatible);
 
-    Ai8FakeFacade audio;
+    Ai8ContextFakeFacade audio;
     SampleBank bank;
     bank.addTestEntry(SampleEntry{"bd", 0, {}, 1, 44100.0, "bd.wav"});
 
@@ -923,7 +923,7 @@ TEST_CASE("AI-8: context assembly with no editor provider returns available=fals
           "[ai8][no-editor]")
 {
     auto metaResult = loadTestMetadata();
-    Ai8FakeFacade audio;
+    Ai8ContextFakeFacade audio;
     SampleBank bank;
     hathor::control::ProjectReadFacade readFacade(audio, bank);
     AuthoringContext ctx(readFacade, nullptr, nullptr,

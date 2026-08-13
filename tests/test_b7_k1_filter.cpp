@@ -63,10 +63,9 @@ using Catch::Approx;
 
 /// Build a SampleBank with a single named mono sample containing
 /// a deterministic ramp [0, 1, 2, 3, …] scaled to [−1, 1].
-static SampleBank makeTestBank(const std::string& name, int64_t index,
-                                std::size_t numFrames, int sampleRate)
+static void makeTestBank(SampleBank& bank, const std::string& name, int64_t index,
+                         std::size_t numFrames, int sampleRate)
 {
-    SampleBank bank;
     SampleEntry entry;
     entry.name = name;
     entry.index = index;
@@ -76,15 +75,13 @@ static SampleBank makeTestBank(const std::string& name, int64_t index,
     for (std::size_t i = 0; i < numFrames; ++i)
         entry.data[i] = -1.0f + 2.0f * static_cast<float>(i) / static_cast<float>(numFrames - 1);
     bank.addTestEntry(std::move(entry));
-    return bank;
 }
 
 /// A simple sine-wave sample generator for frequency-content tests.
 /// Generates `numFrames` samples of a sine at `freqHz` for `sampleRate`.
-static SampleBank makeSineBank(const std::string& name, int64_t index,
-                                std::size_t numFrames, int sampleRate, double freqHz)
+static void makeSineBank(SampleBank& bank, const std::string& name, int64_t index,
+                         std::size_t numFrames, int sampleRate, double freqHz)
 {
-    SampleBank bank;
     SampleEntry entry;
     entry.name = name;
     entry.index = index;
@@ -96,7 +93,6 @@ static SampleBank makeSineBank(const std::string& name, int64_t index,
             static_cast<double>(i) / static_cast<double>(sampleRate)));
     }
     bank.addTestEntry(std::move(entry));
-    return bank;
 }
 
 /// Compute the energy (sum of squares) in a buffer range.
@@ -450,7 +446,8 @@ TEST_CASE("B7-K1: default parameters behave effectively unfiltered",
           "[b7-k1][voicepool]")
 {
     constexpr int kRate = 44100;
-    auto bank = makeTestBank("bd", 0, 441, kRate);
+    SampleBank bank;
+    makeTestBank(bank, "bd", 0, 441, kRate);
     VoicePool pool;
 
     hathor::ParamMap params;
@@ -476,7 +473,8 @@ TEST_CASE("B7-K1: low cutoff materially attenuates high-frequency content",
 {
     constexpr int kRate = 44100;
     // Use a 10 kHz sine sample — high frequency content
-    auto bank = makeSineBank("tone", 0, 882, kRate, 10000.0);
+    SampleBank bank;
+    makeSineBank(bank, "tone", 0, 882, kRate, 10000.0);
     VoicePool pool;
 
     hathor::ParamMap params;
@@ -499,7 +497,8 @@ TEST_CASE("B7-K1: high cutoff preserves high-frequency content",
           "[b7-k1][voicepool]")
 {
     constexpr int kRate = 44100;
-    auto bank = makeSineBank("tone", 0, 882, kRate, 10000.0);
+    SampleBank bank;
+    makeSineBank(bank, "tone", 0, 882, kRate, 10000.0);
     VoicePool pool;
 
     hathor::ParamMap params;
@@ -525,7 +524,8 @@ TEST_CASE("B7-K1: low and high cutoff produce measurably different output",
     constexpr int kSamples = 882;
 
     // Trigger two voices from the same sine sample with different cutoffs
-    auto bank = makeSineBank("tone", 0, kSamples, kRate, 8000.0);
+    SampleBank bank;
+    makeSineBank(bank, "tone", 0, kSamples, kRate, 8000.0);
 
     // Voice A: low cutoff
     {
@@ -566,7 +566,8 @@ TEST_CASE("B7-K1: two simultaneous voices with different cutoffs produce indepen
     constexpr int kRate = 44100;
     constexpr int kSamples = 882;
 
-    auto bank = makeSineBank("tone", 0, kSamples, kRate, 8000.0);
+    SampleBank bank;
+    makeSineBank(bank, "tone", 0, kSamples, kRate, 8000.0);
     VoicePool pool;
 
     // Voice A: low cutoff (500 Hz)
@@ -605,7 +606,8 @@ TEST_CASE("B7-K1: filter state is independent between voices",
     constexpr int kRate = 44100;
     constexpr int kSamples = 441;
 
-    auto bank = makeTestBank("bd", 0, kSamples, kRate);
+    SampleBank bank;
+    makeTestBank(bank, "bd", 0, kSamples, kRate);
     VoicePool pool;
 
     // Trigger two voices with very different cutoffs
@@ -640,7 +642,8 @@ TEST_CASE("B7-K1: different resonance values change the filter response",
     constexpr int kRate = 44100;
     constexpr int kSamples = 882;
 
-    auto bank = makeSineBank("tone", 0, kSamples, kRate, 1000.0);
+    SampleBank bank;
+    makeSineBank(bank, "tone", 0, kSamples, kRate, 1000.0);
 
     // Voice with low resonance
     {
@@ -683,7 +686,8 @@ TEST_CASE("B7-K1: coefficients are calculated at trigger time (not in mix)",
           "[b7-k1][voicepool]")
 {
     constexpr int kRate = 44100;
-    auto bank = makeTestBank("bd", 0, 441, kRate);
+    SampleBank bank;
+    makeTestBank(bank, "bd", 0, 441, kRate);
     VoicePool pool;
 
     hathor::ParamMap params;
@@ -722,7 +726,8 @@ TEST_CASE("B7-K1: coefficients remain fixed for voice lifetime",
           "[b7-k1][voicepool]")
 {
     constexpr int kRate = 44100;
-    auto bank = makeSineBank("tone", 0, 8820, kRate, 1000.0);
+    SampleBank bank;
+    makeSineBank(bank, "tone", 0, 8820, kRate, 1000.0);
     VoicePool pool;
 
     hathor::ParamMap params;
@@ -756,7 +761,8 @@ TEST_CASE("B7-K1: changing pattern param does not mutate currently-playing voice
           "[b7-k1][voicepool][trigger-time]")
 {
     constexpr int kRate = 44100;
-    auto bank = makeSineBank("tone", 0, 1764, kRate, 1000.0);
+    SampleBank bank;
+    makeSineBank(bank, "tone", 0, 1764, kRate, 1000.0);
     VoicePool pool;
 
     // Trigger a voice with low cutoff
@@ -791,7 +797,8 @@ TEST_CASE("B7-K1: changing pattern param does not mutate currently-playing voice
 TEST_CASE("B7-K1: mix() performs no heap allocation", "[b7-k1][allocation]")
 {
     constexpr int kRate = 44100;
-    auto bank = makeTestBank("bd", 0, 441, kRate);
+    SampleBank bank;
+    makeTestBank(bank, "bd", 0, 441, kRate);
     VoicePool pool;
 
     hathor::ParamMap params;
@@ -815,7 +822,8 @@ TEST_CASE("B7-K1: mix() performs no heap allocation", "[b7-k1][allocation]")
 TEST_CASE("B7-K1: mix() is noexcept / lock-free", "[b7-k1][lockfree]")
 {
     constexpr int kRate = 44100;
-    auto bank = makeTestBank("bd", 0, 441, kRate);
+    SampleBank bank;
+    makeTestBank(bank, "bd", 0, 441, kRate);
     VoicePool pool;
 
     hathor::ParamMap params;
@@ -923,7 +931,8 @@ TEST_CASE("B7-K1: invalid params via VoicePool trigger do not produce NaN output
           "[b7-k1][voicepool][safety]")
 {
     constexpr int kRate = 44100;
-    auto bank = makeTestBank("bd", 0, 441, kRate);
+    SampleBank bank;
+    makeTestBank(bank, "bd", 0, 441, kRate);
     VoicePool pool;
 
     // cutoff = NaN
@@ -952,7 +961,8 @@ TEST_CASE("B7-K1: default-param VoicePool output has no NaN",
           "[b7-k1][voicepool][safety]")
 {
     constexpr int kRate = 44100;
-    auto bank = makeTestBank("bd", 0, 441, kRate);
+    SampleBank bank;
+    makeTestBank(bank, "bd", 0, 441, kRate);
     VoicePool pool;
 
     hathor::ParamMap params;
