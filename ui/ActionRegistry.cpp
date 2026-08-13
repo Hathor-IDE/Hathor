@@ -90,11 +90,6 @@ bool ActionRegistry::bindKey(const KeyEquivalent& key, std::string actionId)
         return false;
 
     auto& entry = actions_[it->second];
-
-    // Remove any old reverse binding
-    if (entry.keyEquivalent.has_value())
-        keyToId_.erase(*entry.keyEquivalent);
-
     entry.keyEquivalent = key;
     keyToId_[key] = actionId;
     return true;
@@ -151,7 +146,13 @@ bool ActionRegistry::dispatchKey(const KeyEquivalent& key)
     std::string actionId = findActionForKey(key);
     if (actionId.empty())
         return false;
-    return dispatch(actionId);
+    auto it = idToIndex_.find(actionId);
+    if (it == idToIndex_.end())
+        return false;
+    auto& entry = actions_[it->second];
+    if (entry.callback)
+        entry.callback();
+    return true;
 }
 
 void ActionRegistry::clear() noexcept

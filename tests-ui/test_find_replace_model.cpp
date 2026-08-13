@@ -38,7 +38,7 @@ TEST_CASE("FindReplaceModel: plain text find next", "[findreplace]")
     REQUIRE_FALSE(r3.has_value());
 }
 
-TEST_CASE("FindReplaceModel: case-insensitive search", "[findreplace]")
+TEST_CASE("FindReplaceModel: case-sensitive default", "[findreplace]")
 {
     FindReplaceModel m;
     m.setSearchText("HELLO");
@@ -48,12 +48,11 @@ TEST_CASE("FindReplaceModel: case-insensitive search", "[findreplace]")
     std::string doc = "Say hello world, HELLO there.";
     auto r1 = m.findNext(doc, 0);
     REQUIRE(r1.has_value());
-    // Without case-insensitive flag, won't match 'hello'
-    REQUIRE(r1->start == 15);
-    REQUIRE(r1->end == 20);
+    REQUIRE(r1->start == 17);
+    REQUIRE(r1->end == 22);
 }
 
-TEST_CASE("FindReplaceModel: case-insensitive flag", "[findreplace]")
+TEST_CASE("FindReplaceModel: case-sensitive flag", "[findreplace]")
 {
     FindReplaceModel m;
     m.setSearchText("hello");
@@ -63,8 +62,8 @@ TEST_CASE("FindReplaceModel: case-insensitive flag", "[findreplace]")
     std::string doc = "Say HELLO world, hello there.";
     auto r1 = m.findNext(doc, 0);
     REQUIRE(r1.has_value());
-    REQUIRE(r1->start == 15);
-    REQUIRE(r1->end == 20);
+    REQUIRE(r1->start == 17);
+    REQUIRE(r1->end == 22);
 }
 
 TEST_CASE("FindReplaceModel: whole word search", "[findreplace]")
@@ -74,7 +73,7 @@ TEST_CASE("FindReplaceModel: whole word search", "[findreplace]")
     m.setFlags(FindFlags::WholeWord);
     REQUIRE(m.compilePattern());
 
-    std::string doc = "ell hello yellow shell";
+    std::string doc = "hello yellow shell";
     auto r1 = m.findNext(doc, 0);
     REQUIRE_FALSE(r1.has_value());  // 'ell' in 'hello' is not a whole word
 }
@@ -86,7 +85,7 @@ TEST_CASE("FindReplaceModel: whole word match", "[findreplace]")
     m.setFlags(FindFlags::WholeWord);
     REQUIRE(m.compilePattern());
 
-    std::string doc = "hello hello-world hello";
+    std::string doc = "hello hello-world";
     auto r1 = m.findNext(doc, 0);
     REQUIRE(r1.has_value());
     REQUIRE(r1->start == 0);
@@ -110,7 +109,8 @@ TEST_CASE("FindReplaceModel: wrap around", "[findreplace]")
     std::string doc = "test one test two";
     auto r1 = m.findNext(doc, 5);
     REQUIRE(r1.has_value());
-    REQUIRE(r1->start == 10);
+    REQUIRE(r1->start == 9);
+    REQUIRE(r1->end == 13);
 
     // After the last match, wrap around to the first
     auto r2 = m.findNext(doc, r1->end);
@@ -130,10 +130,15 @@ TEST_CASE("FindReplaceModel: find all plain text", "[findreplace]")
 
     std::string doc = "ab abc abcd ab";
     auto results = m.findAll(doc);
-    REQUIRE(results.size() == 3);
+    REQUIRE(results.size() == 4);
     REQUIRE(results[0].start == 0);
-    REQUIRE(results[1].start == 6);
-    REQUIRE(results[2].start == 14);
+    REQUIRE(results[0].end == 2);
+    REQUIRE(results[1].start == 3);
+    REQUIRE(results[1].end == 5);
+    REQUIRE(results[2].start == 7);
+    REQUIRE(results[2].end == 9);
+    REQUIRE(results[3].start == 12);
+    REQUIRE(results[3].end == 14);
 }
 
 // ===========================================================================

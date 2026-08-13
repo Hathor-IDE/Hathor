@@ -284,7 +284,7 @@ enum class CompletionContextKind {
 };
 
 struct CompletionContext {
-    CompletionContextKind kind;
+    CompletionContextKind kind = CompletionContextKind::Code;
     std::string           prefix;       ///< text before cursor that narrows results
     std::string           fullText;     ///< entire document text at the time of request
     Position              position;

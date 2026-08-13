@@ -229,7 +229,7 @@ TEST_CASE("Plain identifiers are classified as TK_CK_DEFAULT", "[chuck][chuck-ke
 // "pi" is classified as a numeric constant
 // ---------------------------------------------------------------------------
 
-TEST_CASE("\"pi\" is classified as TK_CK_NUMBER", "[chuck][chuck-constants]")
+TEST_CASE("ChucK constant pi is classified as TK_CK_NUMBER", "[chuck][chuck-constants]")
 {
     REQUIRE(classifyChuckIdentifier("pi") == TK_CK_NUMBER);
 }

@@ -160,6 +160,10 @@ void WorkerThread::workerLoop()
 
         slotState->notation = canonicalNotation;
 
+        // Auto-start the slot so audio begins immediately after set-pattern.
+        // (Req 11.5: set-pattern creates and arms the slot for playback.)
+        slotState->running.store(true, std::memory_order_release);
+
         audio_.storeSlot(idx, std::move(slotState));
 
         // ---------------------------------------------------------------

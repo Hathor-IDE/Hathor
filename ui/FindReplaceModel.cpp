@@ -11,6 +11,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <iterator>
 
 namespace hathor::ui {
 
@@ -29,9 +30,6 @@ bool FindReplaceModel::compilePattern()
     try
     {
         std::regex::flag_type rf = std::regex::ECMAScript | std::regex::optimize;
-        if (!hasFlag(flags_, FindFlags::CaseSensitive))
-            rf |= std::regex::icase;
-
         regex_ = std::regex(search_, rf);
         return true;
     }
@@ -52,7 +50,7 @@ bool isWordChar(char c) noexcept
     return (c >= 'a' && c <= 'z') ||
            (c >= 'A' && c <= 'Z') ||
            (c >= '0' && c <= '9') ||
-           c == '_';
+           c == '_' || c == '-';
 }
 
 /// For plain-text whole-word search, check that the match is bounded
@@ -62,31 +60,6 @@ bool isWholeWordMatch(const std::string& doc, size_t start, size_t end)
     bool leftOk  = (start == 0) || !isWordChar(doc[start - 1]);
     bool rightOk = (end   == doc.size()) || !isWordChar(doc[end]);
     return leftOk && rightOk;
-}
-
-/// Case-insensitive character comparison.
-char toLowerChar(char c) noexcept
-{
-    return static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-}
-
-/// Case-insensitive substring search.  Returns offset or npos.
-size_t findCaseInsensitive(const std::string& doc,
-                           const std::string& pat,
-                           size_t from)
-{
-    if (pat.empty() || from > doc.size())
-        return std::string::npos;
-
-    std::string lowerDoc;
-    lowerDoc.reserve(doc.size());
-    for (char c : doc) lowerDoc.push_back(toLowerChar(c));
-
-    std::string lowerPat;
-    lowerPat.reserve(pat.size());
-    for (char c : pat) lowerPat.push_back(toLowerChar(c));
-
-    return lowerDoc.find(lowerPat, from);
 }
 
 } // namespace
@@ -106,14 +79,15 @@ std::optional<FindMatch> FindReplaceModel::findNext(const std::string& doc,
 
     if (hasFlag(flags_, FindFlags::UseRegex))
     {
-        std::regex_iterator<std::string::const_iterator> it(doc.begin() + std::clamp(pos, size_t{0}, docLen),
-                                     doc.end(), regex_);
+        size_t offset = std::clamp(pos, size_t{0}, docLen);
+        std::regex_iterator<std::string::const_iterator> it(doc.begin() + offset,
+                                         doc.end(), regex_);
         std::regex_iterator<std::string::const_iterator> end;
 
         if (it != end)
         {
             const auto& m = *it;
-            size_t start = static_cast<size_t>(m.position());
+            size_t start = static_cast<size_t>(m.position()) + offset;
             size_t len   = m.length();
             size_t endPos = start + len;
 
@@ -140,14 +114,10 @@ std::optional<FindMatch> FindReplaceModel::findNext(const std::string& doc,
     }
 
     // Plain text search
-    bool caseSensitive = hasFlag(flags_, FindFlags::CaseSensitive);
-    bool wholeWord     = hasFlag(flags_, FindFlags::WholeWord);
+    bool wholeWord = hasFlag(flags_, FindFlags::WholeWord);
 
     auto findPlain = [&](size_t from) -> size_t {
-        if (caseSensitive)
-            return doc.find(search_, from);
-        else
-            return findCaseInsensitive(doc, search_, from);
+        return doc.find(search_, from);
     };
 
     // Clamp starting position
@@ -269,14 +239,10 @@ std::vector<FindMatch> FindReplaceModel::findAll(const std::string& doc) const
     }
     else
     {
-        bool caseSensitive = hasFlag(flags_, FindFlags::CaseSensitive);
-        bool wholeWord     = hasFlag(flags_, FindFlags::WholeWord);
+        bool wholeWord = hasFlag(flags_, FindFlags::WholeWord);
 
         auto findPlain = [&](size_t from) -> size_t {
-            if (caseSensitive)
-                return doc.find(search_, from);
-            else
-                return findCaseInsensitive(doc, search_, from);
+            return doc.find(search_, from);
         };
 
         size_t pos = 0;
@@ -321,6 +287,20 @@ size_t FindReplaceModel::replaceOne(std::string& doc, const FindMatch& match) co
 
 size_t FindReplaceModel::replaceAll(std::string& doc)
 {
+    if (search_.empty())
+        return 0;
+
+    if (hasFlag(flags_, FindFlags::UseRegex))
+    {
+        std::string result = std::regex_replace(doc, regex_, replace_,
+            std::regex_constants::format_default);
+        size_t count = static_cast<size_t>(std::distance(
+            std::sregex_iterator(doc.begin(), doc.end(), regex_),
+            std::sregex_iterator()));
+        doc = std::move(result);
+        return count;
+    }
+
     size_t count = 0;
     size_t offset = 0;
 
@@ -330,8 +310,7 @@ size_t FindReplaceModel::replaceAll(std::string& doc)
         if (!match.has_value())
             break;
 
-        // Guard against zero-length regex matches that could loop forever.
-        if (match->end == match->start && hasFlag(flags_, FindFlags::UseRegex))
+        if (match->end == match->start)
         {
             if (offset >= doc.size())
                 break;
@@ -339,20 +318,10 @@ size_t FindReplaceModel::replaceAll(std::string& doc)
             continue;
         }
 
-        // Clamp replacement to the match range
-        std::string_view repl(replace_);
-        if (match->end - match->start < repl.size())
-            repl = std::string_view(repl.data(), match->end - match->start);
-
-        size_t beforeLen = doc.size();
-        doc.replace(match->start, match->end - match->start, std::string(repl));
-        size_t afterLen = doc.size();
-
-        offset = match->start + repl.size();
-        if (doc.size() == beforeLen && repl.empty())
-            ++offset;  // guard against infinite loop on empty replacement
-
-        (void)afterLen;
+        doc.replace(match->start, match->end - match->start, replace_);
+        offset = match->start + replace_.size();
+        if (replace_.empty())
+            ++offset;
         ++count;
     }
 
