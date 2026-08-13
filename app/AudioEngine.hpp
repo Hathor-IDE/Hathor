@@ -5,7 +5,9 @@
 
 #include <atomic>
 #include <memory>
+#include <mutex>
 #include <string>
+#include <unordered_map>
 #include <vector>
 #include <cstdint>
 
@@ -490,19 +492,33 @@ private:
     // setLiveJamSessionDir is called with a non-empty path).
     std::filesystem::path liveJamSessionDirStorage_;
 
-    // AI-5: Async ChucK compilation stubs (not yet wired up)
-    uint64_t startAsyncCkCompile(int /*slotIdx*/,
-                                 const std::string& /*code*/,
-                                 std::function<void(bool, const std::string&)> /*onComplete*/) override
-    {
-        return 0;
-    }
-    nlohmann::json queryCkJob(uint64_t /*jobId*/) const override
-    {
-        return nlohmann::json::object();
-    }
-    bool cancelCkJob(uint64_t /*jobId*/) override
-    {
-        return false;
-    }
+     // AI-5: Async ChucK compilation (Phase 2A — real implementation in AudioEngine.cpp)
+     uint64_t startAsyncCkCompile(int                 slotIdx,
+                                 const std::string&  code,
+                                 std::function<void(bool                /*success*/,
+                                                    const std::string&  /*response*/)> onComplete) override;
+
+      // AI-5: Job status query (Phase 2B)
+      nlohmann::json queryCkJob(uint64_t jobId) const override;
+
+      // AI-5: Job cancellation (Phase 2C)
+      bool cancelCkJob(uint64_t jobId) override;
+
+      // ------------------------------------------------------------------
+      // AI-5: Async ChucK job tracking (Phase 2A)
+      // ------------------------------------------------------------------
+     // Monotonic job-ID counter (same pattern as ChuckRenderWriter::nextJobId_).
+     std::atomic<uint64_t> nextCkJobId_{1};
+
+     /// Per-job tracking entry stored in ckJobs_ for future query (Phase 2B) and
+     /// cancellation (Phase 2C).
+     struct CkJobEntry {
+         uint64_t            jobId;
+         std::atomic<int>    status{0};       ///< 0=queued, 1=running, 2=succeeded, 3=failed, 4=cancelled
+         std::string         response;        ///< worker response message (for queryCkJob)
+         std::atomic<bool>   cancelRequested{false};
+     };
+
+     std::mutex                                          ckJobsMtx_;
+     std::unordered_map<uint64_t, std::shared_ptr<CkJobEntry>> ckJobs_;
 };

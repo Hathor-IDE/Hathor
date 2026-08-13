@@ -8,6 +8,7 @@
 #include <cstdio>
 #include <cstring>
 #include <mutex>
+#include <thread>
 
 #include "hathor/Arc.hpp"
 #include "hathor/Rational.hpp"
@@ -1304,5 +1305,92 @@ std::filesystem::path AudioEngine::studioInstrumentsDir(
 std::filesystem::path AudioEngine::currentProjectDir() const noexcept
 {
     return resolver_.projectDir();
+}
+
+// ---------------------------------------------------------------------------
+// AI-5: Async ChucK compilation (Phase 2A)
+//
+// Submits .ck source to the B4-K4 ChuckDispatcher thread in the worker process
+// via AudioWorkerManager::evaluateCkTab(), on a dedicated background thread.
+// The completion callback fires on that background thread when the IPC round-trip
+// completes — never on the caller's thread, never on the audio thread.
+//
+// Design follows the same pattern as ChuckRenderWriter::runRender() (B8-K2):
+//   1. Validate inputs synchronously (slotIdx range — caller's mistake).
+//   2. Generate a monotonic job ID.
+//   3. Create a CkJobEntry and register it in ckJobs_ for Phase 2B query.
+//   4. Spawn a detached thread that:
+//      a. Checks worker liveness (if dead → fail fast with error message).
+//      b. Calls workerMgr_->evaluateCkTab() (same IPC path as ckEval()).
+//      c. Fires onComplete(result.ok, result.message).
+//   5. Return the job ID immediately (non-blocking).
+// ---------------------------------------------------------------------------
+
+uint64_t AudioEngine::startAsyncCkCompile(int                                        slotIdx,
+                                           const std::string&                         code,
+                                           std::function<void(bool, const std::string&)> onComplete)
+{
+    // B4-K7: validate slot range before doing any work.
+    if (slotIdx < 0 || slotIdx >= kNumSlots) {
+        if (onComplete)
+            onComplete(false, "slot index out of range [0, 16)");
+        return 0;
+    }
+
+    // Generate a non-zero job ID (monotonic counter, same pattern as
+    // ChuckRenderWriter::nextJobId_).
+    const uint64_t jobId = nextCkJobId_.fetch_add(1, std::memory_order_relaxed);
+
+    // Create and register the job entry for Phase 2B (queryCkJob).
+    auto entry = std::make_shared<CkJobEntry>();
+    entry->jobId = jobId;
+    entry->status.store(1, std::memory_order_relaxed); // Running
+    {
+        std::lock_guard<std::mutex> lock(ckJobsMtx_);
+        ckJobs_[jobId] = entry;
+    }
+
+    const uint8_t  tabId      = static_cast<uint8_t>(slotIdx);
+    const std::string sourceCopy = code;  // ensure lifetime on the background thread
+
+    // Spawn a detached background thread. The thread captures `this` (AudioEngine),
+    // but the only member it touches is workerMgr_ (for evaluateCkTab / isWorkerAlive).
+    // workerMgr_ is not destroyed until shutdownWorker() is called, and the
+    // background thread completes its IPC call quickly (bounded by the worker's
+    // IPC timeout). This mirrors the ChuckRenderWriter pattern.
+    std::thread([this, tabId, sourceCopy, onComplete, entry]() mutable {
+        // Check worker liveness before attempting compilation.
+        if (!workerMgr_) {
+            entry->status.store(3, std::memory_order_release); // Failed
+            entry->response = "audio worker is not running";
+            if (onComplete)
+                onComplete(false, entry->response);
+            return;
+        }
+
+        if (!workerMgr_->isWorkerAlive()) {
+            entry->status.store(3, std::memory_order_release); // Failed
+            entry->response = "audio worker is not running";
+            if (onComplete)
+                onComplete(false, entry->response);
+            return;
+        }
+
+        // Submit to the existing worker infrastructure via the same IPC path
+        // as ckEval() (B4-K7). evaluateCkTab() blocks until the worker responds
+        // (bounded by the worker's IPC timeout), so this thread is non-UI.
+        auto result = workerMgr_->evaluateCkTab(tabId, sourceCopy);
+
+        // Update job tracking state (for future queryCkJob / Phase 2B).
+        entry->response = result.message;
+        entry->status.store(result.ok ? 2 : 3, std::memory_order_release);
+
+        // Fire the completion callback. This fires on the background thread,
+        // not the caller's thread or the audio thread.
+        if (onComplete)
+            onComplete(result.ok, result.message);
+    }).detach();
+
+    return jobId;
 }
 

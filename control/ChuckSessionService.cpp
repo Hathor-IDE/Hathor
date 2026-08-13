@@ -265,46 +265,61 @@ AsyncJobHandle ChuckSessionService::compileChuck(
             // the callback updates the job entry when the shred is loaded.
             //
             // We capture the entry weak_ptr so the callback can update it.
-            std::weak_ptr<JobEntry> weakEntry = entry;
-            audio_.startAsyncCkCompile(tabId, sourceCopy,
-                [weakEntry, onComplete, sourceCopy](bool /*success*/, const std::string& response) {
-                    // This callback fires on the worker thread's notification
-                    // thread. Update the job entry if it still exists.
-                    if (auto entry = weakEntry.lock()) {
-                        CompileResult cr;
-                        cr.success = true;
-                        cr.sourceHash = "compiled";
-                        cr.shredId = -1;
+             std::weak_ptr<JobEntry> weakEntry = entry;
+             audio_.startAsyncCkCompile(tabId, sourceCopy,
+                 [weakEntry, onComplete, sourceCopy](bool success, const std::string& response) {
+                     // This callback fires on the background thread spawned by
+                     // startAsyncCkCompile (via evaluateCkTab IPC). Update the
+                     // job entry if it still exists.
+                     if (auto entry = weakEntry.lock()) {
+                         CompileResult cr;
+                         cr.success = success;
+                         cr.sourceHash = "compiled";
+                         cr.shredId = -1;
 
-                        // Parse response for shred/hash info if the worker
-                        // provided it.
-                        auto hashPos = response.find("hash=");
-                        if (hashPos != std::string::npos) {
-                            size_t end = response.find(' ', hashPos);
-                            if (end == std::string::npos) end = response.size();
-                            cr.sourceHash = response.substr(hashPos + 5, end - hashPos - 5);
-                        }
-                        auto shredPos = response.find("shred=");
-                        if (shredPos != std::string::npos) {
-                            try {
-                                cr.shredId = std::stoi(response.substr(shredPos + 6));
-                            } catch (...) {}
-                        }
+                         if (success) {
+                             // Parse response for shred/hash info if the worker
+                             // provided it.
+                             auto hashPos = response.find("hash=");
+                             if (hashPos != std::string::npos) {
+                                 size_t end = response.find(' ', hashPos);
+                                 if (end == std::string::npos) end = response.size();
+                                 cr.sourceHash = response.substr(hashPos + 5, end - hashPos - 5);
+                             }
+                             auto shredPos = response.find("shred=");
+                             if (shredPos != std::string::npos) {
+                                 try {
+                                     cr.shredId = std::stoi(response.substr(shredPos + 6));
+                                 } catch (...) {}
+                             }
 
-                        cr.diagnostics.push_back({
-                            "info", "CK_OK", "ChucK source compiled and published", 0, 0
-                        });
+                             cr.diagnostics.push_back({
+                                 "info", "CK_OK", "ChucK source compiled and published", 0, 0
+                             });
 
-                        {
-                            std::lock_guard<std::mutex> lock(entry->resultMtx);
-                            entry->result = cr;
-                            entry->state.store(JobState::Succeeded, std::memory_order_release);
-                        }
+                             {
+                                 std::lock_guard<std::mutex> lock(entry->resultMtx);
+                                 entry->result = cr;
+                                 entry->state.store(JobState::Succeeded, std::memory_order_release);
+                             }
+                         } else {
+                             // Worker compile failed — surface the error.
+                             cr.errorMessage = response;
+                             cr.diagnostics.push_back({
+                                 "error", "CK_COMPILE_ERROR", response, 0, 0
+                             });
 
-                        if (onComplete)
-                            onComplete(cr);
-                    }
-                });
+                             {
+                                 std::lock_guard<std::mutex> lock(entry->resultMtx);
+                                 entry->result = cr;
+                                 entry->state.store(JobState::Failed, std::memory_order_release);
+                             }
+                         }
+
+                         if (onComplete)
+                             onComplete(cr);
+                     }
+                 });
 
             // Return immediately — the job will be marked complete by the
             // callback above. The job tracker reports "running" status until
