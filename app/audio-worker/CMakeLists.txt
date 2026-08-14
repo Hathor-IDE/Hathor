@@ -12,6 +12,7 @@
 # ---------------------------------------------------------------------------
 add_library(hathor-audio-worker-lib STATIC
     AudioWorkerManager.cpp
+    ChuckCkJobService.cpp
     ChuckCompiler.cpp
     ChuckDiagnostics.cpp
     ChuckVM.cpp
@@ -26,6 +27,9 @@ target_include_directories(hathor-audio-worker-lib
         ${CMAKE_CURRENT_SOURCE_DIR}
         ${CMAKE_SOURCE_DIR}/engine/include
 )
+
+# ChuckCkJobService.hpp pulls in nlohmann/json.hpp, so propagate it publicly.
+target_link_libraries(hathor-audio-worker-lib PUBLIC nlohmann_json::nlohmann_json)
 
 target_compile_features(hathor-audio-worker-lib PUBLIC cxx_std_20)
 target_compile_options(hathor-audio-worker-lib PRIVATE -Wall -Wextra -Werror)

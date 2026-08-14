@@ -107,6 +107,17 @@ std::string AudioEngine::startWorker(const std::string& workerPath)
     // stale samples after a worker restart.
     workerGeneration_.store(workerMgr_->generation(), std::memory_order_release);
 
+    // Create the JUCE-free compile job tracker (Phase 2A/2B/2C). The publisher
+    // binds the existing B4-K7 evaluateCkTab() IPC path so startAsyncCkCompile()
+    // is a thin delegate and the state machine + canonical queryCkJob() schema
+    // are unit-testable in isolation via a fake Publisher.
+    compileJobs_ = std::make_unique<hathor::audio_worker::ChuckCkJobService>(
+        [this](uint8_t tabId, const std::string& code) -> hathor::audio_worker::VMResult {
+            if (!workerMgr_)
+                return {false, 1, "audio worker not configured"};
+            return workerMgr_->evaluateCkTab(tabId, code);
+        });
+
     return "";
 }
 
@@ -117,16 +128,11 @@ void AudioEngine::shutdownWorker() noexcept
         renderWriter_.reset();
     }
 
-    // Join all active CkCompileJob background threads before destroying the
-    // worker manager, so threads do not race with workerMgr_ teardown.
-    {
-        std::lock_guard<std::mutex> lock(ckJobsMtx_);
-        for (auto& [id, entry] : ckJobs_) {
-            entry->cancelRequested.store(true, std::memory_order_release);
-            if (entry->workerThread && entry->workerThread->joinable())
-                entry->workerThread->join();
-        }
-    }
+    // Join all active compile IPC threads before tearing down the worker
+    // manager, so no background thread races with worker process destruction.
+    if (compileJobs_)
+        compileJobs_->shutdown();
+    compileJobs_.reset();
 
     if (workerMgr_) {
         workerMgr_->shutdown();

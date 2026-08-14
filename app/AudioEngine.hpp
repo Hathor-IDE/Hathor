@@ -28,6 +28,7 @@
 #include "VoicePool.hpp"
 #include "VisualizerFrame.hpp"
 #include "audio-worker/AudioWorkerManager.hpp"
+#include "audio-worker/ChuckCkJobService.hpp"
 #include "MasterEq.hpp"
 #include "AssetTarget.hpp"
 #include "AssetPathResolver.hpp"
@@ -494,36 +495,28 @@ private:
     // setLiveJamSessionDir is called with a non-empty path).
     std::filesystem::path liveJamSessionDirStorage_;
 
-     // AI-5: Async ChucK compilation (Phase 2A — real implementation in AudioEngine.cpp)
-     uint64_t startAsyncCkCompile(int                 slotIdx,
-                                 const std::string&  code,
-                                 std::function<void(bool                /*success*/,
-                                                    const std::string&  /*response*/)> onComplete) override;
+       // AI-5: Async ChucK compilation (Phase 2A — real implementation in AudioEngine.cpp)
+      uint64_t startAsyncCkCompile(int                 slotIdx,
+                                  const std::string&  code,
+                                  std::function<void(bool                /*success*/,
+                                                     const std::string&  /*response*/)> onComplete) override;
 
-      // AI-5: Job status query (Phase 2B)
-      nlohmann::json queryCkJob(uint64_t jobId) const override;
+       // AI-5: Job status query (Phase 2B)
+       nlohmann::json queryCkJob(uint64_t jobId) const override;
 
-      // AI-5: Job cancellation (Phase 2C)
-      bool cancelCkJob(uint64_t jobId) override;
+       // AI-5: Job cancellation (Phase 2C)
+       bool cancelCkJob(uint64_t jobId) override;
 
       // ------------------------------------------------------------------
-      // AI-5: Async ChucK job tracking (Phase 2A)
+      // AI-5: Async ChucK job tracking (Phase 2A/2B/2C)
+      //
+      // Owned, JUCE-free tracker for compile jobs submitted via startAsyncCkCompile().
+      // The CkJobEntry registry used to live inline here; it now lives in
+      // ChuckCkJobService so the state machine + canonical queryCkJob() schema are
+      // unit-testable without JUCE (tests/test_b4_k4_ckpt_compile_job.cpp).
+      // Declared after workerMgr_ (see app/AudioEngine.cpp) so it is destroyed
+      // before workerMgr_ during teardown — but only after shutdown() joins any
+      // in-flight compile threads.
       // ------------------------------------------------------------------
-     // Monotonic job-ID counter (same pattern as ChuckRenderWriter::nextJobId_).
-     std::atomic<uint64_t> nextCkJobId_{1};
-
-      /// Per-job tracking entry stored in ckJobs_ for future query (Phase 2B) and
-      /// cancellation (Phase 2C).  The workerThread is stored here so that
-      /// shutdownWorker() can join all active compile threads before tearing
-      /// down the AudioWorkerManager.
-      struct CkJobEntry {
-          uint64_t            jobId;
-          std::atomic<int>    status{0};       ///< 0=queued, 1=running, 2=succeeded, 3=failed, 4=cancelled
-          std::string         response;        ///< worker response message (for queryCkJob)
-          std::atomic<bool>   cancelRequested{false};
-          std::unique_ptr<std::thread> workerThread;  ///< joinable background thread
-      };
-
-      mutable std::mutex                                      ckJobsMtx_;
-      std::unordered_map<uint64_t, std::shared_ptr<CkJobEntry>> ckJobs_;
+      std::unique_ptr<hathor::audio_worker::ChuckCkJobService> compileJobs_;
 };

@@ -406,12 +406,18 @@ struct EventCollector {
 
 /// Poll getState() until terminal state or deadline.
 std::string waitForTerminal(AgenticWorkflow& wf,
-                            std::chrono::steady_clock::time_point deadline)
+                             std::chrono::steady_clock::time_point deadline)
 {
     for (;;) {
         const std::string s = wf.getState().value("state", std::string{});
-        if (s == "completed" || s == "failed" || s == "cancelled")
+        if (s == "completed" || s == "failed" || s == "cancelled") {
+            // setState() changes state_ before emitting terminal events
+            // (LifecycleTransition + WorkflowCompleted).  Briefly yield to
+            // let the workflow thread finish emitting so callers that
+            // inspect the event stream see the complete terminal sequence.
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
             return s;
+        }
         if (std::chrono::steady_clock::now() > deadline)
             return wf.getState().value("state", std::string{});
         std::this_thread::sleep_for(std::chrono::milliseconds(2));
