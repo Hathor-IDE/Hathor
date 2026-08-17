@@ -111,11 +111,17 @@ std::string AudioEngine::startWorker(const std::string& workerPath)
     // binds the existing B4-K7 evaluateCkTab() IPC path so startAsyncCkCompile()
     // is a thin delegate and the state machine + canonical queryCkJob() schema
     // are unit-testable in isolation via a fake Publisher.
+    // The canceller binds cancelCkCompile() so cancelCkJob() sends a real
+    // ck_cancel control-plane command to the worker process (Phase 2C).
     compileJobs_ = std::make_unique<hathor::audio_worker::ChuckCkJobService>(
         [this](uint8_t tabId, const std::string& code) -> hathor::audio_worker::VMResult {
             if (!workerMgr_)
                 return {false, 1, "audio worker not configured"};
             return workerMgr_->evaluateCkTab(tabId, code);
+        },
+        [this](uint8_t tabId) {
+            if (workerMgr_)
+                workerMgr_->cancelCkCompile(tabId);
         });
 
     return "";
@@ -1385,8 +1391,13 @@ nlohmann::json AudioEngine::queryCkJob(uint64_t jobId) const
 //
 // Passthrough to ChuckCkJobService::cancelJob (sets the cooperative flag; the
 // worker thread transitions the observable state to Cancelled). The full
-// Phase 2C UX (worker-side IPC cancel signal) is owned separately — this is
-// intentionally a thin delegate so queryCkJob can report Cancelled.
+// AI-5 Phase 2C: Job cancellation.
+//
+// Delegates to ChuckCkJobService::cancelJob(), which sets the cooperative
+// cancelRequested flag AND fires the ck_cancel control-plane command through
+// AudioWorkerManager::cancelCkCompile().  The worker ChuckCompiler dispatcher
+// observes the flag before publishing the handoff shred, preventing a cancelled
+// job's result from being consumed by the VM render thread.
 // ---------------------------------------------------------------------------
 
 bool AudioEngine::cancelCkJob(uint64_t jobId)

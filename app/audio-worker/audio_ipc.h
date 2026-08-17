@@ -10,7 +10,8 @@
  * hathor-audio-worker (producer) and the main Hathor process (consumer).
  *
  * The transport contract is identical to the one validated by the B4-K0.6
- * spike in spikes/b4-k0-6/audio_ipc.h.  No new protocol is introduced here.
+ * spike in spikes/b4-k0-6/audio_ipc.h.  The ck_cancel command (AI-5 Phase 2C)
+ * is the only extension beyond that baseline.
  *
  * Architecture:
  *   - Control plane: Unix domain socket (lifecycle, commands, status, liveness)
@@ -83,15 +84,25 @@
  *       -> "err ck_compile tab=<tabId> version=<v> error=<msg> line=<l> col=<c>"
  *       (B4-K4: serialized compile; publishes handoff shred on success)
  *
- *   ck_stop <tabId>
- *       -> "ok ck_stopped tab=<tabId>"
- *       -> "err ck_stop_failed tab=<tabId> <reason>"
- *       (B4-K7: stop .ck tab — destroy VM + clear handoff)
- *
- * Requirements: B4-K0.6 (transport contract), B4-K2 (generation identity),
- *               B4-K3 (per-tab VM isolation), B4-K4 (serialized compile),
- *               B4-K7 (.ck tab evaluation), B4-K8 (hard gate tests)
- */
+  *   ck_stop <tabId>
+  *       -> "ok ck_stopped tab=<tabId>"
+  *       -> "err ck_stop_failed tab=<tabId> <reason>"
+  *       (B4-K7: stop .ck tab — destroy VM + clear handoff)
+  *
+  *   ck_cancel <tabId>
+  *       -> "ok ck_cancelled tab=<tabId>"
+  *       -> "err ck_cancel_failed tab=<tabId> <reason>"
+  *       (AI-5 Phase 2C: cancel pending/in-flight async ChucK compile for a tab.
+  *       The ChuckCompiler dispatcher checks the cancel flag before publishing
+  *       the handoff shred, so the VM render thread never consumes a cancelled
+  *       result. Best-effort: if compileCode() is already running the work
+  *       completes but the handoff is suppressed.)
+  *
+  * Requirements: B4-K0.6 (transport contract), B4-K2 (generation identity),
+  *               B4-K3 (per-tab VM isolation), B4-K4 (serialized compile),
+  *               B4-K7 (.ck tab evaluation), B4-K8 (hard gate tests)
+  *               AI-5 Phase 2C (async compile cancellation)
+  */
 
 #include <atomic>
 #include <cstdint>

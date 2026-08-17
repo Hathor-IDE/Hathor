@@ -126,6 +126,7 @@ public:
 
         auto entry = std::make_shared<CkJobEntry>();
         entry->jobId = jobId;
+        entry->tabId = static_cast<uint8_t>(slotIdx);
         entry->status.store(1, std::memory_order_relaxed); // Running
         {
             std::lock_guard<std::mutex> lock(jobsMtx_);
@@ -146,6 +147,16 @@ public:
 
             auto result = worker_->evaluateCkTab(tabId, sourceCopy);
 
+            // Honour a cancellation requested while blocked on IPC.
+            if (entry->cancelRequested.load(std::memory_order_acquire)) {
+                std::lock_guard<std::mutex> lock(entry->resultMtx);
+                entry->response = "job cancelled";
+                entry->status.store(4, std::memory_order_release); // Cancelled
+                if (onComplete)
+                    onComplete(false, "job cancelled");
+                return;
+            }
+
             entry->response = result.message;
             entry->status.store(result.ok ? 2 : 3, std::memory_order_release);
 
@@ -154,6 +165,79 @@ public:
         }).detach();
 
         return jobId;
+    }
+
+    bool cancelJob(uint64_t jobId)
+    {
+        std::shared_ptr<CkJobEntry> entry;
+        {
+            std::lock_guard<std::mutex> lock(jobsMtx_);
+            auto it = jobs_.find(jobId);
+            if (it == jobs_.end())
+                return false;
+            entry = it->second;
+        }
+
+        const int state = entry->status.load(std::memory_order_acquire);
+        if (state == 2 || state == 3 || state == 4) // Succeeded, Failed, Cancelled
+            return false;
+
+        entry->cancelRequested.store(true, std::memory_order_release);
+
+        // Send ck_cancel to the worker process via the existing control plane.
+        if (worker_ && worker_->isWorkerAlive())
+            worker_->cancelCkCompile(entry->tabId);
+
+        return true;
+    }
+
+    nlohmann::json queryJob(uint64_t jobId) const
+    {
+        std::shared_ptr<CkJobEntry> entry;
+        {
+            std::lock_guard<std::mutex> lock(jobsMtx_);
+            auto it = jobs_.find(jobId);
+            if (it == jobs_.end())
+                return nlohmann::json{{"ok", false}, {"error", "unknown job id"}, {"job_id", jobId}};
+            entry = it->second;
+        }
+
+        const int state = entry->status.load(std::memory_order_acquire);
+        const char* stateStr = [state]() {
+            switch (state) {
+                case 0: return "queued";
+                case 1: return "running";
+                case 2: return "succeeded";
+                case 3: return "failed";
+                case 4: return "cancelled";
+                default: return "unknown";
+            }
+        }();
+
+        nlohmann::json result = {
+            {"ok", true},
+            {"job_id", jobId},
+            {"status", stateStr}
+        };
+
+        std::lock_guard<std::mutex> lock(entry->resultMtx);
+        switch (state) {
+            case 2:
+                result["success"] = true;
+                break;
+            case 3:
+                result["success"] = false;
+                result["error"] = entry->response.empty() ? "compile failed" : entry->response;
+                break;
+            case 4:
+                result["success"] = false;
+                result["error"] = "job cancelled";
+                break;
+            default:
+                break;
+        }
+
+        return result;
     }
 
     void shutdown() noexcept
@@ -173,9 +257,11 @@ private:
 
     struct CkJobEntry {
         uint64_t            jobId;
+        uint8_t             tabId = 0;
         std::atomic<int>    status{0};
         std::string         response;
         std::atomic<bool>   cancelRequested{false};
+        mutable std::mutex  resultMtx;
     };
 
     AudioWorkerManager*                        worker_ = nullptr;

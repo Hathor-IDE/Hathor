@@ -214,6 +214,20 @@ public:
     /// @return VMResult with ok=true on success.
     audio_worker::VMResult stopCkTab(uint8_t tabId);
 
+    /// AI-5 Phase 2C: Cancel an in-flight async ChucK compile for a tab.
+    /// Sends the ck_cancel control-plane command to the worker process, which
+    /// sets the cancel flag on the VM entry. The ChuckCompiler dispatcher
+    /// checks this flag before publishing the handoff shred, preventing the
+    /// cancelled job's result from being consumed by the VM render thread.
+    ///
+    /// Best-effort: if the dispatcher has already published the handoff (or
+    /// is in the middle of compileCode()), the work completes but the result
+    /// is suppressed.
+    ///
+    /// @param tabId Slot index.
+    /// @return VMResult with ok=true if cancellation was accepted.
+    audio_worker::VMResult cancelCkCompile(uint8_t tabId);
+
     /// Query the state of a tab's VM.
     /// @param tabId Slot index.
     /// @return VMResult with state info in the message field.

@@ -80,6 +80,7 @@ struct CompileJobDiag {
 /// race with worker process destruction).
 struct CompileJobEntry {
     uint64_t jobId = 0;
+    uint8_t  tabId = 0;  ///< slot index for worker-side cancel signal
 
     std::atomic<int>    state{static_cast<int>(CompileJobState::Queued)};
     std::atomic<bool>   cancelRequested{false};
@@ -112,7 +113,9 @@ struct CompileJobEntry {
  *   - startCompile() : any thread (control / AI), non-blocking
  *   - worker thread  : publishes to ChucK via the injected Publisher, updates state
  *   - queryJob()     : any thread, non-blocking (brief jobsMtx_ + per-entry resultMtx)
- *   - cancelJob()    : any thread (sets the cooperative flag)
+ *   - cancelJob()    : any thread — sets the cooperative flag AND sends a
+ *                      ck_cancel control-plane command via the injected Canceller
+ *                      so the worker dispatcher can suppress the handoff shred
  */
 class ChuckCkJobService {
 public:
@@ -121,12 +124,17 @@ public:
     /// in tests it is a fake that returns canned replies.
     using Publisher = std::function<VMResult(uint8_t tabId, const std::string& code)>;
 
+    /// Worker-side cancellation callback (AI-5 Phase 2C).  Invoked by
+    /// cancelJob() to send a ck_cancel command through the existing control
+    /// plane.  In production this binds AudioWorkerManager::cancelCkCompile.
+    using Canceller = std::function<void(uint8_t tabId)>;
+
     /// Completion callback fired exactly once, on the worker thread, when the
     /// job reaches a terminal state.  Contract matches startAsyncCkCompile():
     /// (success, workerResponse).
     using Completion = std::function<void(bool success, const std::string& response)>;
 
-    explicit ChuckCkJobService(Publisher publish = {});
+    explicit ChuckCkJobService(Publisher publish, Canceller cancel = {});
     ~ChuckCkJobService();
     ChuckCkJobService(const ChuckCkJobService&)            = delete;
     ChuckCkJobService& operator=(const ChuckCkJobService&) = delete;
@@ -142,9 +150,18 @@ public:
     ///   unknown          : {ok:false, error:"unknown job id", job_id}
     nlohmann::json queryJob(uint64_t jobId) const;
 
-    /// Cooperative cancellation (minimal — Phase 2C wiring lives in AudioEngine,
-    /// which delegates here).  Sets the flag; the worker thread transitions the
-    /// observable state.  Returns true if the job was queued/running.
+    /// Cancel an async ChucK compile job (AI-5 Phase 2C).
+    /// Sets the cooperative cancelRequested flag AND sends a ck_cancel
+    /// control-plane command to the worker process via the Canceller callback.
+    /// The worker dispatcher checks the flag before publishing the handoff
+    /// shred, preventing a cancelled job's result from being consumed.
+    ///
+    /// Return value semantics:
+    ///   false — unknown job, or job already in a terminal state (Succeeded,
+    ///           Failed, Cancelled). The caller should treat this as "cannot
+    ///           cancel"; queryJob() will reveal the actual terminal state.
+    ///   true  — cancellation was accepted. The job will transition to
+    ///           Cancelled when the worker thread observes cancelRequested.
     bool cancelJob(uint64_t jobId);
 
     /// Cancel + join every live compile thread.  Called by AudioEngine::shutdownWorker()
@@ -175,6 +192,7 @@ private:
     std::unordered_map<uint64_t, std::shared_ptr<CompileJobEntry>> jobs_;
 
     Publisher publish_;
+    Canceller canceller_;
 };
 
 } // namespace hathor::audio_worker

@@ -345,6 +345,17 @@ private:
     std::string            lastErrorMsg_;
 
     // -----------------------------------------------------------------------
+    // AI-5 Phase 2C: Async compile cancellation (worker-side flag)
+    // -----------------------------------------------------------------------
+    /// Set to true by VmLifecycle::cancelCompileRequest() when the main process
+    /// requests cancellation of the in-flight async ChucK compile.  The
+    /// ChuckCompiler dispatcher checks this flag before calling onResponse for
+    /// a ck_compile result — if set, the handoff shred is NOT published and the
+    /// callback is invoked with a cancellation error.  Reset to false by
+    /// VmLifecycle::bumpRequestVersion() on the next compile request.
+    std::atomic<bool>       cancelCompileRequest_{false};
+
+    // -----------------------------------------------------------------------
     // B4-K4: Real ChucK runtime
     // -----------------------------------------------------------------------
 

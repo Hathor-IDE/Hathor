@@ -66,7 +66,47 @@ uint32_t VmLifecycle::bumpRequestVersion(TabId tabId)
     std::lock_guard<std::mutex> lock(vmTableMtx_);
     ChuckVmEntry& entry = vmTable_[tabId];
     entry.currentRequestVersion.fetch_add(1, std::memory_order_release);
+    entry.cancelCompileRequest.store(false, std::memory_order_release);
     return entry.currentRequestVersion.load(std::memory_order_acquire);
+}
+
+// ---------------------------------------------------------------------------
+// cancelCompileRequest — set the cancellation flag for a tab's in-flight compile
+// ---------------------------------------------------------------------------
+
+bool VmLifecycle::cancelCompileRequest(TabId tabId)
+{
+    if (tabId < 0 || tabId >= kNumTabs)
+        return false;
+
+    std::lock_guard<std::mutex> lock(vmTableMtx_);
+    ChuckVmEntry& entry = vmTable_[tabId];
+
+    // Only meaningful if there is an active VM; silently no-op for
+    // Inactive / Destroyed tabs (the dispatcher would reject the lookup
+    // anyway, so there is nothing to cancel).
+    if (entry.state.load(std::memory_order_acquire) == VmState::Inactive ||
+        entry.state.load(std::memory_order_acquire) == VmState::Destroyed)
+        return false;
+
+    entry.cancelCompileRequest.store(true, std::memory_order_release);
+    return true;
+}
+
+// ---------------------------------------------------------------------------
+// compileCancelled — check whether cancellation has been requested
+// ---------------------------------------------------------------------------
+
+bool VmLifecycle::compileCancelled(TabId tabId) const noexcept
+{
+    if (tabId < 0 || tabId >= kNumTabs)
+        return false;
+
+    // Lock-free read: the dispatcher thread is the only writer (sets true),
+    // bumpRequestVersion / vmDestroy are the only resetters (set false),
+    // and both paths hold vmTableMtx_.  acquire ordering pairs with the
+    // release store in cancelCompileRequest().
+    return vmTable_[tabId].cancelCompileRequest.load(std::memory_order_acquire);
 }
 
 // ---------------------------------------------------------------------------

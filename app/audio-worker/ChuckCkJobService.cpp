@@ -35,8 +35,9 @@ static int parseTokenInt(const std::string& s, const std::string& key) noexcept
     }
 }
 
-ChuckCkJobService::ChuckCkJobService(Publisher publish)
-    : publish_(std::move(publish))
+ChuckCkJobService::ChuckCkJobService(Publisher publish, Canceller cancel)
+    : publish_(std::move(publish)),
+      canceller_(std::move(cancel))
 {
 }
 
@@ -53,6 +54,7 @@ uint64_t ChuckCkJobService::startCompile(uint8_t tabId, std::string code,
 
     auto entry = std::make_shared<CompileJobEntry>();
     entry->jobId = jobId;
+    entry->tabId = static_cast<uint8_t>(tabId);
     entry->state.store(kQueued, std::memory_order_relaxed);
 
     {
@@ -287,6 +289,16 @@ bool ChuckCkJobService::cancelJob(uint64_t jobId)
         return false; // already terminal
 
     entry->cancelRequested.store(true, std::memory_order_release);
+
+    // Fire the worker-side cancel signal asynchronously.  This sends a
+    // ck_cancel control-plane command to the worker process.  The
+    // dispatcher will observe the flag before publishing the handoff
+    // shred and suppress the result for this tab.  We do not wait for
+    // the worker's reply — cancellation is best-effort and the job
+    // state machine is driven by the worker thread's observations.
+    if (canceller_)
+        canceller_(entry->tabId);
+
     return true;
 }
 

@@ -682,6 +682,21 @@ VMResult AudioWorkerManager::stopCkTab(uint8_t tabId)
     return {false, 2, resp};
 }
 
+// ---------------------------------------------------------------------------
+// AI-5 Phase 2C: Cancel async ChucK compile
+// ---------------------------------------------------------------------------
+
+VMResult AudioWorkerManager::cancelCkCompile(uint8_t tabId)
+{
+    if (tabId >= kNumTabs)
+        return {false, 1, "tab id out of range"};
+
+    std::string resp = sendControlCommand("ck_cancel " + std::to_string(tabId), 5000);
+    if (resp.rfind("ok", 0) == 0)
+        return {true, 0, resp};
+    return {false, 2, resp};
+}
+
 VMResult AudioWorkerManager::queryTabVM(uint8_t tabId) const
 {
     if (tabId >= audio_worker::kNumTabs)

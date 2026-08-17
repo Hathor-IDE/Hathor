@@ -105,7 +105,6 @@ MainWindow::MainWindow(AudioEngine& audio,
      ci_.setLspContextProvider(lspContextBridge_.get());
      ci_.setLanguageMetadata(&editorArea_->metadata(),
                              &editorArea_->metadataCompatibility());
-    chatSidebar_     = std::make_unique<hathor::ui::ChatSidebar>(audio_, ci_);
     visualizerPanel_ = std::make_unique<hathor::ui::VisualizerPanel>(audio_);
 
     // L-3: Create StatusRibbon, wired to the shared DiagnosticRegistry

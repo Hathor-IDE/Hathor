@@ -182,18 +182,52 @@ public:
         uint64_t jobId = nextJobId_.fetch_add(1, std::memory_order_acq_rel);
 
         // Simulate async compilation: spawn a thread that validates and responds.
-        std::thread([idx, code, onComplete, jobId]() {
-            (void)idx; (void)jobId;
+        std::thread([this, idx, code, onComplete, jobId]() mutable {
+            (void)idx;
 
             // Run the real ChucK compiler diagnostics.
             auto diag = validateChuckSource(code);
 
+            nlohmann::json result;
+            result["job_id"] = jobId;
+
             if (diag.ok) {
                 if (onComplete)
                     onComplete(true, "ok compiled");
+                result["ok"] = true;
+                result["status"] = "succeeded";
+                result["success"] = true;
+                result["result"] = {
+                    {"success", true},
+                    {"source_hash", "compiled"},
+                    {"shred_id", -1},
+                    {"diagnostics", nlohmann::json::array()}
+                };
             } else {
                 if (onComplete)
                     onComplete(false, "err " + diag.message);
+                result["ok"] = true;
+                result["status"] = "failed";
+                result["success"] = false;
+                result["error"] = diag.message;
+                result["result"] = {
+                    {"success", false},
+                    {"error", diag.message},
+                    {"diagnostics", nlohmann::json::array({
+                        {
+                            {"severity", "error"},
+                            {"code", "CK_COMPILE_ERROR"},
+                            {"message", diag.message},
+                            {"line", diag.errorLine},
+                            {"column", diag.errorColumn}
+                        }
+                    })}
+                };
+            }
+
+            {
+                std::lock_guard<std::mutex> lock(jobResultsMtx_);
+                jobResults_[jobId] = std::move(result);
             }
         }).detach();
 

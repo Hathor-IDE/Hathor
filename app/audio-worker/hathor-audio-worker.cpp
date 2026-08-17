@@ -757,6 +757,28 @@ static void controlPlaneThread() {
                 resp = "err invalid ck_stop arguments\n";
             }
         }
+        else if (cmd.rfind("ck_cancel", 0) == 0) {
+            // AI-5 Phase 2C: Cancel a pending/in-flight async ChucK compile.
+            // Sets the cancel flag on the VM entry. The ChuckCompiler dispatcher
+            // checks this before publishing the handoff shred for the next compile
+            // result targeting this tab.  If compilation is already in progress
+            // the work completes but the handoff is suppressed.
+            std::string rest = cmd.substr(9);
+            trimSpaces(rest);
+            try {
+                int tabId = std::stoi(rest);
+                if (tabId < 0 || tabId >= kNumTabs) {
+                    resp = "err ck_cancel: tab id out of range [0," + std::to_string(kNumTabs) + ")\n";
+                } else if (gVmLifecycle.cancelCompileRequest(static_cast<TabId>(tabId))) {
+                    resp = "ok ck_cancelled tab=" + std::to_string(tabId) + "\n";
+                } else {
+                    resp = "err ck_cancel_failed tab=" + std::to_string(tabId)
+                         + " no_active_vm\n";
+                }
+            } catch (...) {
+                resp = "err invalid ck_cancel arguments\n";
+            }
+        }
         else if (cmd.rfind("policy", 0) == 0) {
             std::string rest = cmd.substr(6);
             trimSpaces(rest);

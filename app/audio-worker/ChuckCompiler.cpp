@@ -26,6 +26,7 @@
 // ---------------------------------------------------------------------------
 #include "ChuckCompiler.hpp"
 #include "ChuckVm.hpp"
+#include "VmLifecycle.hpp"
 #include "ChuckDiagnostics.hpp"
 
 #ifdef CHUCK_AVAILABLE
@@ -192,6 +193,28 @@ void ChuckCompiler::dispatcherLoop()
             // VM on actual load, never fabricated by the dispatcher.
             result->ok = true;
             result->loadedShredId = -1;
+
+            // -------------------------------------------------------
+            // AI-5 Phase 2C: Check whether cancellation was requested
+            // after the compile work completed but before the handoff
+            // is published.  If so, skip the handoff and report a
+            // cancellation error so the waiting main-process thread can
+            // transition the job to Cancelled.  The callback must still
+            // be invoked (the connection needs to be closed); the main
+            // process will suppress its onComplete callback because
+            // cancelRequested is already set.
+            // -------------------------------------------------------
+            if (gVmLifecycle.compileCancelled(cmd.tabId)) {
+                result->ok = false;
+                result->error = "async compile cancelled";
+                result->errorLine = 0;
+                result->errorColumn = 0;
+                // Do NOT publish the handoff — the VM render thread will
+                // never see a cancelled result.
+                if (cmd.onResponse)
+                    cmd.onResponse(result);
+                continue;
+            }
 
             // -------------------------------------------------------
             // ATOMIC HANDOFF — matches AudioEngine::storeSlot() pattern.

@@ -60,7 +60,22 @@ public:
     /// Increment the per-tab request version. Called when a new compile
     /// request is issued, so stale results (with a lower version) are
     /// ignored by the VM render thread. Returns the new version.
+    /// Also resets cancelCompileRequest_ to false so a previous cancellation
+    /// does not affect a new compile request.
     uint32_t bumpRequestVersion(TabId tabId);
+
+    /// AI-5 Phase 2C: Request cancellation of the pending/in-flight async
+    /// ChucK compile for a tab. Sets the cancelCompileRequest_ flag on the
+    /// tab's VM entry.  The ChuckCompiler dispatcher checks this flag before
+    /// publishing the handoff shred for the next ck_compile result targeting
+    /// this tab.  Returns true if the flag was set (there is an active VM).
+    bool cancelCompileRequest(TabId tabId);
+
+    /// Check whether a cancellation has been requested for the tab's current
+    /// compile. Returns true if cancelCompileRequest_ is set.  The dispatcher
+    /// reads this after releasing the dispatch lock so it can decide whether
+    /// to publish the handoff.
+    bool compileCancelled(TabId tabId) const noexcept;
 
     /// Resolve a TabId to its VM entry for the compile dispatcher.
     /// Returns nullptr if the VM is Inactive or Destroyed, or if the

@@ -420,6 +420,34 @@ include(Catch)
 catch_discover_tests(hathor-b4-k7-async-compile-tests DISCOVERY_MODE PRE_TEST)
 
 # ---------------------------------------------------------------------------
+# hathor-b4-k4-ckpt-compile-job-tests — B4-K4 async compile job lifecycle (Phase 2B)
+#
+# Unit tests for ChuckCkJobService::queryJob() and the surrounding state machine.
+# JUCE-free: links hathor-audio-worker-lib + Catch2 only.  No worker process
+# spawn required — uses fake publishers that return canned VMResult replies.
+# ---------------------------------------------------------------------------
+add_executable(hathor-b4-k4-ckpt-compile-job-tests
+    test_b4_k4_ckpt_compile_job.cpp
+)
+
+target_compile_features(hathor-b4-k4-ckpt-compile-job-tests PRIVATE cxx_std_20)
+target_compile_options(hathor-b4-k4-ckpt-compile-job-tests PRIVATE -Wall -Wextra -Werror)
+
+target_include_directories(hathor-b4-k4-ckpt-compile-job-tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/app/audio-worker
+    ${CMAKE_SOURCE_DIR}/app
+    ${CMAKE_SOURCE_DIR}/engine/include
+)
+
+target_link_libraries(hathor-b4-k4-ckpt-compile-job-tests PRIVATE
+    hathor-audio-worker-lib
+    Catch2::Catch2WithMain
+)
+
+include(Catch)
+catch_discover_tests(hathor-b4-k4-ckpt-compile-job-tests DISCOVERY_MODE PRE_TEST)
+
+# ---------------------------------------------------------------------------
 # hathor-b4-k4-execution-tests — B4-K4 REAL ChucK execution (end-to-end)
 #
 # Proves that a compiled .ck program is actually executed by the real vendored
