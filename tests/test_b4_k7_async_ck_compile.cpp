@@ -30,6 +30,8 @@
 #include "AudioWorkerManager.hpp"
 #include "audio_ipc.h"
 
+#include <nlohmann/json.hpp>
+
 #include <atomic>
 #include <chrono>
 #include <cstdint>
@@ -587,3 +589,157 @@ TEST_CASE("Async compile: independent tabs compile in isolation",
 
     mgr.shutdown();
 }
+
+// ===========================================================================
+// Phase 2C: Async compile cancellation tests
+// ===========================================================================
+
+TEST_CASE("Async compile: cancel unknown job returns false",
+          "[k7][async_compile][cancel][unknown]")
+{
+    const std::string workerPath = getWorkerPath();
+    if (workerPath.empty()) {
+        WARN("hathor-audio-worker binary not found; skipping");
+        return;
+    }
+
+    AudioWorkerManager mgr;
+    REQUIRE(mgr.start(workerPath));
+
+    AsyncCompileHarness harness(&mgr);
+
+    REQUIRE_FALSE(harness.cancelJob(99999ULL));
+
+    mgr.shutdown();
+}
+
+TEST_CASE("Async compile: cancel active job sends worker cancel and transitions to cancelled",
+          "[k7][async_compile][cancel][active]")
+{
+    const std::string workerPath = getWorkerPath();
+    if (workerPath.empty()) {
+        WARN("hathor-audio-worker binary not found; skipping");
+        return;
+    }
+
+    AudioWorkerManager mgr;
+    REQUIRE(mgr.start(workerPath));
+
+    AsyncCompileHarness harness(&mgr);
+    CompileResultCapture cap;
+
+    uint64_t jobId = harness.startAsyncCkCompile(0, kValidCk,
+        [&cap](bool ok, const std::string& msg) { cap.fire(ok, msg); });
+    REQUIRE(jobId > 0);
+
+    // Brief pause to ensure the worker thread has started (state → Running).
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+
+    // Cancel the job.
+    REQUIRE(harness.cancelJob(jobId));
+
+    // Query must show cancelled.
+    auto j = harness.queryJob(jobId);
+    REQUIRE(j.value("ok", false) == true);
+    REQUIRE(j.value("status", "") == "cancelled");
+    REQUIRE(j.value("success", true) == false);
+
+    mgr.shutdown();
+}
+
+TEST_CASE("Async compile: cancel job that already completed returns false",
+          "[k7][async_compile][cancel][completed]")
+{
+    const std::string workerPath = getWorkerPath();
+    if (workerPath.empty()) {
+        WARN("hathor-audio-worker binary not found; skipping");
+        return;
+    }
+
+    AudioWorkerManager mgr;
+    REQUIRE(mgr.start(workerPath));
+
+    AsyncCompileHarness harness(&mgr);
+    CompileResultCapture cap;
+
+    uint64_t jobId = harness.startAsyncCkCompile(0, kValidCk,
+        [&cap](bool ok, const std::string& msg) { cap.fire(ok, msg); });
+    REQUIRE(jobId > 0);
+
+    // Wait for completion.
+    REQUIRE(cap.waitFor(std::chrono::seconds(10)));
+    REQUIRE(cap.success.load());
+
+    // Cancel after completion — must return false.
+    REQUIRE_FALSE(harness.cancelJob(jobId));
+
+    // State must remain succeeded.
+    auto j = harness.queryJob(jobId);
+    REQUIRE(j.value("status", "") == "succeeded");
+
+    mgr.shutdown();
+}
+
+TEST_CASE("Async compile: repeated cancellation is safe (idempotent)",
+          "[k7][async_compile][cancel][idempotent]")
+{
+    const std::string workerPath = getWorkerPath();
+    if (workerPath.empty()) {
+        WARN("hathor-audio-worker binary not found; skipping");
+        return;
+    }
+
+    AudioWorkerManager mgr;
+    REQUIRE(mgr.start(workerPath));
+
+    AsyncCompileHarness harness(&mgr);
+
+    uint64_t jobId = harness.startAsyncCkCompile(0, kValidCk, nullptr);
+    REQUIRE(jobId > 0);
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+
+    // First cancel succeeds.
+    REQUIRE(harness.cancelJob(jobId));
+
+    // Subsequent cancels return false.
+    REQUIRE_FALSE(harness.cancelJob(jobId));
+    REQUIRE_FALSE(harness.cancelJob(jobId));
+
+    mgr.shutdown();
+}
+
+TEST_CASE("Async compile: cancelled job does not report success from stale worker",
+          "[k7][async_compile][cancel][stale_result]")
+{
+    const std::string workerPath = getWorkerPath();
+    if (workerPath.empty()) {
+        WARN("hathor-audio-worker binary not found; skipping");
+        return;
+    }
+
+    AudioWorkerManager mgr;
+    REQUIRE(mgr.start(workerPath));
+
+    AsyncCompileHarness harness(&mgr);
+    CompileResultCapture cap;
+
+    uint64_t jobId = harness.startAsyncCkCompile(0, kValidCk,
+        [&cap](bool ok, const std::string& msg) { cap.fire(ok, msg); });
+    REQUIRE(jobId > 0);
+
+    // Cancel quickly, before the worker IPC round-trip completes.
+    REQUIRE(harness.cancelJob(jobId));
+
+    // Wait a reasonable time — either the callback fires with cancelled
+    // (worker observed the flag) or the worker result arrives and is
+    // suppressed.  Either way the final job state must be cancelled.
+    std::this_thread::sleep_for(std::chrono::seconds(6));
+
+    auto j = harness.queryJob(jobId);
+    REQUIRE(j.value("ok", false) == true);
+    REQUIRE(j.value("status", "") == "cancelled");
+
+    mgr.shutdown();
+}
+

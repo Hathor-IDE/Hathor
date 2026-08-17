@@ -40,6 +40,11 @@
 #include <thread>
 #include <tuple>
 
+// Forward declaration for the worker-process lifecycle singleton defined in
+// hathor-audio-worker.cpp.  The dispatcher thread reads its state after
+// releasing the dispatch lock so it can decide whether to publish a handoff.
+extern "C" hathor::audio_worker::VmLifecycle gVmLifecycle;
+
 namespace hathor::audio_worker {
 
 // ---------------------------------------------------------------------------
@@ -61,8 +66,9 @@ static uint64_t fnv1a(const char* data, std::size_t len) noexcept
 // Construction / destruction
 // ---------------------------------------------------------------------------
 
-ChuckCompiler::ChuckCompiler(VmLookup lookup)
-    : lookup_(std::move(lookup))
+ChuckCompiler::ChuckCompiler(VmLookup lookup, CancelCheck cancelCheck)
+    : lookup_(std::move(lookup)),
+      cancelCheck_(std::move(cancelCheck))
 {
     dispatchThread_ = std::thread(&ChuckCompiler::dispatcherLoop, this);
 }
@@ -204,7 +210,7 @@ void ChuckCompiler::dispatcherLoop()
             // process will suppress its onComplete callback because
             // cancelRequested is already set.
             // -------------------------------------------------------
-            if (gVmLifecycle.compileCancelled(cmd.tabId)) {
+            if (cancelCheck_ && cancelCheck_(cmd.tabId)) {
                 result->ok = false;
                 result->error = "async compile cancelled";
                 result->errorLine = 0;

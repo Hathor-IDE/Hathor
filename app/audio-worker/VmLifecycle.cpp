@@ -66,7 +66,7 @@ uint32_t VmLifecycle::bumpRequestVersion(TabId tabId)
     std::lock_guard<std::mutex> lock(vmTableMtx_);
     ChuckVmEntry& entry = vmTable_[tabId];
     entry.currentRequestVersion.fetch_add(1, std::memory_order_release);
-    entry.cancelCompileRequest.store(false, std::memory_order_release);
+    entry.cancelCompileRequest_.store(false, std::memory_order_release);
     return entry.currentRequestVersion.load(std::memory_order_acquire);
 }
 
@@ -89,7 +89,7 @@ bool VmLifecycle::cancelCompileRequest(TabId tabId)
         entry.state.load(std::memory_order_acquire) == VmState::Destroyed)
         return false;
 
-    entry.cancelCompileRequest.store(true, std::memory_order_release);
+    entry.cancelCompileRequest_.store(true, std::memory_order_release);
     return true;
 }
 
@@ -106,7 +106,7 @@ bool VmLifecycle::compileCancelled(TabId tabId) const noexcept
     // bumpRequestVersion / vmDestroy are the only resetters (set false),
     // and both paths hold vmTableMtx_.  acquire ordering pairs with the
     // release store in cancelCompileRequest().
-    return vmTable_[tabId].cancelCompileRequest.load(std::memory_order_acquire);
+    return vmTable_[tabId].cancelCompileRequest_.load(std::memory_order_acquire);
 }
 
 // ---------------------------------------------------------------------------

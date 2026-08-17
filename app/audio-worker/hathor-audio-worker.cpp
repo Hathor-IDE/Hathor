@@ -934,6 +934,9 @@ int main(int argc, char* argv[]) {
     gCompiler = std::make_unique<ChuckCompiler>(
         [](TabId tabId, uint64_t vmGeneration) -> ChuckVmEntry* {
             return gVmLifecycle.lookupForCompile(tabId, vmGeneration);
+        },
+        [](TabId tabId) -> bool {
+            return gVmLifecycle.compileCancelled(tabId);
         });
 
     // B4-K5: create and start the per-VM watchdog.
