@@ -268,8 +268,34 @@ MainWindow::MainWindow(AudioEngine& audio,
                      }
                  }
              }
-            // Other panels (Search, VersionControl, AIAgent) are not yet
-            // implemented — do nothing, preserving active state.
+            // L-2: Search panel toggles the bottom-docked workspace search
+            // panel (Agent 2.4: Panel::Search wiring). Reuses the existing
+            // WorkspaceSearchPanel owned by EditorArea — mirrors the
+            // Problems/Terminal/VersionControl/Debug toggle pattern.
+            if (panel == hathor::ui::Panel::Search)
+            {
+                const bool wantsOpen = (activityRibbon_->activePanel() != hathor::ui::Panel::Search);
+                if (wantsOpen)
+                    editorArea_->showSearchPanel();
+                else
+                    editorArea_->hideSearchPanel();
+                activityRibbon_->setActivePanel(wantsOpen ? hathor::ui::Panel::Search : hathor::ui::Panel::None);
+                editorArea_->resized(); // re-lay-out editor area
+            }
+
+            // H1: AIAgent panel toggles the right-hand ChatSidebar (the AI
+            // agent UI). Mirrors the Explorer left-sidebar toggle (Agent 2.4:
+            // Panel::AIAgent wiring). ChatSidebar owns its thread/session state
+            // (ChatThread/AcpAgentSession) as a persistent member, so toggling
+            // visibility does not destroy or recreate any conversation state.
+            if (panel == hathor::ui::Panel::AIAgent)
+            {
+                const bool wantsOpen = (activityRibbon_->activePanel() != hathor::ui::Panel::AIAgent);
+                if (chatSidebar_)
+                    chatSidebar_->setVisible(wantsOpen);
+                activityRibbon_->setActivePanel(wantsOpen ? hathor::ui::Panel::AIAgent : hathor::ui::Panel::None);
+                resized(); // re-lay-out content areas (editor fills freed space)
+            }
 
             // L-4: Terminal panel toggles the bottom-docked terminal panel.
             if (panel == hathor::ui::Panel::Terminal)
@@ -637,8 +663,16 @@ void MainWindow::resized()
     }
 
     // 3. Chat sidebar — fixed 320 px on the right (Req 20.1)
+    //    Visibility is gated so the editor area fills the freed space when
+    //    the ribbon AIAgent button hides it (Agent 2.4), mirroring how the
+    //    Explorer panel is gated above.
     if (chatSidebar_)
-        chatSidebar_->setBounds(b.removeFromRight(320));
+    {
+        if (chatSidebar_->isVisible())
+            chatSidebar_->setBounds(b.removeFromRight(320));
+        else
+            chatSidebar_->setBounds(juce::Rectangle<int>());
+    }
 
     // 3. Visualizer panel — max(height/4, 120) px at the bottom (Req 20.1, 20.3)
     //    Absorbs all vertical slack when the window grows taller.

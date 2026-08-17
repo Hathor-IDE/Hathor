@@ -354,6 +354,18 @@ public:
     /// Show the symbol search panel.
     void showSymbolSearch();
 
+    // -----------------------------------------------------------------------
+    // L-2: Search panel - ribbon toggle (Agent 2.4)
+    // -----------------------------------------------------------------------
+    /// Show the workspace search panel as the active bottom-docked panel,
+    /// hiding the other bottom-docked panels (mirroring showProblemsPanel()
+    /// and showTerminalPanel()). Preserves the current query/results state.
+    void showSearchPanel();
+
+    /// Hide the search panels (workspace + symbol). Called by the ribbon
+    /// Search toggle when deactivating (Agent 2.4).
+    void hideSearchPanel();
+
     /// Show document symbols for the active tab.
     void showDocumentSymbols();
 

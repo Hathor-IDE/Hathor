@@ -2202,6 +2202,35 @@ void EditorArea::showSymbolSearch()
     symbolSearchPanel_->setQuery({});
 }
 
+void EditorArea::showSearchPanel()
+{
+    // Display the workspace search UI (Agent 2.4: Panel::Search wiring).
+    // showWorkspaceSearch() brings the panel to the front and preserves the
+    // current query/results state (no reset).
+    showWorkspaceSearch();
+
+    // Hide other bottom-docked panels, consistent with showProblemsPanel() and
+    // showTerminalPanel(), so only one bottom panel is active at a time.
+    if (symbolSearchPanel_)
+        symbolSearchPanel_->setVisible(false);
+    if (problemsPanel_)
+        problemsPanel_->setVisible(false);
+    if (terminalPanel_)
+        terminalPanel_->setVisible(false);
+    if (sourceControlPanel_)
+        sourceControlPanel_->setVisible(false);
+    if (debugPanel_)
+        debugPanel_->setVisible(false);
+}
+
+void EditorArea::hideSearchPanel()
+{
+    if (workspaceSearchPanel_)
+        workspaceSearchPanel_->setVisible(false);
+    if (symbolSearchPanel_)
+        symbolSearchPanel_->setVisible(false);
+}
+
 void EditorArea::showDocumentSymbols()
 {
     HathorTab* tab = activeTab();
