@@ -62,6 +62,7 @@
 #include "CommandPalette.hpp"
 #include "BreadcrumbsBar.hpp"
 #include "EditorSplitSurface.hpp"
+#include "WorkspaceSession.hpp"
 // L-2: Navigation & workspace search
 #include "NavigationHistory.hpp"
 #include "WorkspaceSearchModel.hpp"
@@ -488,7 +489,7 @@ public:
     /// Register all L-1 editor actions with their key bindings.
     void registerEditorActions();
 
-    /**
+     /**
         * Sync all tabs' Play/Stop button visuals to the engine's slot state (B1).
         * Called from UITimer at 60 Hz so the UI reflects engine state changes
         * from any path, not only button clicks.
@@ -501,6 +502,29 @@ public:
         * timeouts fire on schedule.
         */
        void ghostTick();
+
+    // -----------------------------------------------------------------------
+    // 20.7: Workspace session persistence (save / restore)
+    // -----------------------------------------------------------------------
+    // saveWorkspace() serialises the current tab set, active tab index, and
+    // settings-tab state into a JUCE-free WorkspaceSession. The caller
+    // (MainWindow) persists it via juce::PropertiesFile.
+    //
+    // restoreWorkspace() recreates the tab set from a previously saved session.
+    // Restored tabs are marked clean (no false dirty state). If a referenced
+    // file no longer exists the tab opens with empty content (existing
+    // missing-file behaviour — no crash).
+    //
+    // Settings tab is restored only when @p props is non-null and
+    // session.settingsActive is true (MainWindow owns appProperties_).
+
+    /// Serialise the current workspace into a WorkspaceSession.
+    WorkspaceSession saveWorkspace() const;
+
+    /// Restore tabs from @p session. If @p props is non-null and
+    /// session.settingsActive is true, the Settings tab is also opened.
+    void restoreWorkspace(const WorkspaceSession& session,
+                          juce::ApplicationProperties* props = nullptr);
 
 #ifdef HATHOR_ENABLE_GHOST_TELEMETRY
     /**
@@ -666,8 +690,16 @@ private:
         HathorTab*  tab_;
     };
 
-    /// Install a TabKeyListener on a newly created tab's editor.
-    void installKeyListenerForTab(HathorTab& tab);
+     /// Install a TabKeyListener on a newly created tab's editor.
+     void installKeyListenerForTab(HathorTab& tab);
+
+     /// Extract the common tab-wiring logic (LSP/ghost/context-bridge callbacks)
+     /// shared by openUntitledTab(), openFile(), and restoreWorkspace().
+     void wireCommonTabIntegrations(HathorTab& tab);
+
+     /// Create and wire a HathorTab from a persisted TabState during restore.
+     /// Returns the raw pointer (owned by tabs_, pushed below).
+     HathorTab* createRestoredTab(const TabState& state);
 
     // -----------------------------------------------------------------------
     // Layout constants

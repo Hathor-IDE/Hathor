@@ -173,6 +173,9 @@ public:
      /// Retrieve the stored front-matter metadata for this tab.
      const std::optional<FrontMatter>& frontMatter() const noexcept { return frontMatter_; }
 
+     /// Retrieve the explicit display-label override (usually from front-matter).
+     const std::optional<std::string>& displayLabel() const noexcept { return displayLabel_; }
+
     // -----------------------------------------------------------------------
     // B4-K7: Per-tab .ck eval state
     // -----------------------------------------------------------------------

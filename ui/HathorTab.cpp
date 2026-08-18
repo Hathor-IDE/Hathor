@@ -1592,25 +1592,50 @@ void HathorTab::notifyChuckDiagnostics(const std::string& uri,
      // Reuse the same display path as LSP diagnostics.
     notifyLspDiagnostics(uri, diags);
 
-    // J-6: Record compile result for telemetry quality tracking.
-    // The compile result is correlated to the most recent accepted ghost
-    // completion's requestId (if telemetry is active).
-#ifdef HATHOR_ENABLE_GHOST_TELEMETRY
-    if (telemetry_)
-    {
-        int64_t nowMs = static_cast<int64_t>(
-            std::chrono::duration_cast<std::chrono::milliseconds>(
-                std::chrono::steady_clock::now().time_since_epoch())
-            .count());
-        // Use the coordinator's current context URI as the requestId
-        // correlation key. In a more sophisticated implementation, we would
-        // track the last accepted requestId, but for now we use the URI.
-        telemetry_->recordCompileResult(
-            coordinator_->ghostLogic().currentContext().uri,
-            nowMs,
-            diag.ok);
-    }
-#endif
+     // J-6: Record compile result for telemetry quality tracking.
+     // The compile result is correlated to the most recent accepted ghost
+     // completion's requestId (if telemetry is active).
+ #ifdef HATHOR_ENABLE_GHOST_TELEMETRY
+     if (telemetry_)
+     {
+         int64_t nowMs = static_cast<int64_t>(
+             std::chrono::duration_cast<std::chrono::milliseconds>(
+                 std::chrono::steady_clock::now().time_since_epoch())
+             .count());
+
+         // Use the ghost's requestId for telemetry correlation if this
+         // compile was triggered by a ghost accept; otherwise fall back
+         // to the context URI (non-ghost compile path).
+         std::string telemetryRequestId;
+         if (!pendingChuckCompileRequestId_.empty())
+         {
+             telemetryRequestId = pendingChuckCompileRequestId_;
+             pendingChuckCompileRequestId_.clear();
+         }
+         else if (coordinator_)
+         {
+             telemetryRequestId = coordinator_->ghostLogic().currentContext().uri;
+         }
+         else
+         {
+             telemetryRequestId = uri;
+         }
+
+         telemetry_->recordCompileResult(
+             telemetryRequestId,
+             nowMs,
+             diag.ok);
+
+         // Record diagnostic-added count when the compile produced
+         // diagnostics (errors or warnings). An empty result set
+         // (clean compile) records no DIAGNOSTIC_ADDED event.
+         if (!diags.empty())
+             telemetry_->recordDiagnosticAdded(
+                 telemetryRequestId,
+                 nowMs,
+                 static_cast<int>(diags.size()));
+     }
+ #endif
 
     // AI-8: Forward ChucK diagnostics to the LspContextBridge so they
     // can be included in the authoring context payload for .ck files.
@@ -1787,10 +1812,14 @@ void HathorTab::acceptGhostCompletion()
         // so we skip the compile-result event.
         if (useChuckTokeniser_)
         {
-            // Trigger async ChucK validation — the callback will record
-            // COMPILE_RESULT. We store the requestId on the coordinator
-            // for correlation.
-            // TODO: wire the compile-result callback to telemetry
+            // Store the ghost's requestId so notifyChuckDiagnostics
+            // (the compile-result callback) can record COMPILE_RESULT
+            // and DIAGNOSTIC_ADDED telemetry with the correct correlation
+            // key. Trigger async ChucK validation via the existing debounced
+            // diagnostic path — the callback posts back to the message thread.
+            if (acceptParams.has_value())
+                pendingChuckCompileRequestId_ = acceptParams->requestId;
+            triggerChuckDiagnostics();
         }
     }
 #endif

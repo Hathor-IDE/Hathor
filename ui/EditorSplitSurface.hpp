@@ -41,6 +41,12 @@ public:
         Horizontal  ///< top/bottom split
     };
 
+    /** Minimum pixel size for any pane to prevent collapse. */
+    static constexpr int kMinPaneSize = 80;
+
+    /** Width of the draggable splitter bar in pixels. */
+    static constexpr int kSplitterWidth = 6;
+
     /**
      * Create a leaf node wrapping an EditorGroup.
      */

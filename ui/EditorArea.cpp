@@ -2601,10 +2601,223 @@ void EditorArea::registerEditorActions()
         if (sourceControlPanel_)
             sourceControlPanel_->createBranch();
     });
-    actionRegistry_->setCallback("git.switchBranch", [this]() {
-        if (sourceControlPanel_)
-            sourceControlPanel_->switchBranch();
-    });
+     actionRegistry_->setCallback("git.switchBranch", [this]() {
+         if (sourceControlPanel_)
+             sourceControlPanel_->switchBranch();
+     });
+}
+
+// ===========================================================================
+// 20.7: Workspace session persistence (save / restore)
+// ===========================================================================
+
+void EditorArea::wireCommonTabIntegrations(HathorTab& tab)
+{
+    // AI-4: Install LSP + ghost-text clients on the tab.
+    tab.installLspClient(lspClient_.get());
+    tab.notifyLspDidOpen();
+    tab.installGhostClient(ghostClient_.get());
+
+    // AI-G3: Wire the authoring-context callback for ghost-text FIM (identical
+    // for all tabs — openUntitledTab and openFile both install this).
+    HathorTab* tabPtr = &tab;
+    tab.getAuthoringContext = [this, tabPtr]() -> nlohmann::json {
+        auto caretPos = tabPtr->editor().getCaretPos();
+        hathor::control::CompletionRequest req;
+        req.file = tabPtr->lspDocumentUri().toStdString();
+        req.uri  = tabPtr->lspDocumentUri().toStdString();
+        req.line = caretPos.getLineNumber();
+        req.character = caretPos.getIndexInLine();
+        req.language = tabPtr->isChuckTab() ? "chuck" : "mininotation";
+        req.documentText = tabPtr->document().getAllContent().toStdString();
+        const auto region = tabPtr->editor().getHighlightedRegion();
+        if (!region.isEmpty())
+        {
+            const auto selStart = tabPtr->editor().getSelectionStart();
+            const auto selEnd   = tabPtr->editor().getSelectionEnd();
+            req.selection = hathor::control::CompletionRequest::Range{
+                selStart.getLineNumber(), selStart.getIndexInLine(),
+                selEnd.getLineNumber(),   selEnd.getIndexInLine()};
+            req.selectedText = tabPtr->editor().getTextInRange(region).toStdString();
+        }
+        return ci_.assembleCompletionContext(req);
+    };
+}
+
+HathorTab* EditorArea::createRestoredTab(const TabState& state)
+{
+    // Construct the tab with the persisted slot index (not re-derived) so the
+    // tab→slot mapping is exactly preserved across sessions.
+    juce::File file(state.filePath.empty() ? juce::File()
+                                          : juce::File(state.filePath));
+    auto tab = std::make_unique<HathorTab>(state.slotIndex, file);
+
+    if (!state.filePath.empty())
+        tab->setFilePath(file);
+
+    if (state.frontMatter.has_value())
+        tab->setFrontMatter(state.frontMatter.value());
+
+    if (state.displayLabel.has_value())
+        tab->setDisplayLabel(state.displayLabel.value());
+
+    // Populate document content.
+    if (!state.filePath.empty())
+    {
+        // File-backed tab: reload body from disk. If the file was deleted the
+        // document stays empty (existing missing-file behaviour — no crash).
+        if (file.existsAsFile())
+        {
+            const juce::String contents = file.loadFileAsString();
+            const auto parseResult = parseHathorFile(contents.toStdString());
+            if (const auto* hf = std::get_if<HathorFile>(&parseResult))
+                tab->document().replaceAllContent(juce::String(hf->body));
+            else
+                tab->document().replaceAllContent(contents);  // no front matter
+        }
+        else
+        {
+            // File no longer exists — use persisted content as a fallback so
+            // the user's work isn't silently lost, but the tab is still clean.
+            if (!state.content.empty())
+                tab->document().replaceAllContent(juce::String(state.content));
+        }
+    }
+    else
+    {
+        // Untitled tab — restore persisted content.
+        tab->document().replaceAllContent(juce::String(state.content));
+    }
+
+    // Clear the unsaved-dot flag: restored content IS the saved state, so the
+    // tab must not appear dirty just because it was re-loaded.
+    tab->clearUnsavedDot();
+
+    // Wire all standard callbacks (same set as openUntitledTab/openFile).
+    wireUnsavedCallback(*tab);
+    wirePlayStopCallback(*tab);
+    wireContextMenuCallbacks(*tab);
+    installKeyListenerForTab(*tab);
+    wireCommonTabIntegrations(*tab);
+
+    HathorTab* tabPtr = tab.get();
+    addAndMakeVisible(*tab);
+    tabs_.push_back(std::move(tab));
+
+    // Restore cursor position, clamped to the actual document length.
+    if (state.cursorOffset >= 0)
+    {
+        const int docLen = tabPtr->document().getNumCharacters();
+        const int clampedOffset = std::clamp(static_cast<int>(state.cursorOffset),
+                                             0, docLen);
+        juce::CodeDocument::Position pos(tabPtr->document(), clampedOffset);
+        tabPtr->editor().moveCaretTo(pos, false);
+    }
+
+    return tabPtr;
+}
+
+// ---------------------------------------------------------------------------
+// saveWorkspace — serialise current tab state into a WorkspaceSession
+// ---------------------------------------------------------------------------
+
+WorkspaceSession EditorArea::saveWorkspace() const
+{
+    WorkspaceSession session;
+    session.schemaVersion  = WorkspaceSession::kSchemaVersion;
+
+    for (const auto& tab : tabs_)
+    {
+        TabState state;
+        state.slotIndex     = tab->slotIndex();
+        state.isChuckTab    = tab->isChuckTab();
+
+        if (const auto& fp = tab->filePath(); fp.has_value())
+            state.filePath  = fp->getFullPathName().toStdString();
+
+        // Persist the content for *all* tabs. For file-backed tabs this is a
+        // safety net in case the file is deleted between sessions; for untitled
+        // tabs it is the only source of truth.
+        state.content = tab->document().getAllContent().toStdString();
+
+        state.cursorOffset  = static_cast<int64_t>(
+            tab->editor().getCaretPosition());
+
+        if (const auto& fm = tab->frontMatter(); fm.has_value())
+            state.frontMatter = *fm;
+
+        if (const auto& label = tab->displayLabel(); label.has_value())
+            state.displayLabel = *label;
+
+        session.tabs.push_back(std::move(state));
+    }
+
+    if (settingsActive_)
+    {
+        session.activeIndex    = -1;
+        session.settingsActive = true;
+    }
+    else
+    {
+        session.activeIndex    = activeIndex_;
+        session.settingsActive = false;
+    }
+
+    return session;
+}
+
+// ---------------------------------------------------------------------------
+// restoreWorkspace — recreate tabs from a WorkspaceSession
+// ---------------------------------------------------------------------------
+
+void EditorArea::restoreWorkspace(const WorkspaceSession& session,
+                                  juce::ApplicationProperties* props)
+{
+    // Reject unknown/future schema versions — fail safe (no restore).
+    if (session.schemaVersion != WorkspaceSession::kSchemaVersion)
+        return;
+
+    if (session.tabs.empty())
+        return;
+
+    // Pre-register slot names from front-matter so findOrAddSlot returns the
+    // same indices as the original session. This guarantees deterministic
+    // slot→tab mapping even when tabs are restored in a different order.
+    for (const auto& tabState : session.tabs)
+    {
+        if (tabState.frontMatter.has_value()
+            && tabState.frontMatter->slot.has_value())
+        {
+            audio_.findOrAddSlot(*tabState.frontMatter->slot);
+        }
+    }
+
+    for (const auto& tabState : session.tabs)
+        createRestoredTab(tabState);
+
+    // Restore active tab.
+    if (session.settingsActive)
+    {
+        session.settingsActive = false;  // consumed; will open via props below
+    }
+
+    if (session.settingsActive && props != nullptr)
+    {
+        openSettingsTab(props);
+    }
+    else if (!session.settingsActive)
+    {
+        const int idx = session.activeIndex;
+        if (idx >= 0 && idx < static_cast<int>(tabs_.size()))
+            activateTab(idx);
+        else if (!tabs_.empty())
+            activateTab(0);
+        else
+            activeIndex_ = -1;
+    }
+
+    refreshTabBar();
+    resized();
 }
 
 } // namespace hathor::ui
