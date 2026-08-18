@@ -25,10 +25,36 @@ endif()
 # Links: hathor-engine + juce_gui_basics + juce_gui_extra + juce_audio_devices
 # Compile flags: -Wall -Wextra -Werror (consistent with engine, Req 31.5)
 # ---------------------------------------------------------------------------
+# Version — single canonical source for the HathorUI beta (Phase 6.2)
+# ---------------------------------------------------------------------------
+set(HATHOR_UI_VERSION       "0.3.0-beta")
+set(HATHOR_UI_BUILD_VERSION "1")
+
 juce_add_gui_app(hathor-ui
     PRODUCT_NAME "HathorUI"
-    VERSION      "0.2.0"
+    VERSION      "${HATHOR_UI_VERSION}"
+    BUILD_VERSION "${HATHOR_UI_BUILD_VERSION}"
+    BUNDLE_ID    "com.hathor.HathorUI"
+    COMPANY_NAME "Hathor Contributors"
+    COMPANY_COPYRIGHT "Copyright (C) 2026 Hathor Contributors"
+    ICON_BIG "${CMAKE_SOURCE_DIR}/Hathor app icon.png"
 )
+
+# ---------------------------------------------------------------------------
+# Inject LSMinimumSystemVersion into the generated Info.plist (Phase 6.2)
+# ---------------------------------------------------------------------------
+# JUCE 8.0.4's juceaide plist generator does not emit LSMinimumSystemVersion.
+# The deployment target is pinned via CMAKE_OSX_DEPLOYMENT_TARGET in the
+# top-level CMakeLists.txt; here we reflect it in the bundle plist so that
+# the binary's LC_BUILD_VERSION and the plist value always agree.
+if(APPLE)
+    add_custom_command(TARGET hathor-ui POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E env
+            plutil -replace LSMinimumSystemVersion -string "${CMAKE_OSX_DEPLOYMENT_TARGET}"
+            "$<TARGET_BUNDLE_DIR:hathor-ui>/Contents/Info.plist"
+        COMMENT "Adding LSMinimumSystemVersion=${CMAKE_OSX_DEPLOYMENT_TARGET} to Info.plist"
+        VERBATIM)
+endif()
 
 target_sources(hathor-ui
     PRIVATE
@@ -187,6 +213,8 @@ target_compile_definitions(hathor-ui
         JUCE_USE_CURL=0
         JUCE_WEB_BROWSER=0
         HATHOR_ENABLE_GHOST_TELEMETRY=1
+        HATHOR_UI_VERSION="${HATHOR_UI_VERSION}"
+        HATHOR_UI_BUILD_VERSION="${HATHOR_UI_BUILD_VERSION}"
 )
 
 # ---------------------------------------------------------------------------

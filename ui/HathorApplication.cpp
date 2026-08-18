@@ -38,7 +38,7 @@ public:
     HathorApplication() = default;
 
     const juce::String getApplicationName() override    { return "Hathor"; }
-    const juce::String getApplicationVersion() override { return "0.2.0"; }
+    const juce::String getApplicationVersion() override { return HATHOR_UI_VERSION; }
     bool moreThanOneInstanceAllowed() override           { return false; }
 
     // -----------------------------------------------------------------------

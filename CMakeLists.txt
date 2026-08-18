@@ -22,6 +22,20 @@ if(APPLE AND NOT DEFINED CMAKE_OSX_ARCHITECTURES)
         "macOS architectures to build (universal binary by default)")
 endif()
 
+# ---------------------------------------------------------------------------
+# macOS deployment target — Phase 6.2
+# ---------------------------------------------------------------------------
+# Pin the minimum macOS version explicitly so that the build is reproducible
+# across machines with different SDKs.  The binary and Info.plist must agree.
+if(APPLE AND NOT DEFINED CMAKE_OSX_DEPLOYMENT_TARGET)
+    set(CMAKE_OSX_DEPLOYMENT_TARGET "15.0" CACHE STRING
+        "macOS minimum deployment target")
+endif()
+if(APPLE AND CMAKE_OSX_DEPLOYMENT_TARGET STREQUAL "")
+    set(CMAKE_OSX_DEPLOYMENT_TARGET "15.0" CACHE STRING
+        "macOS minimum deployment target" FORCE)
+endif()
+
 project(Hathor VERSION 0.1.0 LANGUAGES C CXX)
 if(APPLE)
     enable_language(OBJC OBJCXX)
