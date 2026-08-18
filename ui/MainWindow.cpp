@@ -493,19 +493,27 @@ MainWindow::MainWindow(AudioEngine& audio,
     if (explorerPanel_->directory() == juce::File())
         explorerPanel_->setDirectory(juce::File(projectDir));
 
-    // J-6: Load persisted ghost completion telemetry (quality metrics) from disk.
-    // Restores per-tab event history so metrics accumulate across sessions.
+     // J-6: Load persisted ghost completion telemetry (quality metrics) from disk.
+     // Restores per-tab event history so metrics accumulate across sessions.
 #ifdef HATHOR_ENABLE_GHOST_TELEMETRY
-    if (editorArea_)
-    {
-        juce::File appDataDir = juce::File::getSpecialLocation(
-            juce::File::userApplicationDataDirectory);
-        juce::File telemetryFile = appDataDir.getChildFile("Hathor/ghost-telemetry.json");
-        editorArea_->loadTelemetry(telemetryFile.getFullPathName().toStdString());
-    }
+     if (editorArea_)
+     {
+         juce::File appDataDir = juce::File::getSpecialLocation(
+             juce::File::userApplicationDataDirectory);
+         juce::File telemetryFile = appDataDir.getChildFile("Hathor/ghost-telemetry.json");
+         editorArea_->loadTelemetry(telemetryFile.getFullPathName().toStdString());
+     }
 #endif
 
-    // Add child components to the content component (DocumentWindow wraps one
+     // -----------------------------------------------------------------------
+     // 20.7: Restore persisted editor workspace (tabs, cursors, slot state).
+     // Must run after EditorArea is fully initialised (LSP/ghost clients,
+     // context bridges wired) but before the content component is laid out.
+     // Malformed or version-mismatched data is silently ignored.
+     // -----------------------------------------------------------------------
+     restoreWorkspace();
+
+     // Add child components to the content component (DocumentWindow wraps one
     // content component; we use a plain Component as the layout host).
     auto* content = new juce::Component();
     content->addAndMakeVisible(*activityRibbon_);

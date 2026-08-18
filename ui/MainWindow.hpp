@@ -69,6 +69,9 @@
 #include "EditorContextBridge.hpp"
 #include "LspContextBridge.hpp"
 
+// L-1: Workspace session persistence
+#include "WorkspaceSession.hpp"
+
 // ---------------------------------------------------------------------------
 // Forward declarations — child components not yet implemented
 // ---------------------------------------------------------------------------
@@ -130,13 +133,26 @@ private:
     /// Falls back to centred 1024×768 if stored bounds are off-screen.
     juce::Rectangle<int> resolveInitialBounds();
 
-    /// Returns true if @p bounds is at least partially visible on a connected
-    /// display — used to decide whether to use stored bounds (Req 20.5).
-    static bool boundsIntersectsDisplays(const juce::Rectangle<int>& bounds);
+     /// Returns true if @p bounds is at least partially visible on a connected
+     /// display — used to decide whether to use stored bounds (Req 20.5).
+     static bool boundsIntersectsDisplays(const juce::Rectangle<int>& bounds);
 
-    // -----------------------------------------------------------------------
-    // Phase G (D2–D4) — Petdex selection lifecycle
-    // -----------------------------------------------------------------------
+     // -----------------------------------------------------------------------
+     // 20.7: Workspace session persistence
+     // -----------------------------------------------------------------------
+
+     /// Persist the current editor workspace (tabs, cursors, slot state) into
+     /// the existing PropertiesFile. Called on quit / window close.
+     void saveWorkspace();
+
+     /// Restore the previously saved workspace from the PropertiesFile.
+     /// Called during construction after EditorArea is fully initialised.
+     /// Malformed or version-mismatched data is silently ignored.
+     void restoreWorkspace();
+
+     // -----------------------------------------------------------------------
+     // Phase G (D2–D4) — Petdex selection lifecycle
+     // -----------------------------------------------------------------------
 
     /// React to an applied Petdex selection from Settings (fires on Apply with
     /// the committed slug; empty string = explicit "no mascot"). Runs the D4

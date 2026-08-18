@@ -2796,16 +2796,12 @@ void EditorArea::restoreWorkspace(const WorkspaceSession& session,
         createRestoredTab(tabState);
 
     // Restore active tab.
-    if (session.settingsActive)
-    {
-        session.settingsActive = false;  // consumed; will open via props below
-    }
-
     if (session.settingsActive && props != nullptr)
     {
+        // Re-open the Settings tab (A2) when it was active at save time.
         openSettingsTab(props);
     }
-    else if (!session.settingsActive)
+    else
     {
         const int idx = session.activeIndex;
         if (idx >= 0 && idx < static_cast<int>(tabs_.size()))

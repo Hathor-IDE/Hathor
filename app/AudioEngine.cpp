@@ -181,8 +181,10 @@ std::string AudioEngine::initialise()
                      actualBuffer);
         std::fflush(stderr);
 
-        // Update our atomic sample rate so the audio callback uses the real value.
+        // Update our atomic sample rate and buffer size so the audio callback
+        // and SettingsComponent UI use the real device values.
         sampleRate_.store(static_cast<int>(actualRate), std::memory_order_relaxed);
+        bufferSize_.store(actualBuffer, std::memory_order_relaxed);
     }
 
     return {}; // success
@@ -374,6 +376,126 @@ std::shared_ptr<hathor::MasterEqState> AudioEngine::loadEqState() const noexcept
 }
 
 // ---------------------------------------------------------------------------
+// Phase 4.4: Audio device management
+// ---------------------------------------------------------------------------
+
+std::vector<int> AudioEngine::getAvailableSampleRates() const noexcept
+{
+    if (auto* device = deviceManager_.getCurrentAudioDevice()) {
+        juce::Array<int> rates;
+        device->getAvailableSampleRates(rates);
+        std::vector<int> out;
+        out.reserve(static_cast<size_t>(rates.size()));
+        for (int r : rates)
+            out.push_back(r);
+        return out;
+    }
+    return {};
+}
+
+std::vector<int> AudioEngine::getAvailableBufferSizes() const noexcept
+{
+    if (auto* device = deviceManager_.getCurrentAudioDevice()) {
+        juce::Array<int> sizes;
+        device->getAvailableBufferSizes(sizes);
+        std::vector<int> out;
+        out.reserve(static_cast<size_t>(sizes.size()));
+        for (int s : sizes)
+            out.push_back(s);
+        return out;
+    }
+    return {};
+}
+
+int AudioEngine::getBufferSize() const noexcept
+{
+    return bufferSize_.load(std::memory_order_relaxed);
+}
+
+std::string AudioEngine::setSampleRate(int rate)
+{
+    auto* device = deviceManager_.getCurrentAudioDevice();
+    if (!device)
+        return "No audio device open";
+
+    // Check if the rate is actually supported.
+    juce::Array<int> rates;
+    device->getAvailableSampleRates(rates);
+    if (!rates.contains(rate))
+        return "Sample rate not supported by current device";
+
+    juce::AudioDeviceManager::AudioDeviceSetup setup;
+    deviceManager_.getAudioDeviceSetup(setup);
+    if (static_cast<int>(setup.sampleRate) == rate)
+        return {}; // already at this rate
+
+    setup.sampleRate = rate;
+    juce::String error = deviceManager_.setAudioDeviceSetup(setup, /*usePlatformsDefaultDevice=*/false);
+    if (error.isNotEmpty())
+        return error.toStdString();
+
+    sampleRate_.store(rate, std::memory_order_relaxed);
+    // Re-apply EQ preset with the new sample rate.
+    const hathor::EqPreset currentPreset =
+        static_cast<hathor::EqPreset>(eqPreset_.load(std::memory_order_relaxed));
+    setMasterEqPreset(currentPreset);
+    return {};
+}
+
+std::string AudioEngine::setBufferSize(int size)
+{
+    auto* device = deviceManager_.getCurrentAudioDevice();
+    if (!device)
+        return "No audio device open";
+
+    // Check if the size is supported.
+    juce::Array<int> sizes;
+    device->getAvailableBufferSizes(sizes);
+    if (!sizes.contains(size))
+        return "Buffer size not supported by current device";
+
+    juce::AudioDeviceManager::AudioDeviceSetup setup;
+    deviceManager_.getAudioDeviceSetup(setup);
+    if (setup.bufferSizeSamples == size)
+        return {}; // already at this size
+
+    setup.bufferSizeSamples = size;
+    juce::String error = deviceManager_.setAudioDeviceSetup(setup, /*usePlatformsDefaultDevice=*/false);
+    if (error.isNotEmpty())
+        return error.toStdString();
+
+    bufferSize_.store(size, std::memory_order_relaxed);
+    return {};
+}
+
+// ---------------------------------------------------------------------------
+// Phase 4.4: ChucK VM flags
+// ---------------------------------------------------------------------------
+
+std::string AudioEngine::getVmFlags() const
+{
+    const std::lock_guard<std::mutex> lock(vmFlagsMtx_);
+    return vmFlags_;
+}
+
+void AudioEngine::setVmFlags(const std::string& flags)
+{
+    {
+        const std::lock_guard<std::mutex> lock(vmFlagsMtx_);
+        vmFlags_ = flags;
+    }
+
+    // Forward to the worker process if one is active.  New VM instances
+    // created by the worker will pick up the flags in createChuckInstance().
+    if (workerMgr_) {
+        // Best-effort: the worker stores flags and applies them to the next
+        // VM it creates.  Failures here are non-fatal (the flags are still
+        // stored locally for the next worker activation).
+        workerMgr_->sendControl("vm_set_flags", flags);
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Hot-swap slot API
 // ---------------------------------------------------------------------------
 
@@ -490,6 +612,7 @@ void AudioEngine::audioDeviceAboutToStart(juce::AudioIODevice* device)
 
     const int rate = static_cast<int>(device->getCurrentSampleRate());
     sampleRate_.store(rate, std::memory_order_relaxed);
+    bufferSize_.store(device->getCurrentBufferSizeSamples(), std::memory_order_relaxed);
 
     // B7-K2: Initialize the EQ state now that the real sample rate is known.
     // If a preset was already selected via setMasterEqPreset() before the

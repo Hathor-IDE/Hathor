@@ -255,7 +255,46 @@ public:
     bool isStudioAssetPath(const std::filesystem::path& path) const override;
 
     // ------------------------------------------------------------------
-    // B8-K2: Background ChucK render → .wav
+    // Phase 4.4: Audio device management (sample rate / buffer size)
+    // ------------------------------------------------------------------
+
+    /// Returns the sample rates supported by the current audio device.
+    /// Returns an empty vector if no device is open.
+    std::vector<int> getAvailableSampleRates() const noexcept;
+
+    /// Returns the buffer sizes (in samples) supported by the current audio
+    /// device.  Returns an empty vector if no device is open.
+    std::vector<int> getAvailableBufferSizes() const noexcept;
+
+    /// Returns the current hardware buffer size in samples (0 if no device).
+    int getBufferSize() const noexcept;
+
+    /// Reconfigure the audio device sample rate.
+    /// @param rate  Desired sample rate in Hz.
+    /// @return Empty string on success, error description on failure.
+    /// On failure the device setup is unchanged.
+    std::string setSampleRate(int rate);
+
+    /// Reconfigure the audio device buffer size.
+    /// @param size  Desired buffer size in samples.
+    /// @return Empty string on success, error description on failure.
+    /// On failure the device setup is unchanged.
+    std::string setBufferSize(int size);
+
+    // ------------------------------------------------------------------
+    // Phase 4.4: ChucK VM flags
+    // ------------------------------------------------------------------
+
+    /// Returns the current ChucK VM flags as a comma-separated key=value
+    /// string (e.g. "DUMP_INSTRUCTIONS=1,AUTO_DEPEND=0").
+    std::string getVmFlags() const;
+
+    /// Set the ChucK VM flags applied to newly created VM instances.
+    /// Flags are forwarded to the worker process via the control plane; the
+    /// worker stores them and applies them in ChuckVM::createChuckInstance().
+    /// Existing VMs are unaffected; new VMs pick up the flags on activation.
+    void setVmFlags(const std::string& flags);
+
     // ------------------------------------------------------------------
     //
     // Delegates to a ChuckRenderWriter that drains audio from the worker's
@@ -387,6 +426,7 @@ private:
     std::atomic<double>   bpm_{120.0};        ///< current tempo
     std::atomic<bool>     running_{true};     ///< transport running flag
     std::atomic<int>      sampleRate_{44100}; ///< set when device opens
+    std::atomic<int>      bufferSize_{0};     ///< set when device opens (0 if no device)
 
     // B4-K3: Worker process generation — used by tryReadAudioBlock to reject
     // stale shared-memory samples when the worker has been restarted.
@@ -453,6 +493,15 @@ private:
     // without a worker path). slotPlay/slotStop delegate VM activation
     // to this manager.
     std::unique_ptr<hathor::AudioWorkerManager> workerMgr_;
+
+    // ------------------------------------------------------------------
+    // Phase 4.4: ChucK VM flags configuration
+    // ------------------------------------------------------------------
+    // Stored locally and forwarded to the worker process via the control
+    // plane (vm_set_flags command).  Newly created VM instances pick up
+    // these flags in ChuckVM::createChuckInstance().
+    std::string vmFlags_;
+    mutable std::mutex vmFlagsMtx_;
 
     // ------------------------------------------------------------------
     // B7-K2: Master-bus preset EQ state

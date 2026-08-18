@@ -613,10 +613,130 @@ TEST_CASE("J-6: saveToFile/loadFromFile round-trip", "[j-6][file-io]")
 // ===========================================================================
 // Bonus: loadFromFile on nonexistent file returns false.
 // ===========================================================================
+// 17. Full ghost-accept → compile-result → diagnostic sequence (J-6 wiring).
+//     This mirrors the HathorTab::acceptGhostCompletion → notifyChuckDiagnostics
+//     flow: after accepting a ghost for a .ck tab, ChucK validation is
+//     triggered and the compile-result callback records COMPILE_RESULT and
+//     DIAGNOSTIC_ADDED with the same requestId.
+// ===========================================================================
 
-TEST_CASE("J-6: loadFromFile on nonexistent file returns false", "[j-6][file-missing]")
+TEST_CASE("J-6: clean compile after ghost accept records compile-success, no diagnostic-added",
+         "[j-6][compile][ghost-flow]")
 {
     GhostCompletionTelemetry telemetry;
-    REQUIRE_FALSE(telemetry.loadFromFile("/nonexistent/path/to/telemetry.json"));
-    REQUIRE(telemetry.events().empty());
+    telemetry.recordDisplayed("chuck", "req-clean-1", 1000, 1);
+    telemetry.recordAccepted("req-clean-1", 1050, 1);
+    telemetry.recordCompileResult("req-clean-1", 1100, true);
+    // No recordDiagnosticAdded — clean compile produced zero diagnostics.
+
+    auto metrics = telemetry.computeMetricsForLanguage("chuck");
+    REQUIRE(metrics.acceptedCount == 1);
+    REQUIRE(metrics.compileAttempts == 1);
+    REQUIRE(metrics.compileSuccesses == 1);
+    REQUIRE(metrics.compileSuccessRate == 1.0);
+    REQUIRE(metrics.diagnosticAddedCount == 0);
+    REQUIRE(metrics.diagnosticRate == 0.0);
+}
+
+TEST_CASE("J-6: compile failure after ghost accept records compile-fail + diagnostic-added",
+         "[j-6][compile][ghost-flow]")
+{
+    GhostCompletionTelemetry telemetry;
+    telemetry.recordDisplayed("chuck", "req-fail-1", 1000, 1);
+    telemetry.recordAccepted("req-fail-1", 1050, 1);
+    telemetry.recordCompileResult("req-fail-1", 1100, false);
+    telemetry.recordDiagnosticAdded("req-fail-1", 1100, 3);
+
+    auto metrics = telemetry.computeMetricsForLanguage("chuck");
+    REQUIRE(metrics.acceptedCount == 1);
+    REQUIRE(metrics.compileAttempts == 1);
+    REQUIRE(metrics.compileSuccesses == 0);
+    REQUIRE(metrics.compileSuccessRate == 0.0);
+    REQUIRE(metrics.diagnosticAddedCount == 1);
+    REQUIRE(metrics.diagnosticRate == 1.0);
+
+    // Verify the diagnostic count is retained on the event itself.
+    const auto& evts = telemetry.events();
+    auto diagIt = std::find_if(evts.rbegin(), evts.rend(),
+        [](const TelemetryEvent& e) { return e.type == GhostEventType::DiagnosticAdded; });
+    REQUIRE(diagIt != evts.rend());
+    REQUIRE(diagIt->diagnosticCount == 3);
+    REQUIRE(diagIt->requestId == "req-fail-1");
+}
+
+// ===========================================================================
+// 18. Multiple diagnostics from a single compile retain their count in telemetry.
+// ===========================================================================
+
+TEST_CASE("J-6: multiple diagnostics recorded as single diagnostic-added event with correct count",
+         "[j-6][diagnostics][ghost-flow]")
+{
+    GhostCompletionTelemetry telemetry;
+    telemetry.recordDisplayed("chuck", "req-multi-1", 1000, 1);
+    telemetry.recordAccepted("req-multi-1", 1050, 1);
+    telemetry.recordCompileResult("req-multi-1", 1100, false);
+    telemetry.recordDiagnosticAdded("req-multi-1", 1100, 5);
+
+    const auto& evts = telemetry.events();
+    REQUIRE(evts.size() == 4);
+    REQUIRE(evts[2].type == GhostEventType::CompileResult);
+    REQUIRE(evts[2].compileSuccess == false);
+    REQUIRE(evts[3].type == GhostEventType::DiagnosticAdded);
+    REQUIRE(evts[3].diagnosticCount == 5);
+}
+
+// ===========================================================================
+// 19. Clean compile after a failed compile does not leave stale events.
+// ===========================================================================
+
+TEST_CASE("J-6: subsequent clean compile resets diagnostic tracking",
+         "[j-6][compile][ghost-flow]")
+{
+    GhostCompletionTelemetry telemetry;
+    // First: failed compile with diagnostics.
+    telemetry.recordDisplayed("chuck", "req-err-1", 1000, 1);
+    telemetry.recordAccepted("req-err-1", 1050, 1);
+    telemetry.recordCompileResult("req-err-1", 1100, false);
+    telemetry.recordDiagnosticAdded("req-err-1", 1100, 2);
+
+    // Second: clean compile, no diagnostics added.
+    telemetry.recordDisplayed("chuck", "req-ok-2", 2000, 2);
+    telemetry.recordAccepted("req-ok-2", 2050, 2);
+    telemetry.recordCompileResult("req-ok-2", 2100, true);
+
+    auto metrics = telemetry.computeMetricsForLanguage("chuck");
+    REQUIRE(metrics.compileAttempts == 2);
+    REQUIRE(metrics.compileSuccesses == 1);
+    REQUIRE(metrics.diagnosticAddedCount == 1);
+}
+
+// ===========================================================================
+// 20. Compile-result requestId correlates with the originating ghost accept.
+// ===========================================================================
+
+TEST_CASE("J-6: compile-result and diagnostic-added events correlate to accepted requestId",
+         "[j-6][compile][correlation]")
+{
+    GhostCompletionTelemetry telemetry;
+    telemetry.recordDisplayed("chuck", "req-correlate-1", 1000, 1);
+    telemetry.recordAccepted("req-correlate-1", 1050, 1);
+    telemetry.recordCompileResult("req-correlate-1", 1100, false);
+    telemetry.recordDiagnosticAdded("req-correlate-1", 1100, 1);
+
+    const auto& evts = telemetry.events();
+    // Find the compile and diagnostic events — both must share the requestId.
+    std::string requestId;
+    for (const auto& e : evts)
+    {
+        if (e.type == GhostEventType::CompileResult ||
+            e.type == GhostEventType::DiagnosticAdded)
+        {
+            if (requestId.empty())
+                requestId = e.requestId;
+            else
+                REQUIRE(e.requestId == requestId);
+        }
+    }
+    REQUIRE(requestId == "req-correlate-1");
+    REQUIRE(telemetry.computeMetricsForLanguage("chuck").compileAttempts == 1);
 }

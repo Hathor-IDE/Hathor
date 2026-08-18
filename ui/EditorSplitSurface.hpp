@@ -50,7 +50,8 @@ public:
     /**
      * Create a leaf node wrapping an EditorGroup.
      */
-    static std::unique_ptr<SplitterTree> makeLeaf(AudioEngine& audio);
+    static std::unique_ptr<SplitterTree> makeLeaf(AudioEngine& audio,
+                                                   hathor::control::ControlInterface& ci);
 
     /**
      * Create a split node with two children.
@@ -80,7 +81,7 @@ public:
 
     /** Split ratio for this node (0.0 = all first, 1.0 = all second). */
     float ratio() const noexcept { return ratio_; }
-    void setRatio(float r) noexcept { ratio_ = juce::jlimit(0.1f, 0.9f, r); }
+    void setRatio(float r) noexcept { ratio_ = juce::jlimit(0.05f, 0.95f, r); }
 
     /** Set the active leaf group (propagates to children). */
     void setActiveLeaf(SplitterTree* leaf);
@@ -95,6 +96,42 @@ public:
     /** Collect all leaf EditorGroups in this subtree (in order). */
     void collectLeaves(std::vector<EditorGroup*>& out) noexcept;
 
+    /**
+     * Replace a leaf node within this subtree with a split containing
+     * [the old leaf, a new leaf].  Called on the root of the tree; the
+     * target leaf must be a descendant.
+     *
+     * @param targetLeaf  The leaf to split (must be in this subtree).
+     * @param orient      Orientation for the new split.
+     * @param audio       Needed to construct the new sibling EditorGroup.
+     * @param ci          Needed to construct the new sibling EditorGroup.
+     * @return true if the target was found and replaced.
+     */
+    bool splitLeafInPlace(SplitterTree* targetLeaf,
+                          Orientation orient,
+                          AudioEngine& audio,
+                          hathor::control::ControlInterface& ci);
+
+    /**
+     * Remove a leaf node from this subtree.  Called on the root; the
+     * target leaf must be a descendant (and must not be the root itself).
+     *
+     * After removal, if a split node is left with only one child, that
+     * child is spliced in to replace the parent split.
+     *
+     * @return true if the leaf was found and removed.
+     */
+    bool removeLeaf(SplitterTree* targetLeaf);
+
+    /**
+     * Find the leaf EditorGroup at the given screen position.
+     * Returns nullptr if no leaf is at that position.
+     */
+    EditorGroup* findLeafAt(const juce::Point<int>& screenPos) const noexcept;
+
+    /** Recursive layout entry point (calls resized() with clamping). */
+    void layoutTree();
+
     // juce::Component
     void resized() override;
     void paint(juce::Graphics& g) override;
@@ -106,6 +143,20 @@ public:
 
 private:
     SplitterTree() = default;
+
+    /** Recursive helper for splitLeafInPlace. */
+    bool tryReplaceLeaf(SplitterTree* target,
+                        std::unique_ptr<SplitterTree>& replacement,
+                        Orientation orient,
+                        AudioEngine& audio,
+                        hathor::control::ControlInterface& ci);
+
+    /** Recursive helper for removeLeaf. */
+    bool tryRemoveLeaf(SplitterTree* target, std::unique_ptr<SplitterTree>& childToRemove);
+
+    /** Recursive helper for findLeafAt. */
+    EditorGroup* findLeafAtRecursive(const juce::Point<int>& screenPos) const noexcept;
+
     std::unique_ptr<EditorGroup> group_;
 
     // Split node data
@@ -134,10 +185,12 @@ private:
  * This replaces the single EditorArea content-area with a split-aware
  * container while preserving all existing tab management behavior.
  */
-class EditorSplitSurface : public juce::Component
+class EditorSplitSurface : public juce::Component,
+                           private juce::DragAndDropContainer
 {
 public:
-    explicit EditorSplitSurface(AudioEngine& audio);
+    explicit EditorSplitSurface(AudioEngine& audio,
+                                 hathor::control::ControlInterface& ci);
     ~EditorSplitSurface() override;
 
     void resized() override;
@@ -161,6 +214,12 @@ public:
     /** Open a file in the active group (or focus if already open). */
     HathorTab* openFile(const juce::File& file);
 
+    /** Move a tab from one editor leaf to another. */
+    void moveTab(EditorGroup* source,
+                 int sourceIndex,
+                 EditorGroup* target,
+                 int targetIndex = -1);
+
     /** Forward LSP/Ghost wiring to all groups in the tree. */
     void setLspClient(class HathorLspClient* client) noexcept;
     void setGhostClient(class GhostLlmClient* client) noexcept;
@@ -173,14 +232,25 @@ public:
     void updateNowPlayingHighlight(
         const std::vector<hathor::Event<hathor::ParamMap>>& events);
 
-    #ifdef HATHOR_ENABLE_GHOST_TELEMETRY
+#ifdef HATHOR_ENABLE_GHOST_TELEMETRY
     bool saveTelemetry(const std::string& filePath) const;
     void loadTelemetry(const std::string& filePath);
-    #endif
+#endif
 
 private:
+    /** Install shared callbacks on a newly-created leaf group. */
+    void wireGroupCallbacks(EditorGroup* group);
+
+    /** Ensure all leaf groups have consistent active-tab / tab-count callbacks. */
+    void syncGroupCallbacks();
+
     std::unique_ptr<SplitterTree> tree_;
     AudioEngine& audio_;
+    hathor::control::ControlInterface& ci_;
+
+    // Tab drag tracking — source group + tab index being dragged across panes.
+    EditorGroup* dragSourceGroup_{ nullptr };
+    int dragSourceIndex_{ -1 };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(EditorSplitSurface)
 };
