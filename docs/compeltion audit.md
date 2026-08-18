@@ -697,47 +697,58 @@ commit) runs end-to-end through MCP without stubs.
 
 ---
 
-### Phase 5 — Remove Every Stub / Masked Path ⚠️ **REMAINING**
+### Phase 5 — Complete / Remediate Every Stubbed or Masked Path ⚠️ **REMAINING**
 
-> **Goal**: eliminate all no-op, placeholder, or `(void)`-suppressed paths so there is no
-> silent gap between what the UI shows and what actually runs. Verified inventory below.
+> **Goal**: every reachable feature is **fully implemented and functional** — no no-op
+> handlers, no placeholder toasts, no `(void)`-suppressed dead paths left in the product.
+> This is not about deleting surface area to dodge work; it's about finishing what the UI
+> advertises so the beta has no silent gaps between what a user clicks and what actually runs.
+> Verified inventory below. If a feature is genuinely out of scope for the beta, that's a
+> **product decision to make explicitly** (with a tracked decision + removed entry point), not
+> an unplanned no-op.
 
-**Subphase 5.1 — Finish the two concrete editor no-ops** *(small, parallelizable)*
-- `ui/EditorArea.cpp:1288` — "Go to line: not yet implemented". Implement a Go-To-Line
-  dialog (jump cursor to line N, scroll to visible).
-- `ui/EditorArea.cpp:2135` — "Peek definition not yet implemented". `peekDefinition()` is a
-  no-op status toast. Wire it to `HathorLspClient` textDocument/definition → small popup, or
-  explicitly remove the menu item if out of scope for beta.
-- **Effort**: 2–3 hrs.
+**Subphase 5.1 — Complete the two concrete editor features** *(small, parallelizable)*
+- `ui/EditorArea.cpp:1288` — "Go to line: not yet implemented". **Implement** a Go-To-Line
+  dialog (jump cursor to line N, scroll to visible) rather than a status toast.
+- `ui/EditorArea.cpp:2135` — "Peek definition not yet implemented". **Implement**
+  `peekDefinition()`: wire it to `HathorLspClient` textDocument/definition and show the result
+  in a peek popup. (LSP already supports definition — this is wiring, not net-new surface.)
+- **Effort**: 3–5 hrs.
 
-**Subphase 5.2 — Wire `.ck` file eval from Explorer**
-- `ui/ExplorerFileTypes.hpp:65` — `SongChuck` is "recognized but eval not yet wired". Clicking
-  a `.ck` in the Explorer should open it in a tab (openFile handles it) **and** evaluate it
-  (`ckEval`) with one action, mirroring `.hathor`'s Ctrl+Enter behavior. Also fix
-  `ui/ExplorerTreeItems.cpp:200` where a managed-asset click is a silent no-op.
+**Subphase 5.2 — Complete `.ck` file eval from Explorer**
+- `ui/ExplorerFileTypes.hpp:65` — `SongChuck` is "recognized but eval not yet wired". **Wire it**:
+  clicking a `.ck` in the Explorer opens it in a tab (openFile handles it) **and** evaluates it
+  (`ckEval`) with one action, mirroring `.hathor`'s Ctrl+Enter behavior. Also complete
+  `ui/ExplorerTreeItems.cpp:200` so a managed-asset click performs its intended action instead
+  of a silent no-op.
 - **Effort**: 2–3 hrs.
 
 **Subphase 5.3 — Implement ChatSidebar tab close**
 - `ui/ChatSidebar.cpp:281` — `closeTab()` is an empty function ("tabs are not closable yet").
-  Implement closing an AI chat thread: remove the tab, tear down its `AcpAgentSession`,
+  **Implement** closing an AI chat thread: remove the tab, tear down its `AcpAgentSession`,
   release its worker/session state, and persist the removal. This is a **state-leak risk**
   (threads accumulate and never release).
 - **Effort**: 2–3 hrs.
 
-**Subphase 5.4 — Editor ↔ Control wiring (Phase 4.6 carry-over)**
-- Decide `EditorGroup::ci_`: wire editor save/eval/slot-ops through the `ControlInterface`
-  for a single code path, **or** delete the field and the `juce::ignoreUnused` suppression.
-  Do not ship a permanently dead reference.
+**Subphase 5.4 — Complete the Editor ↔ Control wiring (Phase 4.6 carry-over)**
+- `EditorGroup::ci_` is `(void)`-suppressed. **Complete the wiring**: route editor
+  save/eval/slot-ops through `ControlInterface` so the editor and the console/MCP control
+  paths share one implementation instead of two divergent ones. Only if it proves structurally
+  redundant should it be removed — and that removal must be a deliberate refactor with a note,
+  not a leave-it-suppressed outcome. Do not ship a permanently dead reference either way.
+- **Effort**: 2–3 hrs.
+
+**Subphase 5.5 — Re-run the stub survey to a clean, justified state**
+- Re-run the `TODO/stub/placeholder/no-op/inert/not-yet` grep across `ui/`, `app/`, `control/`
+  and classify **every** hit: implemented (feature now functional), documented design no-op
+  (intentional, with an inline comment explaining why), or explicit product decision to exclude
+  from beta (entry point removed + decision tracked). No hit may remain that is an *unplanned*
+  no-op.
 - **Effort**: 1–2 hrs.
 
-**Subphase 5.5 — Re-run the stub survey to zero**
-- Re-run the `TODO/stub/placeholder/no-op/inert/not-yet` grep across `ui/`, `app/`, `control/`
-  and confirm every remaining hit is either a documented design no-op or a `#error` platform
-  gate (Windows). Produce a clean audit line proving no silent gap remains.
-- **Effort**: 1 hr.
-
 **Phase 5 exit criteria**: no status toast or empty handler for a reachable action; every
-panel/editor action that advertises behavior actually performs it; `ci_` is either wired or gone.
+panel/editor action that advertises behavior actually performs it; `ci_` is fully wired (or
+deliberately refactored away with justification).
 
 ---
 
@@ -765,10 +776,17 @@ these two files and the staged `tests/test_arc.cpp` before anything else.**
 - **Effort**: 2–4 hrs + a Silicon machine or CI runner to validate arm64 actually runs.
 
 **Subphase 6.2 — Proper app bundle (Info.plist, icon, version)**
-- `HathorUI.app/Contents/Info.plist` still has placeholder `com.yourcompany.hathor-ui`, no
+- `HathorUI.app/Contents/Info.plist` still has the placeholder `com.yourcompany.hathor-ui`, no
   icon (`CFBundleIconFile` empty), no copyright, version `0.2.0`.
-- Set a real bundle ID, `CFBundleIconFile` (a valid `.icns`), `NSHumanReadableCopyright`,
-  `CFBundleShortVersionString`/`CFBundleVersion`, and `LSMinimumSystemVersion`.
+- Bundle ID: you don't have a company registered yet, and if you do form one it will be called
+  **Hathor** — so set `CFBundleIdentifier` to `com.hathor.HathorUI` (reverse-DNS under your
+  product name; you can later move to `com.hathor.<product>` if you register a `hathor.com`
+  domain, but `com.hathor.*` is the right default now and stays valid).
+- Also set `CFBundleIconFile` (a valid `.icns`), `NSHumanReadableCopyright`, and
+  `CFBundleShortVersionString`/`CFBundleVersion` (bump to `0.3.0-beta` for the beta), plus
+  `LSMinimumSystemVersion`. Update the bundle ID in one place and source it in `ui/CMakeLists.txt`
+  (JUCE `JUCE_APPLICATION_ID` / `XCODE_MACOS_BUNDLE_ID`), not just the built plist, so it
+  survives rebuilds.
 - **Effort**: 1–2 hrs.
 
 **Subphase 6.3 — Backend wiring check (the "frontend wouldn't hydrate" class)** ⚠️ *highest risk*

@@ -1,4 +1,4 @@
-// Copyright (C) 2024 Hathor Contributors
+// Copyright (C) 2026 Hathor Contributors
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 /**
