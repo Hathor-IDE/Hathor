@@ -113,6 +113,12 @@ public:
     juce::File audioFile() const noexcept;
 
 private:
+    /// Shared click/double-click logic: open .ck source, reveal .wav,
+    /// or show an explicit error.  Extracted so single and double click
+    /// never diverge.
+    void activate();
+
+private:
     AssetNode          node_;
     SongClickedCallback onSourceClicked_;
 

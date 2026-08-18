@@ -197,20 +197,49 @@ void AssetTreeItem::itemOpennessChanged(bool /*isOpen*/)
 
 void AssetTreeItem::itemClicked(const juce::MouseEvent& /*e*/)
 {
-    // Clicking an instrument opens its .ck source for editing (B8-K5 §4).
-    // If no source exists, the .wav is still associated but there's
-    // nothing to open — the click is a no-op in that case.
-    if (onSourceClicked_)
-        if (const juce::File f = sourceFile(); f.getFullPathName().isNotEmpty())
-            onSourceClicked_(f);
+    activate();
 }
 
 void AssetTreeItem::itemDoubleClicked(const juce::MouseEvent& /*e*/)
 {
-    // Double-click: same as single-click — open .ck source.
-    if (onSourceClicked_)
-        if (const juce::File f = sourceFile(); f.getFullPathName().isNotEmpty())
-            onSourceClicked_(f);
+    activate();
+}
+
+void AssetTreeItem::activate()
+{
+    // B8-K5 §4: Clicking an instrument opens its .ck source for editing.
+    // The source opens via openFile(), which — when isChuckTab() is true —
+    // auto-evaluates via ckEval (A5 wiring), so the instrument is heard
+    // immediately on click.
+    if (const juce::File src = sourceFile(); src.getFullPathName().isNotEmpty())
+    {
+        if (onSourceClicked_)
+            onSourceClicked_(src);
+        return;
+    }
+
+    // Audio-only asset (.wav baked, no .ck source) — reveal the WAV in the
+    // file manager so the user can inspect/audition the rendered audio
+    // outside the editor (no source to edit).
+    if (const juce::File wav = audioFile(); wav.getFullPathName().isNotEmpty())
+    {
+        if (!juce::File::revealInFileManager(wav))
+        {
+            juce::AlertWindow::showMessageBoxAsync(
+                juce::AlertWindow::WarningIcon,
+                "Reveal Failed",
+                "Could not reveal \"" + wav.getFileName()
+                + "\" in the file manager.");
+        }
+        return;
+    }
+
+    // No source and no audio — explicit error state (not a silent no-op).
+    juce::AlertWindow::showMessageBoxAsync(
+        juce::AlertWindow::WarningIcon,
+        "No Source Available",
+        "Instrument \"" + juce::String(node_.name)
+        + "\" has no .ck source and no baked .wav audio.");
 }
 
 juce::File AssetTreeItem::sourceFile() const noexcept

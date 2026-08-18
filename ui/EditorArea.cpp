@@ -10,6 +10,8 @@
 #include "EditorArea.hpp"
 #include "HathorFileParser.hpp"
 #include "HathorLspClient.hpp"
+#include "GotoLineDialog.hpp"
+#include "PeekDefinitionDialog.hpp"
 #include "GhostLlmClient.hpp"
 #include "GhostProviderConfig.hpp"
 #include "EditorContextBridge.hpp"
@@ -1145,16 +1147,28 @@ void EditorArea::removeTabAt(int index)
         keyListeners_.erase(keyListeners_.begin() + index);
     }
 
-     // AI-4: Notify LSP/ghost that the document is closing.
-     // Now handles both .hathor and .ck tabs (notifyLspDidClose
-     // routes internally based on useChuckTokeniser_).
-     HathorTab* closingTab = tabs_[static_cast<std::size_t>(index)].get();
-     if (closingTab && lspClient_)
-         closingTab->notifyLspDidClose();
+      // AI-4: Notify LSP/ghost that the document is closing.
+      // Now handles both .hathor and .ck tabs (notifyLspDidClose
+      // routes internally based on useChuckTokeniser_).
+      HathorTab* closingTab = tabs_[static_cast<std::size_t>(index)].get();
+      if (closingTab && lspClient_)
+          closingTab->notifyLspDidClose();
 
-    // Remove the component from the hierarchy before erasing.
-    removeChildComponent(tabs_[static_cast<std::size_t>(index)].get());
-    tabs_.erase(tabs_.begin() + index);
+      // L-1 §1: Push a snapshot onto the recently-closed-tab stack so the
+      // user can undo the close with Cmd+Shift+T.
+      {
+          TabSnapshot snap;
+          snap.label      = closingTab->tabLabel().toStdString();
+          if (closingTab->filePath().has_value())
+              snap.fileName = (*closingTab->filePath()).getFileName().toStdString();
+          snap.content    = closingTab->document().getAllContent().toStdString();
+          snap.cursorOffset = static_cast<size_t>(closingTab->editor().getCaretPos().getPosition());
+          recentlyClosedTabs_.push(std::move(snap));
+      }
+
+      // Remove the component from the hierarchy before erasing.
+      removeChildComponent(tabs_[static_cast<std::size_t>(index)].get());
+      tabs_.erase(tabs_.begin() + index);
 
     // Compute new active index.
     if (tabs_.empty() && !hasSettings)
@@ -1178,6 +1192,179 @@ void EditorArea::removeTabAt(int index)
 
     refreshTabBar();
     resized();
+}
+
+// ---------------------------------------------------------------------------
+// L-1: File operations — save, save-as, reload, reopen
+// ---------------------------------------------------------------------------
+
+bool EditorArea::saveActiveTab()
+{
+    HathorTab* tab = activeTab();
+    if (!tab)
+        return false;
+
+    const auto& fpath = tab->filePath();
+    if (!fpath.has_value())
+    {
+        saveActiveTabAs();
+        return false;
+    }
+
+    const juce::File& f = *fpath;
+    if (ChuckTokeniser::isChuckFile(f))
+    {
+        f.replaceWithText(tab->document().getAllContent());
+    }
+    else
+    {
+        HathorFile hf;
+        if (tab->frontMatter().has_value())
+            hf.front = *tab->frontMatter();
+        hf.body = tab->document().getAllContent().toStdString();
+        f.replaceWithText(juce::String(serialiseHathorFile(hf)));
+    }
+
+    tab->clearUnsavedDot();
+    showStatus("Saved: " + f.getFileName());
+    return true;
+}
+
+void EditorArea::saveActiveTabAs()
+{
+    HathorTab* tab = activeTab();
+    if (!tab)
+        return;
+
+    auto chooser = std::make_shared<juce::FileChooser>(
+        "Save Buffer As…",
+        juce::File::getSpecialLocation(juce::File::userDocumentsDirectory),
+        "*.hathor;*.ck");
+
+    chooser->launchAsync(
+        juce::FileBrowserComponent::saveMode |
+        juce::FileBrowserComponent::canSelectFiles,
+        [this, tab, chooser](const juce::FileChooser& fc)
+        {
+            const auto chosen = fc.getResult();
+            if (chosen.getFullPathName().isEmpty())
+                return;
+
+            if (ChuckTokeniser::isChuckFile(chosen))
+            {
+                chosen.replaceWithText(tab->document().getAllContent());
+            }
+            else
+            {
+                HathorFile hf;
+                if (tab->frontMatter().has_value())
+                    hf.front = *tab->frontMatter();
+                hf.body = tab->document().getAllContent().toStdString();
+                chosen.replaceWithText(juce::String(serialiseHathorFile(hf)));
+            }
+
+            tab->setFilePath(chosen);
+            tab->setFileTypeFromPath(chosen);
+            tab->clearUnsavedDot();
+            showStatus("Saved: " + chosen.getFileName());
+        });
+}
+
+void EditorArea::reloadActiveTab()
+{
+    HathorTab* tab = activeTab();
+    if (!tab)
+        return;
+
+    const auto& fpath = tab->filePath();
+    if (!fpath.has_value() || !fpath->existsAsFile())
+    {
+        showStatus("Cannot reload: file not found");
+        return;
+    }
+
+    const juce::String contents = fpath->loadFileAsString();
+    const auto parseResult = parseHathorFile(contents.toStdString());
+
+    juce::String bodyText = contents;
+    if (const auto* hf = std::get_if<HathorFile>(&parseResult))
+    {
+        bodyText = juce::String(hf->body);
+    }
+
+    tab->document().replaceAllContent(bodyText);
+    tab->clearUnsavedDot();
+    showStatus("Reloaded: " + fpath->getFileName());
+}
+
+void EditorArea::reopenLastClosedTab()
+{
+    auto snap = recentlyClosedTabs_.pop();
+    if (!snap.has_value())
+    {
+        showStatus("No recently closed tabs");
+        return;
+    }
+
+    const TabSnapshot& s = snap.value();
+    const int slot = nextFreeSlot(buildHathorTabPointers());
+    if (slot == -1)
+    {
+        showStatus("Error: all 16 pattern slots are occupied. Close a tab to reopen.");
+        // Push the snapshot back so it isn't lost.
+        recentlyClosedTabs_.push(std::move(snap.value()));
+        return;
+    }
+
+    auto tab = std::make_unique<HathorTab>(slot);
+    tab->document().replaceAllContent(juce::String(s.content));
+
+    if (!s.fileName.empty())
+    {
+        juce::File file(s.fileName);
+        tab->setFilePath(file);
+        tab->setFileTypeFromPath(file);
+    }
+
+    const juce::String offset = juce::String(static_cast<int>(s.cursorOffset));
+    tab->editor().setCaretPosition(juce::CodeDocument::Position(
+        tab->document(), static_cast<int>(s.cursorOffset)));
+
+    wireUnsavedCallback(*tab);
+    wirePlayStopCallback(*tab);
+    wireContextMenuCallbacks(*tab);
+    installKeyListenerForTab(*tab);
+    tab->installLspClient(lspClient_.get());
+    tab->notifyLspDidOpen();
+    tab->installGhostClient(ghostClient_.get());
+
+    HathorTab* tabPtr = tab.get();
+    tab->getAuthoringContext = [this, tabPtr]() -> nlohmann::json {
+        auto caretPos = tabPtr->editor().getCaretPos();
+        hathor::control::CompletionRequest req;
+        req.file = tabPtr->lspDocumentUri().toStdString();
+        req.uri  = tabPtr->lspDocumentUri().toStdString();
+        req.line = caretPos.getLineNumber();
+        req.character = caretPos.getIndexInLine();
+        req.language = tabPtr->isChuckTab() ? "chuck" : "mininotation";
+        req.documentText = tabPtr->document().getAllContent().toStdString();
+        const auto region = tabPtr->editor().getHighlightedRegion();
+        if (!region.isEmpty())
+        {
+            const auto selStart = tabPtr->editor().getSelectionStart();
+            const auto selEnd   = tabPtr->editor().getSelectionEnd();
+            req.selection = hathor::control::CompletionRequest::Range{
+                selStart.getLineNumber(), selStart.getIndexInLine(),
+                selEnd.getLineNumber(),   selEnd.getIndexInLine()};
+            req.selectedText = tabPtr->editor().getTextInRange(region).toStdString();
+        }
+        return ci_.assembleCompletionContext(req);
+    };
+
+    addAndMakeVisible(*tab);
+    tabs_.push_back(std::move(tab));
+    activateTab(static_cast<int>(tabs_.size()) - 1);
+    showStatus("Reopened: " + juce::String(s.label));
 }
 
 void EditorArea::showStatus(const juce::String& msg)
@@ -1302,40 +1489,7 @@ void EditorArea::wireContextMenuCallbacks(HathorTab& tab)
         showFindReplace();
     };
     tab.onGoToLine = [this]() {
-        HathorTab* tab = activeTab();
-        if (!tab)
-            return;
-
-        auto* ed = &tab->editor();
-        const int currentLine = ed->getCaretPos().getLineNumber() + 1;
-        const int totalLines = tab->document().getNumLines();
-        const juce::String prompt = "Line number (1–" + juce::String(totalLines) + "):";
-
-        auto alert = std::make_shared<juce::AlertWindow>(
-            juce::MessageBoxIconType::QuestionIcon,
-            "Go to Line",
-            prompt);
-        alert->addButton("OK", 1);
-        alert->addButton("Cancel", 0);
-        alert->addTextBox("lineNumber", juce::String(currentLine));
-
-        alert->enterModalState(true,
-            juce::ModalCallbackFunction::create([alert, ed, totalLines](int result) {
-                if (result == 1)
-                {
-                    const int lineNum = juce::Colours::fromString;
-                    const juce::String input = alert->getTextBoxInput("lineNumber");
-                    const int n = input.getIntValue();
-                    if (n >= 1 && n <= totalLines)
-                    {
-                        juce::CodeDocument::Position pos(ed->getDocument(), n - 1, 0);
-                        ed->moveCaretTo(pos, false);
-                        ed->scrollToKeepCaretVisible();
-                    }
-                }
-                alert = nullptr;
-            }),
-            false);
+        showGoToLineDialog();
     };
     tab.onToggleComment = [&tab]() {
         // Toggle line comment — use // prefix for .hathor and .ck
@@ -2035,12 +2189,75 @@ void EditorArea::findPrevInActiveTab()
 
 void EditorArea::replaceInActiveTab()
 {
-    // Single replace is handled by the FindReplacePanel callback
+    HathorTab* tab = activeTab();
+    if (!tab || !findReplacePanel_)
+        return;
+
+    FindReplaceModel& model = findReplacePanel_->model();
+    if (model.searchText().empty())
+        return;
+
+    juce::CodeDocument& doc = tab->document();
+    juce::CodeEditorComponent& ed = tab->editor();
+
+    const juce::String content = doc.getAllContent();
+    const std::string contentStr = content.toStdString();
+    const size_t cursorOffset = static_cast<size_t>(ed.getCaretPos().getPosition());
+
+    auto match = model.findNext(contentStr, cursorOffset);
+    if (!match.has_value())
+    {
+        if (hasFlag(model.flags(), FindFlags::WrapAround) && cursorOffset > 0)
+            match = model.findNext(contentStr, 0);
+        if (!match.has_value())
+        {
+            showStatus("No match to replace");
+            return;
+        }
+    }
+
+    const juce::String replacement = juce::String(model.replaceText());
+    juce::CodeDocument::Position startPos(doc, static_cast<int>(match->start));
+    juce::CodeDocument::Position endPos(doc, static_cast<int>(match->end));
+
+    doc.deleteSection(startPos.getPosition(), endPos.getPosition());
+    doc.insertText(startPos.getPosition(), replacement);
+
+    juce::CodeDocument::Position afterPos(doc,
+        static_cast<int>(match->start) + static_cast<int>(replacement.length()));
+    ed.moveCaretTo(afterPos, false);
+    ed.scrollToKeepCaretVisible();
 }
 
 void EditorArea::replaceAllInActiveTab()
 {
-    // Replace all is handled by the FindReplacePanel callback
+    HathorTab* tab = activeTab();
+    if (!tab || !findReplacePanel_)
+        return;
+
+    FindReplaceModel& model = findReplacePanel_->model();
+    if (model.searchText().empty())
+        return;
+
+    juce::CodeDocument& doc = tab->document();
+
+    const juce::String content = doc.getAllContent();
+    std::string contentStr = content.toStdString();
+
+    const size_t count = model.replaceAll(contentStr);
+    if (count == 0)
+    {
+        showStatus("No matches to replace");
+        return;
+    }
+
+    doc.replaceAllContent(juce::String(contentStr));
+
+    juce::CodeDocument::Position pos(doc, 0);
+    tab->editor().moveCaretTo(pos, false);
+    tab->editor().scrollToKeepCaretVisible();
+
+    showStatus(juce::String(static_cast<int>(count)) + " replacement(s)");
 }
 
 void EditorArea::toggleSplit()
@@ -2201,7 +2418,66 @@ void EditorArea::gotoReferences()
 
 void EditorArea::peekDefinition()
 {
-    showStatus("Peek definition not yet implemented");
+    HathorTab* tab = activeTab();
+    if (!tab || !lspClient_ || tab->isChuckTab())
+        return;
+
+    auto cursorPos = tab->editor().getCaretPos();
+    juce::String uri = tab->lspDocumentUri();
+    int line = cursorPos.getLineNumber();
+    int column = cursorPos.getIndexInLine();
+
+    lspClient_->requestDefinition(
+        uri.toStdString(), line, column,
+        [this, tab](const lsp::NavigationResult& result) {
+            if (result.locations.empty())
+            {
+                showStatus("No definition found");
+                return;
+            }
+
+            const auto& loc = result.locations.front();
+            std::string path = loc.uri;
+            const std::string prefix = "file://";
+            if (path.substr(0, prefix.size()) == prefix)
+                path = path.substr(prefix.size());
+
+            juce::File file(path);
+            if (!file.existsAsFile())
+            {
+                showStatus("Definition file not found");
+                return;
+            }
+
+            const juce::String contents = file.loadFileAsString();
+            const juce::StringArray lines = contents.split(juce::newLine);
+            const int defLine = juce::jmax(0, static_cast<int>(loc.range.start.line));
+            const int defEnd  = juce::jmax(defLine + 1,
+                static_cast<int>(loc.range.end.line) + 1);
+
+            // Extract ~10 lines of context around the definition
+            const int contextStart = juce::jmax(0, defLine - 4);
+            const int contextEnd   = juce::jmin(lines.size(), defEnd + 6);
+
+            juce::String snippet;
+            for (int i = contextStart; i < contextEnd; ++i)
+            {
+                snippet << (i + 1) << ": " << lines[i] << juce::newLine;
+            }
+
+            const juce::String title = "Definition — " + file.getFileName();
+            auto* alert = new juce::AlertWindow(
+                title, snippet,
+                juce::MessageBoxIconType::NoIcon);
+            alert->addButton("Close", 1);
+
+            alert->addToDesktop(juce::Component::getDesktopWindowStyleFlags());
+            alert->centreWithDefaultSize();
+            alert->setAlwaysOnTop(true);
+            alert->enterModalState(true,
+                juce::ModalCallbackFunction::create([](int) {}),
+                true);
+        });
 }
 
 void EditorArea::navigateBack()

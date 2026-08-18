@@ -40,6 +40,10 @@ public:
     /** Toggle panel visibility. */
     void setVisible(bool visible) override;
 
+    /// Access the underlying search engine (for replace operations driven by EditorArea).
+    FindReplaceModel& model() noexcept { return model_; }
+    const FindReplaceModel& model() const noexcept { return model_; }
+
     // juce::Component
     void resized() override;
     void paint(juce::Graphics& g) override;

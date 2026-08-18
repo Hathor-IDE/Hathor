@@ -52,6 +52,7 @@
 #include "BakeOrchestrator.hpp"
 #include "EditorContextBridge.hpp"
 #include "LspContextBridge.hpp"
+#include "LspProtocol.hpp"
 #include "GhostLlmClient.hpp"
 // L-1: Editor ergonomics
 #include "ActionRegistry.hpp"
@@ -62,12 +63,14 @@
 #include "CommandPalette.hpp"
 #include "BreadcrumbsBar.hpp"
 #include "EditorSplitSurface.hpp"
+#include "GotoLineDialog.hpp"        // L-1 §3: Go to Line modal dialog
 #include "WorkspaceSession.hpp"
 // L-2: Navigation & workspace search
 #include "NavigationHistory.hpp"
 #include "WorkspaceSearchModel.hpp"
 #include "SymbolSearchModel.hpp"
 #include "QuickOpenDialog.hpp"
+#include "PeekDefinitionDialog.hpp"  // L-2: Peek Definition modal surface
 #include "WorkspaceSearchPanel.hpp"
 #include "SymbolSearchPanel.hpp"
 // L-3: Problems panel
@@ -632,6 +635,21 @@ private:
 
     /// L-1 §5: Wire context menu callbacks for a tab (find, replace, eval, etc.).
     void wireContextMenuCallbacks(HathorTab& tab);
+
+    /// Show the modal Go-to-Line dialog and move the cursor on confirm.
+    void showGoToLineDialog();
+
+    /// Open @p file in a new tab (or focus an existing one) and move the caret
+    /// to the LSP location, pushing the target onto the navigation history.
+    /// Shared by go-to-definition, go-to-references, and peek.
+    void navigateToLocation(const lsp::Location& loc);
+
+    /// Read up to 2 surrounding lines of source context for @p uri at the
+    /// 0-based @p targetLine. Prefers the active in-memory document when the
+    /// uri matches; falls back to reading the file from disk (same path used by
+    /// openFile()), so no duplicate file-loading is introduced.
+    juce::String sourceContextForLocation(const std::string& uri,
+                                          int targetLine0);
 
     /// Build a pointer list of HathorTab only (excludes Settings tab).
     std::vector<HathorTab*> buildHathorTabPointers() const;
