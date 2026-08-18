@@ -72,9 +72,9 @@ SettingsComponent::SettingsComponent(juce::ApplicationProperties* props,
     hathorMcpPath = mcpFile.getFullPathName().toStdString();
 
     buildAgentSection(hathorMcpPath);
-    buildPetdexSection();
-    buildChuckPlaceholder();
-    buildActionButtons();
+     buildPetdexSection();
+     buildChuckSection();
+     buildActionButtons();
 
     // Wrap in a viewport.
     scrollView_ = std::make_unique<juce::Viewport>();
@@ -136,6 +136,11 @@ SettingsComponent::loadSettings() const
         m.agentExePath    = "";
         m.petSelection    = "";
         m.eqPreset        = hathor::EqPreset::Flat;
+
+        // Phase 4.4: defaults when no ApplicationProperties.
+        m.sampleRate      = 44100;
+        m.bufferSize      = 512;
+        m.vmFlags         = "";
         return m;
     }
 
@@ -177,6 +182,11 @@ SettingsComponent::loadSettings() const
     // B7-K3: Load persisted EQ preset (stable key, not display text).
     m.eqPreset = parseEqPreset(props->getValue("settings.eqPreset", "flat"));
 
+    // Phase 4.4: Load audio device / VM flag settings.
+    m.sampleRate = props->getIntValue("settings.sampleRate", 44100);
+    m.bufferSize = props->getIntValue("settings.bufferSize", 512);
+    m.vmFlags   = props->getValue("settings.vmFlags").toStdString();
+
     return m;
 }
 
@@ -196,6 +206,9 @@ void SettingsComponent::saveSettings(const SettingsModel& model) const
     props->setValue("settings.agentExePath",   juce::String(model.agentExePath));
     props->setValue("settings.petSelection",   juce::String(model.petSelection));
     props->setValue("settings.eqPreset",       juce::String(eqPresetKey(model.eqPreset)));
+    props->setValue("settings.sampleRate",     model.sampleRate);
+    props->setValue("settings.bufferSize",     model.bufferSize);
+    props->setValue("settings.vmFlags",        juce::String(model.vmFlags));
 
     props->saveIfNeeded();
 }
@@ -585,34 +598,128 @@ void SettingsComponent::buildPetdexSection()
     updatePetAttribution();
 }
 
-void SettingsComponent::buildChuckPlaceholder()
+void SettingsComponent::buildChuckSection()
 {
     const auto& palette = HathorLookAndFeel::fromComponent(*this).getPalette();
+    const int labelW   = kLabelWidth;
+    const int controlX = labelW + 8;
+    const int controlW = 300;
+    const int contentW = 600;
 
     int y = contentPanel_->getHeight() + 8;
 
+    // --- Section header ---
     auto* header = new juce::Label();
-    header->setText("ChucK", juce::dontSendNotification);
+    header->setText("Audio Device", juce::dontSendNotification);
     header->setFont(HathorLookAndFeel::fontSemiBold(HathorLookAndFeel::Typography::headlineMd));
     header->setColour(juce::Label::textColourId, palette.textPrimary);
     header->setJustificationType(juce::Justification::centredLeft);
-    header->setBounds(0, y, 600, kControlHeight);
+    header->setBounds(0, y, contentW, kControlHeight);
     contentPanel_->addAndMakeVisible(header);
 
     y += kControlHeight + 8;
 
-    auto* note = new juce::Label();
-    note->setText("ChucK integration - implemented in Phase C (B4).",
-                  juce::dontSendNotification);
-    note->setFont(HathorLookAndFeel::fontRegular(HathorLookAndFeel::Typography::bodySm));
-    note->setColour(juce::Label::textColourId, palette.textMuted);
-    note->setJustificationType(juce::Justification::centredLeft);
-    note->setBounds(0, y, 600, kControlHeight);
-    contentPanel_->addAndMakeVisible(note);
+    // --- Sample rate combo ---
+    sampleRateLabel_.setText("Sample Rate:", juce::dontSendNotification);
+    sampleRateLabel_.setFont(HathorLookAndFeel::fontMedium(HathorLookAndFeel::Typography::bodySm));
+    sampleRateLabel_.setColour(juce::Label::textColourId, palette.textSecondary);
+    sampleRateLabel_.setJustificationType(juce::Justification::centredRight);
+    sampleRateLabel_.setBounds(0, y, labelW, kControlHeight);
+    contentPanel_->addAndMakeVisible(sampleRateLabel_);
 
-    y += kControlHeight + 24;
+    sampleRateCombo_.setBounds(controlX, y, controlW, kControlHeight);
+    sampleRateCombo_.setEditableText(false);
+    sampleRateCombo_.addListener(this);
+    contentPanel_->addAndMakeVisible(sampleRateCombo_);
 
-    contentPanel_->setBounds(0, 0, 600, y);
+    // Populate available sample rates from the engine (or use common defaults).
+    sampleRateCombo_.clear();
+    std::vector<int> availableRates;
+    if (audioEngine_)
+        availableRates = audioEngine_->getAvailableSampleRates();
+    if (availableRates.empty())
+        availableRates = { 44100, 48000, 88200, 96000, 176400 };
+    for (int r : availableRates)
+        sampleRateCombo_.addItem(std::to_string(r), r);
+
+    // Select the pending value.
+    sampleRateCombo_.setText(juce::String(pending_.sampleRate), juce::dontSendNotification);
+
+    // Show current device rate alongside pending.
+    if (audioEngine_) {
+        int currentRate = static_cast<int>(audioEngine_->getSampleRate());
+        if (currentRate != pending_.sampleRate) {
+            sampleRateCombo_.setText(juce::String(pending_.sampleRate)
+                                     + " (current: " + std::to_string(currentRate) + ")",
+                                     juce::dontSendNotification);
+        }
+    }
+
+    y += kControlHeight + 8;
+
+    // --- Buffer size combo ---
+    bufferSizeLabel_.setText("Buffer Size:", juce::dontSendNotification);
+    bufferSizeLabel_.setFont(HathorLookAndFeel::fontMedium(HathorLookAndFeel::Typography::bodySm));
+    bufferSizeLabel_.setColour(juce::Label::textColourId, palette.textSecondary);
+    bufferSizeLabel_.setJustificationType(juce::Justification::centredRight);
+    bufferSizeLabel_.setBounds(0, y, labelW, kControlHeight);
+    contentPanel_->addAndMakeVisible(bufferSizeLabel_);
+
+    bufferSizeCombo_.setBounds(controlX, y, controlW, kControlHeight);
+    bufferSizeCombo_.setEditableText(false);
+    bufferSizeCombo_.addListener(this);
+    contentPanel_->addAndMakeVisible(bufferSizeCombo_);
+
+    // Populate available buffer sizes from the engine (or use common defaults).
+    bufferSizeCombo_.clear();
+    std::vector<int> availableSizes;
+    if (audioEngine_)
+        availableSizes = audioEngine_->getAvailableBufferSizes();
+    if (availableSizes.empty())
+        availableSizes = { 64, 128, 256, 512, 1024 };
+    for (int s : availableSizes)
+        bufferSizeCombo_.addItem(std::to_string(s), s);
+
+    bufferSizeCombo_.setText(juce::String(pending_.bufferSize), juce::dontSendNotification);
+
+    if (audioEngine_) {
+        int currentSize = audioEngine_->getBufferSize();
+        if (currentSize != pending_.bufferSize && currentSize > 0) {
+            bufferSizeCombo_.setText(juce::String(pending_.bufferSize)
+                                     + " (current: " + std::to_string(currentSize) + ")",
+                                     juce::dontSendNotification);
+        }
+    }
+
+    y += kControlHeight + 8;
+
+    // --- VM flags editor ---
+    vmFlagsLabel_.setText("VM Flags:", juce::dontSendNotification);
+    vmFlagsLabel_.setFont(HathorLookAndFeel::fontMedium(HathorLookAndFeel::Typography::bodySm));
+    vmFlagsLabel_.setColour(juce::Label::textColourId, palette.textSecondary);
+    vmFlagsLabel_.setJustificationType(juce::Justification::centredLeft);
+    vmFlagsLabel_.setBounds(0, y, labelW, kControlHeight);
+    contentPanel_->addAndMakeVisible(vmFlagsLabel_);
+
+    vmFlagsEditor_.setBounds(controlX, y, 400, kControlHeight);
+    vmFlagsEditor_.setFont(HathorLookAndFeel::fontRegular(HathorLookAndFeel::Typography::bodySm));
+    vmFlagsEditor_.setText(juce::String(pending_.vmFlags), juce::dontSendNotification);
+    vmFlagsEditor_.addListener(this);
+    contentPanel_->addAndMakeVisible(vmFlagsEditor_);
+
+    // Hint label for VM flags format.
+    auto* flagsHint = new juce::Label();
+    flagsHint->setText("Comma-separated key=value (e.g. DUMP_INSTRUCTIONS=1,AUTO_DEPEND=0)",
+                       juce::dontSendNotification);
+    flagsHint->setFont(HathorLookAndFeel::fontRegular(HathorLookAndFeel::Typography::bodyXs));
+    flagsHint->setColour(juce::Label::textColourId, palette.textMuted);
+    flagsHint->setJustificationType(juce::Justification::centredLeft);
+    flagsHint->setBounds(controlX, y + kControlHeight + 2, 400, kControlHeight);
+    contentPanel_->addAndMakeVisible(flagsHint);
+
+    y += kControlHeight * 2 + 12;
+
+    contentPanel_->setBounds(0, 0, contentW, y);
 }
 
 void SettingsComponent::buildAudioSection(int& y)

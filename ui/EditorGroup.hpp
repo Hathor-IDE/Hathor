@@ -63,6 +63,8 @@ public:
     std::function<void(int)> onTabCloseClicked;  // tab index
     std::function<void(int)> onTabPinClicked;    // tab index (toggle pin)
     std::function<void()>    onReorderRequested; // drag ended, reorder tabs
+    std::function<void(int)> onTabDragStarted;   // tab drag began (cross-pane)
+    std::function<bool(const juce::MouseEvent&)> onTabDragEnded; // drag ended, returns true if consumed
 
     struct TabDisplayInfo
     {

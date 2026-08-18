@@ -164,9 +164,14 @@ private:
         float     opacityPercent = 70.0f;   // B5: 70% default on mac/win, 100% on Linux
         int       macosBlurRadius = 30;     // macOS only: blur radius 0–100
         bool      windowsAcrylic  = false;  // Windows only: Acrylic on/off
-        std::string agentExePath;
+         std::string agentExePath;
         std::string petSelection;
         hathor::EqPreset eqPreset  = hathor::EqPreset::Flat;  // B7-K3
+
+        // Phase 4.4: Audio device + ChucK VM settings
+        int       sampleRate      = 44100;            ///< pending sample rate selection
+        int       bufferSize      = 512;              ///< pending buffer size selection
+        std::string vmFlags;                          ///< pending ChucK VM flags string
     };
 
     // -----------------------------------------------------------------------
@@ -212,6 +217,14 @@ private:
     // Appearance — Audio subsection (B7-K3)
     juce::ComboBox   eqPresetCombo_;
     juce::Label      eqPresetLabel_;
+
+    // Phase 4.4: ChucK / audio device settings subsection
+    juce::ComboBox   sampleRateCombo_;
+    juce::Label      sampleRateLabel_;
+    juce::ComboBox   bufferSizeCombo_;
+    juce::Label      bufferSizeLabel_;
+    juce::TextEditor vmFlagsEditor_;
+    juce::Label      vmFlagsLabel_;
 
     // Action buttons
     juce::TextButton applyButton_;
@@ -267,11 +280,11 @@ private:
     /** Build the Petdex section UI. */
     void buildPetdexSection();
 
-    /** Build the ChucK placeholder section. */
-    void buildChuckPlaceholder();
-
     /** Build the Appearance > Audio subsection (EQ preset selector, B7-K3). */
     void buildAudioSection(int& y);
+
+    /** Build the Phase 4.4 ChucK / audio device settings subsection. */
+    void buildChuckSection();
 
     /** Build the Apply/Reset buttons. */
     void buildActionButtons();
@@ -305,6 +318,12 @@ private:
 
     /** Apply the EQ preset to the live AudioEngine via B7-K2's atomic swap (B7-K3). */
     void applyEqPreset(hathor::EqPreset preset);
+
+    /** Apply sample rate / buffer size changes to the live AudioEngine (Phase 4.4). */
+    void applyDeviceSettings(int sampleRate, int bufferSize);
+
+    /** Apply ChucK VM flags to the live AudioEngine / worker (Phase 4.4). */
+    void applyVmFlags(const std::string& flags);
 
     /** Update the enabled/disabled state of blur controls based on opacity. */
     void updateBlurControlState();

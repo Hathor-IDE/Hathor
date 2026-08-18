@@ -1978,7 +1978,7 @@ void EditorArea::toggleSplit()
 {
     if (!editorSplitSurface_)
     {
-        editorSplitSurface_ = std::make_unique<EditorSplitSurface>(audio_);
+    editorSplitSurface_ = std::make_unique<EditorSplitSurface>(audio_, ci_);
         addChildComponent(editorSplitSurface_.get());
         // Hide the original EditorArea content area when split is active
     }

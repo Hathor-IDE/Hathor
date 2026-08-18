@@ -260,26 +260,26 @@ public:
 
     /// Returns the sample rates supported by the current audio device.
     /// Returns an empty vector if no device is open.
-    std::vector<int> getAvailableSampleRates() const noexcept;
+    std::vector<int> getAvailableSampleRates() const noexcept override;
 
     /// Returns the buffer sizes (in samples) supported by the current audio
     /// device.  Returns an empty vector if no device is open.
-    std::vector<int> getAvailableBufferSizes() const noexcept;
+    std::vector<int> getAvailableBufferSizes() const noexcept override;
 
     /// Returns the current hardware buffer size in samples (0 if no device).
-    int getBufferSize() const noexcept;
+    int getBufferSize() const noexcept override;
 
     /// Reconfigure the audio device sample rate.
     /// @param rate  Desired sample rate in Hz.
     /// @return Empty string on success, error description on failure.
     /// On failure the device setup is unchanged.
-    std::string setSampleRate(int rate);
+    std::string setSampleRate(int rate) override;
 
     /// Reconfigure the audio device buffer size.
     /// @param size  Desired buffer size in samples.
     /// @return Empty string on success, error description on failure.
     /// On failure the device setup is unchanged.
-    std::string setBufferSize(int size);
+    std::string setBufferSize(int size) override;
 
     // ------------------------------------------------------------------
     // Phase 4.4: ChucK VM flags
@@ -287,13 +287,13 @@ public:
 
     /// Returns the current ChucK VM flags as a comma-separated key=value
     /// string (e.g. "DUMP_INSTRUCTIONS=1,AUTO_DEPEND=0").
-    std::string getVmFlags() const;
+    std::string getVmFlags() const override;
 
     /// Set the ChucK VM flags applied to newly created VM instances.
     /// Flags are forwarded to the worker process via the control plane; the
     /// worker stores them and applies them in ChuckVM::createChuckInstance().
     /// Existing VMs are unaffected; new VMs pick up the flags on activation.
-    void setVmFlags(const std::string& flags);
+    void setVmFlags(const std::string& flags) override;
 
     // ------------------------------------------------------------------
     //

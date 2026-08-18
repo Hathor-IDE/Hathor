@@ -128,6 +128,7 @@ public:
      * target leaf must be a descendant (and must not be the root itself).
      *
      * After removal, degenerate splits (nodes with one child) are collapsed.
+     * Delegates to the static removeLeafFromTree helper.
      *
      * @return true if the leaf was found and removed.
      */

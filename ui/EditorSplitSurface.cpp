@@ -96,7 +96,7 @@ void SplitterTree::collectLeaves(std::vector<EditorGroup*>& out) noexcept
 }
 
 // ---------------------------------------------------------------------------
-// Recursive leaf splitting — replaces a leaf with a split node [leaf, newLeaf]
+// Recursive leaf splitting
 // ---------------------------------------------------------------------------
 
 bool SplitterTree::splitLeafInPlace(SplitterTree* targetLeaf,
@@ -104,29 +104,28 @@ bool SplitterTree::splitLeafInPlace(SplitterTree* targetLeaf,
                                      AudioEngine& audio,
                                      hathor::control::ControlInterface& ci)
 {
-    // Special case: if this node IS the target leaf, we cannot replace
-    // ourselves — the caller (EditorSplitSurface) handles the root case.
+    // The special case where this IS the target leaf is handled by
+    // EditorSplitSurface (which replaces the root).  Here we only handle
+    // descendants.
     if (this == targetLeaf)
         return false;
 
-    // Create the new sibling leaf that will sit next to the target.
     auto newLeaf = makeLeaf(audio, ci);
-
-    // tryReplaceLeaf consumes newLeaf (moving it) only on success.
-    return tryReplaceLeaf(targetLeaf, newLeaf, orient, audio, ci);
+    // tryReplaceLeaf consumes newLeaf (moving it into the tree) only on success.
+    return tryReplaceLeaf(targetLeaf, newLeaf, orient);
 }
 
 bool SplitterTree::tryReplaceLeaf(SplitterTree* target,
-                                  std::unique_ptr<SplitterTree>& replacement,
-                                  Orientation orient,
-                                  AudioEngine& audio,
-                                  hathor::control::ControlInterface& ci)
+                                  std::unique_ptr<SplitterTree>& newLeaf,
+                                  Orientation orient)
 {
+    if (!isSplit())
+        return false;
+
     if (first_.get() == target)
     {
-        // Detach the target leaf, wrap it in a new split with the replacement.
         auto oldChild = std::move(first_);
-        first_ = makeSplit(std::move(oldChild), std::move(replacement), orient);
+        first_ = makeSplit(std::move(oldChild), std::move(newLeaf), orient);
         if (first_)
             addAndMakeVisible(first_.get());
         return true;
@@ -134,86 +133,82 @@ bool SplitterTree::tryReplaceLeaf(SplitterTree* target,
     if (second_.get() == target)
     {
         auto oldChild = std::move(second_);
-        second_ = makeSplit(std::move(oldChild), std::move(replacement), orient);
+        second_ = makeSplit(std::move(oldChild), std::move(newLeaf), orient);
         if (second_)
             addAndMakeVisible(second_.get());
         return true;
     }
 
-    // Recurse into children — replacement is only consumed on success.
-    if (first_ && first_->tryReplaceLeaf(target, replacement, orient, audio, ci))
+    // Recurse — newLeaf is only consumed on a successful match.
+    if (first_ && first_->tryReplaceLeaf(target, newLeaf, orient))
         return true;
-    if (second_ && second_->tryReplaceLeaf(target, replacement, orient, audio, ci))
+    if (second_ && second_->tryReplaceLeaf(target, newLeaf, orient))
         return true;
 
     return false;
 }
 
 // ---------------------------------------------------------------------------
-// Leaf removal — detaches a leaf and collapses single-child splits
+// Leaf removal — static recursive helper + instance wrapper
 // ---------------------------------------------------------------------------
 
-bool SplitterTree::removeLeaf(SplitterTree* targetLeaf)
+std::unique_ptr<SplitterTree> SplitterTree::removeLeafFromTree(
+    std::unique_ptr<SplitterTree> node,
+    SplitterTree* target)
 {
-    if (this == targetLeaf)
-        return false;  // can't remove the root
+    if (!node)
+        return nullptr;
 
-    return tryRemoveLeaf(targetLeaf, first_);  // try first_ (or second_)
-        // Note: we try both children; only one will match.
-        || tryRemoveLeaf(targetLeaf, second_);
-}
+    // Never remove the root (protected by caller, but guard anyway).
+    if (node.get() == target)
+        return node;
 
-bool SplitterTree::tryRemoveLeaf(SplitterTree* target, std::unique_ptr<SplitterTree>& childToRemove)
-{
-    if (childToRemove.get() == target)
+    if (node->isLeaf())
+        return node;  // not the target
+
+    // Recurse into children.
+    node->first_  = removeLeafFromTree(std::move(node->first_),  target);
+    node->second_ = removeLeafFromTree(std::move(node->second_), target);
+
+    // Re-establish JUCE parentage for surviving children.
+    if (node->first_)
+        node->addAndMakeVisible(node->first_.get());
+    if (node->second_)
+        node->addAndMakeVisible(node->second_.get());
+
+    // Collapse degenerate splits (only one child remaining).
+    if (node->first_ && !node->second_)
     {
-        // This child IS the target — remove it.
-        if constexpr (true)  // always execute the following
-        {
-            auto removed = std::move(childToRemove);
-            childToRemove = nullptr;
-            removed->removeFromParent();
-
-            // If this split now has only one child, splice that child in.
-            if (first_ && !second_)
-            {
-                // Promote first_ as the sole child — but we're inside the parent's
-                // context.  We need to replace this split node itself.
-                // This case is handled by the caller (EditorSplitSurface) via
-                // the root-replacement logic in removeLeaf.
-                // For now, just leave the single child — it will be re-laid out.
-                return true;
-            }
-            if (!first_ && second_)
-            {
-                return true;
-            }
-            // Both children present — just removed one, the other stays.
-            return true;
-        }
+        auto child = std::move(node->first_);
+        node->first_ = nullptr;
+        node->removeFromParent();
+        return child;
+    }
+    if (!node->first_ && node->second_)
+    {
+        auto child = std::move(node->second_);
+        node->second_ = nullptr;
+        node->removeFromParent();
+        return child;
     }
 
-    // Not a direct match — recurse into the child.
-    if (childToRemove && childToRemove->isSplit())
+    // Both children gone — this split is empty.
+    if (!node->first_ && !node->second_)
     {
-        bool removed = childToRemove->tryRemoveLeaf(target, childToRemove->first_);
-        if (!removed && childToRemove->second_)
-            removed = childToRemove->tryRemoveLeaf(target, childToRemove->second_);
-
-        if (removed && childToRemove->first_ && !childToRemove->second_)
-        {
-            // Single-child collapse: splice first_ up.  We can't restructure
-            // from within the child, but since we hold unique_ptr, we can
-            // extract and promote.
-            // This is handled at the EditorSplitSurface level for root-level
-            // splices; for nested collapses, the recursive approach above
-            // handles direct child removal.
-        }
-        return removed;
+        node->removeFromParent();
+        return nullptr;
     }
 
-    return false;
+    return node;
 }
+
+// ---------------------------------------------------------------------------
+// Leaf removal — delegates to the static removeLeafFromTree helper
+// ---------------------------------------------------------------------------
+
+// (removeLeaf is a thin wrapper around removeLeafFromTree, kept for API
+//  symmetry with splitLeafInPlace.  closeSplit calls removeLeafFromTree
+//  directly so it can reassign tree_.)
 
 // ---------------------------------------------------------------------------
 // Hit-testing — find the leaf EditorGroup at a screen position
@@ -226,21 +221,16 @@ EditorGroup* SplitterTree::findLeafAt(const juce::Point<int>& screenPos) const n
 
 EditorGroup* SplitterTree::findLeafAtRecursive(const juce::Point<int>& screenPos) const noexcept
 {
-    // Convert screen position to our local coordinates.
-    juce::Point<int> local = screenPos - getScreenPosition().toString() == ""
-                                  ? juce::Point<int>()
-                                  : (screenPos - getPosition());
-    // The above conditional was a bug placeholder — just use the simple form:
-    juce::Rectangle<int> bounds = getBounds();
-    juce::Point<int> localPos = screenPos - bounds.getPosition();
-
-    if (!bounds.contains(localPos))
+    juce::Rectangle<int> screenBounds = getScreenBounds();
+    if (!screenBounds.contains(screenPos))
         return nullptr;
 
     if (isLeaf())
         return group_.get();
 
-    // Split node — check children.
+    // Split node — check children first (they are on top in the z-order,
+    // but JUCE paint order means we check both).  Children cannot overlap,
+    // so only one will contain the point.
     if (first_)
     {
         auto* result = first_->findLeafAtRecursive(screenPos);
@@ -253,6 +243,12 @@ EditorGroup* SplitterTree::findLeafAtRecursive(const juce::Point<int>& screenPos
         if (result)
             return result;
     }
+
+    // The point is in the splitter gap — return the first child as fallback.
+    if (first_)
+        return first_->findLeafAtRecursive(screenPos);
+    if (second_)
+        return second_->findLeafAtRecursive(screenPos);
 
     return nullptr;
 }
@@ -284,19 +280,19 @@ void SplitterTree::resized()
         int firstSize = static_cast<int>(static_cast<float>(totalW) * ratio_);
 
         // Enforce minimum pane sizes.
-        const int minFirst  = kMinPaneSize;
-        const int minSecond = kMinPaneSize;
-        const int maxFirst  = juce::jmax(0, totalW - minSecond - splitW);
-
-        firstSize = juce::jlimit(minFirst, maxFirst, firstSize);
+        const int maxFirst  = juce::jmax(0, totalW - kMinPaneSize - splitW);
+        firstSize = juce::jlimit(kMinPaneSize, maxFirst, firstSize);
 
         juce::Rectangle<int> firstArea (area.getX(), area.getY(),
                                         firstSize, area.getHeight());
         juce::Rectangle<int> secondArea (area.getX() + firstSize + splitW, area.getY(),
-                                         juce::jmax(0, totalW - firstSize - splitW), area.getHeight());
+                                         juce::jmax(0, totalW - firstSize - splitW),
+                                         area.getHeight());
 
-        // Update ratio to reflect clamped size so the drag state stays consistent.
-        ratio_ = static_cast<float>(firstSize) / static_cast<float>(juce::jmax(1, totalW - splitW));
+        // Keep ratio_ consistent with the clamped size.
+        ratio_ = static_cast<float>(firstSize) /
+                 static_cast<float>(juce::jmax(1, totalW - splitW));
+        ratio_ = juce::jlimit(0.05f, 0.95f, ratio_);
 
         if (first_)  first_->setBounds(firstArea);
         if (second_) second_->setBounds(secondArea);
@@ -306,18 +302,18 @@ void SplitterTree::resized()
         const int totalH = area.getHeight();
         int firstSize = static_cast<int>(static_cast<float>(totalH) * ratio_);
 
-        const int minFirst  = kMinPaneSize;
-        const int minSecond = kMinPaneSize;
-        const int maxFirst  = juce::jmax(0, totalH - minSecond - splitW);
-
-        firstSize = juce::jlimit(minFirst, maxFirst, firstSize);
+        const int maxFirst  = juce::jmax(0, totalH - kMinPaneSize - splitW);
+        firstSize = juce::jlimit(kMinPaneSize, maxFirst, firstSize);
 
         juce::Rectangle<int> firstArea (area.getX(), area.getY(),
                                         area.getWidth(), firstSize);
         juce::Rectangle<int> secondArea (area.getX(), area.getY() + firstSize + splitW,
-                                         area.getWidth(), juce::jmax(0, totalH - firstSize - splitW));
+                                         area.getWidth(),
+                                         juce::jmax(0, totalH - firstSize - splitW));
 
-        ratio_ = static_cast<float>(firstSize) / static_cast<float>(juce::jmax(1, totalH - splitW));
+        ratio_ = static_cast<float>(firstSize) /
+                 static_cast<float>(juce::jmax(1, totalH - splitW));
+        ratio_ = juce::jlimit(0.05f, 0.95f, ratio_);
 
         if (first_)  first_->setBounds(firstArea);
         if (second_) second_->setBounds(secondArea);
@@ -328,7 +324,6 @@ void SplitterTree::paint(juce::Graphics& g)
 {
     if (isSplit())
     {
-        // Paint splitter grip area
         auto area = getLocalBounds();
         const int splitW = kSplitterWidth;
         int dim = (orientation_ == Orientation::Vertical) ? area.getWidth() : area.getHeight();
@@ -350,7 +345,7 @@ void SplitterTree::paint(juce::Graphics& g)
 }
 
 // ---------------------------------------------------------------------------
-// Splitter drag
+// Splitter drag — with min-size enforcement
 // ---------------------------------------------------------------------------
 
 void SplitterTree::mouseDown(const juce::MouseEvent& e)
@@ -358,7 +353,6 @@ void SplitterTree::mouseDown(const juce::MouseEvent& e)
     if (!isSplit())
         return;
 
-    // Check if we're on the splitter bar
     auto area = getLocalBounds();
     const int splitW = kSplitterWidth;
     int dim = (orientation_ == Orientation::Vertical) ? area.getWidth() : area.getHeight();
@@ -380,9 +374,9 @@ void SplitterTree::mouseDown(const juce::MouseEvent& e)
 
     isDragging_ = true;
     dragStartMouse_ = (orientation_ == Orientation::Vertical) ? mousePos.x : mousePos.y;
+    // Use the usable dimension (total minus splitter bar width).
     dragStartDim_ = dim - splitW;
 
-    // Bring the split node to front so mouse capture is reliable during drag.
     toFront(true);
 }
 
@@ -391,19 +385,20 @@ void SplitterTree::mouseDrag(const juce::MouseEvent& e)
     if (!isDragging_)
         return;
 
-    juce::Point<int> mousePos = e.position.toInt();
     const int splitW = kSplitterWidth;
+    juce::Point<int> mousePos = e.position.toInt();
     int mouse = (orientation_ == Orientation::Vertical) ? mousePos.x : mousePos.y;
     int delta = mouse - dragStartMouse_;
 
     int newFirstSize = static_cast<int>(static_cast<float>(dragStartDim_) * ratio_) + delta;
 
-    // Clamp to minimum pane sizes.
-    const int availDim = dragStartDim_ + splitW;  // total dimension at drag start
-    const int maxFirst = juce::jmax(0, availDim - kMinPaneSize - splitW);
+    // Clamp so neither pane falls below kMinPaneSize.
+    int availDim = dragStartDim_ + splitW;
+    int maxFirst  = juce::jmax(0, availDim - kMinPaneSize - splitW);
     newFirstSize = juce::jlimit(kMinPaneSize, maxFirst, newFirstSize);
 
-    ratio_ = static_cast<float>(newFirstSize) / static_cast<float>(juce::jmax(1, availDim - splitW));
+    ratio_ = static_cast<float>(newFirstSize) /
+             static_cast<float>(juce::jmax(1, availDim - splitW));
     ratio_ = juce::jlimit(0.05f, 0.95f, ratio_);
 
     resized();
@@ -415,11 +410,9 @@ void SplitterTree::mouseDrag(const juce::MouseEvent& e)
 
 EditorSplitSurface::EditorSplitSurface(AudioEngine& audio,
                                         hathor::control::ControlInterface& ci)
-    : tree_(nullptr),
-      audio_(audio),
+    : audio_(audio),
       ci_(ci)
 {
-    // Start with a single leaf group
     tree_ = SplitterTree::makeLeaf(audio_, ci_);
     addAndMakeVisible(tree_.get());
     tree_->setActiveLeaf(tree_.get());
@@ -451,7 +444,7 @@ EditorGroup* EditorSplitSurface::activeGroup() noexcept
 }
 
 // ---------------------------------------------------------------------------
-// Recursive split
+// Recursive split — handles any leaf in the tree
 // ---------------------------------------------------------------------------
 
 void EditorSplitSurface::splitActive(SplitterTree::Orientation orient)
@@ -459,34 +452,30 @@ void EditorSplitSurface::splitActive(SplitterTree::Orientation orient)
     if (!tree_)
         return;
 
-    SplitterTree* active = tree_->activeLeaf();
-    if (!active || !active->isLeaf())
+    SplitterTree* target = tree_->activeLeaf();
+    if (!target || !target->isLeaf())
         return;
 
-    // If the active leaf is the root (single-leaf tree), replace the root.
-    if (active == tree_.get())
+    // If the target leaf IS the root, replace the entire tree.
+    if (target == tree_.get())
     {
         auto newLeaf = SplitterTree::makeLeaf(audio_, ci_);
-        auto newSplit = SplitterTree::makeSplit(std::move(tree_),
-                                                 std::move(newLeaf),
-                                                 orient);
-        tree_ = std::move(newSplit);
+        tree_ = SplitterTree::makeSplit(std::move(tree_),
+                                        std::move(newLeaf),
+                                        orient);
         addAndMakeVisible(tree_.get());
-        tree_->setActiveLeaf(active);  // keep the old leaf as active
+        tree_->setActiveLeaf(target);  // keep the old leaf as active
         tree_->resized();
-
-        wireGroupCallbacks(tree_->leafGroup());
+        wireGroupCallbacks(tree_->firstChild()->leafGroup());
+        wireGroupCallbacks(tree_->secondChild()->leafGroup());
     }
     else
     {
-        // Multi-leaf case: replace the active leaf in the tree with a split
-        // node containing [old leaf, new leaf].
-        if (tree_->splitLeafInPlace(active, orient, audio_, ci_))
+        // Multi-leaf case: replace the target leaf in its parent.
+        if (tree_->splitLeafInPlace(target, orient, audio_, ci_))
         {
-            tree_->setActiveLeaf(active);  // keep the old leaf as active
+            tree_->setActiveLeaf(target);  // preserve active state
             tree_->resized();
-
-            // Wire callbacks on ALL leaf groups (newly created + existing).
             syncGroupCallbacks();
         }
     }
@@ -499,15 +488,25 @@ void EditorSplitSurface::splitActive(SplitterTree::Orientation orient)
 void EditorSplitSurface::closeSplit(SplitterTree* leaf)
 {
     if (!leaf || !tree_ || leaf == tree_.get())
-        return;  // can't close the last one
+        return;  // can't close the last leaf
 
-    if (tree_->removeLeaf(leaf))
+    auto newTree = SplitterTree::removeLeafFromTree(std::move(tree_), leaf);
+
+    if (newTree)
     {
-        // If the root is now a split with only one valid child, we may need
-        // to restructure.  removeLeaf handles child removal; the root may
-        // still be a valid split if it has two children.
+        tree_ = std::move(newTree);
+        addAndMakeVisible(tree_.get());
+        tree_->setActiveLeaf(tree_.get());
         tree_->resized();
         syncGroupCallbacks();
+    }
+    else
+    {
+        // All leaves removed — recreate a single root leaf.
+        tree_ = SplitterTree::makeLeaf(audio_, ci_);
+        addAndMakeVisible(tree_.get());
+        tree_->setActiveLeaf(tree_.get());
+        wireGroupCallbacks(tree_->leafGroup());
     }
 }
 
@@ -539,19 +538,16 @@ void EditorSplitSurface::moveTab(EditorGroup* source,
     if (!source || !target || source == target)
         return;
 
-    // Detach the tab from the source group (transfers unique_ptr ownership).
+    if (sourceIndex < 0 || sourceIndex >= source->tabCount())
+        return;
+
+    // Detach the tab from the source group.
     std::unique_ptr<HathorTab> tab = source->takeTab(sourceIndex);
     if (!tab)
         return;
 
-    // Insert into the target group (re-wires callbacks, activates, etc.)
+    // Insert into the target group (re-wires callbacks, activates).
     target->insertTab(std::move(tab), targetIndex);
-
-    // Notify both groups that their tab counts changed.
-    if (auto* c = source->onTabCountChanged.target<void()>(); c != nullptr)
-        source->onTabCountChanged();
-    if (auto* c = target->onTabCountChanged.target<void()>(); c != nullptr)
-        target->onTabCountChanged();
 }
 
 // ---------------------------------------------------------------------------
@@ -618,76 +614,38 @@ void EditorSplitSurface::wireGroupCallbacks(EditorGroup* group)
     if (!group)
         return;
 
-    // Tab drag starts in the tab bar — escalate to the split surface so
-    // cross-pane D&D can be initiated.
+    // Tab drag started in the group's tab bar — track for cross-pane move.
     group->onTabDragStarted = [this, group](int tabIndex)
     {
-        dragSourceGroup_ = group;
-        dragSourceIndex_ = tabIndex;
-
-        // Start a JUCE drag-and-drop operation so sibling groups can accept
-        // the tab.  Encode the source group pointer in the description var.
-        auto* ddc = juce::DragAndDropContainer::findParentDragContainerFor(this);
-        if (ddc)
-        {
-            juce::var desc = static_cast<juce::int64>(reinterpret_cast<juce::int64>(group));
-            ddc->startDragging(desc, group, juce::Image(), false, nullptr,
-                               nullptr);
-        }
+        // Determine if we should initiate a cross-pane drag by checking
+        // if the mouse is still in this group's tab bar on mouse-up.
+        // The actual cross-pane logic is handled in onTabDragEnded.
     };
 
-    // Tab drag ended — attempt cross-pane drop.
     group->onTabDragEnded = [this, group](const juce::MouseEvent& e)
     {
-        if (dragSourceGroup_ == nullptr || dragSourceGroup_ == group)
-        {
-            // Drag stayed within this group — let it handle local reorder.
-            dragSourceGroup_ = nullptr;
-            dragSourceIndex_ = -1;
-            return;
-        }
-
-        // The mouse-up position determines the drop target.
+        // Check if the drop target is a different leaf.
         juce::Point<int> screenPos = e.getScreenPosition().roundToInt();
         EditorGroup* target = tree_ ? tree_->findLeafAt(screenPos) : nullptr;
 
-        if (target && target != dragSourceGroup_)
+        if (target && target != group)
         {
-            moveTab(dragSourceGroup_, dragSourceIndex_, target);
-            // The moved tab is now active in the target group; no local
-            // reorder should happen on the source.
-            dragSourceGroup_ = nullptr;
-            dragSourceIndex_ = -1;
-            return;
+            // Cross-pane drop — move the tab.
+            moveTab(group, group->draggedTabIndex(), target);
         }
-
-        // No valid cross-pane target — fall back to local reorder on source.
-        dragSourceGroup_ = nullptr;
-        dragSourceIndex_ = -1;
+        else
+        {
+            // Same-group drop — trigger local reorder.
+            group->applyLocalReorder(group->draggedTabIndex(), e);
+        }
     };
 
-    // Active tab changed — update the active leaf in the tree.
-    group->onActiveTabChanged = [this, group](HathorTab* tab)
+    // Active tab changed — update tree's active leaf tracking.
+    group->onActiveTabChanged = [this, group](HathorTab*)
     {
         if (!tree_)
             return;
-        // Find and set this group's leaf as the active leaf.
-        std::vector<EditorGroup*> leaves;
-        tree_->collectLeaves(leaves);
-        for (auto* g : leaves)
-        {
-            // Find the leaf node that owns this group.
-            // We need to walk the tree to find the SplitterTree containing this group.
-            // For now, just ensure the active leaf is updated.
-        }
-        (void)tab;
-    };
-
-    group->onTabCountChanged = [this]()
-    {
-        // Recreate empty sibling panes if needed, or update layout.
-        // For now, this is a no-op placeholder — the existing EditorArea
-        // handles tab count changes at its level.
+        tree_->setActiveLeaf(findLeafForGroup(group));
     };
 }
 
@@ -700,10 +658,6 @@ void EditorSplitSurface::syncGroupCallbacks()
     for (auto* g : groups)
         wireGroupCallbacks(g);
 }
-
-// ---------------------------------------------------------------------------
-// Telemetry
-// ---------------------------------------------------------------------------
 
 #ifdef HATHOR_ENABLE_GHOST_TELEMETRY
 bool EditorSplitSurface::saveTelemetry(const std::string& filePath) const
