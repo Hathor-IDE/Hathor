@@ -23,6 +23,8 @@
 #include <cstdio>
 #include <cstring>
 #include <memory>
+#include <sstream>
+#include <string>
 #include <thread>
 
 #include <pthread.h>
@@ -33,8 +35,9 @@ namespace hathor::audio_worker {
 // Construction / destruction
 // ---------------------------------------------------------------------------
 
-ChuckVM::ChuckVM(TabId tabId, RenderCallback renderCb)
+ChuckVM::ChuckVM(TabId tabId, RenderCallback renderCb, std::string vmFlags)
     : tabId_(tabId)
+    , vmFlags_(std::move(vmFlags))
     , renderCb_(renderCb ? renderCb : RenderCallback{
         [](float* outBuf, unsigned numFrames, unsigned /*numChannels*/) {
             std::memset(outBuf, 0, numFrames * sizeof(float));
@@ -567,6 +570,39 @@ bool ChuckVM::createChuckInstance()
         ck->setParam(CHUCK_PARAM_VM_HALT, FALSE);       // keep VM running without shreds
         ck->setParam(CHUCK_PARAM_IS_REALTIME_AUDIO_HINT, FALSE);
         ck->setParam(CHUCK_PARAM_CHUGIN_ENABLE, FALSE); // no chugins in this build
+
+        // Phase 4.4: apply ChucK VM flags from the settings panel.
+        // Flags are a comma-separated key=value string (e.g.
+        // "DUMP_INSTRUCTIONS=1,AUTO_DEPEND=0").  We parse and apply each
+        // recognized flag via ck->setParam().  Unknown flags are silently
+        // skipped (non-fatal — the user may specify flags not relevant to
+        // this build).
+        if (!vmFlags_.empty()) {
+            std::stringstream ss(vmFlags_);
+            std::string token;
+            while (std::getline(ss, token, ',')) {
+                if (token.empty())
+                    continue;
+                // Split on first '='
+                auto eqPos = token.find('=');
+                if (eqPos == std::string::npos)
+                    continue;
+                std::string key   = token.substr(0, eqPos);
+                std::string val   = token.substr(eqPos + 1);
+                // trim whitespace
+                key.erase(0, key.find_first_not_of(" \t"));
+                key.erase(key.find_last_not_of(" \t") + 1);
+                val.erase(0, val.find_first_not_of(" \t"));
+                val.erase(val.find_last_not_of(" \t") + 1);
+                if (!key.empty()) {
+                    try {
+                        ck->setParam(key.c_str(), static_cast<t_CKINT>(std::stol(val)));
+                    } catch (...) {
+                        // non-integer value or parse failure — skip
+                    }
+                }
+            }
+        }
 
         if (!ck->init()) {
             lastError_ = "libchuck init() failed for tab " + std::to_string(tabId_);

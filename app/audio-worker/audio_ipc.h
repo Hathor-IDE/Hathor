@@ -42,6 +42,13 @@
  *       -> "ok vm_activated tab=<tabId> state=active"
  *       -> "err vm_activate_failed tab=<tabId> <reason>"
  *
+ *   vm_set_flags <flags>
+ *       -> "ok vm_flags_set"
+ *       -> "err vm_set_flags_failed <reason>"
+ *       (Phase 4.4: sets ChucK VM flags as comma-separated key=value, e.g.
+ *        "DUMP_INSTRUCTIONS=1,AUTO_DEPEND=0".  Applied to newly created VM
+ *        instances in createChuckInstance().)
+ *
  *   vm_deactivate <tabId> [suspend|destroy]
  *       -> "ok vm_deactivated tab=<tabId> state=<suspended|destroyed>"
  *       -> "err vm_deactivate_failed tab=<tabId> <reason>"

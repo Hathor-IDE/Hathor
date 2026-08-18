@@ -357,6 +357,16 @@ void VMManager::setHandoffLoader(ChuckVM::HandoffLoader loader) noexcept
 }
 
 // ---------------------------------------------------------------------------
+// Phase 4.4: VM flags
+// ---------------------------------------------------------------------------
+
+void VMManager::setVmFlags(std::string flags) noexcept
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    vmFlags_ = std::move(flags);
+}
+
+// ---------------------------------------------------------------------------
 // Watchdog integration (B4-K5)
 // ---------------------------------------------------------------------------
 
@@ -434,13 +444,13 @@ ChuckVM* VMManager::getOrCreateVM(TabId tabId)
     // Create a new VM for this tab.
     // If we have a render callback, use it; otherwise use silence.
     if (renderCallback_) {
-        vms_[tabId] = std::make_unique<ChuckVM>(tabId, renderCallback_);
+        vms_[tabId] = std::make_unique<ChuckVM>(tabId, renderCallback_, vmFlags_);
     } else {
         // Default: silence callback.
         vms_[tabId] = std::make_unique<ChuckVM>(tabId,
             [](float* outBuf, unsigned numFrames, unsigned /*numChannels*/) {
                 std::memset(outBuf, 0, numFrames * sizeof(float));
-            });
+            }, vmFlags_);
     }
 
     // B4-K7: Install the handoff loader if one has been registered.

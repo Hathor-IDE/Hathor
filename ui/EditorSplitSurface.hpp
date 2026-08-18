@@ -61,6 +61,17 @@ public:
                                                     Orientation orient,
                                                     float ratio = 0.5f);
 
+    /**
+     * Remove a leaf from a subtree, collapsing degenerate splits.
+     *
+     * @param node    The subtree root (transferred in).
+     * @param target  The leaf to remove.
+     * @return The (possibly collapsed) new subtree root.
+     */
+    static std::unique_ptr<SplitterTree> removeLeafFromTree(
+        std::unique_ptr<SplitterTree> node,
+        SplitterTree* target);
+
     /** True if this is a leaf (EditorGroup) node. */
     bool isLeaf() const noexcept { return group_ != nullptr; }
 
@@ -116,8 +127,7 @@ public:
      * Remove a leaf node from this subtree.  Called on the root; the
      * target leaf must be a descendant (and must not be the root itself).
      *
-     * After removal, if a split node is left with only one child, that
-     * child is spliced in to replace the parent split.
+     * After removal, degenerate splits (nodes with one child) are collapsed.
      *
      * @return true if the leaf was found and removed.
      */
@@ -144,15 +154,10 @@ public:
 private:
     SplitterTree() = default;
 
-    /** Recursive helper for splitLeafInPlace. */
+    /** Recursive helper for splitLeafInPlace.  Consumes newLeaf on success. */
     bool tryReplaceLeaf(SplitterTree* target,
-                        std::unique_ptr<SplitterTree>& replacement,
-                        Orientation orient,
-                        AudioEngine& audio,
-                        hathor::control::ControlInterface& ci);
-
-    /** Recursive helper for removeLeaf. */
-    bool tryRemoveLeaf(SplitterTree* target, std::unique_ptr<SplitterTree>& childToRemove);
+                        std::unique_ptr<SplitterTree>& newLeaf,
+                        Orientation orient);
 
     /** Recursive helper for findLeafAt. */
     EditorGroup* findLeafAtRecursive(const juce::Point<int>& screenPos) const noexcept;
@@ -185,8 +190,7 @@ private:
  * This replaces the single EditorArea content-area with a split-aware
  * container while preserving all existing tab management behavior.
  */
-class EditorSplitSurface : public juce::Component,
-                           private juce::DragAndDropContainer
+class EditorSplitSurface : public juce::Component
 {
 public:
     explicit EditorSplitSurface(AudioEngine& audio,
@@ -238,19 +242,15 @@ public:
 #endif
 
 private:
-    /** Install shared callbacks on a newly-created leaf group. */
+    /** Install shared callbacks on a leaf group (tab drag, active, etc.). */
     void wireGroupCallbacks(EditorGroup* group);
 
-    /** Ensure all leaf groups have consistent active-tab / tab-count callbacks. */
+    /** Re-install callbacks on every leaf group (after tree changes). */
     void syncGroupCallbacks();
 
     std::unique_ptr<SplitterTree> tree_;
     AudioEngine& audio_;
     hathor::control::ControlInterface& ci_;
-
-    // Tab drag tracking — source group + tab index being dragged across panes.
-    EditorGroup* dragSourceGroup_{ nullptr };
-    int dragSourceIndex_{ -1 };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(EditorSplitSurface)
 };

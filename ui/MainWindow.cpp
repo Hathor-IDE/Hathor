@@ -983,3 +983,42 @@ bool MainWindow::keyPressed(const juce::KeyPress& key)
 
     return false;
 }
+
+// ---------------------------------------------------------------------------
+// 20.7 — Workspace persistence (save / restore)
+// ---------------------------------------------------------------------------
+
+void MainWindow::saveWorkspace()
+{
+    if (!editorArea_)
+        return;
+
+    WorkspaceSession session = editorArea_->exportWorkspace();
+    std::string json = session.toJson();
+
+    if (auto* props = appProperties_.getUserSettings())
+    {
+        props->setValue("workspaceData",
+                        juce::String(json));
+        props->setValue("workspaceSchemaVersion",
+                        WorkspaceSession::kSchemaVersion);
+        props->saveIfNeeded();
+    }
+}
+
+void MainWindow::restoreWorkspace()
+{
+    if (!editorArea_)
+        return;
+
+    if (auto* props = appProperties_.getUserSettings())
+    {
+        juce::String json = props->getValue("workspaceData");
+        if (!json.isEmpty())
+        {
+            WorkspaceSession session;
+            if (WorkspaceSession::fromJson(json.toStdString(), session))
+                editorArea_->restoreWorkspace(session);
+        }
+    }
+}

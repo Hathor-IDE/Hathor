@@ -119,6 +119,9 @@ public:
     /// atomic handoff slot (lock-free).
     void setHandoffLoader(ChuckVM::HandoffLoader loader) noexcept;
 
+    /// Phase 4.4: Set ChucK VM flags applied to newly created VM instances.
+    void setVmFlags(std::string flags) noexcept;
+
     // -----------------------------------------------------------------------
     // Watchdog integration (B4-K5)
     ///
@@ -184,6 +187,9 @@ private:
 
     /// B4-K7: Handoff loader for new VMs (consumes compiled shreds).
     ChuckVM::HandoffLoader handoffLoader_;
+
+    /// Phase 4.4: ChucK VM flags applied to newly created VM instances.
+    std::string vmFlags_;
 
     /// Monotonic clock source for timestamps.
     static std::chrono::milliseconds nowMs() {

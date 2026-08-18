@@ -468,6 +468,18 @@ static void controlPlaneThread() {
                 resp = "err invalid tab id\n";
             }
         }
+        // Phase 4.4: Set ChucK VM flags — stored and applied to new VMs.
+        else if (cmd.rfind("vm_set_flags", 0) == 0) {
+            std::string rest = cmd.substr(12);
+            trimSpace(rest);
+            {
+                const std::lock_guard<std::mutex> lock(gVmFlagsMtx);
+                gVmFlags = rest;
+            }
+            // Also pass to VMManager so newly created VMs pick up the flags.
+            gVmManager.setVmFlags(rest);
+            resp = "ok vm_flags_set\n";
+        }
         else if (cmd.rfind("vm_deactivate", 0) == 0) {
             std::string rest = cmd.substr(13);
             trimSpaces(rest);

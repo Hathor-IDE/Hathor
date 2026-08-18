@@ -79,8 +79,8 @@ public:
     using HandoffLoader = std::function<std::shared_ptr<CompiledShred>()>;
 
     /// Construct a VM for the given tab, with a render callback to fill
-    /// the audio block buffer.
-    ChuckVM(TabId tabId, RenderCallback renderCb);
+    /// the audio block buffer and optional ChucK VM flags.
+    ChuckVM(TabId tabId, RenderCallback renderCb, std::string vmFlags = {});
     ~ChuckVM();
 
     ChuckVM(const ChuckVM&)            = delete;
@@ -284,6 +284,10 @@ private:
 
     /// Tab identity (slot index [0,15]).
     const TabId tabId_;
+
+    /// Phase 4.4: ChucK VM flags (comma-separated key=value) applied when
+    /// creating the ChucK instance.
+    std::string vmFlags_;
 
     /// Render callback (set at construction; invoked on the ChucK thread).
     RenderCallback renderCb_;

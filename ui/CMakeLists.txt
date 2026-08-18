@@ -40,30 +40,31 @@ target_sources(hathor-ui
         ExplorerFileTypes.cpp
         ExplorerTreeItems.cpp
         TreeBuilder.cpp
-        HathorFileParser.cpp
-        HathorTab.cpp         # task 3.4
-         EditorArea.cpp        # task 3.4
-         EditorGroup.cpp       # L-1: extracted tab management
-         EditorSplitSurface.cpp  # L-1: split layout container
-         EditorSplitSurface.cpp  # L-1: split layout container
-         TabReorderModel.cpp   # L-1: JUCE-free tab reorder model
-         RecentlyClosedTabs.cpp # L-1: JUCE-free tab close history
-         ActionRegistry.cpp    # L-1: JUCE-free action/keystroke registry
-        FindReplacePanel.cpp  # L-1: find/replace UI
-        CommandPalette.cpp    # L-1: command palette UI
-        BreadcrumbsBar.cpp    # L-1: breadcrumbs navigation bar
-        MiniNotationTokeniser.cpp # task 3.5
-        ChuckTokeniser.cpp       # A5 — ChucK syntax highlighting
-        ChuckKeywords.cpp       # A5 — JUCE-free ChucK keyword/class sets
-        UITimer.cpp               # task 3.7
-        VisualizerPanel.cpp       # task 3.8
-        SliderPanel.cpp           # task 3.9
-        AcpAgentSession.cpp           # task 4.2–4.5
-        PermissionPromptComponent.cpp # task 4.4
-        ChatSidebar.cpp               # task 5.1 — B6 multi-thread + C2 reconnect
-        ChatThread.cpp                # B6: per-thread session + connection state
-        MessageHistoryView.cpp        # extracted from ChatSidebar (B6)
-         SettingsComponent.cpp         # A2
+         HathorFileParser.cpp
+         HathorTab.cpp         # task 3.4
+          EditorArea.cpp        # task 3.4
+          EditorGroup.cpp       # L-1: extracted tab management
+          EditorSplitSurface.cpp  # L-1: split layout container
+          EditorSplitSurface.cpp  # L-1: split layout container
+          TabReorderModel.cpp   # L-1: JUCE-free tab reorder model
+          RecentlyClosedTabs.cpp # L-1: JUCE-free tab close history
+          ActionRegistry.cpp    # L-1: JUCE-free action/keystroke registry
+         FindReplacePanel.cpp  # L-1: find/replace UI
+         CommandPalette.cpp    # L-1: command palette UI
+         BreadcrumbsBar.cpp    # L-1: breadcrumbs navigation bar
+         MiniNotationTokeniser.cpp # task 3.5
+         ChuckTokeniser.cpp       # A5 — ChucK syntax highlighting
+         ChuckKeywords.cpp       # A5 — JUCE-free ChucK keyword/class sets
+         UITimer.cpp               # task 3.7
+         VisualizerPanel.cpp       # task 3.8
+         SliderPanel.cpp           # task 3.9
+         AcpAgentSession.cpp           # task 4.2–4.5
+         PermissionPromptComponent.cpp # task 4.4
+         ChatSidebar.cpp               # task 5.1 — B6 multi-thread + C2 reconnect
+         ChatThread.cpp                # B6: per-thread session + connection state
+         MessageHistoryView.cpp        # extracted from ChatSidebar (B6)
+          SettingsComponent.cpp         # A2
+          WorkspaceSession.cpp         # 20.7: JUCE-free workspace persistence model
          # Phase G — Petdex (D1): JUCE-free core + service glue
          PetdexManifestParser.cpp      # D1: robust manifest/envelope parsing
          PetdexCacheStore.cpp          # D1: manifest cache store + staleness
