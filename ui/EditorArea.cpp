@@ -36,6 +36,47 @@
 namespace hathor::ui {
 
 // ---------------------------------------------------------------------------
+// Phase 6.3: Bundle-aware path resolution helpers
+// ---------------------------------------------------------------------------
+
+namespace {
+
+/// Resolve a resource inside the .app bundle (Contents/Resources/), falling
+/// back to the development relative path when not running from a bundle.
+juce::File resolveBundledResource(const std::string& relativePath)
+{
+    const juce::File exeFile =
+        juce::File::getSpecialLocation(juce::File::currentExecutableFile);
+    // In a .app: Contents/MacOS/HathorUI → Contents/Resources/<relativePath>
+    const juce::File bundled = exeFile.getParentDirectory().getParentDirectory()
+        .getChildFile("Resources").getChildFile(relativePath);
+    if (bundled.existsAsFile())
+        return bundled;
+    // Development fallback: relative to cwd (project root)
+    return juce::File(relativePath);
+}
+
+/// Resolve the Node.js executable.  Tries common install locations first,
+/// then falls back to a bare "node" so execvp searches PATH at runtime.
+std::string resolveNodeExe()
+{
+    static const char* candidates[] = {
+        "/usr/local/bin/node",
+        "/opt/homebrew/bin/node",
+        "/opt/homebrew/opt/node/bin/node",
+    };
+    for (const char* p : candidates)
+    {
+        std::error_code ec;
+        if (std::filesystem::exists(p, ec))
+            return p;
+    }
+    return "node";  // let execvp search PATH
+}
+
+} // namespace
+
+// ---------------------------------------------------------------------------
 // L-3: Conversion from lsp::Diagnostic to control::Diagnostic
 // ---------------------------------------------------------------------------
 
@@ -293,47 +334,90 @@ EditorArea::EditorArea(AudioEngine& audio,
     , ci_(ci)
 {
      // AI-4 / AI-G7: Load language metadata for LSP fallback (AI-3) and
-     // ChucK deterministic completion (AI-G7). Search multiple candidate paths
-     // since the binary may be run from a build directory or bundled app.
-     {
-         const char* candidates[] = {
-             "reference/language-metadata/HathorLanguageMetadata.json",
-             "./reference/language-metadata/HathorLanguageMetadata.json",
-             "../reference/language-metadata/HathorLanguageMetadata.json",
-             "../../reference/language-metadata/HathorLanguageMetadata.json",
-         };
-         for (const char* p : candidates)
-         {
-             std::error_code ec;
-             if (std::filesystem::exists(p, ec))
-             {
-                 auto result = hathor::language::loadAndValidate(p);
-                 if (result.compatibility.compatible)
-                 {
-                     metadata_ = std::move(result.metadata);
-                     metadataCompat_ = std::move(result.compatibility);
-                     hathor::language::assignToConsumer(metadata_, "hathor-editor");
-                     break;
-                 }
-                 else
-                 {
-                     // File was found but failed compatibility — log for debugging.
-                     for (const auto& e : result.compatibility.errors)
-                         std::fprintf(stderr, "AI-3 metadata compatibility error: %s\n", e.c_str());
-                 }
-             }
-         }
-         // If no compatible metadata was found after all candidates,
-         // metadata_ stays empty and metadataCompat_ stays default (compatible=false).
-     }
+     // ChucK deterministic completion (AI-G7). Search bundle Resources first
+     // (Phase 6.3), then development relative paths.
+      {
+          const juce::File metaFile =
+              resolveBundledResource("language-metadata/HathorLanguageMetadata.json");
+          if (metaFile.existsAsFile())
+          {
+              auto result = hathor::language::loadAndValidate(
+                  metaFile.getFullPathName().toStdString());
+              if (result.compatibility.compatible)
+              {
+                  metadata_ = std::move(result.metadata);
+                  metadataCompat_ = std::move(result.compatibility);
+                  hathor::language::assignToConsumer(metadata_, "hathor-editor");
+              }
+              else
+              {
+                  for (const auto& e : result.compatibility.errors)
+                      std::fprintf(stderr, "AI-3 metadata compatibility error: %s\n", e.c_str());
+              }
+          }
+          else
+          {
+              // Development fallback: try multiple relative paths.
+              const char* candidates[] = {
+                  "reference/language-metadata/HathorLanguageMetadata.json",
+                  "./reference/language-metadata/HathorLanguageMetadata.json",
+                  "../reference/language-metadata/HathorLanguageMetadata.json",
+                  "../../reference/language-metadata/HathorLanguageMetadata.json",
+              };
+              for (const char* p : candidates)
+              {
+                  std::error_code ec;
+                  if (std::filesystem::exists(p, ec))
+                  {
+                      auto result = hathor::language::loadAndValidate(p);
+                      if (result.compatibility.compatible)
+                      {
+                          metadata_ = std::move(result.metadata);
+                          metadataCompat_ = std::move(result.compatibility);
+                          hathor::language::assignToConsumer(metadata_, "hathor-editor");
+                          break;
+                      }
+                      else
+                      {
+                          for (const auto& e : result.compatibility.errors)
+                              std::fprintf(stderr, "AI-3 metadata compatibility error: %s\n", e.c_str());
+                      }
+                  }
+              }
+          }
+          // If no compatible metadata was found after all candidates,
+          // metadata_ stays empty and metadataCompat_ stays default (compatible=false).
+      }
 
-    // AI-4: Create the LSP client (manages the strudel-lsp-server process)
-    // The server script is located at reference/strudel-lsp/strudel-lsp-server.cjs
+    // AI-4: Create the LSP client (manages the strudel-lsp-server process).
+    // Phase 6.3: resolve the server script from the .app bundle Resources
+    // (Contents/Resources/strudel-lsp/strudel-lsp-server.cjs), falling back
+    // to the development reference/ path.  Node is resolved from common
+    // install locations so the bundle does not hard-code /usr/local/bin/node.
+    const juce::File lspScript = resolveBundledResource(
+        "strudel-lsp/strudel-lsp-server.cjs");
+    const std::string nodeExe = resolveNodeExe();
     lspClient_ = std::make_unique<HathorLspClient>(
-        "reference/strudel-lsp/strudel-lsp-server.cjs",
-        "/usr/local/bin/node",
+        lspScript.getFullPathName().toStdString(),
+        nodeExe,
         &metadata_,
         &metadataCompat_);
+
+    // Warn if the LSP server script is not found — diagnostics/completion
+    // will be unavailable but the editor still functions.
+    if (!lspScript.existsAsFile())
+    {
+        std::cerr << "[EditorArea] WARNING: strudel-lsp-server.cjs not found at "
+                  << lspScript.getFullPathName().toStdString()
+                  << " — LSP features disabled." << std::endl;
+    }
+    // Warn if node was not found at any known location.
+    if (nodeExe == "node" && std::filesystem::exists("/usr/local/bin/node") == false
+        && std::filesystem::exists("/opt/homebrew/bin/node") == false)
+    {
+        std::cerr << "[EditorArea] WARNING: node not found at common locations; "
+                  << "LSP will attempt PATH lookup at process spawn time." << std::endl;
+    }
 
     // Wire diagnostics callback — forward to: (1) the active tab for
     // squiggly underlines, (2) the AI-8 LSP context bridge, and (3) the
@@ -374,7 +458,15 @@ EditorArea::EditorArea(AudioEngine& audio,
 
     // AI-4: Create the ghost-text client (manages the llm-ls process).
     // Only started if GHOST_ENABLED=true — the client checks this internally.
-    ghostClient_ = std::make_unique<GhostLlmClient>("reference/llm-ls/llm-ls");
+    // Phase 6.3: resolve the llm-ls binary as a sibling of the executable so
+    // the packaged .app finds it in Contents/MacOS/ rather than a development
+    // build/ or reference/ path.
+    std::string llmLsPath =
+        juce::File::getSpecialLocation(juce::File::currentExecutableFile)
+            .getSiblingFile("llm-ls")
+            .getFullPathName()
+            .toStdString();
+    ghostClient_ = std::make_unique<GhostLlmClient>(llmLsPath);
     ghostClient_->start();
 
     const auto& palette = HathorLookAndFeel::fromComponent(*this).getPalette();

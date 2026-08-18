@@ -73,6 +73,70 @@ if(APPLE)
         VERBATIM)
 endif()
 
+# ---------------------------------------------------------------------------
+# Phase 6.3: Bundle backend subprocesses into Contents/MacOS/
+#
+# hathor-audio-worker and hathor-mcp are resolved at runtime via
+# File::getSpecialLocation(currentExecutableFile).getSiblingFile(...),
+# so they MUST live inside Contents/MacOS/ of the .app bundle.  CMake copies
+# them automatically from the built target output (target-based, not hard-coded
+# paths).  chmod +x guarantees the executable bit survives the copy.
+#
+# hathor-ui links the *library* variant (hathor-audio-worker-lib), not the
+# executable targets, so we must declare the dependency explicitly.
+# ---------------------------------------------------------------------------
+add_dependencies(hathor-ui
+    hathor-audio-worker
+    hathor-mcp
+)
+
+if(APPLE)
+    add_custom_command(TARGET hathor-ui POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy
+            "$<TARGET_FILE:hathor-audio-worker>"
+            "$<TARGET_BUNDLE_DIR:hathor-ui>/Contents/MacOS/hathor-audio-worker"
+        COMMAND ${CMAKE_COMMAND} -E copy
+            "$<TARGET_FILE:hathor-mcp>"
+            "$<TARGET_BUNDLE_DIR:hathor-ui>/Contents/MacOS/hathor-mcp"
+        COMMAND chmod +x
+            "$<TARGET_BUNDLE_DIR:hathor-ui>/Contents/MacOS/hathor-audio-worker"
+            "$<TARGET_BUNDLE_DIR:hathor-ui>/Contents/MacOS/hathor-mcp"
+        COMMENT "Phase 6.3: Bundling hathor-audio-worker + hathor-mcp into HathorUI.app/Contents/MacOS/"
+        VERBATIM)
+
+    # Conditionally bundle the llm-ls ghost-text binary if it was downloaded
+    # during configure (reference/llm-ls/download_llm_ls.cmake sets
+    # HATHOR_LLM_LS_BINARY when the download succeeds).
+    if(DEFINED HATHOR_LLM_LS_BINARY AND EXISTS "${HATHOR_LLM_LS_BINARY}")
+        add_custom_command(TARGET hathor-ui POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy
+                "${HATHOR_LLM_LS_BINARY}"
+                "$<TARGET_BUNDLE_DIR:hathor-ui>/Contents/MacOS/llm-ls"
+            COMMAND chmod +x
+                "$<TARGET_BUNDLE_DIR:hathor-ui>/Contents/MacOS/llm-ls"
+            COMMENT "Phase 6.3: Bundling llm-ls ghost-text binary into HathorUI.app/Contents/MacOS/"
+            VERBATIM)
+        message(STATUS "llm-ls binary found — will bundle into HathorUI.app/Contents/MacOS/")
+    else()
+        message(STATUS "llm-ls binary not available — ghost text remains disabled in the bundle")
+    endif()
+
+    # ---------------------------------------------------------------------------
+    # Phase 6.3: Bundle LSP server resources (strudel-lsp script + node_modules)
+    # and language metadata into Contents/Resources/ so the packaged .app does
+    # not depend on the development reference/ directory.
+    # ---------------------------------------------------------------------------
+    add_custom_command(TARGET hathor-ui POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${CMAKE_SOURCE_DIR}/reference/strudel-lsp"
+            "$<TARGET_BUNDLE_DIR:hathor-ui>/Contents/Resources/strudel-lsp"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${CMAKE_SOURCE_DIR}/reference/language-metadata"
+            "$<TARGET_BUNDLE_DIR:hathor-ui>/Contents/Resources/language-metadata"
+        COMMENT "Phase 6.3: Bundling strudel-lsp + language-metadata into HathorUI.app/Contents/Resources/"
+        VERBATIM)
+endif()
+
 target_sources(hathor-ui
     PRIVATE
         HathorApplication.cpp

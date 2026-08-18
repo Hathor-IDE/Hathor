@@ -17,7 +17,10 @@
 
 #include <atomic>
 #include <chrono>
+#include <cstdio>
 #include <cstring>
+#include <filesystem>
+#include <iostream>
 #include <thread>
 
 #if JUCE_WINDOWS
@@ -60,6 +63,22 @@ void HathorLspClient::start()
 {
     if (isRunning())
         return;
+
+    // Phase 6.3: Pre-launch existence check.  If the server script or node
+    // executable is missing, log the expected path rather than spawning a
+    // child that will silently _exit(127).
+    if (!std::filesystem::exists(serverScriptPath_))
+    {
+        std::cerr << "[HathorLspClient] ERROR: LSP server script not found: "
+                  << serverScriptPath_ << std::endl;
+        return;
+    }
+    if (nodeExePath_ != "node" && !std::filesystem::exists(nodeExePath_))
+    {
+        std::cerr << "[HathorLspClient] ERROR: node executable not found: "
+                  << nodeExePath_ << std::endl;
+        return;
+    }
 
     if (!launchProcess())
     {

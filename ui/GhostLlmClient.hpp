@@ -136,13 +136,13 @@ public:
     /** True if ghost text is enabled (GHOST_ENABLED=1 in env). */
     bool isGhostEnabled() const noexcept { return ghostEnabled_; }
 
-    /** True if the llm-ls binary was found at the expected path. */
-    bool hasBinary() const noexcept { return !llmLsBinaryPath_.empty(); }
+     /** True if the llm-ls binary exists at the expected path. */
+    bool hasBinary() const noexcept;
 
-private:
-    // -----------------------------------------------------------------------
-    // juce::Timer — polls child process stdout for incoming messages
-    // -----------------------------------------------------------------------
+    private:
+        // -----------------------------------------------------------------------
+        // juce::Timer — polls child process stdout for incoming messages
+        // -----------------------------------------------------------------------
     static constexpr int kPollIntervalMs = 50;
     void timerCallback() override;
 

@@ -140,41 +140,99 @@ public:
         }
 
          // Start the audio worker process (B4-K7: needed for .ck tab eval).
-        // Resolve path as a sibling of the executable, same as hathor-mcp.
-        const std::string workerPath =
-            juce::File::getSpecialLocation(juce::File::currentExecutableFile)
-                .getSiblingFile("hathor-audio-worker")
-                .getFullPathName()
-                .toStdString();
-        const std::string workerError = audio_->startWorker(workerPath);
-        if (!workerError.empty())
-        {
-            // Worker failure is non-fatal — mini-notation still works.
-            // .ck tab eval will show error at eval time via hasWorker() check.
-            // Log to stderr for diagnosis but don't block startup.
-            std::cerr << "[HathorApplication] Worker startup: " << workerError << std::endl;
-        }
+         // Resolve path as a sibling of the executable — same layout the
+         // macOS .app bundle uses (Contents/MacOS/).
+         const juce::File workerFile =
+             juce::File::getSpecialLocation(juce::File::currentExecutableFile)
+                 .getSiblingFile("hathor-audio-worker");
+         const std::string workerPath = workerFile.getFullPathName().toStdString();
 
-        // B8-K1 §9: Initialise the LiveJam session temp directory at startup.
-        // This creates a session-unique temp dir under the platform temp area
-        // for Live Jam assets (disposable renders).  Studio assets are unaffected.
-        audio_->setLiveJamSessionDir({});
+         // Phase 6.3: Explicit existence check — fail loudly if the worker
+         // binary is missing from the application bundle.  Silent degradation
+         // is unacceptable for the macOS beta: the audio backend must be
+         // present for .ck tab evaluation.
+         if (!workerFile.existsAsFile())
+         {
+             const std::string msg =
+                 "Hathor audio worker is missing from the application bundle:\n"
+                 "  " + workerPath + "\n\n"
+                 "Audio tab evaluation (.ck files) will not function. "
+                 "Please reinstall Hathor.";
 
-        // Construct ControlInterface (worker thread, worker stdin disabled in
-        // GUI mode — ControlInterface::run() is not called here; dispatch() is
-        // called directly from UI components on the worker thread pool).
-        ci_ = std::make_unique<hathor::control::ControlInterface>(*audio_, *bank_);
+             std::cerr << "[HathorApplication] ERROR: audio worker missing at "
+                       << workerPath << std::endl;
 
-        // Resolve hathor-mcp path: look for it as a sibling of the executable.
-        // If not present, pass empty string — ChatSidebar will still work but
-        // tool calls won't be forwarded (Req 32.1).
-        const std::string hathorMcpPath =
-            juce::File::getSpecialLocation(juce::File::currentExecutableFile)
-                .getSiblingFile("hathor-mcp")
-                .getFullPathName()
-                .toStdString();
+             juce::AlertWindow::showMessageBoxAsync(
+                 juce::AlertWindow::WarningIcon,
+                 "Hathor — Audio Worker Missing",
+                 msg,
+                 "OK",
+                 nullptr,
+                 juce::ModalCallbackFunction::create([](int) {}));
 
-        // Create and show the main window.
+             // Worker is not started.  hasWorker() will report false so that
+             // .ck tab eval surfaces a clear error at eval time rather than
+             // silently failing.
+         }
+         else
+         {
+             const std::string workerError = audio_->startWorker(workerPath);
+             if (!workerError.empty())
+             {
+                 // Worker binary exists but failed to start — log for diagnosis.
+                 // Non-fatal: mini-notation still works; .ck eval errors at
+                 // eval time via hasWorker().
+                 std::cerr << "[HathorApplication] Worker startup: "
+                           << workerError << std::endl;
+             }
+         }
+
+         // B8-K1 §9: Initialise the LiveJam session temp directory at startup.
+         // This creates a session-unique temp dir under the platform temp area
+         // for Live Jam assets (disposable renders).  Studio assets are unaffected.
+         audio_->setLiveJamSessionDir({});
+
+         // Construct ControlInterface (worker thread, worker stdin disabled in
+         // GUI mode — ControlInterface::run() is not called here; dispatch() is
+         // called directly from UI components on the worker thread pool).
+         ci_ = std::make_unique<hathor::control::ControlInterface>(*audio_, *bank_);
+
+         // Resolve hathor-mcp path: look for it as a sibling of the executable.
+         const juce::File mcpFile =
+             juce::File::getSpecialLocation(juce::File::currentExecutableFile)
+                 .getSiblingFile("hathor-mcp");
+         std::string hathorMcpPath = mcpFile.getFullPathName().toStdString();
+
+         // Phase 6.3: Explicit existence check — fail loudly if the MCP binary
+         // is missing from the bundle.  Without it, agent tool calls would not
+         // be forwarded, and the user would see "no response" rather than a
+         // clear "unavailable" message.
+         if (!mcpFile.existsAsFile())
+         {
+             const std::string missingPath = mcpFile.getFullPathName().toStdString();
+             const std::string msg =
+                 "Hathor MCP server is missing from the application bundle:\n"
+                 "  " + missingPath + "\n\n"
+                 "AI tool calls via the agent will not function. "
+                 "Please reinstall Hathor.";
+
+             std::cerr << "[HathorApplication] ERROR: hathor-mcp missing at "
+                       << missingPath << std::endl;
+
+             juce::AlertWindow::showMessageBoxAsync(
+                 juce::AlertWindow::WarningIcon,
+                 "Hathor — MCP Server Missing",
+                 msg,
+                 "OK",
+                 nullptr,
+                 juce::ModalCallbackFunction::create([](int) {}));
+
+             // Pass empty path so MainWindow / ChatSidebar know MCP is
+             // unavailable and will not attempt to spawn it.
+             hathorMcpPath.clear();
+         }
+
+         // Create and show the main window.
          mainWindow_ = std::make_unique<MainWindow>(*audio_, *ci_, agentExePath, hathorMcpPath);
     }
 

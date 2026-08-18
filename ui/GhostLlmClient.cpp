@@ -21,6 +21,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstring>
+#include <iostream>
 #include <thread>
 
 #if JUCE_WINDOWS
@@ -54,6 +55,16 @@ GhostLlmClient::~GhostLlmClient()
     stop();
 }
 
+bool GhostLlmClient::hasBinary() const noexcept
+{
+    if (llmLsBinaryPath_.empty())
+        return false;
+    // Phase 6.3: verify the binary actually exists on disk, not just that a
+    // path string was provided.  A missing binary must be detectable so the UI
+    // can distinguish "ghost text unavailable" from "no completion".
+    return juce::File(llmLsBinaryPath_).existsAsFile();
+}
+
 // ---------------------------------------------------------------------------
 // Lifecycle
 // ---------------------------------------------------------------------------
@@ -64,7 +75,12 @@ void GhostLlmClient::start()
         return;
 
     if (!hasBinary())
+    {
+        if (ghostEnabled_)
+            std::cerr << "[GhostLlmClient] GHOST_ENABLED=1 but llm-ls binary not found at "
+                      << llmLsBinaryPath_ << " — ghost text disabled." << std::endl;
         return;
+    }
 
     if (!launchProcess())
         return;

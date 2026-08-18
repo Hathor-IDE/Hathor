@@ -48,6 +48,8 @@ set(archive_path "${dest_dir}/llm-ls.tar.gz")
 # Skip download if the binary already exists (idempotent — supports re-runs)
 if(EXISTS "${binary_path}")
     message(STATUS "llm-ls binary already present at ${binary_path}")
+    set(HATHOR_LLM_LS_BINARY "${binary_path}" CACHE PATH
+        "Path to the downloaded llm-ls binary (for bundling into .app)")
     return()
 endif()
 
@@ -66,6 +68,7 @@ if(NOT status_code EQUAL 0)
     list(GET download_status 1 status_message)
     message(WARNING "Failed to download llm-ls binary: ${status_message}")
     message(STATUS "Ghost text will be disabled (GHOST_ENABLED must be set manually).")
+    unset(HATHOR_LLM_LS_BINARY CACHE)
     return()
 endif()
 
@@ -80,6 +83,7 @@ if(ZLIB_FOUND)
     )
     if(NOT tar_result EQUAL 0)
         message(WARNING "Failed to extract llm-ls archive. Ghost text will be disabled.")
+        unset(HATHOR_LLM_LS_BINARY CACHE)
         return()
     endif()
 
@@ -88,9 +92,11 @@ if(ZLIB_FOUND)
         message(STATUS "llm-ls v0.5.3 installed at ${binary_path}")
     else()
         message(WARNING "llm-ls binary not found after extraction. Ghost text will be disabled.")
+        unset(HATHOR_LLM_LS_BINARY CACHE)
     endif()
 else()
     message(WARNING "zlib/tar not available — cannot extract llm-ls binary. Ghost text will be disabled.")
+    unset(HATHOR_LLM_LS_BINARY CACHE)
 endif()
 
 # Clean up the archive
@@ -103,4 +109,15 @@ if(EXISTS "${binary_path}")
         GROUP_READ GROUP_EXECUTE
         WORLD_READ WORLD_EXECUTE
     )
+
+    # Expose the resolved binary path to the parent scope so that
+    # ui/CMakeLists.txt can conditionally bundle it into Contents/MacOS/.
+    set(HATHOR_LLM_LS_BINARY "${binary_path}" CACHE PATH
+        "Path to the downloaded llm-ls binary (for bundling into .app)")
+    message(STATUS "llm-ls v0.5.3 installed at ${binary_path}")
+else()
+    # Clear any stale cache entry so a previous successful download does not
+    # cause a missing binary to be bundled.
+    unset(HATHOR_LLM_LS_BINARY CACHE)
+    message(STATUS "llm-ls binary not found after extraction. Ghost text will be disabled.")
 endif()
