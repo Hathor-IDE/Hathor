@@ -739,6 +739,9 @@ void MainWindow::closeButtonPressed()
     }
 #endif
 
+    // 20.7: Persist the editor workspace (open tabs, cursors, slot state).
+    saveWorkspace();
+
     juce::JUCEApplication::getInstance()->systemRequestedQuit();
 }
 

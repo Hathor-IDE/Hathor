@@ -491,7 +491,7 @@ void AudioEngine::setVmFlags(const std::string& flags)
         // Best-effort: the worker stores flags and applies them to the next
         // VM it creates.  Failures here are non-fatal (the flags are still
         // stored locally for the next worker activation).
-        workerMgr_->sendControl("vm_set_flags", flags);
+        workerMgr_->sendControlCommand("vm_set_flags " + flags);
     }
 }
 

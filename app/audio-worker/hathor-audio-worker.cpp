@@ -133,6 +133,10 @@ static std::string gControlSocketPath;
 // Per-tab VM lifecycle manager (table + handoff slots for K4).
 static VmLifecycle gVmLifecycle;
 
+// Phase 4.4: ChucK VM flags — stored and applied to each new VM instance.
+static std::string gVmFlags;
+static std::mutex gVmFlagsMtx;
+
 // K3: VM manager — manages ChuckVM instances with per-tab OS threads,
 // resource policy enforcement, and lifecycle state machine.
 static VMManager gVmManager;
