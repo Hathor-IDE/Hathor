@@ -83,7 +83,7 @@ private:
     // TextEditor::Listener
     void textEditorTextChanged(juce::TextEditor& editor) override;
     void textEditorEscapeKeyPressed(juce::TextEditor& editor) override;
-    void textEditorFocusLost(juce::TextEditor&) override {}
+    void textEditorFocusLost(juce::TextEditor&) override {}  // no-op — navigation happens on return key
 
     // ListBoxModel
     int getNumRows() override;

@@ -58,7 +58,7 @@ private:
     // TextEditor::Listener
     void textEditorReturnKeyPressed(juce::TextEditor&) override;
     void textEditorEscapeKeyPressed(juce::TextEditor&) override;
-    void textEditorFocusLost(juce::TextEditor&) override {}
+    void textEditorFocusLost(juce::TextEditor&) override {}  // no-op — Enter key drives confirmation
 
     // Button::Listener
     void buttonClicked(juce::Button*) override;

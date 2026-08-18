@@ -124,7 +124,7 @@ public:
     // juce::TextEditor::Listener (commit message editor)
     // -----------------------------------------------------------------------
 
-    void textEditorTextChanged(juce::TextEditor&) override {}
+    void textEditorTextChanged(juce::TextEditor&) override {}  // no-op — commit triggered by button, not live typing
 
     // -----------------------------------------------------------------------
     // juce::ListBoxModel (changes list)

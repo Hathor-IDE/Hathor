@@ -64,7 +64,7 @@ private:
     void textEditorTextChanged(juce::TextEditor& editor) override;
     void textEditorEscapeKeyPressed(juce::TextEditor& editor) override;
     void textEditorReturnKeyPressed(juce::TextEditor& editor) override;
-    void textEditorFocusLost(juce::TextEditor&) override {}
+    void textEditorFocusLost(juce::TextEditor&) override {}  // no-op — search runs on text change, not focus
 
     // ListBoxModel
     int getNumRows() override;
