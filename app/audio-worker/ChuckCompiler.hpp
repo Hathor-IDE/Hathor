@@ -82,7 +82,13 @@ public:
     /// generation does not match cmd.vmGeneration.
     using VmLookup = std::function<ChuckVmEntry*(TabId, uint64_t)>;
 
-    explicit ChuckCompiler(VmLookup lookup);
+    /// Cancel-check accessor type — returns true if cancellation has been
+    /// requested for the given tab. The dispatcher calls this after the
+    /// dispatch lock is released but before calling onResponse, so it can
+    /// suppress the handoff for cancelled jobs.
+    using CancelCheck = std::function<bool(TabId)>;
+
+    explicit ChuckCompiler(VmLookup lookup, CancelCheck cancelCheck = {});
     ~ChuckCompiler();
 
     ChuckCompiler(const ChuckCompiler&) = delete;
@@ -101,6 +107,7 @@ private:
     void dispatcherLoop();
 
     VmLookup       lookup_;
+    CancelCheck    cancelCheck_;
     std::mutex     queueMtx_;
     std::queue<CompileCommand> pending_;
     std::mutex     dispatchMtx_;  ///< serializes ChucK operations

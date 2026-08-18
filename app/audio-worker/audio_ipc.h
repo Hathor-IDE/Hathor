@@ -250,6 +250,15 @@ struct ChuckVmEntry {
     /// Loaded shred ID (-1 if none loaded).
     std::atomic<int> loadedShredId{-1};
 
+    /// AI-5 Phase 2C: Async compile cancellation flag. Set to true by
+    /// VmLifecycle::cancelCompileRequest() when the main process requests
+    /// cancellation of an in-flight async ChucK compile.  The ChuckCompiler
+    /// dispatcher checks this flag before publishing the handoff shred for a
+    /// ck_compile result — if set, the handoff is suppressed and the callback
+    /// receives a cancellation error.  Reset to false by bumpRequestVersion()
+    /// on the next compile request.
+    std::atomic<bool> cancelCompileRequest{false};
+
     /// Atomic handoff slot: compile dispatcher publishes here, render thread
     /// consumes here.  Uses std::atomic_store/load_explicit on shared_ptr
     /// (Apple-Clang compatible free-function API).

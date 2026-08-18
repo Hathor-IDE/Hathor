@@ -136,17 +136,15 @@ TEST_CASE("queryJob: newly submitted job is queued", "[ckjob][query][queued]")
 
 TEST_CASE("queryJob: active compilation reports running", "[ckjob][query][running]")
 {
-    std::atomic<bool> started{false};
     ChuckCkJobService service(makeDelayedPublisher(
         {true, 0, "ok ck_compile tab=0 version=1 hash=abc123"}, std::chrono::milliseconds(100)));
 
     uint64_t jobId = service.startCompile(0, "SinOsc s => dac;", nullptr);
     REQUIRE(jobId > 0);
 
-    // Wait for the worker thread to start and transition to Running.
-    while (!started.load(std::memory_order_acquire)) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(5));
-    }
+    // Wait for the worker thread to transition to Running.
+    REQUIRE(waitForState(service, jobId, CompileJobState::Running,
+                         std::chrono::seconds(5)));
 
     auto j = service.queryJob(jobId);
     REQUIRE(j.value("ok", false) == true);

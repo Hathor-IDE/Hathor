@@ -26,7 +26,6 @@
 // ---------------------------------------------------------------------------
 #include "ChuckCompiler.hpp"
 #include "ChuckVm.hpp"
-#include "VmLifecycle.hpp"
 #include "ChuckDiagnostics.hpp"
 
 #ifdef CHUCK_AVAILABLE
@@ -39,11 +38,6 @@
 #include <cstring>
 #include <thread>
 #include <tuple>
-
-// Forward declaration for the worker-process lifecycle singleton defined in
-// hathor-audio-worker.cpp.  The dispatcher thread reads its state after
-// releasing the dispatch lock so it can decide whether to publish a handoff.
-extern "C" hathor::audio_worker::VmLifecycle gVmLifecycle;
 
 namespace hathor::audio_worker {
 
