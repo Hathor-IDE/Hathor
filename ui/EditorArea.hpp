@@ -110,6 +110,7 @@ struct TabInfo
 {
     juce::String label;
     bool         unsavedDot{ false };
+    bool         pinned{ false };
 };
 
 // ---------------------------------------------------------------------------
@@ -254,13 +255,19 @@ public:
       */
     void reloadActiveTab();
 
-    /**
-      * Reopen the most recently closed tab (L-1 §1).
-      * Pops a TabSnapshot from recentlyClosedTabs_ and recreates the tab
-      * with the saved content, cursor position, and (if the file still exists)
-      * the file path.
-      */
+     /**
+       * Reopen the most recently closed tab (L-1 §1).
+       * Pops a TabSnapshot from recentlyClosedTabs_ and recreates the tab
+       * with the saved content, cursor position, and (if the file still exists)
+       * the file path.
+       */
     void reopenLastClosedTab();
+
+    /**
+      * Toggle the pinned state of the active tab.
+      * Pinned tabs are visually marked and protected from bulk close operations.
+      */
+    void toggleTabPin();
 
     /**
       * Open or focus the Settings tab (A2).
@@ -784,6 +791,10 @@ private:
     /// When active, it occupies the same content area as HathorTab tabs.
     std::unique_ptr<SettingsComponent>       settingsTab_;
     bool                                     settingsActive_{ false };
+
+    /// Pinned state per HathorTab (parallel to tabs_). Pinned tabs are
+    /// protected from close-all / close-others operations.
+    std::vector<bool>                        pinnedTabs_;
 
     /// Recently closed tab snapshots (L-1 §1) — for undo-close (Cmd+Shift+T).
     RecentlyClosedTabs                        recentlyClosedTabs_;

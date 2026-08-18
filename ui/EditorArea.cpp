@@ -57,6 +57,36 @@ static hathor::control::Diagnostic toControlDiag(
     return d;
 }
 
+// ---------------------------------------------------------------------------
+// L-2: Source-context rendering for the Peek Definition surface
+// ---------------------------------------------------------------------------
+// Returns up to kBefore/kAfter lines around @p targetLine (0-based) in @p doc,
+// prefixed with ">> " on the target line and a 1-based line number. Never
+// depends on the document being saved — reads whatever is in @p doc.
+
+static juce::String renderSourceContext(const juce::CodeDocument& doc,
+                                        int targetLine0)
+{
+    static constexpr int kBefore = 2;
+    static constexpr int kAfter  = 2;
+
+    const int total = doc.getNumLines();
+    if (total <= 0)
+        return "<empty document>";
+
+    const int start = juce::jmax(0, juce::jmin(total - 1, targetLine0 - kBefore));
+    const int end   = juce::jmax(0, juce::jmin(total - 1, targetLine0 + kAfter));
+
+    juce::String out;
+    for (int ln = start; ln <= end; ++ln)
+    {
+        out << (ln == targetLine0 ? ">> " : "   ");
+        out << juce::String(ln + 1) << "  " << doc.getLine(ln);
+        out << juce::newLine;
+    }
+    return out;
+}
+
 // ===========================================================================
 // nextFreeSlot (Req 22.6, 24.4)
 // ===========================================================================
@@ -1326,9 +1356,9 @@ void EditorArea::reopenLastClosedTab()
         tab->setFileTypeFromPath(file);
     }
 
-    const juce::String offset = juce::String(static_cast<int>(s.cursorOffset));
-    tab->editor().setCaretPosition(juce::CodeDocument::Position(
-        tab->document(), static_cast<int>(s.cursorOffset)));
+    juce::CodeDocument::Position caretPos(tab->document(),
+        static_cast<int>(s.cursorOffset));
+    tab->editor().moveCaretTo(caretPos, false);
 
     wireUnsavedCallback(*tab);
     wirePlayStopCallback(*tab);
@@ -1365,6 +1395,24 @@ void EditorArea::reopenLastClosedTab()
     tabs_.push_back(std::move(tab));
     activateTab(static_cast<int>(tabs_.size()) - 1);
     showStatus("Reopened: " + juce::String(s.label));
+}
+
+void EditorArea::toggleTabPin()
+{
+    if (activeIndex_ < 0 || activeIndex_ >= static_cast<int>(tabs_.size()))
+        return;
+
+    if (pinnedTabs_.size() <= static_cast<size_t>(activeIndex_))
+        pinnedTabs_.resize(tabs_.size(), false);
+
+    pinnedTabs_[static_cast<size_t>(activeIndex_)] = !pinnedTabs_[static_cast<size_t>(activeIndex_)];
+    refreshTabBar();
+
+    HathorTab* tab = tabs_[static_cast<size_t>(activeIndex_)].get();
+    if (pinnedTabs_[static_cast<size_t>(activeIndex_)])
+        showStatus("Pinned: " + tab->tabLabel());
+    else
+        showStatus("Unpinned: " + tab->tabLabel());
 }
 
 void EditorArea::showStatus(const juce::String& msg)
@@ -2416,67 +2464,211 @@ void EditorArea::gotoReferences()
         });
 }
 
+// ---------------------------------------------------------------------------
+// L-1 §3: Go to Line — modal dialog + cursor move
+// ---------------------------------------------------------------------------
+
+void EditorArea::showGoToLineDialog()
+{
+    HathorTab* tab = activeTab();
+    if (!tab)
+    {
+        showStatus("No active editor");
+        return;
+    }
+
+    const int numLines    = juce::jmax(1, tab->document().getNumLines());
+    const int cursorLine0 = tab->editor().getCaretPos().getLineNumber();
+    const int current1    = juce::jlimit(1, numLines, cursorLine0 + 1);
+
+    juce::Component* topParent = getTopLevelComponent();
+    if (!topParent)
+        topParent = this;
+
+    // Guard against the editor being closed while the dialog is open.
+    juce::Component::SafePointer<EditorArea> self(this);
+    juce::Component::SafePointer<HathorTab>  safeTab(tab);
+
+    showGotoLineDialog(topParent, numLines, current1,
+        [this, self, safeTab, numLines] (int lineNumber)
+        {
+            if (!self)
+                return; // EditorArea closed while the dialog was open.
+
+            HathorTab* t = safeTab;
+            if (!t)
+            {
+                showStatus("No active editor");
+                return;
+            }
+
+            juce::CodeDocument& doc = t->document();
+
+            // Re-validate against the live document (it may have changed).
+            const int maxLine = juce::jmax(1, doc.getNumLines());
+            const int target0 = juce::jlimit(0, maxLine - 1, lineNumber - 1);
+
+            // Preserve the existing column, clamped to the target line length
+            // (the editor's existing cursor semantics). moveCaretTo() also
+            // scrolls the target line into view.
+            const int curCol    = t->editor().getCaretPos().getIndexInLine();
+            const int lineLen   = doc.getLine(target0).length();
+            const int col       = juce::jmin(curCol, lineLen);
+
+            juce::CodeDocument::Position pos(doc, target0, col);
+            t->editor().moveCaretTo(pos, false);
+            showStatus("Go to line " + juce::String(target0 + 1));
+            t->editor().grabKeyboardFocus(); // return focus to the editor
+        });
+}
+
+// ---------------------------------------------------------------------------
+// Shared LSP navigation: open the target file and move the caret, pushing the
+// destination onto the navigation history. Reused by go-to-definition,
+// go-to-references, and peek.
+// ---------------------------------------------------------------------------
+
+void EditorArea::navigateToLocation(const lsp::Location& loc)
+{
+    std::string path = loc.uri;
+    const std::string prefix = "file://";
+    if (path.substr(0, prefix.size()) == prefix)
+        path = path.substr(prefix.size());
+
+    juce::File file(path);
+    openFile(file);
+
+    if (auto* targetTab = activeTab())
+    {
+        juce::CodeDocument::Position targetPos(targetTab->document(),
+            static_cast<int>(loc.range.start.line),
+            static_cast<int>(loc.range.start.character));
+        targetTab->editor().moveCaretTo(targetPos, false);
+
+        navigationHistory_->navigateTo({
+            loc.uri,
+            static_cast<int>(loc.range.start.line),
+            static_cast<int>(loc.range.start.character)
+        });
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Source context for the Peek Definition surface
+// ---------------------------------------------------------------------------
+
+juce::String EditorArea::sourceContextForLocation(const std::string& uri,
+                                                  int targetLine0)
+{
+    // Prefer the active in-memory document when the definition lives in it,
+    // so unsaved buffers are reflected correctly.
+    if (HathorTab* tab = activeTab())
+    {
+        if (tab->lspDocumentUri().toStdString() == uri)
+        {
+            const juce::CodeDocument& doc = tab->document();
+            const int clamped = juce::jmax(0, juce::jmin(doc.getNumLines() - 1, targetLine0));
+            return renderSourceContext(doc, clamped);
+        }
+    }
+
+    // Otherwise read from disk — the same loadFileAsString() path that
+    // EditorArea::openFile() uses (no duplicate file-loading introduced).
+    std::string path = uri;
+    const std::string prefix = "file://";
+    if (path.substr(0, prefix.size()) == prefix)
+        path = path.substr(prefix.size());
+
+    juce::File f(path);
+    if (!f.existsAsFile())
+        return "<definition file not found on disk>";
+
+    juce::CodeDocument diskDoc;
+    diskDoc.replaceAll(f.loadFileAsString());
+    const int clamped = juce::jmax(0, juce::jmin(diskDoc.getNumLines() - 1, targetLine0));
+    return renderSourceContext(diskDoc, clamped);
+}
+
+// ---------------------------------------------------------------------------
+// L-2: Peek Definition — LSP textDocument/definition → modal peek surface
+// ---------------------------------------------------------------------------
+
 void EditorArea::peekDefinition()
 {
     HathorTab* tab = activeTab();
     if (!tab || !lspClient_ || tab->isChuckTab())
         return;
 
-    auto cursorPos = tab->editor().getCaretPos();
-    juce::String uri = tab->lspDocumentUri();
-    int line = cursorPos.getLineNumber();
-    int column = cursorPos.getIndexInLine();
+    // Surface a distinct failure when the server isn't available, rather than
+    // turning a silent empty result into an apparently-successful "no
+    // definition found". (The LSP client invokes its callback with an empty
+    // NavigationResult for both server-down and LSP errors; a pre-flight
+    // isRunning() check lets us report the unavailable-server case distinctly.)
+    if (!lspClient_->isRunning())
+    {
+        showStatus("Language server is not running");
+        return;
+    }
+
+    const auto cursorPos = tab->editor().getCaretPos();
+    const juce::String uri = tab->lspDocumentUri();
+    const int line   = cursorPos.getLineNumber();
+    const int column = cursorPos.getIndexInLine();
+
+    // Guard against the editor/document being closed while the request is in
+    // flight. HathorLspClient delivers its callback on the message thread (via
+    // its juce::Timer poll), so no UI-thread blocking or marshalling is needed.
+    juce::Component::SafePointer<EditorArea> self(this);
 
     lspClient_->requestDefinition(
         uri.toStdString(), line, column,
-        [this, tab](const lsp::NavigationResult& result) {
+        [this, self] (const lsp::NavigationResult& result)
+        {
+            if (!self)
+                return; // EditorArea destroyed while the request was pending.
+
             if (result.locations.empty())
             {
                 showStatus("No definition found");
                 return;
             }
 
-            const auto& loc = result.locations.front();
-            std::string path = loc.uri;
-            const std::string prefix = "file://";
-            if (path.substr(0, prefix.size()) == prefix)
-                path = path.substr(prefix.size());
-
-            juce::File file(path);
-            if (!file.existsAsFile())
+            // Build a display entry per definition hit. Each location is
+            // surfaced explicitly rather than silently picking an arbitrary one.
+            std::vector<PeekDefinitionEntry> entries;
+            entries.reserve(result.locations.size());
+            for (const auto& loc : result.locations)
             {
-                showStatus("Definition file not found");
-                return;
+                PeekDefinitionEntry e;
+                e.location = loc;
+
+                std::string path = loc.uri;
+                const std::string prefix = "file://";
+                if (path.substr(0, prefix.size()) == prefix)
+                    path = path.substr(prefix.size());
+
+                e.filePath  = juce::String(path);
+                e.fileLabel = juce::File(path).getFileName();
+                const int targetLine0 = static_cast<int>(loc.range.start.line);
+                e.line1     = targetLine0 + 1;
+                e.sourceText = sourceContextForLocation(loc.uri, targetLine0);
+                entries.push_back(std::move(e));
             }
 
-            const juce::String contents = file.loadFileAsString();
-            const juce::StringArray lines = contents.split(juce::newLine);
-            const int defLine = juce::jmax(0, static_cast<int>(loc.range.start.line));
-            const int defEnd  = juce::jmax(defLine + 1,
-                static_cast<int>(loc.range.end.line) + 1);
+            juce::Component* topParent = self->getTopLevelComponent();
+            if (!topParent)
+                topParent = self.get();
 
-            // Extract ~10 lines of context around the definition
-            const int contextStart = juce::jmax(0, defLine - 4);
-            const int contextEnd   = juce::jmin(lines.size(), defEnd + 6);
-
-            juce::String snippet;
-            for (int i = contextStart; i < contextEnd; ++i)
-            {
-                snippet << (i + 1) << ": " << lines[i] << juce::newLine;
-            }
-
-            const juce::String title = "Definition — " + file.getFileName();
-            auto* alert = new juce::AlertWindow(
-                title, snippet,
-                juce::MessageBoxIconType::NoIcon);
-            alert->addButton("Close", 1);
-
-            alert->addToDesktop(juce::Component::getDesktopWindowStyleFlags());
-            alert->centreWithDefaultSize();
-            alert->setAlwaysOnTop(true);
-            alert->enterModalState(true,
-                juce::ModalCallbackFunction::create([](int) {}),
-                true);
+            showPeekDefinition(topParent, std::move(entries),
+                [this, self] (const lsp::Location& loc)
+                {
+                    if (!self)
+                        return;
+                    // Reuse the existing editor/file-opening infrastructure
+                    // (openFile + caret move + history) rather than duplicating
+                    // file loading.
+                    navigateToLocation(loc);
+                });
         });
 }
 
@@ -2805,7 +2997,8 @@ void EditorArea::registerEditorActions()
     actionRegistry_->registerAction("file.saveAs",              "Save As…",           "File",       "Save as…");
     actionRegistry_->registerAction("file.reload",              "Reload",             "File",       "Reload from disk");
 
-    // L-1: editor.eval is registered in the AI-4 section above
+    // L-1: editor.eval — evaluate the current eval block (Ctrl+Enter / Cmd+Enter)
+    actionRegistry_->registerAction("editor.eval",            "Evaluate Block",     "Editor",     "Eval current block (Ctrl+Enter)");
 
     // Bind key shortcuts (macOS uses Cmd as primary modifier)
     if (auto k = parseKeyEquivalent("Cmd+F"))      actionRegistry_->bindKey(*k, "editor.find");
@@ -2814,6 +3007,9 @@ void EditorArea::registerEditorActions()
     if (auto k = parseKeyEquivalent("Cmd+Shift+P")) actionRegistry_->bindKey(*k, "editor.commandPalette");
     if (auto k = parseKeyEquivalent("Cmd+Shift+T")) actionRegistry_->bindKey(*k, "editor.reopenClosed");
     if (auto k = parseKeyEquivalent("Cmd+Enter")) actionRegistry_->bindKey(*k, "editor.eval");
+    if (auto k = parseKeyEquivalent("Cmd+S"))     actionRegistry_->bindKey(*k, "file.save");
+    if (auto k = parseKeyEquivalent("Cmd+Shift+S")) actionRegistry_->bindKey(*k, "file.saveAs");
+    if (auto k = parseKeyEquivalent("Cmd+W"))     actionRegistry_->bindKey(*k, "tab.close");
 
     // L-2: Navigation & workspace search actions
     actionRegistry_->registerAction("editor.quickOpen",         "Quick Open…",      "Go",    "Open file by name");
@@ -2854,6 +3050,7 @@ void EditorArea::registerEditorActions()
 
     // L-1: Install callbacks
     actionRegistry_->setCallback("editor.find", [this]() { showFindReplace(); });
+    actionRegistry_->setCallback("editor.replace", [this]() { showFindReplace(); });
     actionRegistry_->setCallback("editor.commandPalette", [this]() {
         if (commandPalette_)
         {
@@ -2861,14 +3058,26 @@ void EditorArea::registerEditorActions()
             commandPalette_->show(topParent);
         }
     });
-    actionRegistry_->setCallback("editor.reopenClosed", []() {
-        // Reopen last closed tab — handled by the active EditorGroup
-    });
+    actionRegistry_->setCallback("editor.reopenClosed", [this]() { reopenLastClosedTab(); });
     actionRegistry_->setCallback("editor.toggleSplit", [this]() { toggleSplit(); });
     actionRegistry_->setCallback("tab.new", [this]() { openUntitledTab(); });
-    actionRegistry_->setCallback("editor.togglePin", []() {
-        // Pin toggle is handled at the EditorGroup/EnhancedTabBar level
+    actionRegistry_->setCallback("tab.close", [this]() {
+        if (activeIndex_ >= 0 && activeIndex_ < static_cast<int>(tabs_.size()))
+            closeTab(activeIndex_);
     });
+    actionRegistry_->setCallback("tab.gotoDefinition", [this]() { gotoDefinition(); });
+    actionRegistry_->setCallback("tab.peekDefinition", [this]() { peekDefinition(); });
+    actionRegistry_->setCallback("editor.togglePin", [this]() { toggleTabPin(); });
+    actionRegistry_->setCallback("editor.eval", [this]() {
+        if (HathorTab* tab = activeTab())
+            if (tab->onEvalBlock)
+                tab->onEvalBlock();
+    });
+
+    // File actions
+    actionRegistry_->setCallback("file.save",   [this]() { saveActiveTab(); });
+    actionRegistry_->setCallback("file.saveAs", [this]() { saveActiveTabAs(); });
+    actionRegistry_->setCallback("file.reload", [this]() { reloadActiveTab(); });
 
     // L-4: Terminal + task runner actions
     actionRegistry_->registerAction("terminal.toggle",      "Toggle Terminal",     "Terminal",    "Show/hide the integrated terminal");
@@ -2887,6 +3096,12 @@ void EditorArea::registerEditorActions()
     actionRegistry_->setCallback("terminal.cancel", [this]() {
         if (terminalPanel_ && terminalPanel_->isRunning())
             terminalPanel_->cancelProcess();
+    });
+    actionRegistry_->setCallback("terminal.runCommand", [this]() {
+        if (!terminalPanel_)
+            return;
+        showTerminalPanel();
+        terminalPanel_->focusInput();
     });
 
     // L-5: Git source control actions

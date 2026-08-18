@@ -80,9 +80,11 @@ target_sources(hathor-ui
          PetdexResourceService.cpp     # D2: async download → cache → decode
          PetWidget.cpp                 # D2–D4: D4-gated animated mascot widget
          WindowAppearanceController.mm  # B5
-         BakeTargetDialog.cpp          # B8-K6
-         BakeProgressDialog.cpp        # B8-K6
-         BakeOrchestrator.cpp          # B8-K6
+          BakeTargetDialog.cpp          # B8-K6
+          BakeProgressDialog.cpp        # B8-K6
+          BakeOrchestrator.cpp          # B8-K6
+          GotoLineDialog.cpp            # L-1 §3: Go to Line modal dialog
+          PeekDefinitionDialog.cpp      # L-2: Peek Definition modal surface
          EditorContextBridge.cpp       # AI-8: editor state snapshot bridge
          LspContextBridge.cpp          # AI-8: LSP diagnostics/status bridge
          # AI-4: LSP language integration
