@@ -27,11 +27,10 @@
 #include "../app/VisualizerFrame.hpp"   // hathor::SpscRingBuffer<128>
 #include "../app/AudioEngine.hpp"       // AudioEngine
 
-// Forward-declare the two panel types that may not yet be implemented.
-// When VisualizerPanel.hpp (task 3.8, now done) and SliderPanel.hpp (task 3.9) exist,
-// MainWindow.cpp will include them before including UITimer.hpp; the
-// definitions below (in UITimer.cpp) are protected by include-guards so they
-// will not conflict.
+// Forward-declare panel types that MainWindow.cpp includes.  When
+// VisualizerPanel.hpp and SliderPanel.hpp are included before UITimer.hpp
+// (as they are in MainWindow.cpp), they set include-guards that suppress
+// the stub fallback definitions in UITimer.cpp below.
 namespace hathor::ui {
     class VisualizerPanel;
     class SliderPanel;

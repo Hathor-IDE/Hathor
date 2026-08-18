@@ -42,8 +42,8 @@
 #include "HathorLookAndFeel.hpp"
 
 // ---------------------------------------------------------------------------
-// Child component headers that already exist (implemented in other tasks).
-// Headers not yet available are forward-declared below.
+// Child component headers (all implemented — included directly here or in .cpp).
+// Forward declarations for pointer-only types follow below.
 // ---------------------------------------------------------------------------
 #include "ActivityRibbon.hpp"   // task 3.2 — implemented
 #include "ExplorerPanel.hpp"    // task 3.2 — implemented
@@ -73,7 +73,9 @@
 #include "WorkspaceSession.hpp"
 
 // ---------------------------------------------------------------------------
-// Forward declarations — concrete types defined in their own headers
+// Forward declarations — concrete types defined in their own headers,
+// included only in MainWindow.cpp.  Forward-declared here because MainWindow's
+// own interface only holds pointers/references to them.
 // ---------------------------------------------------------------------------
 namespace hathor::ui {
 

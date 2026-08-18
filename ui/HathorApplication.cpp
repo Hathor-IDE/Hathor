@@ -200,6 +200,11 @@ public:
         quit();
     }
 
+    // Single-instance app (moreThanOneInstanceAllowed() returns false).
+    // JUCE still requires this override to exist; when a second instance is
+    // launched, the first instance receives this callback instead. We
+    // intentionally do nothing — the second instance simply exits via
+    // JUCE's single-instance mechanism.
     void anotherInstanceStarted(const juce::String& /*commandLine*/) override {}
 
 private:

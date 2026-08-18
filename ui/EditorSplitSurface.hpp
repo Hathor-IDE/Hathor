@@ -250,6 +250,10 @@ public:
         const std::vector<hathor::Event<hathor::ParamMap>>& events);
 
 #ifdef HATHOR_ENABLE_GHOST_TELEMETRY
+    // Vestigial — telemetry persistence moved to EditorArea::saveTelemetry
+    // /loadTelemetry (called by MainWindow at startup/shutdown).  These
+    // declarations remain only so the header compiles if the flag is set;
+    // they are never called.
     bool saveTelemetry(const std::string& filePath) const;
     void loadTelemetry(const std::string& filePath);
 #endif

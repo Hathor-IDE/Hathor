@@ -117,6 +117,9 @@ public:
     // juce::TextEditor::Listener
     // ---------------------------------------------------------------------------
 
+    // Intentional no-ops — the diff is rendered in a read-only TextEditor
+    // (line 97), so text changes can never occur, and focus loss needs
+    // no action. Required by the TextEditor::Listener interface.
     void textEditorTextChanged(juce::TextEditor&) override {}
     void textEditorFocusLost(juce::TextEditor&) override {}
 
