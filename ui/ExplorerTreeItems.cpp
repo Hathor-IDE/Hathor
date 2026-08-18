@@ -223,14 +223,9 @@ void AssetTreeItem::activate()
     // outside the editor (no source to edit).
     if (const juce::File wav = audioFile(); wav.getFullPathName().isNotEmpty())
     {
-        if (!juce::File::revealInFileManager(wav))
-        {
-            juce::AlertWindow::showMessageBoxAsync(
-                juce::AlertWindow::WarningIcon,
-                "Reveal Failed",
-                "Could not reveal \"" + wav.getFileName()
-                + "\" in the file manager.");
-        }
+        // revealInFileManager() is not a member of the pinned JUCE; revealToUser()
+        // is the canonical JUCE call that opens Finder/Explorer at the file location.
+        wav.revealToUser();
         return;
     }
 

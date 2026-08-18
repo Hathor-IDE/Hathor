@@ -2295,7 +2295,7 @@ void EditorArea::replaceInActiveTab()
     juce::CodeDocument::Position afterPos(doc,
         static_cast<int>(match->start) + static_cast<int>(replacement.length()));
     ed.moveCaretTo(afterPos, false);
-    ed.scrollToKeepCaretVisible();
+    ed.scrollToKeepCaretOnScreen();
 }
 
 void EditorArea::replaceAllInActiveTab()
@@ -2324,7 +2324,7 @@ void EditorArea::replaceAllInActiveTab()
 
     juce::CodeDocument::Position pos(doc, 0);
     tab->editor().moveCaretTo(pos, false);
-    tab->editor().scrollToKeepCaretVisible();
+    tab->editor().scrollToKeepCaretOnScreen();
 
     showStatus(juce::String(static_cast<int>(count)) + " replacement(s)");
 }
@@ -2511,7 +2511,7 @@ void EditorArea::showGoToLineDialog()
     juce::Component::SafePointer<HathorTab>  safeTab(tab);
 
     showGotoLineDialog(topParent, numLines, current1,
-        [this, self, safeTab, numLines] (int lineNumber)
+        [this, self, safeTab] (int lineNumber)
         {
             if (!self)
                 return; // EditorArea closed while the dialog was open.
@@ -2605,7 +2605,7 @@ juce::String EditorArea::sourceContextForLocation(const std::string& uri,
         return "<definition file not found on disk>";
 
     juce::CodeDocument diskDoc;
-    diskDoc.replaceAll(f.loadFileAsString());
+    diskDoc.replaceAllContent(f.loadFileAsString());
     const int clamped = juce::jmax(0, juce::jmin(diskDoc.getNumLines() - 1, targetLine0));
     return renderSourceContext(diskDoc, clamped);
 }
@@ -2678,7 +2678,7 @@ void EditorArea::peekDefinition()
 
             juce::Component* topParent = self->getTopLevelComponent();
             if (!topParent)
-                topParent = self.get();
+                topParent = self.getComponent();
 
             showPeekDefinition(topParent, std::move(entries),
                 [this, self] (const lsp::Location& loc)

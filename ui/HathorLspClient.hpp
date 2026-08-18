@@ -156,8 +156,10 @@ private:
     const hathor::language::MetadataCompatibility* compatibility_;
 
 #if JUCE_WINDOWS
-    // Windows implementation would use CreateProcess + anonymous pipes
-    // Not implemented for this platform
+    // Windows: unreachable — the #error at the top of HathorLspClient.cpp
+    // prevents compilation on Windows (out of beta scope; macOS/Linux only).
+    // These fields exist only so the declaration type-checks in the
+    // non-Windows branch structure; they are never instantiated.
     void* stdinWrite_ = nullptr;
     void* stdoutRead_ = nullptr;
     int pid_ = -1;

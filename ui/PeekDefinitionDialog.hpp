@@ -73,7 +73,7 @@ public:
     // juce::Component
     void paint(juce::Graphics& g) override;
     void resized() override;
-    void keyPressed(const juce::KeyPress& key) override;
+    bool keyPressed(const juce::KeyPress& key) override;
 
 private:
     // Button::Listener

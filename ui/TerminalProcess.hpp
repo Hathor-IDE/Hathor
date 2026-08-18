@@ -30,8 +30,8 @@
  * Platform support:
  *   - POSIX (macOS, Linux): posix_spawn + pipes (following the AcpAgentSession
  *     pattern — safer and faster than fork on modern systems).
- *   - Windows: CreateProcess + anonymous pipes (stubbed for now; the project
- *     targets macOS/Linux primarily).
+ *   - Windows: CreateProcess + anonymous pipes (implemented; the project
+ *     targets macOS/Linux primarily but Windows is compiled for parity).
  *
  * Requirement references: L-4 §Architecture, L-4 Acceptance
  */

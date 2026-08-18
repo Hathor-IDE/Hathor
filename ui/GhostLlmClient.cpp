@@ -219,7 +219,9 @@ void GhostLlmClient::terminateProcess()
         stdoutRead_ = -1;
     }
 #else
-    // Windows not implemented
+    // Windows: unreachable — the #error at the top of this file prevents
+    // compilation on Windows (out of beta scope; macOS/Linux only).
+    // Intentional no-op on the non-Windows paths below.
 #endif
 }
 

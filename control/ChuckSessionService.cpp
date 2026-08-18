@@ -50,6 +50,8 @@ int ChuckSessionService::parseSessionId(std::string_view sessionId)
             return -1;
         return tabId;
     } catch (...) {
+        // std::stoi throws on non-numeric input — treat as an invalid
+        // session id rather than propagating.
         return -1;
     }
 }
@@ -309,9 +311,13 @@ AsyncJobHandle ChuckSessionService::compileChuck(
                              }
                              auto shredPos = response.find("shred=");
                              if (shredPos != std::string::npos) {
-                                 try {
-                                     cr.shredId = std::stoi(response.substr(shredPos + 6));
-                                 } catch (...) {}
+                                  try {
+                                      cr.shredId = std::stoi(response.substr(shredPos + 6));
+                                  } catch (...) {
+                                      // shred id is optional in the compile response;
+                                      // if it isn't present or malformed, leave the
+                                      // default value and proceed with an empty shred id.
+                                  }
                              }
 
                              cr.diagnostics.push_back({

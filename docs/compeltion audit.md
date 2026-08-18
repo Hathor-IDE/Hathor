@@ -707,13 +707,27 @@ commit) runs end-to-end through MCP without stubs.
 > **product decision to make explicitly** (with a tracked decision + removed entry point), not
 > an unplanned no-op.
 
-**Subphase 5.1 — Complete the two concrete editor features** *(small, parallelizable)*
-- `ui/EditorArea.cpp:1288` — "Go to line: not yet implemented". **Implement** a Go-To-Line
-  dialog (jump cursor to line N, scroll to visible) rather than a status toast.
-- `ui/EditorArea.cpp:2135` — "Peek definition not yet implemented". **Implement**
-  `peekDefinition()`: wire it to `HathorLspClient` textDocument/definition and show the result
-  in a peek popup. (LSP already supports definition — this is wiring, not net-new surface.)
-- **Effort**: 3–5 hrs.
+**Subphase 5.1 — Complete the two concrete editor features** *(small, parallelizable)* ✅ **DONE**
+- `ui/EditorArea.cpp:2492` (`EditorArea::showGoToLineDialog()`) — placeholder removed. Implemented a real
+  modal Go-To-Line dialog (`ui/GotoLineDialog.cpp`: `GotoLineDialog` over `juce::DialogWindow`,
+  pre-filled with the current cursor line). Validates empty / non-numeric / ≤0 / >doc-lines /
+  too-large (64-bit parse) input inline and keeps the dialog open on invalid input. On confirm it
+  re-validates against the live document, clamps the column to the target line length, moves the
+  caret (`moveCaretTo`, which scrolls the line into view), and returns focus to the editor. Invoked
+  from the tab context menu item "Go to Line…" (`HathorTab.cpp:640` → `onGoToLine`).
+- `ui/EditorArea.cpp:2617` (`EditorArea::peekDefinition()`) — placeholder removed. Wired to the existing
+  `HathorLspClient::requestDefinition(uri, line, character, NavigationCallback)` (LSP position
+  conversion reused from `gotoDefinition()`). Builds a `PeekDefinitionEntry` per location and shows
+  them in `PeekDefinitionDialog` (`ui/PeekDefinitionDialog.cpp`): a ListBox when >1 definition (no
+  silent arbitrary pick), a source-context view (`<file> : line N` label + ~2 surrounding lines via
+  `renderSourceContext`; prefers the active in-memory doc, falls back to `loadFileAsString()`),
+  with a "Go to Definition" button that reuses `navigateToLocation()` (openFile + caret + history) for
+  cross-file navigation. Handles no-definition ("No definition found"), server-not-running
+  ("Language server is not running"), and LSP errors distinctly; request is asynchronous (callback
+  on the message thread via the LSP client Timer poll) with `SafePointer` guards for editor/tab
+  closure mid-flight.
+- **Verified**: `hathor-ui` builds with `-Wall -Wextra -Werror`; `hathor-ui-tests` (582 cases,
+  including `test_lsp_jsonrpc_navigation`) pass.
 
 **Subphase 5.2 — Complete `.ck` file eval from Explorer**
 - `ui/ExplorerFileTypes.hpp:65` — `SongChuck` is "recognized but eval not yet wired". **Wire it**:

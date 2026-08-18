@@ -411,7 +411,7 @@ void TerminalPanel::textEditorTextChanged(juce::TextEditor& /*editor*/)
 
 void TerminalPanel::textEditorFocusLost(juce::TextEditor& /*editor*/)
 {
-    (void)0; // no-op
+    (void)0; // no-op — focus loss doesn't trigger any terminal action
 }
 
 void TerminalPanel::textEditorReturnKeyPressed(juce::TextEditor& /*editor*/)

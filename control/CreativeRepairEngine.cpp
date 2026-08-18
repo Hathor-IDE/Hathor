@@ -333,9 +333,13 @@ std::string CreativeRepairEngine::generateChuckRepair(
                          // to avoid re-processing the same assignment.
                          // After replacement, the => that was at searchFrom
                          // has shifted by (adjustedStr.size() - (numEnd - numStart)).
-                         searchFrom = numStart + adjustedStr.size() +
-                             (searchFrom - numEnd) + 2; // +2 for =>
-                     } catch (...) {}
+                          searchFrom = numStart + adjustedStr.size() +
+                              (searchFrom - numEnd) + 2; // +2 for =>
+                      } catch (...) {
+                          // Best-effort: if the numeric adjustment or string
+                          // replacement fails, skip this assignment rather
+                          // than aborting the entire repair pass.
+                      }
                  }
             }
             ++searchFrom;
@@ -429,7 +433,11 @@ std::string CreativeRepairEngine::generateChuckRepair(
                     found = true;
                     searchFrom = numStart + adjustedStr.size() +
                                  (searchFrom - numEnd) + 2;
-                } catch (...) {}
+                    } catch (...) {
+                        // Best-effort: if the frequency parse or replacement
+                        // fails, skip this parameter rather than crashing the
+                        // repair engine (AI-generated code may be malformed).
+                    }
             }
             ++searchFrom;
         }

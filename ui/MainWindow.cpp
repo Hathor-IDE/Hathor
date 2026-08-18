@@ -226,7 +226,9 @@ MainWindow::MainWindow(AudioEngine& audio,
     activityRibbon_->onPanelToggled =
         [this](hathor::ui::Panel panel)
         {
-            // Only the Explorer is wired in H1; other panels are no-ops for now.
+            // H1–L-6: All ActivityRibbon panels are wired (Explorer, Search,
+            // AIAgent, Terminal, Problems, VersionControl, Debug). Each block
+            // below toggles its panel and syncs the ribbon accent.
             if (panel == hathor::ui::Panel::Explorer)
             {
                 // Close Problems panel when switching to another panel

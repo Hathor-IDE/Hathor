@@ -74,8 +74,7 @@ GotoLineDialog::GotoLineDialog(const int numLines,
     cancelBtn_->addListener(this);
     addAndMakeVisible(cancelBtn_.get());
 
-    // The OK button is the default (Enter → confirm).
-    okBtn_->setTriggeredOnReturn(true);
+    
 }
 
 // ---------------------------------------------------------------------------
@@ -181,7 +180,7 @@ void GotoLineDialog::attemptConfirm()
     }
 
     // Parse as a 64-bit value to tolerate very large inputs without overflow.
-    const juce::int64 value = text.getLargeValue();
+    const juce::int64 value = text.getLargeIntValue();
 
     if (value < 1)
     {

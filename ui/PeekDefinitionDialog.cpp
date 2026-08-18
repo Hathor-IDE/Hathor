@@ -50,7 +50,7 @@ PeekDefinitionDialog::PeekDefinitionDialog(std::vector<PeekDefinitionEntry> entr
     sourceView_->setColour(juce::TextEditor::outlineColourId, palette.surfaceHighest);
     sourceView_->setColour(juce::CaretComponent::caretColourId, palette.accent);
     sourceView_->setColour(juce::TextEditor::highlightColourId, palette.accent.withAlpha(0.25f));
-    sourceView_->setScrollToShowCaret(false);
+    sourceView_->setScrollToShowCursor(false);
     addAndMakeVisible(sourceView_.get());
 
     // List box — only when there is more than one definition.
@@ -141,13 +141,15 @@ void PeekDefinitionDialog::resized()
 // Key handling
 // ---------------------------------------------------------------------------
 
-void PeekDefinitionDialog::keyPressed(const juce::KeyPress& key)
+bool PeekDefinitionDialog::keyPressed(const juce::KeyPress& key)
 {
     if (key == juce::KeyPress::escapeKey)
     {
         if (auto* dw = findParentComponentOfClass<juce::DialogWindow>())
             dw->exitModalState(0);
+        return true;
     }
+    return false;
 }
 
 // ---------------------------------------------------------------------------
