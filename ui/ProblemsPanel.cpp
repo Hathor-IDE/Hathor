@@ -117,6 +117,8 @@ ProblemsPanel::ProblemsPanel(hathor::control::DiagnosticRegistry* registry)
     rebuildRows();
 }
 
+ProblemsPanel::~ProblemsPanel() = default;
+
 // ---------------------------------------------------------------------------
 // Visibility
 // ---------------------------------------------------------------------------

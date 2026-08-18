@@ -202,6 +202,11 @@ bool SymbolSearchPanel::keyPressed(const juce::KeyPress& key)
     return false;
 }
 
+int SymbolSearchPanel::getNumRows()
+{
+    return static_cast<int>(displayResults_.size());
+}
+
 void SymbolSearchPanel::paintListBoxItem(int row, juce::Graphics& g,
                                           int width, int height, bool isSelected)
 {

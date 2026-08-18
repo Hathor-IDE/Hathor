@@ -186,7 +186,15 @@ All 34 tests that fail in `-j N` pass with `-j 1`. These are **parallel resource
 
 ## Verdict
 
-The app is **substantially complete but has critical blockers**:
+> **Current (at `HEAD` `05cad58`)**: the "5 critical blockers" below are all historical —
+> each is resolved. The app **now builds and launches** (two launch-crash symbols were fixed
+> in this review — `SymbolSearchPanel::getNumRows` and `ProblemsPanel` dtor). What remains is
+> **Phase 5** (erase remaining stubs: go-to-line, peek-definition, `.ck` explorer eval,
+> ChatSidebar close, `ci_` wiring) and **Phase 6** (ship a signed, notarized universal
+> x86_64+arm64 DMG, with the critical backend-wiring check that `hathor-audio-worker` and
+> `hathor-mcp` are actually bundled next to the executable). See the Phased Roadmap.
+
+The app was **substantially complete but had critical blockers** (all since resolved):
 
 1. **Release/Debug `hathor-ui` build is broken** — two unused private fields in `EditorGroup.hpp` cause `-Werror` compilation failure. The GUI app cannot be built at all.
 2. **Integration audio test fails** — committed sample WAV files are empty (0-byte data chunks), causing zero samples to load.
@@ -679,3 +687,131 @@ commit) runs end-to-end through MCP without stubs.
   slot ops) through `ci_` for a single control path, or remove the field entirely. Keep the
   suppression only if a concrete wiring plan lands in the next phase.
 - **Effort**: 1–2 hrs.
+
+> **Phase 4 verified status** (at `HEAD` `05cad58`): 4.1 session persistence ✅, 4.2 LSP
+> telemetry ✅ (`HathorTab.cpp:1595`), 4.3 multi-leaf split ✅ (`SplitterTree`), 4.4 ChucK
+> settings ✅ (`buildChuckSection()`, `vmFlags` persisted), 4.5 Windows **skipped by choice**
+> (correct call — Intel/Silicon Mac is the target), 4.6 Editor↔control **still masked**
+> (`ci_` remains `[[maybe_unused]]` + `juce::ignoreUnused`, `EditorGroup.cpp:248`). Only
+> **4.6 carries into Phase 5**.
+
+---
+
+### Phase 5 — Remove Every Stub / Masked Path ⚠️ **REMAINING**
+
+> **Goal**: eliminate all no-op, placeholder, or `(void)`-suppressed paths so there is no
+> silent gap between what the UI shows and what actually runs. Verified inventory below.
+
+**Subphase 5.1 — Finish the two concrete editor no-ops** *(small, parallelizable)*
+- `ui/EditorArea.cpp:1288` — "Go to line: not yet implemented". Implement a Go-To-Line
+  dialog (jump cursor to line N, scroll to visible).
+- `ui/EditorArea.cpp:2135` — "Peek definition not yet implemented". `peekDefinition()` is a
+  no-op status toast. Wire it to `HathorLspClient` textDocument/definition → small popup, or
+  explicitly remove the menu item if out of scope for beta.
+- **Effort**: 2–3 hrs.
+
+**Subphase 5.2 — Wire `.ck` file eval from Explorer**
+- `ui/ExplorerFileTypes.hpp:65` — `SongChuck` is "recognized but eval not yet wired". Clicking
+  a `.ck` in the Explorer should open it in a tab (openFile handles it) **and** evaluate it
+  (`ckEval`) with one action, mirroring `.hathor`'s Ctrl+Enter behavior. Also fix
+  `ui/ExplorerTreeItems.cpp:200` where a managed-asset click is a silent no-op.
+- **Effort**: 2–3 hrs.
+
+**Subphase 5.3 — Implement ChatSidebar tab close**
+- `ui/ChatSidebar.cpp:281` — `closeTab()` is an empty function ("tabs are not closable yet").
+  Implement closing an AI chat thread: remove the tab, tear down its `AcpAgentSession`,
+  release its worker/session state, and persist the removal. This is a **state-leak risk**
+  (threads accumulate and never release).
+- **Effort**: 2–3 hrs.
+
+**Subphase 5.4 — Editor ↔ Control wiring (Phase 4.6 carry-over)**
+- Decide `EditorGroup::ci_`: wire editor save/eval/slot-ops through the `ControlInterface`
+  for a single code path, **or** delete the field and the `juce::ignoreUnused` suppression.
+  Do not ship a permanently dead reference.
+- **Effort**: 1–2 hrs.
+
+**Subphase 5.5 — Re-run the stub survey to zero**
+- Re-run the `TODO/stub/placeholder/no-op/inert/not-yet` grep across `ui/`, `app/`, `control/`
+  and confirm every remaining hit is either a documented design no-op or a `#error` platform
+  gate (Windows). Produce a clean audit line proving no silent gap remains.
+- **Effort**: 1 hr.
+
+**Phase 5 exit criteria**: no status toast or empty handler for a reachable action; every
+panel/editor action that advertises behavior actually performs it; `ci_` is either wired or gone.
+
+---
+
+### Phase 6 — Ship Beta on macOS Intel + Apple Silicon ⚠️ **REMAINING**
+
+> **Goal**: a distributable, code-signed, notarized universal `.app` + `.dmg` that runs on
+> both an Intel Mac (current dev machine) and Apple Silicon. **Beyond** the 5 items flagged
+> earlier, this phase front-loads the **backend/frontend wiring and "hydration" checks** you
+> hit in Rust/TS apps — verifying at runtime that every component the UI talks to is actually
+> reachable once packaged. **The app currently launches (crash fixed — see below), but it is
+> x86_64-only, unsigned, and bundles nothing but the executable.**
+
+**Critical fix already applied (must be committed)**: the Release app **crashed on launch**
+with `dyld: symbol not found` — `SymbolSearchPanel::getNumRows()` was declared but never
+defined, and `ProblemsPanel`'s destructor was missing (so its vtable was never emitted). Both
+are fixed in `ui/SymbolSearchPanel.cpp` + `ui/ProblemsPanel.cpp`; the app now launches. **Commit
+these two files and the staged `tests/test_arc.cpp` before anything else.**
+
+**Subphase 6.1 — Universal binary (arm64 + x86_64)**
+- Current binary is `Mach-O 64-bit executable x86_64` only (`build/ui/hathor-ui_artefacts/Release/HathorUI.app`).
+- Add an `arm64` build. On an Intel Mac, cross-compile with the arm64 SDK slice in
+  `CMAKE_OSX_ARCHITECTURES="arm64;x86_64"` (or build on a Silicon machine / CI with arm64).
+- Confirm JUCE, libchuck, and all static deps compile/link as universal (`lipo -archs` on the
+  final binary should show `x86_64 arm64`).
+- **Effort**: 2–4 hrs + a Silicon machine or CI runner to validate arm64 actually runs.
+
+**Subphase 6.2 — Proper app bundle (Info.plist, icon, version)**
+- `HathorUI.app/Contents/Info.plist` still has placeholder `com.yourcompany.hathor-ui`, no
+  icon (`CFBundleIconFile` empty), no copyright, version `0.2.0`.
+- Set a real bundle ID, `CFBundleIconFile` (a valid `.icns`), `NSHumanReadableCopyright`,
+  `CFBundleShortVersionString`/`CFBundleVersion`, and `LSMinimumSystemVersion`.
+- **Effort**: 1–2 hrs.
+
+**Subphase 6.3 — Backend wiring check (the "frontend wouldn't hydrate" class)** ⚠️ *highest risk*
+- **The app resolves its subprocesses as siblings of the executable**:
+  - `hathor-audio-worker` at `HathorApplication.cpp:146` (`.getSiblingFile("hathor-audio-worker")`)
+  - `hathor-mcp` at `HathorApplication.cpp:167` (`.getSiblingFile("hathor-mcp")`)
+- In a `.app` bundle the executable lives at `Contents/MacOS/`; unless `hathor-audio-worker`
+  and `hathor-mcp` are copied next to it inside the bundle, they will **not be found** after
+  packaging. The worker failure is *non-fatal by design* (`HathorApplication.cpp:154` logs and
+  continues), and a missing `hathor-mcp` silently means "tool calls won't be forwarded"
+  (`HathorApplication.cpp:171`) — **exactly the silent back-end-not-wired failure you're
+  guarding against**. This is a latent bug: it works in `build/` (binaries are siblings) but
+  will break in the DMG.
+- **Fix**: add a CMake bundle step that copies `hathor-audio-worker` and `hathor-mcp` into
+  `Contents/MacOS/`, and make path resolution check the bundle-relative location first
+  (`File::getSpecialLocation(currentExecutableFile).getSiblingFile(...)` already matches a
+  bundled-into-MacOS layout — verify the copy lands there). Add a startup check that fails
+  loudly (not silently) if the worker is absent, so the beta can't ship "working" while audio
+  subprocesses are missing.
+- **Effort**: 3–4 hrs.
+
+**Subphase 6.4 — Runtime "hydration" smoke test (verify UI↔backend wiring end-to-end)**
+- Launch the packaged app and drive a scripted check that each UI panel reaches its backend:
+  - Ctrl+Enter on a `.hathor` pattern → pattern actually plays (audio engine reachable).
+  - Ctrl+Enter on a `.ck` tab → diagnostics + audio return (worker reachable).
+  - Chat send → `hathor-mcp` tool call round-trips (MCP reachable).
+  - Git panel → `git status` returns; Terminal → shell spawns; Problems → diagnostics populate.
+- Treat each as a pass/fail, mirroring how you'd verify a hydrated React/TS frontend after a
+  fresh build — a UI that renders but can't reach its worker is the same class of bug.
+- **Effort**: 2–3 hrs (scriptable via the app's own control surface + logs).
+
+**Subphase 6.5 — Code sign + notarize**
+- Sign the universal `.app` with a Developer ID cert (`codesign --deep --sign "Developer ID
+  Application: ..."`), including the bundled `hathor-audio-worker` and `hathor-mcp`.
+- Submit to Apple notary (`xcrun notarytool submit`) and staple
+  (`xcrun stapler staple`). Without this, Gatekeeper will block/quarantine the beta.
+- **Effort**: 2–4 hrs (needs a paid Apple Developer account).
+
+**Subphase 6.6 — Package the DMG**
+- Wrap the signed/notarized `.app` in a `.dmg` (`hdiutil create` or `create-dmg`), verify the
+  DMG passes `spctl --assess --type open` and mounts/launches cleanly.
+- **Effort**: 1–2 hrs.
+
+**Phase 6 exit criteria**: a universal (x86_64+arm64) `Hathor.dmg` that passes
+`spctl --assess`; launches on both Intel and Silicon; and passes the full 6.4 runtime smoke
+test (every panel reaches its worker/MCP/audio backend) with **no silent no-op**.
