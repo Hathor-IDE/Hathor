@@ -202,29 +202,35 @@ What IS working: the full pattern engine (Rational, all combinators, mini-notati
 
 ### Real Gaps (Blockers)
 
-| # | Gap | Impact | Root Location |
-|---|-----|--------|---------------|
-| 1 | **Broken Release/Debug `hathor-ui` build** | GUI app cannot compile at all | `ui/EditorGroup.hpp:215,223` — unused private fields `editorErgonomicsEnabled_` and `ci_` |
-| 2 | **Empty sample WAV files** | `integration/audio` test fails; samples/bd/0.wav and samples/sn/0.wav have 0-byte data chunks | `samples/bd/0.wav`, `samples/sn/0.wav` |
-| 3 | **AI-5 async ChucK compile is stubbed** | `compile_chuck` / `render_chuck` MCP paths non-functional (shred never published to worker) | `app/AudioEngine.hpp:493-507` — `startAsyncCkCompile` returns 0, callback never fires |
-| 4 | **Phase 2 PBT tests P2 and P3 are stubs** | `HathorFile` round-trip and tokeniser bijection properties untested | `tests-ui/test_hathor_file_parser.cpp:19`, `tests-ui/test_mini_tokeniser.cpp:21` |
-| 5 | **Search and AIAgent ribbon panels not wired** | Clicking Search or AI Agent in the activity ribbon does nothing | `ui/MainWindow.cpp:271` |
-| 6 | **Missing `test_arc.cpp`** | Phase 1 test coverage gap for Arc intersect/contains | `tests/` directory — file absent |
-| 7 | **53 source files lack copyright headers** | Phase 1 R20.6 violation; legal/compliance gap | Scattered across `ui/`, `control/`, `app/` newer files |
+**None remaining.** All seven items from the original audit are resolved (verified in this
+review against `HEAD` at `a10547b`): the `hathor-ui` build blocker (fixed via `(void)ci_;`),
+empty sample WAVs (regenerated, non-empty), AI-5 async ChucK compile (real via
+`ChuckCkJobService`), P2/P3 PBT stubs (real property tests), Search/AIAgent wiring
+(`MainWindow.cpp:274,290`), `test_arc.cpp` (added — **staged, commit it**), and copyright
+headers (53 → 6, all non-production `spikes/`/debug-test files).
 
-### Potential Gaps / Improvements (Non-blocking)
+### The Remaining Gap (largest, actionable now)
 
 | # | Gap | Impact | Root Location |
 |---|-----|--------|---------------|
-| 1 | **MCP server exposes only 7 tools** | AI agent cannot access introspection/render/workflow commands (intentional per Phase 2 spec — deferred to Phase 3) | `ui/mcp/HathorMcpServer.cpp` |
-| 2 | **Tab save on close is stubbed** | Save button in dirty-tab-close dialog does nothing | `ui/EditorGroup.cpp:381` |
-| 3 | **Multi-leaf split not implemented** | Editor split surface only supports single split, not arbitrary tree of splits | `ui/EditorSplitSurface.cpp:267` |
-| 4 | **Workspace/session persistence incomplete** | Only window bounds + settings persisted; open tabs, cursor positions, pattern state not saved | `MainWindow.cpp`, `HathorFileParser` |
-| 5 | **LSP → telemetry TODO** | Compile-result callback not wired to telemetry system | `ui/HathorTab.cpp:1793` |
-| 6 | **Windows TerminalProcess stubbed** | Terminal panel uses CreateProcess + anonymous pipes on Windows but it's stubbed | `ui/TerminalProcess.hpp:33` |
-| 7 | **ChucK Settings section inert** | Settings panel shows a placeholder label instead of ChucK controls | `ui/SettingsComponent.hpp:18` |
-| 8 | **EditorGroup `ci_` field unused** | `ControlInterface& ci_` stored but never called — suggests incomplete editor↔control wiring (beyond just the unused-field compile error) | `ui/EditorGroup.hpp:223`, `EditorGroup.cpp:219` |
-| 9 | **README CMake targets incomplete** | Table lists only 3 of 6+ actual targets; doesn't mention `hathor-ui`, `hathor-mcp`, `hathor-ui-tests` | `README.md` lines 80–84 |
+| 1 | **MCP server exposes only 7 of 44 tools** | AI agent can only set patterns, adjust BPM/gain, play/stop, get context, and edit songs — **cannot** inspect the project, list samples/instruments, read diagnostics, compile/audition ChucK, render assets, or orchestrate workflows | `ui/mcp/HathorMcpServer.cpp` (`makeToolsList` + `buildHathorCommand`) |
+
+This is the single highest-value remaining work: the `ControlInterface` already implements
+all 44 commands (verified), the async ChucK backend is real, and the agentic `AgenticWorkflow`
+(AI-10) is tested — only the MCP surface needs exposing. See **Phase 3** for the breakdown.
+
+### Potential Gaps / Improvements (Non-blocking, deferred)
+
+| # | Gap | Impact | Root Location |
+|---|-----|--------|---------------|
+| 1 | **Workspace/session persistence incomplete** | Only window bounds + settings persisted; open tabs, cursor positions, pattern state not saved | `MainWindow.cpp`, `HathorFileParser` |
+| 2 | **Multi-leaf split not implemented** | Editor split surface only supports single split, not arbitrary tree of splits | `ui/EditorSplitSurface.cpp:267` |
+| 3 | **LSP → telemetry TODO** | Compile-result callback not wired to telemetry system | `ui/HathorTab.cpp:1793` |
+| 4 | **Windows TerminalProcess stubbed** | Terminal panel uses CreateProcess + anonymous pipes on Windows but it's stubbed | `ui/TerminalProcess.hpp:33` |
+| 5 | **ChucK Settings section inert** | Settings panel shows a placeholder label instead of ChucK controls | `ui/SettingsComponent.hpp:18` |
+| 6 | **EditorGroup `ci_` field suppressed** | `ControlInterface& ci_` stored but only `(void)`-suppressed — either wire editor actions through it or remove the field | `ui/EditorGroup.hpp:222`, `EditorGroup.cpp:225` |
+| 7 | **Windows `GhostLlmClient` / `HathorLspClient` `#error`** | Windows builds intentionally hard-stop (compile error) | `ui/GhostLlmClient.hpp:15`, `ui/HathorLspClient.cpp:24` |
+| 8 | **6 non-production files lack copyright headers** | Only `spikes/b4-k0-6/*` and `tests/test_k8*_debug.cpp` — non-blocking | `spikes/`, `tests/test_k8*_debug.cpp` |
 
 ---
 
@@ -536,62 +542,140 @@ Searched entire `ui/`, `control/`, `app/` for `TODO`, `FIXME`, `stub`, `placehol
 
 ---
 
-## Updated Phased Remediation Roadmap
+## Updated Phased Remediation Roadmap (verified against repo, 30 commits later)
 
-### Phase 0 — Unblock the Build (1 task, parallelizable)
+> **Status as of last commit (`a10547b`)**: Phases 0–2 are **complete**. Each item below
+> was re-verified against source in this review. Only **Phase 3 (MCP expansion)** and
+> **Phase 4 (deferred polish)** remain. The build-blocker, test, wiring, save, and
+> copyright-header gaps from the original audit are all resolved.
 
-**Agent 0.1: Fix Compiler Warning Blockers** *(can parallelize with Phase 1)*
-- Remove or suppress unused private fields in `ui/EditorGroup.hpp:215,223` (`editorErgonomicsEnabled_`, `ci_`)
-- This unblocks ALL Release and Debug `hathor-ui` builds
-- **Effort**: 5 min. **Files**: `ui/EditorGroup.hpp`, `ui/EditorGroup.cpp`
+### Phase 0 — Unblock the Build ✅ **DONE**
+- `ui/EditorGroup.hpp:215` `editorErgonomicsEnabled_` **removed**; `ci_` retained but
+  suppressed via `(void)ci_;` at `ui/EditorGroup.cpp:225`. Release/Debug `hathor-ui` no longer
+  blocked by `-Werror,-Wunused-private-field`.
 
-### Phase 1 — Fix Failing Tests (2 tasks, all parallelizable)
+### Phase 1 — Fix Failing Tests ✅ **DONE**
+- `samples/bd/0.wav` and `samples/sn/0.wav` now contain real audio (10,628 / 7,100 bytes);
+  `integration/audio` + `integration/all` no longer fail from empty fixtures.
+- P2 (`test_hathor_file_parser.cpp` — P2/P2b/P2c round-trip property tests) and
+  P3 (`test_mini_tokeniser.cpp` — colour-kind bijection) are real, not stubs.
 
-**Agent 1.1: Fix Sample Bank Files** *(parallelizable with 1.2)*
-- Regenerate `samples/bd/0.wav` and `samples/sn/0.wav` with actual audio data (kick drum + snare samples, non-empty data chunks)
-- Verify `integration/audio` and `integration/all` tests pass
-- **Effort**: 15 min. **Files**: `samples/bd/0.wav`, `samples/sn/0.wav`
+### Phase 2 — Real Feature Gaps ✅ **DONE**
+- **AI-5 async ChucK compile**: implemented via JUCE-free `ChuckCkJobService`
+  (`startAsyncCkCompile` → `compileJobs_->startCompile` at `app/AudioEngine.cpp:1348`;
+  `queryCkJob` → `queryJob` at `:1378`; `cancelCkJob` → `cancelJob` at `:1403`, firing
+  `ck_cancel` through `AudioWorkerManager::cancelCkCompile()`). No-op `(void)result;`
+  callback path resolved.
+- **Search + AIAgent panels**: wired at `ui/MainWindow.cpp:274,290` (toggle-active logic).
+- **Tab save-on-close**: implemented at `ui/EditorGroup.cpp:365-395` (untitled → error path,
+  dirty buffer written to disk before close).
+- **Copyright headers**: 53 → **6** remaining, all non-production (`spikes/b4-k0-6/*`,
+  `tests/test_k8*_debug.cpp`). No production code needs headers.
+- **test_arc.cpp**: added (323 lines, `tests/test_arc.cpp`), **currently staged — commit it**.
+- **README CMake targets**: `hathor-ui`, `hathor-mcp`, `hathor-ui-tests` now documented
+  (`README.md:81-91`).
 
-**Agent 1.2: Implement Phase 2 PBT Tests P2 & P3** *(parallelizable with 1.1)*
-- Replace stub at `tests-ui/test_hathor_file_parser.cpp:19` with real property-based round-trip test
-- Replace stub at `tests-ui/test_mini_tokeniser.cpp:21` with real bijection test
-- **Effort**: 3–4 hrs. **Files**: `tests-ui/test_hathor_file_parser.cpp`, `tests-ui/test_mini_tokeniser.cpp`
+---
 
-### Phase 2 — Real Feature Gaps (6 tasks, 2 parallelizable groups)
+### Phase 3 — MCP Tool Expansion (7 → 44 tools) ⚠️ **REMAINING**
 
-**Group 2A — Implement AI-5 Async ChucK Compile** *(parallelizable internally)*
-- **Agent 2.1**: Implement `AudioEngine::startAsyncCkCompile()` — publish shred to worker via shared-memory ring (`app/AudioEngine.hpp:493`)
-- **Agent 2.2**: Implement `AudioEngine::queryCkJob()` — poll worker for compilation/job status (`app/AudioEngine.hpp:500`)
-- **Agent 2.3**: Implement `AudioEngine::cancelCkJob()` — signal worker to cancel compilation (`app/AudioEngine.hpp:504`)
-- Also fix the no-op callback at `control/ControlInterface.cpp:1117` — `(void)result;` must emit a response when compilation completes
+> **Verified gap**: `ui/mcp/HathorMcpServer.cpp` `makeToolsList()` + `buildHathorCommand()`
+> expose only **7 tools** (`set_pattern`, `bpm`, `play`, `stop`, `set_gain`, `get_context`,
+> `edit_song`). `control/ControlInterface.cpp` dispatches **44 commands** (verified via grep —
+> all 44 tokens present). **37 are unreachable from the AI agent**.
+>
+> **Architecture**: every tool = (1) a JSON schema pushed into `tools` in `makeToolsList()`,
+> and (2) a string branch in `buildHathorCommand()` returning the matching
+> `ControlInterface::dispatch()` command line. Each tool is an additive change to one file.
+> The compile/render commands now have a working async backend (Phase 2 done) so **no
+> ordering dependency remains** — subphases 3A–3F can proceed in any order and be worked in
+> parallel.
+>
+> **Suggested implementation recipe per tool**: add `json <name>; <name>["name"]="...";
+> ["description"]="..."; ["inputSchema"]=<schema>; tools.push_back(<name>);` then an
+> `if (toolName == "...") { <parse args>; return "<hathor-cmd> ..."; }` branch. Follow the
+> existing `bpm`/`set_gain` numeric-formatting style for arg marshalling. After each batch,
+> rebuild `hathor-mcp` and confirm the tool appears in `tools/list`.
 
-**Group 2B — Wire Missing UI + Save** *(all parallelizable)*
-- **Agent 2.4**: Wire Search panel and AIAgent panel in `MainWindow.cpp` (add missing `Panel::Search` and `Panel::AIAgent` handlers)
-- **Agent 2.5**: Implement tab save-on-close in `EditorGroup.cpp:381` — write buffer to file, then proceed with close
-- **Agent 2.6**: Add missing copyright headers to 53 source files across `ui/`, `control/`, `app/`
-- **Agent 2.7**: Implement `test_arc.cpp` for Phase 1 R19.1 compliance
+**Subphase 3A — Transport & basic slot control** *(6 tools, no deps)*
+- Tools: `slot-play`, `slot-stop`, `set-eq-preset`, `clear-pattern`, `list-patterns`, `list-samples`
+- Commands: `slot-play <slot>`, `slot-stop <slot>`, `set-eq-preset <preset>`, `clear-pattern [slot]`, `list-patterns`, `list-samples`
+- Schema needs: slot as string; preset as string. No-arg for the list commands.
+- Verify: set a pattern, `slot-play bd`, hear audio, `clear-pattern`, confirm empty.
+- **Effort**: 1–1.5 hrs.
 
-### Phase 3 — MCP Tool Expansion (1 task, large surface area)
+**Subphase 3B — Introspection / read tools** *(7 tools, no deps)*
+- Tools: `inspect_project`, `get_current_song`, `list_assets`, `list_samples`, `list_chuck_instruments`, `get_diagnostics`, `get_audio_status`
+- All map 1:1 to existing no-arg/one-arg dispatch commands; responses are JSON objects that
+  pass straight through. This unblocks the AI's ability to **see** project state (largest
+  single UX win for the agentic loop).
+- Verify: call `inspect_project` and `get_diagnostics` via MCP, confirm non-empty JSON.
+- **Effort**: 1–1.5 hrs.
 
-**Agent 3.1: Expand MCP tool surface from 7 → 40** *(not parallelizable — single file)*
-- Add the 33 missing MCP tools to `ui/mcp/HathorMcpServer.cpp` to match all `ControlInterface::dispatch()` commands:
-  - Introspection: `inspect_project`, `get_current_song`, `list_assets`, `list_samples`, `list_chuck_instruments`, `get_diagnostics`, `get_audio_status`, `list-patterns`, `list-samples`
-  - ChucK lifecycle: `create_chuck_session`, `get_chuck_session`, `compile_chuck`, `audition_chuck`, `stop_chuck`, `get_chuck_job`, `cancel_chuck_job`
-  - Render: `render_chuck`, `get_job_status`, `commit_rendered_asset`, `cancel_render_job`, `list_render_jobs`
-  - Agentic workflow: `workflow_start`, `workflow_cancel`, `workflow_status`, `workflow_approve`, `workflow_reject`, `workflow_plan`, `workflow_repair`, `workflow_replan`
-  - Working set: `working_set`, `resolve_reference`, `revert_change`, `clear_working_set`
-  - Changeset: `changeset_status`, `changeset_preview`, `changeset_accept`, `changeset_reject`, `changeset_undo`
-  - Transport: `slot-play`, `slot-stop`, `set-eq-preset`, `quit`, `index_project`
-- **Effort**: 8–12 hrs (schema definitions + handler routing for 33 tools)
-- **Dependency**: Must come AFTER Phase 2 Agent 2.1 (async ChucK compile) — the `compile_chuck`/`render_chuck` MCP tools depend on working async compile
+**Subphase 3C — ChucK lifecycle** *(6 tools, no deps — async backend already real)*
+- Tools: `create_chuck_session`, `get_chuck_session`, `compile_chuck`, `audition_chuck`, `stop_chuck`, `get_chuck_job`
+- `compile_chuck` → `startAsyncCkCompile` (now real); `get_chuck_job` → `queryCkJob`
+  (canonical `{ok, job_id, status, success, result.diagnostics, error}` schema). Include
+  `cancel_chuck_job` here for symmetry (see 3D).
+- Verify: `compile_chuck` a `.ck` snippet → `get_chuck_job` shows `success` → `audition_chuck` produces audio.
+- **Effort**: 2–3 hrs (async job polling contract needs care).
 
-### Phase 4 — Future Improvements (deferred, not blockers)
+**Subphase 3D — Render, asset commit & job management** *(6 tools, no deps)*
+- Tools: `render_chuck`, `get_job_status`, `list_render_jobs`, `cancel_render_job`, `commit_rendered_asset`, `cancel_chuck_job`
+- Round-trips through the existing `BakeOrchestrator`/`ChuckRenderWriter` (B8, now real-audio).
+- Verify: `render_chuck` produces a WAV via `get_job_status`, then `commit_rendered_asset`.
+- **Effort**: 2 hrs.
 
-- **Multi-leaf split**: Extend `EditorSplitSurface` to support arbitrary split trees
-- **Workspace/session persistence**: Save/restore open tabs, cursor positions, pattern state
-- **LSP → telemetry wiring**: Connect compile-result callback (`HathorTab.cpp:1793`)
-- **Windows TerminalProcess**: Implement `CreateProcess` + anonymous pipes for Windows
-- **ChucK Settings section**: Replace placeholder label in `SettingsComponent`
-- **Editor↔Control wiring**: Fully utilize or remove dead `EditorGroup::ci_` field
-- **Windows support**: Implement `GhostLlmClient` and `HathorLspClient` for Windows (currently `#error`)
-- **README fix**: Update CMake targets table to include `hathor-ui`, `hathor-mcp`, `hathor-ui-tests`
+**Subphase 3E — Agentic workflow orchestration** *(8 tools, no deps)*
+- Tools: `workflow_start`, `workflow_cancel`, `workflow_status`, `workflow_approve`, `workflow_reject`, `workflow_plan`, `workflow_repair`, `workflow_replan`
+- Backed by the internal `AgenticWorkflow` class (AI-10, tests pass). These make the
+  end-to-end AI loop (Workflow 3) reachable.
+- Verify: `workflow_plan` → `workflow_start` → `workflow_status` → `workflow_approve`.
+- **Effort**: 2–3 hrs.
+
+**Subphase 3F — Working set & changeset** *(11 tools, no deps)*
+- Tools (working set): `working_set`, `resolve_reference`, `revert_change`, `clear_working_set`
+- Tools (changeset): `changeset_status`, `changeset_preview`, `changeset_accept`, `changeset_reject`, `changeset_undo`
+- Plus: `index_project`, `ping`, `quit`.
+- Verify: stage an edit → `changeset_preview` → `changeset_accept` → `changeset_status` empty.
+- **Effort**: 2–3 hrs.
+
+**Phase 3 exit criteria**: `tools/list` returns 44 tools; `hathor-mcp` builds; the full
+agentic Workflow 3 (inspect → plan → modify → validate → audition → render → approve →
+commit) runs end-to-end through MCP without stubs.
+
+---
+
+### Phase 4 — Deferred Polish (actionable, non-blocking)
+
+**Subphase 4.1 — Workspace / session persistence** *(biggest user-facing gap)*
+- Persist open tabs, per-tab cursor position, and pattern/slot state alongside the existing
+  `windowBounds`/`agentExePath`/theme in `juce::PropertiesFile` (`MainWindow.cpp`).
+- Add save on quit + restore on launch; schema versioning.
+- **Effort**: 4–6 hrs.
+
+**Subphase 4.2 — LSP → telemetry wiring**
+- Connect the compile-result callback at `ui/HathorTab.cpp:1793` (currently a `TODO`) to the
+  telemetry/`DiagnosticRegistry` so LSP results surface in Problems panel + runtime metrics.
+- **Effort**: 1–2 hrs.
+
+**Subphase 4.3 — Multi-leaf editor split**
+- Extend `EditorSplitSurface.cpp:267` (`TODO: implement multi-leaf split`) to support
+  arbitrary split trees (recursive leaf splitting + drag-to-resize + tab drag-across-pane).
+- **Effort**: 4–8 hrs.
+
+**Subphase 4.4 — ChucK Settings controls**
+- Replace the inert label (`SettingsComponent.hpp:18`, `buildChuckPlaceholder()`) with real
+  controls: sample-rate, buffer-size, EQ preset, ChucK VM flags — wired to `AudioEngine`.
+- **Effort**: 2–4 hrs.
+
+**Subphase 4.5 — Windows support**
+- Implement `GhostLlmClient` and `HathorLspClient` for Windows (currently `#error` hard stops);
+  implement `TerminalProcess` `CreateProcess` + anonymous pipes (`TerminalProcess.hpp:33`).
+- **Effort**: 6–12 hrs. **Blocker for any Windows build** — do before claiming Windows support.
+
+**Subphase 4.6 — Editor ↔ Control wiring cleanup**
+- `EditorGroup::ci_` is now `(void)`-suppressed. Decide: wire editor actions (save, eval,
+  slot ops) through `ci_` for a single control path, or remove the field entirely. Keep the
+  suppression only if a concrete wiring plan lands in the next phase.
+- **Effort**: 1–2 hrs.
