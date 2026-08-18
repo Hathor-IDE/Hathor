@@ -30,6 +30,8 @@ endif()
 set(HATHOR_UI_VERSION       "0.3.0-beta")
 set(HATHOR_UI_BUILD_VERSION "1")
 
+set(HATHOR_UI_ICON_ICNS "${CMAKE_CURRENT_SOURCE_DIR}/resources/HathorAppIcon.icns")
+
 juce_add_gui_app(hathor-ui
     PRODUCT_NAME "HathorUI"
     VERSION      "${HATHOR_UI_VERSION}"
@@ -37,22 +39,37 @@ juce_add_gui_app(hathor-ui
     BUNDLE_ID    "com.hathor.HathorUI"
     COMPANY_NAME "Hathor Contributors"
     COMPANY_COPYRIGHT "Copyright (C) 2026 Hathor Contributors"
-    ICON_BIG "${CMAKE_SOURCE_DIR}/Hathor app icon.png"
 )
 
 # ---------------------------------------------------------------------------
-# Inject LSMinimumSystemVersion into the generated Info.plist (Phase 6.2)
+# Application icon (Phase 6.2)
 # ---------------------------------------------------------------------------
-# JUCE 8.0.4's juceaide plist generator does not emit LSMinimumSystemVersion.
-# The deployment target is pinned via CMAKE_OSX_DEPLOYMENT_TARGET in the
-# top-level CMakeLists.txt; here we reflect it in the bundle plist so that
-# the binary's LC_BUILD_VERSION and the plist value always agree.
+# The pre-built .icns (1024x1024 master) is shipped directly into the bundle's
+# Resources directory.  CFBundleIconFile is set in the plist below.
+add_custom_command(TARGET hathor-ui POST_BUILD
+    COMMAND "${CMAKE_COMMAND}" -E copy "${HATHOR_UI_ICON_ICNS}"
+        "$<TARGET_BUNDLE_DIR:hathor-ui>/Contents/Resources/HathorAppIcon.icns"
+    COMMENT "Copying HathorAppIcon.icns to bundle Resources"
+    VERBATIM)
+
+# ---------------------------------------------------------------------------
+# Inject LSMinimumSystemVersion + CFBundleIconFile into the generated
+# Info.plist (Phase 6.2).
+# ---------------------------------------------------------------------------
+# JUCE 8.0.4's juceaide plist generator does not emit LSMinimumSystemVersion,
+# and we bypass ICON_BIG to ship a pre-built .icns.  The deployment target is
+# pinned via CMAKE_OSX_DEPLOYMENT_TARGET in the top-level CMakeLists.txt; here
+# we reflect it in the bundle plist so that the binary's LC_BUILD_VERSION and
+# the plist value always agree.
 if(APPLE)
     add_custom_command(TARGET hathor-ui POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E env
             plutil -replace LSMinimumSystemVersion -string "${CMAKE_OSX_DEPLOYMENT_TARGET}"
             "$<TARGET_BUNDLE_DIR:hathor-ui>/Contents/Info.plist"
-        COMMENT "Adding LSMinimumSystemVersion=${CMAKE_OSX_DEPLOYMENT_TARGET} to Info.plist"
+        COMMAND ${CMAKE_COMMAND} -E env
+            plutil -replace CFBundleIconFile -string "HathorAppIcon.icns"
+            "$<TARGET_BUNDLE_DIR:hathor-ui>/Contents/Info.plist"
+        COMMENT "Patching Info.plist: LSMinimumSystemVersion + CFBundleIconFile"
         VERBATIM)
 endif()
 
