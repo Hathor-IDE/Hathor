@@ -60,9 +60,10 @@ target_sources(hathor-ui
          SliderPanel.cpp           # task 3.9
          AcpAgentSession.cpp           # task 4.2–4.5
          PermissionPromptComponent.cpp # task 4.4
-         ChatSidebar.cpp               # task 5.1 — B6 multi-thread + C2 reconnect
-         ChatThread.cpp                # B6: per-thread session + connection state
-         MessageHistoryView.cpp        # extracted from ChatSidebar (B6)
+          ChatSidebar.cpp               # task 5.1 — B6 multi-thread + C2 reconnect
+          ChatThread.cpp                # B6: per-thread session + connection state
+          MessageHistoryView.cpp        # extracted from ChatSidebar (B6)
+          ChatSessionState.cpp          # B6: JUCE-free chat thread persistence model
           SettingsComponent.cpp         # A2
           WorkspaceSession.cpp         # 20.7: JUCE-free workspace persistence model
          # Phase G — Petdex (D1): JUCE-free core + service glue

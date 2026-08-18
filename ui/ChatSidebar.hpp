@@ -55,6 +55,7 @@
 
 // Sibling UI components
 #include "AcpAgentSession.hpp"
+#include "ChatSessionState.hpp"
 #include "SliderPanel.hpp"
 #include "ChatThread.hpp"
 
@@ -148,14 +149,42 @@ public:
     void setMcpCommandHandler(AcpAgentSession::McpCommandHandlerFn handler);
 
     /**
-     * Restart all chat threads with a new agent executable path (A2).
-     * Stops all sessions, then starts a new session for each thread with
-     * the updated path. If agentExePath is empty, sessions are stopped
-     * without restarting.
-     */
+      * Restart all chat threads with a new agent executable path (A2).
+      * Stops all sessions, then starts a new session for each thread with
+      * the updated path. If agentExePath is empty, sessions are stopped
+      * without restarting.
+      */
     void restartAllThreads(const std::string& agentExePath,
                            const std::string& projectDir,
                            const std::string& hathorMcpPath);
+
+    /**
+     * Install the ApplicationProperties used for chat tab persistence.
+     * Must be called before restoreChatThreads() or saveChatState().
+     */
+    void setApplicationProperties(juce::ApplicationProperties* props) noexcept
+    {
+        appProperties_ = props;
+    }
+
+    /**
+     * Restore chat threads from persisted state.  Creates one thread per
+     * stored ChatThreadState entry.  Safe to call when no persisted state
+     * exists — creates no threads.
+     *
+     * @param agentExePath  Path to the agent executable.
+     * @param projectDir    Project directory for sessions.
+     * @param mcpPath       Path to hathor-mcp.
+     */
+    void restoreChatThreads(const std::string& agentExePath,
+                            const std::string& projectDir,
+                            const std::string& mcpPath);
+
+    /**
+     * Persist the current chat thread list (titles + active index).
+     * Called after tab close, tab add, or app shutdown.
+     */
+    void saveChatState() const;
 
     // -----------------------------------------------------------------------
     // SliderPanel access (for UITimer bidirectional sync)
@@ -199,6 +228,9 @@ private:
     /** Tab bar buttons — one per thread. */
     juce::OwnedArray<juce::TextButton> tabButtons_;
 
+    /** Close buttons — one per thread, parented to the corresponding tab button. */
+    juce::OwnedArray<juce::TextButton> tabCloseButtons_;
+
     /** Container component for the tab bar. */
     juce::Component tabBarArea_;
 
@@ -212,6 +244,9 @@ private:
 
     /** MCP command handler installed on each session (H0). */
     AcpAgentSession::McpCommandHandlerFn mcpCommandHandler_;
+
+    /** ApplicationProperties for chat tab persistence (B6). */
+    juce::ApplicationProperties* appProperties_ = nullptr;
 
     // SliderPanel (shared across all threads — BPM/gain are global)
     std::unique_ptr<SliderPanel> sliderPanel_;

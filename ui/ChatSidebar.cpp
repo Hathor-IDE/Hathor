@@ -227,6 +227,7 @@ void ChatSidebar::buildTabButtons()
     for (auto* btn : tabButtons_)
         tabBarArea_.removeChildComponent(btn);
     tabButtons_.clear();
+    tabCloseButtons_.clear();
 
     // Create a tab button for each thread.
     for (int i = 0; i < static_cast<int>(threads_.size()); ++i)
@@ -247,6 +248,19 @@ void ChatSidebar::buildTabButtons()
 
         tabButtons_.add(btn);
         tabBarArea_.addAndMakeVisible(btn);
+
+        // Close button — small × on the right edge of the tab button.
+        auto* closeBtn = new juce::TextButton();
+        closeBtn->setButtonText("\xef\x80\x8d");  // ×
+        closeBtn->setTooltip("Close tab");
+        closeBtn->setButtonTextColour(juce::Colours::white);
+        closeBtn->onClick = [this, idx]()
+        {
+            closeTab(idx);
+        };
+
+        tabCloseButtons_.add(closeBtn);
+        btn->addAndMakeVisible(closeBtn);
     }
 
     updatingTabs_ = true;
@@ -258,12 +272,26 @@ void ChatSidebar::updateTabButtons()
 {
     // Layout all tab buttons at their natural width.
     constexpr int kTabBtnW = 120;
+    constexpr int kCloseBtnW = 16;
     int x = tabScrollOffset_;
     int idx = 0;
     for (auto* btn : tabButtons_)
     {
         btn->setBounds(x, 2, kTabBtnW, kTabAreaH - 6);
         btn->setToggleState(activeThreadIndex_ == idx, juce::dontSendNotification);
+
+        // Position the close button inside the tab button's top-right corner.
+        if (idx < static_cast<int>(tabCloseButtons_.size()))
+        {
+            auto* closeBtn = tabCloseButtons_[idx];
+            if (closeBtn)
+            {
+                closeBtn->setBounds(kTabBtnW - kCloseBtnW - 2,
+                                   2, kCloseBtnW, kTabAreaH - 10);
+                closeBtn->toFront(true);
+            }
+        }
+
         x += kTabBtnW;
         ++idx;
     }
@@ -276,10 +304,86 @@ void ChatSidebar::onTabClicked(int index)
     setActiveThread(index);
 }
 
-void ChatSidebar::closeTab(int /*index*/)
+void ChatSidebar::closeTab(int index)
 {
-    // Not implemented for v1 — tabs are not closable yet (C2 §8: switching
-    // away does NOT erase state; closing is a separate feature).
+    // Guard: out-of-range index is a safe no-op (repeated close safety).
+    if (index < 0 || index >= static_cast<int>(threads_.size()))
+        return;
+
+    // -----------------------------------------------------------------------
+    // 1. Tear down the ACP session (C2 §11 — clean teardown, no lingering
+    //    callbacks).  stop() kills the subprocess, joins sender/reader/MCP
+    //    threads, closes the Unix socket, and clears all queues.
+    //    SafePointer on the ChatThread callbacks makes any already-queued
+    //    callAsync lambdas safe no-ops.
+    // -----------------------------------------------------------------------
+    AcpAgentSession* session = sessions_[index];
+    if (session != nullptr)
+    {
+        session->stop();
+    }
+
+    // -----------------------------------------------------------------------
+    // 2. Hide and remove the ChatThread from the component hierarchy.
+    // -----------------------------------------------------------------------
+    ChatThread* thread = threads_[index];
+    if (thread != nullptr)
+    {
+        thread->setVisible(false);
+        removeChildComponent(thread);
+    }
+
+    // -----------------------------------------------------------------------
+    // 3. Remove the thread and its session from the parallel arrays.
+    //    The OwnedArray destructors handle full cleanup of the ChatThread
+    //    and AcpAgentSession objects.
+    // -----------------------------------------------------------------------
+    threads_.remove(index);
+    sessions_.remove(index);
+
+    // -----------------------------------------------------------------------
+    // 4. Update active-tab state.
+    //    If we closed the active tab, switch to a neighbouring one.
+    //    If we closed a non-active tab, shift the active index down by one.
+    // -----------------------------------------------------------------------
+    if (activeThreadIndex_ == index)
+    {
+        if (!threads_.empty())
+        {
+            // Prefer the tab to the left; if that was the last tab, pick 0.
+            activeThreadIndex_ = std::min(index,
+                                          static_cast<int>(threads_.size()) - 1);
+            if (auto* newThread = threads_[activeThreadIndex_])
+            {
+                newThread->setVisible(true);
+                newThread->toFront(true);
+                newThread->resized();
+            }
+        }
+        else
+        {
+            activeThreadIndex_ = -1;
+        }
+    }
+    else if (activeThreadIndex_ > index)
+    {
+        --activeThreadIndex_;
+    }
+
+    // -----------------------------------------------------------------------
+    // 5. Rebuild tab buttons (removes the close button for the closed tab).
+    // -----------------------------------------------------------------------
+    buildTabButtons();
+
+    // -----------------------------------------------------------------------
+    // 6. Relayout content.
+    // -----------------------------------------------------------------------
+    resized();
+
+    // -----------------------------------------------------------------------
+    // 7. Persist the updated thread list (B6 — closed tab must not reappear).
+    // -----------------------------------------------------------------------
+    saveChatState();
 }
 
 // ---------------------------------------------------------------------------
@@ -293,21 +397,35 @@ void ChatSidebar::resized()
     // Tab bar at top (B6).
     tabBarArea_.setBounds(b.removeFromTop(kTabAreaH));
 
-    // Layout tab buttons within the tab bar area.
-    // Simple horizontal layout — scroll buttons shown if overflow.
-    constexpr int kTabBtnW = 120;
-    constexpr int kScrollBtnW = 24;
+     // Layout tab buttons within the tab bar area.
+     // Simple horizontal layout — scroll buttons shown if overflow.
+     constexpr int kTabBtnW = 120;
+     constexpr int kCloseBtnW = 16;
+     constexpr int kScrollBtnW = 24;
 
-    auto tabArea = tabBarArea_.getLocalBounds().reduced(2, 2);
-    int x = tabScrollOffset_;
-    int idx = 0;
-    for (auto* btn : tabButtons_)
-    {
-        btn->setBounds(x, tabArea.getY(), kTabBtnW, tabArea.getHeight() - 2);
-        btn->setToggleState(activeThreadIndex_ == idx, juce::dontSendNotification);
-        x += kTabBtnW;
-        ++idx;
-    }
+     auto tabArea = tabBarArea_.getLocalBounds().reduced(2, 2);
+     int x = tabScrollOffset_;
+     int idx = 0;
+     for (auto* btn : tabButtons_)
+     {
+         btn->setBounds(x, tabArea.getY(), kTabBtnW, tabArea.getHeight() - 2);
+         btn->setToggleState(activeThreadIndex_ == idx, juce::dontSendNotification);
+
+         // Position close button inside the tab button.
+         if (idx < static_cast<int>(tabCloseButtons_.size()))
+         {
+             auto* closeBtn = tabCloseButtons_[idx];
+             if (closeBtn)
+             {
+                 closeBtn->setBounds(kTabBtnW - kCloseBtnW - 2,
+                                    2, kCloseBtnW, tabArea.getHeight() - 6);
+                 closeBtn->toFront(true);
+             }
+         }
+
+         x += kTabBtnW;
+         ++idx;
+     }
 
     // Scroll buttons — shown if total tab width exceeds viewport.
     const int totalTabWidth = static_cast<int>(tabButtons_.size()) * kTabBtnW;
@@ -358,12 +476,95 @@ void ChatSidebar::paint(juce::Graphics& g)
     g.setColour(palette.surfaceHighest);
     g.drawHorizontalLine(kTabAreaH, 0.0f, static_cast<float>(getWidth()));
 
-    // Separator above slider panel.
-    const int sepY = getHeight() - kSliderH - 1;
-    if (sepY > 0)
+     // Separator above slider panel.
+     const int sepY = getHeight() - kSliderH - 1;
+     if (sepY > 0)
+     {
+         g.drawHorizontalLine(sepY, 0.0f, static_cast<float>(getWidth()));
+     }
+}
+
+// ---------------------------------------------------------------------------
+// Chat thread persistence (B6)
+// ---------------------------------------------------------------------------
+
+void ChatSidebar::saveChatState() const
+{
+    if (appProperties_ == nullptr)
+        return;
+
+    ChatSessionState state;
+    state.schemaVersion = ChatSessionState::kSchemaVersion;
+    state.activeIndex   = activeThreadIndex_;
+
+    for (const auto* thread : threads_)
     {
-        g.drawHorizontalLine(sepY, 0.0f, static_cast<float>(getWidth()));
+        if (thread == nullptr)
+            continue;
+
+        ChatThreadState ts;
+        ts.title = thread->tabTitle().toStdString();
+        state.threads.push_back(std::move(ts));
     }
+
+    if (auto* props = appProperties_->getUserSettings())
+    {
+        props->setValue("chatThreadsData",
+                        juce::String(state.toJson()));
+        props->saveIfNeeded();
+    }
+}
+
+void ChatSidebar::restoreChatThreads(const std::string& agentExePath,
+                                     const std::string& projectDir,
+                                     const std::string& mcpPath)
+{
+    if (appProperties_ == nullptr)
+        return;
+
+    const auto* props = appProperties_->getUserSettings();
+    if (props == nullptr)
+        return;
+
+    const juce::String json = props->getValue("chatThreadsData");
+    if (json.isEmpty())
+        return;
+
+    auto state = ChatSessionState::fromJson(json.toStdString());
+    if (!state.has_value())
+        return;
+
+    // Guard against version mismatch — fail safe (no restore).
+    if (state->schemaVersion != ChatSessionState::kSchemaVersion)
+        return;
+
+    if (state->threads.empty())
+        return;
+
+    // Restore each thread.  addThread() creates a new AcpAgentSession per
+    // tab (B6 decision #3), starts it, and switches to it.
+    for (const auto& ts : state->threads)
+    {
+        const int idx = addThread(agentExePath, projectDir, mcpPath);
+        if (idx >= 0 && idx < static_cast<int>(threads_.size()))
+        {
+            if (auto* t = threads_[idx])
+                t->setTabTitle(juce::String(ts.title));
+        }
+    }
+
+    // Restore active index (clamped to valid range).
+    if (state->activeIndex >= 0 &&
+        state->activeIndex < static_cast<int>(threads_.size()))
+    {
+        setActiveThread(state->activeIndex);
+    }
+
+    // Rebuild tab buttons so restored titles are reflected.
+    buildTabButtons();
+
+    // Persist the restored list so the schema version key is current.
+    saveChatState();
 }
 
 } // namespace hathor::ui

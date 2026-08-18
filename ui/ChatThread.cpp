@@ -130,30 +130,43 @@ void ChatThread::setSession(AcpAgentSession& session,
     // These callbacks are bound to THIS ChatThread instance — when the
     // session fires onAgentDisconnected, it calls THIS thread's onDisconnected,
     // which updates THIS thread's reconnectBanner_, not any other thread's.
+    //
+    // SafePointer guards against use-after-free: when a tab is closed,
+    // session->stop() joins all worker threads, but any callback already
+    // queued via MessageManager::callAsync may still be pending.  SafePointer
+    // becomes null when the ChatThread component is destroyed, so the
+    // callback becomes a safe no-op instead of targeting a freed object.
 
-    session_->setOnError([this](std::string reason)
+    juce::Component::SafePointer<ChatThread> safeThread(this);
+
+    session_->setOnError([safeThread](std::string reason)
     {
-        onError(reason);
+        if (safeThread)
+            safeThread->onError(reason);
     });
 
-    session_->setOnAgentDisconnected([this]()
+    session_->setOnAgentDisconnected([safeThread]()
     {
-        onDisconnected();
+        if (safeThread)
+            safeThread->onDisconnected();
     });
 
-    session_->setOnAgentMessageChunk([this](std::string text)
+    session_->setOnAgentMessageChunk([safeThread](std::string text)
     {
-        onAgentMessageChunk(text);
+        if (safeThread)
+            safeThread->onAgentMessageChunk(text);
     });
 
-    session_->setOnToolCallUpdate([this](nlohmann::json update)
+    session_->setOnToolCallUpdate([safeThread](nlohmann::json update)
     {
-        onToolCallUpdate(std::move(update));
+        if (safeThread)
+            safeThread->onToolCallUpdate(std::move(update));
     });
 
-    session_->setOnPermissionRequest([this](int requestId, nlohmann::json options)
+    session_->setOnPermissionRequest([safeThread](int requestId, nlohmann::json options)
     {
-        onPermissionRequest(requestId, std::move(options));
+        if (safeThread)
+            safeThread->onPermissionRequest(requestId, std::move(options));
     });
 }
 

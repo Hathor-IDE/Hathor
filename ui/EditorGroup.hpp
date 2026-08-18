@@ -194,6 +194,39 @@ public:
     // -----------------------------------------------------------------------
     void handleKeyPress(const juce::KeyPress& key);
 
+    // -----------------------------------------------------------------------
+    // Eval helpers (Req 23.1–23.7)
+    // -----------------------------------------------------------------------
+    // Mini-notation eval routes through ControlInterface::enqueueSetPattern()
+    // — the same canonical path used by EditorArea and the console/MCP.
+    // .ck eval routes through AudioEngine::ckEval() — the canonical .ck
+    // control implementation (no equivalent ControlInterface command exists).
+    // -----------------------------------------------------------------------
+
+    /**
+     * Dispatch `set-pattern <slotName> <text>` on the worker thread (Req 23.7).
+     *
+     * @param tab      The source tab (must outlive the lambda).
+     * @param slotName AudioEngine slot name string (e.g. "d0").
+     * @param text     Mini-notation text to compile.
+     */
+    void evalOnWorkerThread(HathorTab* tab,
+                            const juce::String& slotName,
+                            const juce::String& text);
+
+    /**
+     * Evaluate ChucK source for a .ck tab via AudioEngine::ckEval().
+     *
+     * @param tab   The .ck source tab.
+     * @param code  Full ChucK source code.
+     */
+    void evalCkOnWorkerThread(HathorTab* tab, const juce::String& code);
+
+    /**
+     * Show a status-bar message for a few seconds, then clear it.
+     */
+    void showStatus(const juce::String& msg);
+
     /** Enable editor ergonomics on newly created tabs. */
     void setEditorErgonomicsEnabled(bool enabled) noexcept;
 
@@ -243,7 +276,7 @@ private:
 
     // References (not owned)
     AudioEngine& audio_;
-    [[maybe_unused]] hathor::control::ControlInterface& ci_;
+    hathor::control::ControlInterface& ci_;
 
     // LSP / Ghost clients (non-owning)
     class HathorLspClient* lspClient_{ nullptr };

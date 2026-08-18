@@ -205,9 +205,12 @@ MainWindow::MainWindow(AudioEngine& audio,
                  });
          });
 
-     // Start the first chat thread if a path was provided (Req 32.1, B6).
+     // B6: Restore persisted chat threads (if any) so closed tabs are not
+     // resurrected.  Falls back to a single thread when no persisted state
+     // exists (preserving the original startup behaviour).
+     chatSidebar_->setApplicationProperties(&appProperties_);
      if (!agentExePath.empty())
-         chatSidebar_->addThread(agentExePath, projectDir, hathorMcpPath);
+         chatSidebar_->restoreChatThreads(agentExePath, projectDir, hathorMcpPath);
 
     // -----------------------------------------------------------------------
     // Wire ActivityRibbon panel toggles (H1: Explorer)
@@ -739,8 +742,12 @@ void MainWindow::closeButtonPressed()
     }
 #endif
 
-    // 20.7: Persist the editor workspace (open tabs, cursors, slot state).
-    saveWorkspace();
+     // 20.7: Persist the editor workspace (open tabs, cursors, slot state).
+     saveWorkspace();
+
+     // B6: Persist the chat thread list (so closed tabs survive a restart).
+     if (chatSidebar_)
+         chatSidebar_->saveChatState();
 
     juce::JUCEApplication::getInstance()->systemRequestedQuit();
 }
