@@ -113,7 +113,9 @@ add_executable(hathor-ui-tests
         test_petdex_sprite.cpp
         # 20.7: Workspace session persistence (JUCE-free model)
         ${CMAKE_SOURCE_DIR}/ui/WorkspaceSession.cpp
+        ${CMAKE_SOURCE_DIR}/ui/ChatSessionState.cpp
         test_workspace_session.cpp
+        test_chat_session_state.cpp
 )
 
 target_compile_features(hathor-ui-tests PRIVATE cxx_std_20)

@@ -229,6 +229,8 @@ void ChatSidebar::buildTabButtons()
     tabButtons_.clear();
     tabCloseButtons_.clear();
 
+    const auto& palette = HathorLookAndFeel::fromComponent(*this).getPalette();
+
     // Create a tab button for each thread.
     for (int i = 0; i < static_cast<int>(threads_.size()); ++i)
     {
@@ -253,7 +255,12 @@ void ChatSidebar::buildTabButtons()
         auto* closeBtn = new juce::TextButton();
         closeBtn->setButtonText("\xef\x80\x8d");  // ×
         closeBtn->setTooltip("Close tab");
-        closeBtn->setButtonTextColour(juce::Colours::white);
+        closeBtn->setColour(juce::TextButton::buttonColourId,
+                            juce::Colours::transparentWhite);
+        closeBtn->setColour(juce::TextButton::buttonOnColourId,
+                            juce::Colours::transparentWhite);
+        closeBtn->setColour(juce::TextButton::textColourId,
+                            palette.textSecondary);
         closeBtn->onClick = [this, idx]()
         {
             closeTab(idx);

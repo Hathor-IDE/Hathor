@@ -214,21 +214,30 @@ public:
                             const juce::String& slotName,
                             const juce::String& text);
 
-    /**
-     * Evaluate ChucK source for a .ck tab via AudioEngine::ckEval().
-     *
-     * @param tab   The .ck source tab.
-     * @param code  Full ChucK source code.
-     */
-    void evalCkOnWorkerThread(HathorTab* tab, const juce::String& code);
+     /**
+      * Evaluate ChucK source for a .ck tab via AudioEngine::ckEval().
+      *
+      * @param tab   The .ck source tab.
+      * @param code  Full ChucK source code.
+      */
+     void evalCkOnWorkerThread(HathorTab* tab, const juce::String& code);
 
-    /**
-     * Show a status-bar message for a few seconds, then clear it.
-     */
-    void showStatus(const juce::String& msg);
+     /**
+      * Show a status-bar message for a few seconds, then clear it.
+      */
+     void showStatus(const juce::String& msg);
 
-    /** Enable editor ergonomics on newly created tabs. */
-    void setEditorErgonomicsEnabled(bool enabled) noexcept;
+     /**
+      * Extract the Eval_Block — maximal contiguous run of non-blank lines
+      * containing the cursor's line — and return it as a single string.
+      * Returns nullopt if the cursor is on a blank line (Req 23.2).
+      */
+     static std::optional<juce::String> extractEvalBlock(
+         const juce::CodeDocument& doc,
+         int cursorLine) noexcept;
+
+     /** Enable editor ergonomics on newly created tabs. */
+     void setEditorErgonomicsEnabled(bool enabled) noexcept;
 
     // -----------------------------------------------------------------------
     // juce::Component overrides
@@ -274,9 +283,12 @@ private:
     TabReorderModel reorderModel_;
     RecentlyClosedTabs closedTabsHistory_;
 
-    // References (not owned)
-    AudioEngine& audio_;
-    hathor::control::ControlInterface& ci_;
+     // References (not owned)
+     AudioEngine& audio_;
+     hathor::control::ControlInterface& ci_;
+
+     // Timer for auto-clearing the status bar message
+     juce::Timer* statusClearTimer_{ nullptr };
 
     // LSP / Ghost clients (non-owning)
     class HathorLspClient* lspClient_{ nullptr };

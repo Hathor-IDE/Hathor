@@ -14,6 +14,10 @@
 #include "ChuckTokeniser.hpp"
 #include "EditorArea.hpp"  // for nextFreeSlot()
 
+#include <nlohmann/json.hpp>
+
+#include <thread>
+
 namespace hathor::ui {
 
 // ===========================================================================
@@ -238,21 +242,40 @@ void EnhancedTabBar::mouseUp(const juce::MouseEvent& e)
 // EditorGroup
 // ===========================================================================
 
+namespace {
+
+class StatusClearTimer : public juce::Timer
+{
+public:
+    explicit StatusClearTimer(juce::Label& label) : label_(label) {}
+
+    void timerCallback() override
+    {
+        label_.setText("", juce::dontSendNotification);
+        stopTimer();
+    }
+
+private:
+    juce::Label& label_;
+};
+
+} // namespace
+
 EditorGroup::EditorGroup(AudioEngine& audio,
                          hathor::control::ControlInterface& ci)
     : tabBar_(),
       statusBar_(),
-      audio_(audio),
+       audio_(audio),
       ci_(ci)
 {
-    juce::ignoreUnused(ci_);
-
     addAndMakeVisible(tabBar_);
     addAndMakeVisible(statusBar_);
 
     statusBar_.setJustificationType(juce::Justification::left);
     statusBar_.setColour(juce::Label::textColourId, juce::Colours::white);
     statusBar_.setColour(juce::Label::backgroundColourId, juce::Colours::black.withAlpha(0.3f));
+
+    statusClearTimer_ = new StatusClearTimer(statusBar_);
 
     // Wire tab bar callbacks
     tabBar_.onTabClicked = [this](int idx) { activateTab(idx); };
@@ -281,7 +304,10 @@ EditorGroup::EditorGroup(AudioEngine& audio,
     };
 }
 
-EditorGroup::~EditorGroup() = default;
+EditorGroup::~EditorGroup()
+{
+    delete statusClearTimer_;
+}
 
 HathorTab* EditorGroup::openUntitledTab()
 {
