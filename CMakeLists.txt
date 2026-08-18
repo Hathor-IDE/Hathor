@@ -2,9 +2,34 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 cmake_minimum_required(VERSION 3.24)
+
+# ---------------------------------------------------------------------------
+# macOS universal binary support — Phase 6.1
+# ---------------------------------------------------------------------------
+# Default to a universal binary containing both `arm64` (Apple Silicon) and
+# `x86_64` (Intel) architectures on macOS.  This is set as a cache variable
+# *before* project() so that CMake's compiler ABI checks and every
+# FetchContent dependency (JUCE, libwebp, libchuck) pick it up automatically.
+#
+# Override on the configure command line when a single-architecture build is
+# needed, e.g.:
+#   cmake -S . -B build -DCMAKE_OSX_ARCHITECTURES=x86_64
+#
+# When HATHOR_BUILD_APP=OFF (engine-only / CI), the architecture still applies
+# to libchuck and other static libs so that test binaries can be sliced later.
+if(APPLE AND NOT DEFINED CMAKE_OSX_ARCHITECTURES)
+    set(CMAKE_OSX_ARCHITECTURES "arm64;x86_64" CACHE STRING
+        "macOS architectures to build (universal binary by default)")
+endif()
+
 project(Hathor VERSION 0.1.0 LANGUAGES C CXX)
 if(APPLE)
     enable_language(OBJC OBJCXX)
+endif()
+
+# Report the effective architecture list for build diagnostics.
+if(APPLE)
+    message(STATUS "Hathor macOS architectures: ${CMAKE_OSX_ARCHITECTURES}")
 endif()
 
 set(CMAKE_CXX_STANDARD 20)
@@ -70,6 +95,35 @@ FetchContent_Declare(
 
 # Make Catch2 and nlohmann/json available now (lightweight, no audio deps)
 FetchContent_MakeAvailable(Catch2 nlohmann_json libwebp)
+
+# ---------------------------------------------------------------------------
+# Universal build fix for libwebp (Phase 6.1)
+# ---------------------------------------------------------------------------
+# libwebp's cmake/cpu.cmake detects SIMD support via check_c_source_compiles.
+# In a universal (arm64;x86_64) build that test compiles for BOTH
+# architectures at once; arm64 has no __SSE2__, so the SSE2 test fails and
+# libwebp appends -mno-sse2 to CMAKE_C_FLAGS for its scope.
+#
+# On x86_64, -mno-sse2 disables SSE2, which conflicts with the macOS 15 SDK's
+# _Float16 math.h declarations and breaks compilation of libwebp's own
+# SSE-dependent DSP sources (e.g. filter_enc.c).
+#
+# Fix: append -msse2 as a *target* compile option on every libwebp C/C++
+# target.  Target COMPILE_OPTIONS are emitted after CMAKE_C_FLAGS in the
+# compile command, so -msse2 overrides -mno-sse2 on the x86_64 slice.
+# On arm64, -msse2 is an unrelated (harmless) unrecognized-argument warning.
+# Only applied when the architecture list contains both arm64 and x86_64.
+if(APPLE AND CMAKE_OSX_ARCHITECTURES MATCHES "arm64"
+         AND CMAKE_OSX_ARCHITECTURES MATCHES "x86_64")
+    foreach(_t sharpyuv webpencode webpdecode webpdsp webpdspdecode
+              webputils webputilsdecode webp webpdemux libwebpmux
+              cpufeatures-webp)
+        if(TARGET ${_t})
+            target_compile_options(${_t} PRIVATE -msse2)
+        endif()
+    endforeach()
+    message(STATUS "Universal build: restored -msse2 for libwebp x86_64 slice")
+endif()
 
 # ---------------------------------------------------------------------------
 # AI-4: Download the llm-ls binary for ghost text (only for app builds)

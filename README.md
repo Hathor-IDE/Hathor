@@ -128,10 +128,20 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build
 ```
 
+On macOS, the build produces a **universal binary** (x86_64 + arm64) by default,
+running natively on both Intel and Apple Silicon Macs.  To build for a single
+architecture, set `CMAKE_OSX_ARCHITECTURES` explicitly:
+
+```sh
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_ARCHITECTURES=x86_64
+# or
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_ARCHITECTURES=arm64
+```
+
 ### Running Hathor
 
 ```sh
-./build/hathor --samples ./samples
+./build/app/hathor_artefacts/Release/hathor --samples ./samples
 ```
 
 Send patterns via stdin:
