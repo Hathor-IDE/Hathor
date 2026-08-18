@@ -26,7 +26,8 @@
  * Requirements: 22.1–22.3, 22.5–22.7, 23.1–23.7, 24.4
  */
 
-// Guard so MainWindow.cpp stub is replaced when this header is included.
+// Include-guard so MainWindow.cpp can detect that the real EditorArea header
+// was included (vs a fallback stub in stripped-down builds).
 #define HATHOR_EDITOR_AREA_DEFINED
 
 #include <juce_gui_basics/juce_gui_basics.h>
@@ -158,6 +159,7 @@ private:
         juce::Rectangle<int> closeBtnBounds;
         juce::String         label;
         bool                 unsavedDot{ false };
+        bool                 pinned{ false };
     };
 
     std::vector<TabGeometry> geom_;

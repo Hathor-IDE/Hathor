@@ -41,7 +41,8 @@
  *               32.6, 32.8, 32.9, B6, C2
  */
 
-// This guard is checked in MainWindow.cpp to suppress the stub ChatSidebar.
+// This guard is checked in MainWindow.cpp to detect that the real ChatSidebar
+// is available (vs a fallback stub in stripped-down builds).
 #define HATHOR_CHAT_SIDEBAR_DEFINED
 
 #include <memory>

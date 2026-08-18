@@ -15,7 +15,7 @@
  *      Audio subsection — Master EQ preset selector (B7-K3, drives B7-K2).
  *   2. Agent / ACP — agent executable path; hathor-mcp path (read-only inferred).
  *   3. Petdex — browse/select a mascot (D1–D4); opt-in only, no default.
- *   4. ChucK placeholder — inert until B4 ships.
+ *   4. ChucK — ChucK binary path configuration (B4).
  *   5. EQ — implemented in Appearance > Audio (B7-K3).
  *
  * Apply/Reset/Close semantics (PROGRAM.md §A2):

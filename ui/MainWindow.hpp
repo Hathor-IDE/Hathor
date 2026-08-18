@@ -73,7 +73,7 @@
 #include "WorkspaceSession.hpp"
 
 // ---------------------------------------------------------------------------
-// Forward declarations — child components not yet implemented
+// Forward declarations — concrete types defined in their own headers
 // ---------------------------------------------------------------------------
 namespace hathor::ui {
 

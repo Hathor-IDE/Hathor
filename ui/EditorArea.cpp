@@ -145,8 +145,9 @@ void TabBarComponent::rebuild(const std::vector<TabInfo>& tabs,
         g.closeBtnBounds = { x + tabW - kCloseBoxSize - 4,
                              (kTabHeight - kCloseBoxSize) / 2,
                              kCloseBoxSize, kCloseBoxSize };
-        g.label       = tabs[static_cast<std::size_t>(i)].label;
-        g.unsavedDot  = tabs[static_cast<std::size_t>(i)].unsavedDot;
+         g.label       = tabs[static_cast<std::size_t>(i)].label;
+         g.unsavedDot  = tabs[static_cast<std::size_t>(i)].unsavedDot;
+         g.pinned      = tabs[static_cast<std::size_t>(i)].pinned;
         geom_.push_back(std::move(g));
         x += tabW;
     }
@@ -186,6 +187,7 @@ void TabBarComponent::paint(juce::Graphics& g)
         }
 
         // Unsaved dot (Req 22.5): small amber filled circle
+        int indent = 8;
         if (tg.unsavedDot)
         {
             const int dotX = tg.bounds.getX() + 6;
@@ -195,10 +197,24 @@ void TabBarComponent::paint(juce::Graphics& g)
                           static_cast<float>(dotY),
                           static_cast<float>(kDotRadius),
                           static_cast<float>(kDotRadius));
+            indent = kDotRadius + 10;
+        }
+
+        // Pin indicator (solid dot on left, like a pin icon)
+        if (tg.pinned)
+        {
+            const int pinX = tg.bounds.getX() + indent;
+            const int pinY = tg.bounds.getCentreY() - kDotRadius / 2;
+            g.setColour(palette.textMuted);
+            g.fillEllipse(static_cast<float>(pinX),
+                          static_cast<float>(pinY),
+                          static_cast<float>(kDotRadius),
+                          static_cast<float>(kDotRadius));
+            indent += kDotRadius + 6;
         }
 
         // Label — leave room for dot on left and close button on right
-        const int labelLeft  = tg.bounds.getX() + (tg.unsavedDot ? kDotRadius + 10 : 8);
+        const int labelLeft  = tg.bounds.getX() + indent;
         const int labelRight = tg.closeBtnBounds.getX() - 4;
         const juce::Rectangle<int> labelRect(labelLeft, tg.bounds.getY(),
                                              labelRight - labelLeft,
@@ -1045,11 +1061,12 @@ std::vector<TabInfo> EditorArea::tabInfos() const
 {
     std::vector<TabInfo> infos;
 
-    for (const auto& t : tabs_)
+    for (size_t i = 0; i < tabs_.size(); ++i)
     {
         TabInfo info;
-        info.label      = t->tabLabel();
-        info.unsavedDot = t->hasUnsavedDot();
+        info.label      = tabs_[i]->tabLabel();
+        info.unsavedDot = tabs_[i]->hasUnsavedDot();
+        info.pinned     = (i < pinnedTabs_.size()) && pinnedTabs_[i];
         infos.push_back(std::move(info));
     }
 
@@ -1176,6 +1193,10 @@ void EditorArea::removeTabAt(int index)
             .removeKeyListener(kl.get());
         keyListeners_.erase(keyListeners_.begin() + index);
     }
+
+    // Remove the pinned-entry for this tab (parallel to tabs_ / keyListeners_).
+    if (index < static_cast<int>(pinnedTabs_.size()))
+        pinnedTabs_.erase(pinnedTabs_.begin() + index);
 
       // AI-4: Notify LSP/ghost that the document is closing.
       // Now handles both .hathor and .ck tabs (notifyLspDidClose

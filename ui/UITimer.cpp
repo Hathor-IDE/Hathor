@@ -6,16 +6,13 @@
  *
  * Requirements: 26.4, 26.9, 28.5, 28.6
  *
- * Stub panel classes are defined here (under include-guards) for tasks that
- * are not yet implemented:
+ * Stub panel classes are defined here behind include-guards as a fallback
+ * for stripped-down builds that don't include the real headers:
  *
- *   HATHOR_SLIDER_PANEL_DEFINED      — SliderPanel     (task 3.9)
+ *   HATHOR_SLIDER_PANEL_DEFINED      — SliderPanel stub
  *
- * When those headers land, the include-guard prevents the stubs from being
- * re-defined, and MainWindow.cpp (and any other TU) can include the real
- * headers before including UITimer.hpp.
- *
- * TODO (task 3.9): replace stub with  #include "SliderPanel.hpp"
+ * In the full build, SliderPanel.hpp and VisualizerPanel.hpp are included
+ * above, setting their guards and suppressing the stubs below.
  */
 
 #include "UITimer.hpp"
