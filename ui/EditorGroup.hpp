@@ -37,6 +37,7 @@
 #include "TabReorderModel.hpp"
 #include "RecentlyClosedTabs.hpp"
 #include "../app/AudioEngine.hpp"
+#include "../control/ControlInterface.hpp"
 #include "hathor/Event.hpp"
 
 namespace hathor::ui {
@@ -62,7 +63,8 @@ public:
     std::function<void(int)> onTabClicked;        // tab index
     std::function<void(int)> onTabCloseClicked;  // tab index
     std::function<void(int)> onTabPinClicked;    // tab index (toggle pin)
-    std::function<void()>    onReorderRequested; // drag ended, reorder tabs
+    std::function<void()>    onReorderRequested; // drag ended, reorder tabs (local)
+    std::function<void(int, int)> onLocalReorderRequested; // (fromIndex, toIndex) for local reorder
     std::function<void(int)> onTabDragStarted;   // tab drag began (cross-pane)
     std::function<bool(const juce::MouseEvent&)> onTabDragEnded; // drag ended, returns true if consumed
 
@@ -121,7 +123,8 @@ private:
 class EditorGroup : public juce::Component
 {
 public:
-    explicit EditorGroup(AudioEngine& audio);
+    explicit EditorGroup(AudioEngine& audio,
+                         hathor::control::ControlInterface& ci);
     ~EditorGroup() override;
 
     // Non-movable (owns JUCE components)
@@ -232,6 +235,7 @@ private:
     // -----------------------------------------------------------------------
     std::vector<std::unique_ptr<HathorTab>> tabs_;
     int activeIndex_{ -1 };
+    int draggedTabIndex_{ -1 };
 
     // JUCE-free models
     TabReorderModel reorderModel_;
@@ -239,6 +243,7 @@ private:
 
     // References (not owned)
     AudioEngine& audio_;
+    [[maybe_unused]] hathor::control::ControlInterface& ci_;
 
     // LSP / Ghost clients (non-owning)
     class HathorLspClient* lspClient_{ nullptr };

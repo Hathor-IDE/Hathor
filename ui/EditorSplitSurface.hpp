@@ -19,6 +19,7 @@
 #include <vector>
 
 #include "EditorGroup.hpp"
+#include "../control/ControlInterface.hpp"
 
 namespace hathor::ui {
 
@@ -140,6 +141,13 @@ public:
      */
     EditorGroup* findLeafAt(const juce::Point<int>& screenPos) const noexcept;
 
+    /**
+     * Find the SplitterTree leaf node that contains the given EditorGroup.
+     * Returns nullptr if the group is not in this subtree.
+     */
+    SplitterTree* findLeafNodeForGroup(EditorGroup* group) noexcept;
+    const SplitterTree* findLeafNodeForGroup(const EditorGroup* group) const noexcept;
+
     /** Recursive layout entry point (calls resized() with clamping). */
     void layoutTree();
 
@@ -162,6 +170,10 @@ private:
 
     /** Recursive helper for findLeafAt. */
     EditorGroup* findLeafAtRecursive(const juce::Point<int>& screenPos) const noexcept;
+
+    /** Recursive helper for findLeafNodeForGroup. */
+    SplitterTree* findLeafNodeForGroupRecursive(EditorGroup* group) noexcept;
+    const SplitterTree* findLeafNodeForGroupRecursive(const EditorGroup* group) const noexcept;
 
     std::unique_ptr<EditorGroup> group_;
 
@@ -252,6 +264,10 @@ private:
     std::unique_ptr<SplitterTree> tree_;
     AudioEngine& audio_;
     hathor::control::ControlInterface& ci_;
+
+    // Cross-pane drag tracking
+    EditorGroup* dragSourceGroup_{ nullptr };
+    int dragSourceIndex_{ -1 };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(EditorSplitSurface)
 };

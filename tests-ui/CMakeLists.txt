@@ -110,7 +110,10 @@ add_executable(hathor-ui-tests
       # Phase G — Petdex (D1): parser + cache + attribution gate (JUCE-free)
       test_petdex_manifest.cpp
       # Phase G — Petdex (D2–D3): grid/animation/webp/cache (JUCE-free)
-      test_petdex_sprite.cpp
+        test_petdex_sprite.cpp
+        # 20.7: Workspace session persistence (JUCE-free model)
+        ${CMAKE_SOURCE_DIR}/ui/WorkspaceSession.cpp
+        test_workspace_session.cpp
 )
 
 target_compile_features(hathor-ui-tests PRIVATE cxx_std_20)

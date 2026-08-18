@@ -716,7 +716,7 @@ void SettingsComponent::buildChuckSection()
     auto* flagsHint = new juce::Label();
     flagsHint->setText("Comma-separated key=value (e.g. DUMP_INSTRUCTIONS=1,AUTO_DEPEND=0)",
                        juce::dontSendNotification);
-    flagsHint->setFont(HathorLookAndFeel::fontRegular(HathorLookAndFeel::Typography::bodyXs));
+    flagsHint->setFont(HathorLookAndFeel::fontRegular(HathorLookAndFeel::Typography::bodySm));
     flagsHint->setColour(juce::Label::textColourId, palette.textMuted);
     flagsHint->setJustificationType(juce::Justification::centredLeft);
     flagsHint->setBounds(controlX, y + kControlHeight + 2, 400, kControlHeight);

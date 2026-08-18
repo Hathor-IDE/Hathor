@@ -204,16 +204,33 @@ void EnhancedTabBar::mouseUp(const juce::MouseEvent& e)
     {
         isDragging_ = false;
         int tabIdx = draggedTabIndex_;
-        draggedTabIndex_ = -1;
 
         // Allow cross-pane handler to consume the drag first.
         bool consumed = false;
         if (onTabDragEnded)
             consumed = onTabDragEnded(e);
 
-        // If not consumed by cross-pane logic, fall back to local reorder.
-        if (!consumed && onReorderRequested)
-            onReorderRequested();
+        // If not consumed by cross-pane logic, perform local reorder.
+        if (!consumed && reorderModel_ && tabIdx >= 0)
+        {
+            std::vector<float> boundaries;
+            float cursor = 0.0f;
+            for (size_t i = 0; i < geom_.size(); ++i)
+            {
+                boundaries.push_back(cursor);
+                cursor += static_cast<float>(geom_[i].bounds.getWidth());
+            }
+
+            size_t dropIdx = reorderModel_->computeDropIndex(
+                static_cast<size_t>(tabIdx),
+                e.position.x,
+                boundaries);
+
+            if (static_cast<int>(dropIdx) != tabIdx && onLocalReorderRequested)
+                onLocalReorderRequested(tabIdx, static_cast<int>(dropIdx));
+        }
+
+        draggedTabIndex_ = -1;
     }
 }
 
@@ -221,11 +238,15 @@ void EnhancedTabBar::mouseUp(const juce::MouseEvent& e)
 // EditorGroup
 // ===========================================================================
 
-EditorGroup::EditorGroup(AudioEngine& audio)
+EditorGroup::EditorGroup(AudioEngine& audio,
+                         hathor::control::ControlInterface& ci)
     : tabBar_(),
       statusBar_(),
-      audio_(audio)
+      audio_(audio),
+      ci_(ci)
 {
+    juce::ignoreUnused(ci_);
+
     addAndMakeVisible(tabBar_);
     addAndMakeVisible(statusBar_);
 
@@ -241,6 +262,23 @@ EditorGroup::EditorGroup(AudioEngine& audio)
         refreshTabBar();
     };
     tabBar_.onReorderRequested = [this]() { refreshTabBar(); };
+
+    // Bridge EnhancedTabBar drag callbacks to EditorGroup's own callbacks.
+    tabBar_.onTabDragStarted = [this](int tabIndex) {
+        draggedTabIndex_ = tabIndex;
+        if (onTabDragStarted)
+            onTabDragStarted(tabIndex);
+    };
+    tabBar_.onTabDragEnded = [this](const juce::MouseEvent& e) -> bool {
+        if (onTabDragEnded)
+            return onTabDragEnded(e);
+        return false;
+    };
+
+    // Wire local reordering from the tab bar to reorderTab.
+    tabBar_.onLocalReorderRequested = [this](int from, int to) {
+        reorderTab(from, to);
+    };
 }
 
 EditorGroup::~EditorGroup() = default;
@@ -261,6 +299,9 @@ HathorTab* EditorGroup::openUntitledTab()
     reorderModel_.resize(tabs_.size());
 
     wireTabCallbacks(ptr);
+
+    activateTab(static_cast<int>(tabs_.size()) - 1);
+
     if (onTabCountChanged)
         onTabCountChanged();
 
@@ -293,17 +334,7 @@ HathorTab* EditorGroup::openFile(const juce::File& file)
 
     reorderModel_.resize(tabs_.size());
 
-    // Wire unsaved-dot callback
-    ptr->onUnsavedDotChanged = [this, ptr]() {
-        if (ptr == activeTab())
-            refreshTabBar();
-    };
-
-    // Wire LSP/Ghost if available
-    if (lspClient_)
-        ptr->installLspClient(lspClient_);
-    if (ghostClient_)
-        ptr->installGhostClient(ghostClient_);
+    wireTabCallbacks(ptr);
 
     // Load file content
     juce::String content;
@@ -513,17 +544,7 @@ void EditorGroup::reopenLastClosedTab()
 
     reorderModel_.resize(tabs_.size());
 
-    // Wire callbacks
-    ptr->onUnsavedDotChanged = [this, ptr]() {
-        if (ptr == activeTab())
-            refreshTabBar();
-    };
-
-    // Wire LSP/Ghost if available
-    if (lspClient_)
-        ptr->installLspClient(lspClient_);
-    if (ghostClient_)
-        ptr->installGhostClient(ghostClient_);
+    wireTabCallbacks(ptr);
 
     // Restore cursor position
     juce::CodeDocument::Position pos(ptr->document(), static_cast<int>(snap->cursorOffset));
@@ -595,7 +616,8 @@ std::unique_ptr<HathorTab> EditorGroup::takeTab(int index)
 
     // Detach from component tree first
     if (HathorTab* tab = tabs_[static_cast<size_t>(index)].get())
-        tab->removeFromParent();
+        if (auto* parent = tab->getParentComponent())
+            parent->removeChildComponent(tab);
 
     // Extract from vector
     auto it = tabs_.begin() + index;
@@ -636,11 +658,8 @@ HathorTab* EditorGroup::insertTab(std::unique_ptr<HathorTab> tab, int index)
     // Wire callbacks
     wireTabCallbacks(ptr);
 
-    // Wire LSP/Ghost if available
-    if (lspClient_)
-        ptr->installLspClient(lspClient_);
-    if (ghostClient_)
-        ptr->installGhostClient(ghostClient_);
+    // Activate the newly inserted tab
+    activateTab(index);
 
     refreshTabBar();
 
@@ -868,6 +887,21 @@ std::vector<HathorTab*> EditorGroup::buildHathorTabPointers() const
     for (const auto& tab : tabs_)
         ptrs.push_back(tab.get());
     return ptrs;
+}
+
+void EditorGroup::wireTabCallbacks(HathorTab* tab)
+{
+    // Wire unsaved-dot callback
+    tab->onUnsavedDotChanged = [this, tab]() {
+        if (tab == activeTab())
+            refreshTabBar();
+    };
+
+    // Wire LSP/Ghost if available
+    if (lspClient_)
+        tab->installLspClient(lspClient_);
+    if (ghostClient_)
+        tab->installGhostClient(ghostClient_);
 }
 
 } // namespace hathor::ui

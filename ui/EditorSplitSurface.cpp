@@ -181,21 +181,24 @@ std::unique_ptr<SplitterTree> SplitterTree::removeLeafFromTree(
     {
         auto child = std::move(node->first_);
         node->first_ = nullptr;
-        node->removeFromParent();
+        if (auto* parent = node->getParentComponent())
+            parent->removeChildComponent(node.get());
         return child;
     }
     if (!node->first_ && node->second_)
     {
         auto child = std::move(node->second_);
         node->second_ = nullptr;
-        node->removeFromParent();
+        if (auto* parent = node->getParentComponent())
+            parent->removeChildComponent(node.get());
         return child;
     }
 
     // Both children gone — this split is empty.
     if (!node->first_ && !node->second_)
     {
-        node->removeFromParent();
+        if (auto* parent = node->getParentComponent())
+            parent->removeChildComponent(node.get());
         return nullptr;
     }
 
@@ -217,6 +220,58 @@ std::unique_ptr<SplitterTree> SplitterTree::removeLeafFromTree(
 EditorGroup* SplitterTree::findLeafAt(const juce::Point<int>& screenPos) const noexcept
 {
     return findLeafAtRecursive(screenPos);
+}
+
+SplitterTree* SplitterTree::findLeafNodeForGroup(EditorGroup* group) noexcept
+{
+    return findLeafNodeForGroupRecursive(group);
+}
+
+const SplitterTree* SplitterTree::findLeafNodeForGroup(const EditorGroup* group) const noexcept
+{
+    return findLeafNodeForGroupRecursive(group);
+}
+
+SplitterTree* SplitterTree::findLeafNodeForGroupRecursive(EditorGroup* group) noexcept
+{
+    if (isLeaf())
+        return (group_ != nullptr && group_.get() == group) ? this : nullptr;
+
+    if (first_)
+    {
+        auto* result = first_->findLeafNodeForGroupRecursive(group);
+        if (result)
+            return result;
+    }
+    if (second_)
+    {
+        auto* result = second_->findLeafNodeForGroupRecursive(group);
+        if (result)
+            return result;
+    }
+
+    return nullptr;
+}
+
+const SplitterTree* SplitterTree::findLeafNodeForGroupRecursive(const EditorGroup* group) const noexcept
+{
+    if (isLeaf())
+        return (group_ != nullptr && group_.get() == group) ? this : nullptr;
+
+    if (first_)
+    {
+        auto* result = first_->findLeafNodeForGroupRecursive(group);
+        if (result)
+            return result;
+    }
+    if (second_)
+    {
+        auto* result = second_->findLeafNodeForGroupRecursive(group);
+        if (result)
+            return result;
+    }
+
+    return nullptr;
 }
 
 EditorGroup* SplitterTree::findLeafAtRecursive(const juce::Point<int>& screenPos) const noexcept
@@ -614,30 +669,35 @@ void EditorSplitSurface::wireGroupCallbacks(EditorGroup* group)
     if (!group)
         return;
 
-    // Tab drag started in the group's tab bar — track for cross-pane move.
+    // Track cross-pane drag source when a tab starts being dragged.
     group->onTabDragStarted = [this, group](int tabIndex)
     {
-        // Determine if we should initiate a cross-pane drag by checking
-        // if the mouse is still in this group's tab bar on mouse-up.
-        // The actual cross-pane logic is handled in onTabDragEnded.
+        dragSourceGroup_ = group;
+        dragSourceIndex_ = tabIndex;
     };
 
-    group->onTabDragEnded = [this, group](const juce::MouseEvent& e)
+    group->onTabDragEnded = [this, group](const juce::MouseEvent& e) -> bool
     {
-        // Check if the drop target is a different leaf.
+        if (!tree_)
+            return false;
+
+        // Determine drop target at cursor position.
         juce::Point<int> screenPos = e.getScreenPosition().roundToInt();
-        EditorGroup* target = tree_ ? tree_->findLeafAt(screenPos) : nullptr;
+        EditorGroup* target = tree_->findLeafAt(screenPos);
 
         if (target && target != group)
         {
             // Cross-pane drop — move the tab.
-            moveTab(group, group->draggedTabIndex(), target);
+            moveTab(group, dragSourceIndex_, target);
+            dragSourceGroup_ = nullptr;
+            dragSourceIndex_ = -1;
+            return true; // consumed — no local reorder needed
         }
-        else
-        {
-            // Same-group drop — trigger local reorder.
-            group->applyLocalReorder(group->draggedTabIndex(), e);
-        }
+
+        // Same-group drop — let EnhancedTabBar fall through to onReorderRequested.
+        dragSourceGroup_ = nullptr;
+        dragSourceIndex_ = -1;
+        return false;
     };
 
     // Active tab changed — update tree's active leaf tracking.
@@ -645,7 +705,7 @@ void EditorSplitSurface::wireGroupCallbacks(EditorGroup* group)
     {
         if (!tree_)
             return;
-        tree_->setActiveLeaf(findLeafForGroup(group));
+        tree_->setActiveLeaf(tree_->findLeafNodeForGroup(group));
     };
 }
 
