@@ -717,11 +717,75 @@ void EditorGroup::reorderTab(int fromIndex, int toIndex)
 
 void EditorGroup::handleKeyPress(const juce::KeyPress& key)
 {
-    if (HathorTab* tab = activeTab())
+    HathorTab* tab = activeTab();
+    if (tab == nullptr)
+        return;
+
+    // B8-K6: Ctrl+Shift+B — Bake to Song (only meaningful for .ck tabs)
+    const bool isBKey = (key.getKeyCode() == 'b' || key.getKeyCode() == 'B');
+    const bool ctrlHeld = key.getModifiers().isCtrlDown();
+    const bool shiftHeld = key.getModifiers().isShiftDown();
+
+    if (isBKey && ctrlHeld && shiftHeld)
+    {
+        showStatus("Bake to Song is handled by the parent EditorArea");
+        return;
+    }
+
+    const bool isEnter = (key.getKeyCode() == juce::KeyPress::returnKey);
+
+    if (!isEnter)
     {
         if (tab->handleLspKeyPress(key))
             return;
+        return;
     }
+
+    if (!ctrlHeld)
+    {
+        if (tab->handleLspKeyPress(key))
+            return;
+        return;
+    }
+
+    // Ctrl+Enter / Ctrl+Alt+Enter — eval path
+    const bool altHeld = key.getModifiers().isAltDown();
+
+    if (tab->isChuckTab())
+    {
+        // .ck tabs: compile→load→execute entire buffer
+        const juce::String code = tab->document().getAllContent();
+        evalCkOnWorkerThread(tab, code);
+        return;
+    }
+
+    // Mini-notation (.hathor) path
+    juce::String slotName;
+    const std::string engineName = audio_.slotName(tab->slotIndex());
+    if (!engineName.empty())
+        slotName = juce::String(engineName);
+    else
+        slotName = "d" + juce::String(tab->slotIndex());
+
+    if (altHeld)
+    {
+        // Ctrl+Alt+Enter — evaluate entire buffer (Req 23.3)
+        const juce::String text = tab->document().getAllContent();
+        evalOnWorkerThread(tab, slotName, text);
+        return;
+    }
+
+    // Ctrl+Enter — evaluate Eval_Block (Req 23.1, 23.2)
+    const int cursorLine = tab->editor().getCaretPos().getLineNumber();
+    const auto block = extractEvalBlock(tab->document(), cursorLine);
+
+    if (!block.has_value())
+    {
+        showStatus("Cursor is on a blank line — nothing to evaluate");
+        return;
+    }
+
+    evalOnWorkerThread(tab, slotName, *block);
 }
 
 void EditorGroup::setEditorErgonomicsEnabled(bool /*enabled*/) noexcept
@@ -731,6 +795,162 @@ void EditorGroup::setEditorErgonomicsEnabled(bool /*enabled*/) noexcept
     // These features can be implemented via custom logic in HathorTab if needed.
     // For L-1, the editor ergonomics focus on tab management (pinning, drag,
     // recently-closed), which is handled by EnhancedTabBar + TabReorderModel.
+}
+
+// ---------------------------------------------------------------------------
+// Status bar
+// ---------------------------------------------------------------------------
+
+void EditorGroup::showStatus(const juce::String& msg)
+{
+    statusBar_.setText(msg, juce::dontSendNotification);
+    static_cast<juce::Timer*>(statusClearTimer_)->startTimer(6000);
+}
+
+// ---------------------------------------------------------------------------
+// Eval helpers (Req 23.1–23.7)
+// ---------------------------------------------------------------------------
+
+std::optional<juce::String>
+EditorGroup::extractEvalBlock(const juce::CodeDocument& doc,
+                              int cursorLine) noexcept
+{
+    const int totalLines = doc.getNumLines();
+
+    if (cursorLine < 0 || cursorLine >= totalLines)
+        return std::nullopt;
+
+    auto isNonBlank = [&](int lineNum) -> bool
+    {
+        if (lineNum < 0 || lineNum >= totalLines)
+            return false;
+        const juce::String lineText = doc.getLine(lineNum);
+        for (int i = 0; i < lineText.length(); ++i)
+        {
+            const juce::juce_wchar c = lineText[i];
+            if (c != ' ' && c != '\t' && c != '\r' && c != '\n')
+                return true;
+        }
+        return false;
+    };
+
+    if (!isNonBlank(cursorLine))
+        return std::nullopt;
+
+    int blockStart = cursorLine;
+    while (blockStart > 0 && isNonBlank(blockStart - 1))
+        --blockStart;
+
+    int blockEnd = cursorLine;
+    while (blockEnd < totalLines - 1 && isNonBlank(blockEnd + 1))
+        ++blockEnd;
+
+    juce::String result;
+    for (int ln = blockStart; ln <= blockEnd; ++ln)
+    {
+        if (ln > blockStart)
+            result += "\n";
+        juce::String line = doc.getLine(ln);
+        while (line.endsWithChar('\n') || line.endsWithChar('\r'))
+            line = line.dropLastCharacters(1);
+        result += line;
+    }
+
+    return result;
+}
+
+void EditorGroup::evalOnWorkerThread(HathorTab* tab,
+                                     const juce::String& slotName,
+                                     const juce::String& text)
+{
+    HathorTab* tabPtr = tab;
+
+    ci_.enqueueSetPattern(
+        slotName.toStdString(),
+        text.toStdString(),
+        [this, tabPtr](nlohmann::json resp)
+        {
+            juce::MessageManager::callAsync(
+                [this, tabPtr, resp = std::move(resp)]() mutable
+                {
+                    bool tabStillOpen = false;
+                    for (const auto& t : tabs_)
+                    {
+                        if (t.get() == tabPtr)
+                        {
+                            tabStillOpen = true;
+                            break;
+                        }
+                    }
+
+                    const bool ok = resp.value("ok", false);
+
+                    if (ok)
+                    {
+                        if (tabStillOpen)
+                            tabPtr->clearUnsavedDot();
+                    }
+                    else
+                    {
+                        const std::string errMsg =
+                            resp.value("error", "unknown error");
+                        showStatus("Error: " + juce::String(errMsg));
+                    }
+                });
+        });
+}
+
+void EditorGroup::evalCkOnWorkerThread(HathorTab* tab,
+                                       const juce::String& code)
+{
+    HathorTab* tabPtr = tab;
+    const int slotIdx = tab->slotIndex();
+
+    juce::MessageManager::callAsync([this, tabPtr]() {
+        for (const auto& t : tabs_)
+        {
+            if (t.get() == tabPtr)
+            {
+                tabPtr->setCkEvalState(HathorTab::CkevalState::Compiling);
+                break;
+            }
+        }
+    });
+
+    std::thread([this, tabPtr, slotIdx, code = code.toStdString()]()
+    {
+        const bool ok = audio_.ckEval(slotIdx, code);
+
+        juce::MessageManager::callAsync(
+            [this, tabPtr, slotIdx, ok]() mutable
+            {
+                bool tabStillOpen = false;
+                for (const auto& t : tabs_)
+                {
+                    if (t.get() == tabPtr)
+                    {
+                        tabStillOpen = true;
+                        break;
+                    }
+                }
+
+                if (!tabStillOpen)
+                    return;
+
+                if (ok)
+                {
+                    tabPtr->clearUnsavedDot();
+                    tabPtr->setCkEvalState(HathorTab::CkevalState::Running);
+                    showStatus("\xe2\x9c\x93 compiled (Ctrl+Enter: re-eval, Play/Stop: stop)");
+                }
+                else
+                {
+                    const std::string qStatus = audio_.queryCkTab(slotIdx);
+                    tabPtr->setCkEvalState(HathorTab::CkevalState::Error);
+                    showStatus("ChucK compile error: " + juce::String(qStatus));
+                }
+            });
+    }).detach();
 }
 
 // ---------------------------------------------------------------------------
@@ -928,6 +1148,96 @@ void EditorGroup::wireTabCallbacks(HathorTab* tab)
         tab->installLspClient(lspClient_);
     if (ghostClient_)
         tab->installGhostClient(ghostClient_);
+
+    // Wire status message callback (e.g. from LSP hover / diagnostics)
+    tab->onStatusMessage = [this](const juce::String& msg)
+    {
+        showStatus(msg);
+    };
+
+    // B1: Per-tab Play/Stop button — dispatch slot-play/slot-stop via
+    // the canonical ControlInterface path (same as EditorArea/Console/MCP).
+    const int slotIdx = tab->slotIndex();
+    const bool isChuck = tab->isChuckTab();
+    hathor::control::ControlInterface& ci = ci_;
+
+    tab->onPlayStopClicked = [this, slotIdx, isChuck, &ci]()
+    {
+        if (isChuck)
+        {
+            // B4-K7: .ck tab — dispatch ck_stop via the AudioEngine.
+            std::thread([this, slotIdx]()
+            {
+                audio_.stopCkTab(slotIdx);
+                juce::MessageManager::callAsync([this, slotIdx]()
+                {
+                    for (const auto& t : tabs_)
+                    {
+                        if (t->slotIndex() == slotIdx && t->isChuckTab())
+                        {
+                            t->setCkEvalState(HathorTab::CkevalState::Idle);
+                            showStatus("Stopped .ck tab");
+                            break;
+                        }
+                    }
+                });
+            }).detach();
+        }
+        else
+        {
+            // Mini-notation path (B1)
+            const std::string slotName =
+                audio_.slotName(slotIdx).empty()
+                    ? ("d" + std::to_string(slotIdx))
+                    : audio_.slotName(slotIdx);
+
+            const bool currentlyRunning = audio_.isSlotRunning(slotIdx);
+            const bool start = !currentlyRunning;
+
+            const std::string cmd =
+                (start ? "slot-play " : "slot-stop ") + slotName;
+
+            std::thread([&ci, cmd]()
+            {
+                ci.dispatch(cmd);
+            }).detach();
+        }
+    };
+
+    // L-1 §5: Context menu eval callbacks (Req 23.1–23.7)
+    tab->onEvalLine = [this, tab]()
+    {
+        if (tab->isChuckTab())
+            evalCkOnWorkerThread(tab, tab->document().getAllContent());
+        else
+            evalOnWorkerThread(tab,
+                               resolveSlotName(*tab),
+                               tab->document().getAllContent());
+    };
+
+    tab->onEvalBlock = [this, tab]()
+    {
+        juce::String text = tab->editor().getTextInRange(tab->editor().getHighlightedRegion());
+        if (text.isEmpty())
+            text = tab->document().getLine(tab->editor().getCaretPos().getLineNumber());
+
+        if (tab->isChuckTab())
+            evalCkOnWorkerThread(tab, text);
+        else
+            evalOnWorkerThread(tab, resolveSlotName(*tab), text);
+    };
+}
+
+// ---------------------------------------------------------------------------
+// Helper: resolve the slot-name string for a tab (for eval / play-stop dispatch)
+// ---------------------------------------------------------------------------
+
+juce::String EditorGroup::resolveSlotName(const HathorTab& tab) const
+{
+    const std::string engineName = audio_.slotName(tab.slotIndex());
+    if (!engineName.empty())
+        return juce::String(engineName);
+    return "d" + juce::String(tab.slotIndex());
 }
 
 } // namespace hathor::ui
