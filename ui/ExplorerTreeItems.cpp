@@ -7,6 +7,8 @@
 
 #include "ExplorerTreeItems.hpp"
 
+#include <juce_gui_extra/juce_gui_extra.h>
+
 namespace hathor::ui {
 
 // ---------------------------------------------------------------------------

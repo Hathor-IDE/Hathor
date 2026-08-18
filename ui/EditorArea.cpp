@@ -1905,6 +1905,25 @@ void EditorArea::evalCkOnWorkerThread(HathorTab* tab,
 }
 
 // ---------------------------------------------------------------------------
+// A5: triggerChuckEval — guard + dispatch for .ck auto-evaluation on open
+// ---------------------------------------------------------------------------
+
+void EditorArea::triggerChuckEval(HathorTab* tab)
+{
+    // Guard: the audio worker must be running before we can evaluate.
+    if (!audio_.hasWorker())
+    {
+        showStatus("ChucK runtime unavailable — cannot evaluate .ck file.");
+        tab->setCkEvalState(HathorTab::CkevalState::Error);
+        return;
+    }
+
+    // Dispatch via the existing Ctrl+Enter path (same evalCkOnWorkerThread).
+    const juce::String code = tab->document().getAllContent();
+    evalCkOnWorkerThread(tab, code);
+}
+
+// ---------------------------------------------------------------------------
 // J-6: Telemetry persistence
 // ---------------------------------------------------------------------------
 

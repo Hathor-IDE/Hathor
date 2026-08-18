@@ -10,12 +10,11 @@
  * The logic is kept JUCE-free (plain std::filesystem) so it can be unit-tested
  * independently of the GUI layer.
  *
- * Supported song extensions for Phase A4:
+ * Supported song extensions for Phase A4/A5:
  *   - ".hathor" — always recognized (mini-notation source)
- *   - ".ck"     — recognized (ChucK source), ready for A5. The file appears
- *                 as a song leaf because the architecture is prepared, but
- *                 the editor-side eval/highlight is introduced by A5. No
- *                 unsupported behavior is invented here.
+ *   - ".ck"     — recognized (ChucK source). Eval is wired in A5: clicking
+ *                 a .ck file in the Explorer opens it in a tab and evaluates
+ *                 it via ckEval (mirroring .hathor's Ctrl+Enter surface).
  *
  * All other files (".wav", ".txt", ".md", etc.) are excluded from the tree
  * as song leaves.
@@ -62,7 +61,7 @@ enum class FileType
 {
     Folder,        ///< a directory node
     SongHathor,    ///< a .hathor song file
-    SongChuck,     ///< a .ck ChucK source file (A5 — recognized but eval not yet wired)
+    SongChuck,     ///< a .ck ChucK source file (A5 — eval wired via ckEval on Explorer click)
     ManagedDir,    ///< a managed asset directory (.hathor_assets) — collapsed by TreeBuilder
     Other,         ///< unsupported — should not appear as a song leaf
 };
