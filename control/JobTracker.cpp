@@ -1,3 +1,6 @@
+// Copyright (C) 2024 Hathor Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 // ---------------------------------------------------------------------------
 // JobTracker — canonical asynchronous job infrastructure (AI-1/AI-5/AI-6)
 // ---------------------------------------------------------------------------

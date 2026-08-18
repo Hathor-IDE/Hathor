@@ -12,6 +12,7 @@
 #include "../app/AudioEngine.hpp"
 #include "../control/ControlInterface.hpp"
 #include "HathorFileParser.hpp"
+#include "ChuckTokeniser.hpp"
 #include "EditorArea.hpp"  // for nextFreeSlot()
 
 namespace hathor::ui {
@@ -383,7 +384,37 @@ bool EditorGroup::closeTab(int index)
 
                 if (result == 1)
                 {
-                    // Save — stub for now; real save writes to file
+                    HathorTab* t = tabs_[static_cast<size_t>(index)].get();
+                    if (!t->filePath().has_value())
+                    {
+                        statusBar_.setText("Error: cannot save untitled buffer", juce::dontSendNotification);
+                        return;
+                    }
+
+                    const juce::File& f = *t->filePath();
+                    bool saveOk = false;
+
+                    if (ChuckTokeniser::isChuckFile(f))
+                    {
+                        saveOk = f.replaceWithText(t->document().getAllContent());
+                    }
+                    else
+                    {
+                        HathorFile hf;
+                        if (t->frontMatter().has_value())
+                            hf.front = *t->frontMatter();
+                        hf.body = t->document().getAllContent().toStdString();
+                        const std::string serialized = serialiseHathorFile(hf);
+                        saveOk = f.replaceWithText(juce::String(serialized));
+                    }
+
+                    if (!saveOk)
+                    {
+                        statusBar_.setText("Error: failed to save file", juce::dontSendNotification);
+                        return;
+                    }
+
+                    t->clearUnsavedDot();
                 }
 
                 // Proceed with closing

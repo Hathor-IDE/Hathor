@@ -4,6 +4,7 @@
 # hathor-engine-tests — unit tests for the pure engine, NO JUCE dependency
 add_executable(hathor-engine-tests
     test_rational.cpp
+    test_arc.cpp
     test_parammap.cpp
     test_pattern.cpp
     test_combinators.cpp

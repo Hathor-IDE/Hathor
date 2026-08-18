@@ -77,11 +77,33 @@ subsequent builds use the CMake download cache.
 
 ## CMake targets
 
-| Target | Description | JUCE dep? |
-|---|---|---|
-| `hathor-engine` | Pure pattern engine (static library) | No |
-| `hathor-engine-tests` | Unit test runner | No |
-| `hathor` | Full audio application + IDE | Yes |
+All top-level targets below are defined unconditionally unless noted. The `hathor`,
+`hathor-ui`, and `hathor-mcp` targets, and the `tests/integration` tests, are gated
+behind the `HATHOR_BUILD_APP` option (default `ON`).
+
+| Target | Type | Description | JUCE dep? |
+|---|---|---|---|
+| `hathor-engine` | Static library | Pure pattern engine (Tidal-style language, no JUCE) | No |
+| `hathor-engine-tests` | Test executable | Engine unit tests (Catch2, golden fixtures) | No |
+| `hathor` | Executable (console app) | Full audio application: audio engine, voice pool, sample bank, live-jam, control + engine linkage | Yes |
+| `hathor-ui` | GUI app | Full JUCE IDE (editor, explorer, chat, panels, LSP, ghost text, Git, debugger, Petdex) — requires `HATHOR_BUILD_APP=ON` | Yes |
+| `hathor-mcp` | Executable | Standalone, JUCE-free MCP server (links `hathor-engine` only) — requires `HATHOR_BUILD_APP=ON` | No |
+| `hathor-ui-tests` | Test executable | Headless UI-level tests (ring buffer, file parser, tokenisers, LSP, ghost, Petdex) — no audio device | No |
+| `hathor-control-tests` | Test executable | Control plane + MCP socket accept-loop tests (control interface, worker, render, agentic workflow) | No |
+| `hathor-control` | Object library | JUCE-free control plane (control interface, worker thread, socket server, project facade, services) | No |
+| `hathor-chuck-diagnostics` | Object library | JUCE-free ChucK source validation (links vendored `libchuck` when available) | No |
+| `hathor-audio-worker-lib` | Static library | JUCE-free audio-worker manager + VM lifecyle (ChucK compile/run, watchdog, resource policy) | No |
+| `hathor-audio-worker` | Executable | JUCE-free companion process spawned by the app/tests to run per-tab ChucK VMs | No |
+| `acp_spike` | Executable (test) | Task 0.1 ACP transport spike — requires `HATHOR_BUILD_APP=ON` | No |
+
+Additional `tests/` Catch2 targets (all JUCE-free): `hathor-audio-transport-tests`,
+`hathor-b7-k1-filter-tests`, `hathor-b7-k2-eq-tests`, `hathor-b4-k6-event-queue-tests`,
+`hathor-audio-worker-tests`, `hathor-b4-k3-vm-isolation-tests`, `hathor-b4-k5-watchdog-tests`,
+`hathor-vm-lifecycle-tests`, `hathor-b4-k7-ck-eval-tests`, `hathor-b4-k7-async-compile-tests`,
+`hathor-b4-k4-ckpt-compile-job-tests`, `hathor-b4-k4-execution-tests`, `hathor-b4-k8-hard-gate-tests`,
+`hathor-b8-k1-asset-target-tests`, `hathor-b8-k2-render-writer-tests`, `hathor-b8-k3-vm-shutdown-tests`,
+`hathor-b8-k4-sample-registration-tests`, `hathor-b8-real-audio-bake-tests`, and the standalone
+verification program `hathor-b7-k4-verification`.
 
 ## Building
 

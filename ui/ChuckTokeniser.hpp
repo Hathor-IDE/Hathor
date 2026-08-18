@@ -1,5 +1,5 @@
 // Copyright (C) 2024 Hathor Contributors
-// SPDX-License-Identifier: GPV-3.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 
 #pragma once
 
