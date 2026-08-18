@@ -15,11 +15,10 @@ namespace hathor::ui {
 // SplitterTree
 // ===========================================================================
 
-std::unique_ptr<SplitterTree> SplitterTree::makeLeaf(AudioEngine& audio,
-                                                      hathor::control::ControlInterface& ci)
+std::unique_ptr<SplitterTree> SplitterTree::makeLeaf(AudioEngine& audio)
 {
     auto tree = std::unique_ptr<SplitterTree>(new SplitterTree());
-    tree->group_ = std::make_unique<EditorGroup>(audio, ci);
+    tree->group_ = std::make_unique<EditorGroup>(audio);
     tree->addAndMakeVisible(tree->group_.get());
     return tree;
 }
@@ -200,14 +199,12 @@ void SplitterTree::mouseDrag(const juce::MouseEvent& e)
 // EditorSplitSurface
 // ===========================================================================
 
-EditorSplitSurface::EditorSplitSurface(AudioEngine& audio,
-                                        hathor::control::ControlInterface& ci)
+EditorSplitSurface::EditorSplitSurface(AudioEngine& audio)
     : tree_(nullptr),
-      audio_(audio),
-      ci_(ci)
+      audio_(audio)
 {
     // Start with a single leaf group
-    tree_ = SplitterTree::makeLeaf(audio_, ci_);
+    tree_ = SplitterTree::makeLeaf(audio_);
     addAndMakeVisible(tree_.get());
     tree_->setActiveLeaf(tree_.get());
 }
@@ -247,7 +244,7 @@ void EditorSplitSurface::splitActive(SplitterTree::Orientation orient)
     // For now, simple case: if there's only one leaf, split it
     if (oldLeaf->leafCount() == 1)
     {
-        auto newGroup = SplitterTree::makeLeaf(audio_, ci_);
+        auto newGroup = SplitterTree::makeLeaf(audio_);
         auto newSplit = SplitterTree::makeSplit(std::move(oldLeaf), std::move(newGroup), orient);
         tree_ = std::move(newSplit);
         addAndMakeVisible(tree_.get());

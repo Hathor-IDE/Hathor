@@ -360,7 +360,7 @@ EditorArea::EditorArea(AudioEngine& audio,
     commandPalette_ = std::make_unique<CommandPalette>();
     commandPalette_->setActionRegistry(actionRegistry_.get());
     breadcrumbsBar_ = std::make_unique<BreadcrumbsBar>();
-    editorSplitSurface_ = std::make_unique<EditorSplitSurface>(audio_, ci_);
+    editorSplitSurface_ = std::make_unique<EditorSplitSurface>(audio_);
 
     // Add L-1 components to EditorArea's hierarchy (hidden by default)
     addChildComponent(findReplacePanel_.get());
@@ -1978,7 +1978,7 @@ void EditorArea::toggleSplit()
 {
     if (!editorSplitSurface_)
     {
-        editorSplitSurface_ = std::make_unique<EditorSplitSurface>(audio_, ci_);
+        editorSplitSurface_ = std::make_unique<EditorSplitSurface>(audio_);
         addChildComponent(editorSplitSurface_.get());
         // Hide the original EditorArea content area when split is active
     }

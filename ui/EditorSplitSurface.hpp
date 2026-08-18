@@ -44,8 +44,7 @@ public:
     /**
      * Create a leaf node wrapping an EditorGroup.
      */
-    static std::unique_ptr<SplitterTree> makeLeaf(AudioEngine& audio,
-                                                   hathor::control::ControlInterface& ci);
+    static std::unique_ptr<SplitterTree> makeLeaf(AudioEngine& audio);
 
     /**
      * Create a split node with two children.
@@ -132,8 +131,7 @@ private:
 class EditorSplitSurface : public juce::Component
 {
 public:
-    explicit EditorSplitSurface(AudioEngine& audio,
-                                 hathor::control::ControlInterface& ci);
+    explicit EditorSplitSurface(AudioEngine& audio);
     ~EditorSplitSurface() override;
 
     void resized() override;
@@ -177,7 +175,6 @@ public:
 private:
     std::unique_ptr<SplitterTree> tree_;
     AudioEngine& audio_;
-    hathor::control::ControlInterface& ci_;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(EditorSplitSurface)
 };

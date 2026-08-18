@@ -597,13 +597,19 @@ private:
         // overlay is re-displayed with the remaining text.
         bool partialAcceptInProgress_ = false;
 
-       // J-6: Telemetry state for tracking accepted ghost text outcomes.
-       // These are used to detect immediate deletion and heavy modification
-       // of accepted ghost text — NOT stored for any other purpose, and NOT
-       // the full source code (only the accepted ghost text snippet).
-       std::string acceptedGhostText_;     ///< text inserted from last ghost accept
-       int64_t     acceptedAtMs_{ 0 };     ///< steady-clock ms when ghost was accepted
-       bool        ghostAccepted_{ false }; ///< true while accepted ghost text is being tracked
+        // J-6: Telemetry state for tracking accepted ghost text outcomes.
+        // These are used to detect immediate deletion and heavy modification
+        // of accepted ghost text — NOT stored for any other purpose, and NOT
+        // the full source code (only the accepted ghost text snippet).
+        std::string acceptedGhostText_;     ///< text inserted from last ghost accept
+        int64_t     acceptedAtMs_{ 0 };     ///< steady-clock ms when ghost was accepted
+        bool        ghostAccepted_{ false }; ///< true while accepted ghost text is being tracked
+
+        /// J-6: RequestId of the ghost completion that triggered the pending
+        /// ChucK compile validation. Used by notifyChuckDiagnostics to record
+        /// COMPILE_RESULT and DIAGNOSTIC_ADDED telemetry with the correct
+        /// correlation key. Empty when no ghost accept is pending.
+        std::string pendingChuckCompileRequestId_;
 
       // AI-G7: ChucK diagnostics debounce timestamp.
       int64_t chuckLastDiagTimeMs_{ 0 };

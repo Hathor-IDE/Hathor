@@ -10,7 +10,6 @@
 #include "EditorGroup.hpp"
 
 #include "../app/AudioEngine.hpp"
-#include "../control/ControlInterface.hpp"
 #include "HathorFileParser.hpp"
 #include "ChuckTokeniser.hpp"
 #include "EditorArea.hpp"  // for nextFreeSlot()
@@ -212,18 +211,11 @@ void EnhancedTabBar::mouseDrag(const juce::MouseEvent& e)
 // EditorGroup
 // ===========================================================================
 
-EditorGroup::EditorGroup(AudioEngine& audio,
-                          hathor::control::ControlInterface& ci)
+EditorGroup::EditorGroup(AudioEngine& audio)
     : tabBar_(),
       statusBar_(),
-      audio_(audio),
-      ci_(ci)
+      audio_(audio)
 {
-    // ci_ is retained for future editor↔control wiring (see completion audit,
-    // EditorGroup.hpp:222). No editor↔control calls are wired yet — suppressing
-    // the unused-private-field warning locally until Phase 1 implements them.
-    (void)ci_;
-
     addAndMakeVisible(tabBar_);
     addAndMakeVisible(statusBar_);
 

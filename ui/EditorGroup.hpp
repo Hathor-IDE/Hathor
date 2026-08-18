@@ -38,7 +38,6 @@
 #include "RecentlyClosedTabs.hpp"
 #include "../app/AudioEngine.hpp"
 #include "hathor/Event.hpp"
-#include "../control/ControlInterface.hpp"
 
 namespace hathor::ui {
 
@@ -120,8 +119,7 @@ private:
 class EditorGroup : public juce::Component
 {
 public:
-    explicit EditorGroup(AudioEngine& audio,
-                         hathor::control::ControlInterface& ci);
+    explicit EditorGroup(AudioEngine& audio);
     ~EditorGroup() override;
 
     // Non-movable (owns JUCE components)
@@ -219,7 +217,6 @@ private:
 
     // References (not owned)
     AudioEngine& audio_;
-    hathor::control::ControlInterface& ci_;
 
     // LSP / Ghost clients (non-owning)
     class HathorLspClient* lspClient_{ nullptr };
