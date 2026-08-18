@@ -605,15 +605,29 @@ bool EditorArea::openUntitledTab()
            return ci_.assembleCompletionContext(req);
        };
 
-     addAndMakeVisible(*tab);
-     tabs_.push_back(std::move(tab));
+      addAndMakeVisible(*tab);
+      tabs_.push_back(std::move(tab));
 
      activateTab(static_cast<int>(tabs_.size()) - 1);
+
+     // A5 — SongChuck eval wiring: auto-evaluate .ck files on open so that
+     // a single Explorer click performs open + ckEval, mirroring .hathor's
+     // Ctrl+Enter eval surface (same evalCkOnWorkerThread path).
+     if (auto* newTab = tabs_.back().get(); newTab->isChuckTab())
+         triggerChuckEval(newTab);
+
      return true;
-}
+ }
 
 bool EditorArea::openFile(const juce::File& file)
 {
+    // Guard: verify the file exists before attempting to open it.
+    if (!file.existsAsFile())
+    {
+        showStatus("Error: file not found: " + file.getFileName());
+        return false;
+    }
+
     // Focus existing tab if the file is already open.
     for (int i = 0; i < static_cast<int>(tabs_.size()); ++i)
     {
@@ -621,6 +635,9 @@ bool EditorArea::openFile(const juce::File& file)
         if (fp.has_value() && *fp == file)
         {
             activateTab(i);
+            // A5 — SongChuck eval wiring: re-evaluate .ck files on re-open.
+            if (auto* t = tabs_[static_cast<std::size_t>(i)].get(); t->isChuckTab())
+                triggerChuckEval(t);
             return true;
         }
     }

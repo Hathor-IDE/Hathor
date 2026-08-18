@@ -685,8 +685,19 @@ private:
       */
      void evalCkOnWorkerThread(HathorTab* tab, const juce::String& code);
 
-    // -----------------------------------------------------------------------
-    // Per-tab KeyListener — bridges CodeEditorComponent key events into
+     /**
+      * A5: Trigger ChucK evaluation on a .ck tab, guarding against a
+      * missing audio worker.  Called from openFile() so that clicking a
+      * .ck file in the Explorer performs open + ckEval as one action,
+      * mirroring .hathor's Ctrl+Enter eval surface.
+      *
+      * If the audio worker is unavailable, sets the tab state to Error
+      * and shows a status message instead of silently no-op'ing.
+      */
+     void triggerChuckEval(HathorTab* tab);
+
+     // -----------------------------------------------------------------------
+     // Per-tab KeyListener — bridges CodeEditorComponent key events into
     // EditorArea::handleKeyPress (Req 23.1–23.7)
     // -----------------------------------------------------------------------
 
