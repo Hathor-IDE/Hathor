@@ -504,6 +504,100 @@ static json makeToolsList()
     tools.push_back(cancelChuckJob);
 
     // -----------------------------------------------------------------------
+    // AI-6: Background rendering tools (Phase 3D: MCP Tool Expansion)
+    // These map 1:1 to ControlInterface::handleRenderCommand dispatch commands
+    // (AI-6 §1–§21 — RenderService → ChuckRenderWriter (B8-K2) → AudioWorkerManager).
+    // -----------------------------------------------------------------------
+
+    json renderChuckSchema;
+    renderChuckSchema["type"] = "object";
+    renderChuckSchema["properties"]["session_id"] = json::object({
+        {"type", "string"},
+        {"description", "ChucK session ID (e.g. 'ck:0') — must be created via create_chuck_session or compile_chuck"}
+    });
+    renderChuckSchema["properties"]["duration_bars"] = json::object({
+        {"type", "integer"},
+        {"minimum", 1},
+        {"description", "Render duration in bars (positive integer; 4/4 time)"}
+    });
+    renderChuckSchema["properties"]["asset_name"] = json::object({
+        {"type", "string"},
+        {"description", "Safe asset name for the output (no path separators)"}
+    });
+    renderChuckSchema["properties"]["target"] = json::object({
+        {"type", "string"},
+        {"description", "Asset target: 'studio' (default) or 'live_jam'"}
+    });
+    renderChuckSchema["required"] = json::array({"session_id", "duration_bars", "asset_name"});
+
+    json renderChuckJobIdSchema;
+    renderChuckJobIdSchema["type"] = "object";
+    renderChuckJobIdSchema["properties"]["job_id"] = json::object({
+        {"type", "integer"},
+        {"minimum", 0},
+        {"description", "Job ID returned by render_chuck or compile_chuck"}
+    });
+    renderChuckJobIdSchema["required"] = json::array({"job_id"});
+
+    json commitRenderedAssetSchema;
+    commitRenderedAssetSchema["type"] = "object";
+    commitRenderedAssetSchema["properties"]["job_id"] = json::object({
+        {"type", "integer"},
+        {"minimum", 0},
+        {"description", "Render job ID from render_chuck (must have succeeded)"}
+    });
+    commitRenderedAssetSchema["properties"]["asset_name"] = json::object({
+        {"type", "string"},
+        {"description", "Final asset name for the committed render (same as used in render_chuck)"}
+    });
+    commitRenderedAssetSchema["properties"]["confirm_overwrite"] = json::object({
+        {"type", "boolean"},
+        {"description", "Overwrite existing asset if one exists at the target path"}
+    });
+    commitRenderedAssetSchema["required"] = json::array({"job_id", "asset_name"});
+
+    json renderChuck;
+    renderChuck["name"] = "render_chuck";
+    renderChuck["description"] = "Start an asynchronous background render of a ChucK instrument. "
+        "Returns a job_id immediately; poll get_job_status until the job reaches a terminal state. "
+        "The render writes to a temp file — the project tree is NOT modified until "
+        "commit_rendered_asset is called. Routes through RenderService::renderChuck → "
+        "ChuckRenderWriter::startRender (B8-K2) → AudioWorkerManager IPC.";
+    renderChuck["inputSchema"] = renderChuckSchema;
+    tools.push_back(renderChuck);
+
+    json getJobStatus;
+    getJobStatus["name"] = "get_job_status";
+    getJobStatus["description"] = "Query the status of a render job (render_chuck) or a ChucK compile job (compile_chuck). "
+        "Returns the canonical JobTracker schema augmented with render-specific metadata (output_path, samples_written, etc.) "
+        "when the job is a render job. Terminal states: 'queued', 'running', 'succeeded', 'failed', 'cancelled'.";
+    getJobStatus["inputSchema"] = renderChuckJobIdSchema;
+    tools.push_back(getJobStatus);
+
+    json listRenderJobs;
+    listRenderJobs["name"] = "list_render_jobs";
+    listRenderJobs["description"] = "List all known render jobs with their current state (AI-6 §9). "
+        "Routes through RenderService::listRenderJobs.";
+    listRenderJobs["inputSchema"] = noArgSchema;
+    tools.push_back(listRenderJobs);
+
+    json cancelRenderJob;
+    cancelRenderJob["name"] = "cancel_render_job";
+    cancelRenderJob["description"] = "Cancel an in-flight render job. Returns cancelled=true if the cancellation was accepted "
+        "(job was queued or running). Routes through RenderService::cancelJob → JobTracker::cancelJob + "
+        "ChuckRenderWriter::RenderHandle::cancel().";
+    cancelRenderJob["inputSchema"] = renderChuckJobIdSchema;
+    tools.push_back(cancelRenderJob);
+
+    json commitRenderedAsset;
+    commitRenderedAsset["name"] = "commit_rendered_asset";
+    commitRenderedAsset["description"] = "Commit a completed render to the persistent asset tree. "
+        "Performs collision detection — pass confirm_overwrite=true to replace an existing asset. "
+        "Routes through RenderService::commitRenderedAsset → AssetPathResolver + SampleBank registration.";
+    commitRenderedAsset["inputSchema"] = commitRenderedAssetSchema;
+    tools.push_back(commitRenderedAsset);
+
+    // -----------------------------------------------------------------------
     // AI-10 / J-5: Agentic workflow, working-set, changeset, indexing, and
     // lifecycle tools (Phase 3F: MCP Tool Expansion).
     // These map 1:1 to ControlInterface::dispatch() commands for the
@@ -1022,6 +1116,68 @@ static std::string buildHathorCommand(const std::string& toolName, const json& a
         std::snprintf(buf, sizeof(buf), "cancel_chuck_job %llu",
                       static_cast<unsigned long long>(jobId));
         return buf;
+    }
+
+    // -----------------------------------------------------------------------
+    // AI-6: Rendering commands (Phase 3D: MCP Tool Expansion)
+    // Maps directly to ControlInterface::handleRenderCommand dispatch.
+    // Backend: MCP → ControlInterface → RenderService → ChuckRenderWriter
+    // -----------------------------------------------------------------------
+
+    if (toolName == "render_chuck")
+    {
+        if (!args.contains("session_id") || !args["session_id"].is_string()
+            || !args.contains("duration_bars") || !args["duration_bars"].is_number_integer()
+            || !args.contains("asset_name") || !args["asset_name"].is_string())
+            return {};
+        const std::string sessionId    = args["session_id"].get<std::string>();
+        const int         durationBars = args["duration_bars"].get<int>();
+        const std::string assetName    = args["asset_name"].get<std::string>();
+        std::string cmd = "render_chuck " + sessionId
+                        + " " + std::to_string(durationBars)
+                        + " " + assetName;
+        if (args.contains("target") && args["target"].is_string())
+            cmd += " " + args["target"].get<std::string>();
+        return cmd;
+    }
+    if (toolName == "get_job_status")
+    {
+        if (!args.contains("job_id") || !args["job_id"].is_number_integer())
+            return {};
+        uint64_t jobId = args["job_id"].get<uint64_t>();
+        char buf[64];
+        std::snprintf(buf, sizeof(buf), "get_job_status %llu",
+                      static_cast<unsigned long long>(jobId));
+        return buf;
+    }
+    if (toolName == "list_render_jobs")
+        return "list_render_jobs";
+    if (toolName == "cancel_render_job")
+    {
+        if (!args.contains("job_id") || !args["job_id"].is_number_integer())
+            return {};
+        uint64_t jobId = args["job_id"].get<uint64_t>();
+        char buf[64];
+        std::snprintf(buf, sizeof(buf), "cancel_render_job %llu",
+                      static_cast<unsigned long long>(jobId));
+        return buf;
+    }
+    if (toolName == "commit_rendered_asset")
+    {
+        if (!args.contains("job_id") || !args["job_id"].is_number_integer()
+            || !args.contains("asset_name") || !args["asset_name"].is_string())
+            return {};
+        uint64_t jobId = args["job_id"].get<uint64_t>();
+        const std::string assetName = args["asset_name"].get<std::string>();
+        char jobBuf[32];
+        std::snprintf(jobBuf, sizeof(jobBuf), "%llu",
+                      static_cast<unsigned long long>(jobId));
+        std::string cmd = "commit_rendered_asset " + std::string(jobBuf)
+                        + " " + assetName;
+        if (args.contains("confirm_overwrite") && args["confirm_overwrite"].is_boolean()
+            && args["confirm_overwrite"].get<bool>())
+            cmd += " true";
+        return cmd;
     }
 
     // -----------------------------------------------------------------------
