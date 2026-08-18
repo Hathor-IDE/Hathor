@@ -16,6 +16,7 @@
 
 #include <cerrno>
 #include <csignal>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -199,6 +200,29 @@ static json makeToolsList()
     editSongSchema["properties"]["ops"]["items"] = editSongOpsSchema;
     editSongSchema["required"] = json::array({"song_file", "ops"});
 
+    json slotPlaySchema;
+    slotPlaySchema["type"] = "object";
+    slotPlaySchema["properties"]["slot"]["type"] = "string";
+    slotPlaySchema["properties"]["slot"]["description"] = "Slot name, e.g. d1";
+    slotPlaySchema["required"] = json::array({"slot"});
+
+    json slotStopSchema;
+    slotStopSchema["type"] = "object";
+    slotStopSchema["properties"]["slot"]["type"] = "string";
+    slotStopSchema["properties"]["slot"]["description"] = "Slot name, e.g. d1";
+    slotStopSchema["required"] = json::array({"slot"});
+
+    json setEqPresetSchema;
+    setEqPresetSchema["type"] = "object";
+    setEqPresetSchema["properties"]["preset"]["type"] = "string";
+    setEqPresetSchema["properties"]["preset"]["description"] = "EQ preset name (flat, bass-boost, vocal, bright)";
+    setEqPresetSchema["required"] = json::array({"preset"});
+
+    json clearPatternSchema;
+    clearPatternSchema["type"] = "object";
+    clearPatternSchema["properties"]["slot"]["type"] = "string";
+    clearPatternSchema["properties"]["slot"]["description"] = "Slot name to clear (optional)";
+
     json tools = json::array();
 
     json setPattern;
@@ -247,6 +271,113 @@ static json makeToolsList()
     editSong["description"] = "Apply structured operations to a .hathor song file (replace_pattern, insert, set_meta, clear_pattern, delete_song)";
     editSong["inputSchema"] = editSongSchema;
     tools.push_back(editSong);
+
+    json slotPlay;
+    slotPlay["name"] = "slot-play";
+    slotPlay["description"] = "Start playback on a named slot";
+    slotPlay["inputSchema"] = slotPlaySchema;
+    tools.push_back(slotPlay);
+
+    json slotStop;
+    slotStop["name"] = "slot-stop";
+    slotStop["description"] = "Stop playback on a named slot";
+    slotStop["inputSchema"] = slotStopSchema;
+    tools.push_back(slotStop);
+
+    json setEqPreset;
+    setEqPreset["name"] = "set-eq-preset";
+    setEqPreset["description"] = "Set the master EQ preset";
+    setEqPreset["inputSchema"] = setEqPresetSchema;
+    tools.push_back(setEqPreset);
+
+    json clearPattern;
+    clearPattern["name"] = "clear-pattern";
+    clearPattern["description"] = "Clear the pattern for a slot (or all patterns if no slot given)";
+    clearPattern["inputSchema"] = clearPatternSchema;
+    tools.push_back(clearPattern);
+
+    json listPatterns;
+    listPatterns["name"] = "list-patterns";
+    listPatterns["description"] = "List all active patterns";
+    listPatterns["inputSchema"] = noArgSchema;
+    tools.push_back(listPatterns);
+
+    json listSamplesLegacy;
+    listSamplesLegacy["name"] = "list-samples";
+    listSamplesLegacy["description"] = "List registered sample names";
+    listSamplesLegacy["inputSchema"] = noArgSchema;
+    tools.push_back(listSamplesLegacy);
+
+    // -----------------------------------------------------------------------
+    // AI-2 read-only introspection tools (Phase 3B: MCP Tool Expansion)
+    // These map 1:1 to ControlInterface::handleReadOnlyCommand dispatch
+    // commands (AI-2 §1, §12 — ProjectReadFacade service layer).
+    // -----------------------------------------------------------------------
+
+    json inspectProject;
+    inspectProject["name"] = "inspect_project";
+    inspectProject["description"] = "Inspect the current Hathor project: project directory, songs, tempo, active pattern slots, ChucK instruments, and registered samples";
+    inspectProject["inputSchema"] = noArgSchema;
+    tools.push_back(inspectProject);
+
+    json getCurrentSong;
+    getCurrentSong["name"] = "get_current_song";
+    getCurrentSong["description"] = "Get the semantic state of the currently active song: pattern notation, tempo, slot name, parse diagnostics, and referenced sample assets";
+    getCurrentSong["inputSchema"] = noArgSchema;
+    tools.push_back(getCurrentSong);
+
+    json listAssets;
+    listAssets["name"] = "list_assets";
+    listAssets["description"] = "List all project assets: songs (.hathor files), ChucK instruments with lifecycle state, and samples registered in the SampleBank";
+    listAssets["inputSchema"] = noArgSchema;
+    tools.push_back(listAssets);
+
+    json listSamples;
+    listSamples["name"] = "list_samples";
+    listSamples["description"] = "List all registered samples in the SampleBank with full metadata (path, duration, channels, sample rate)";
+    listSamples["inputSchema"] = noArgSchema;
+    tools.push_back(listSamples);
+
+    json listChuckInstrumentsSchema;
+    listChuckInstrumentsSchema["type"] = "object";
+    listChuckInstrumentsSchema["properties"]["project_dir"] = json::object({
+        {"type", "string"},
+        {"description", "Optional project directory path to scan for ChucK instruments. If omitted, the current project directory is used."}
+    });
+
+    json listChuckInstruments;
+    listChuckInstruments["name"] = "list_chuck_instruments";
+    listChuckInstruments["description"] = "List ChucK instruments (.ck sources and rendered .wav files) in the project with lifecycle state (source_only, rendered, bound)";
+    listChuckInstruments["inputSchema"] = listChuckInstrumentsSchema;
+    tools.push_back(listChuckInstruments);
+
+    json getDiagnosticsSchema;
+    getDiagnosticsSchema["type"] = "object";
+    getDiagnosticsSchema["properties"]["source_id"] = json::object({
+        {"type", "string"},
+        {"description", "Resource identifier for diagnostics (e.g. 'slot:d0' or 'file:bd.hathor')"}
+    });
+    getDiagnosticsSchema["properties"]["is_chuck"] = json::object({
+        {"type", "boolean"},
+        {"description", "true if content is ChucK (.ck) code; false if mini-notation"}
+    });
+    getDiagnosticsSchema["properties"]["content"] = json::object({
+        {"type", "string"},
+        {"description", "Source text to analyze for compile/parse errors and warnings"}
+    });
+    getDiagnosticsSchema["required"] = json::array({"source_id", "is_chuck", "content"});
+
+    json getDiagnostics;
+    getDiagnostics["name"] = "get_diagnostics";
+    getDiagnostics["description"] = "Run language diagnostics on a source text: ChucK compiler validation for .ck code, or mini-notation parser/tokeniser for patterns";
+    getDiagnostics["inputSchema"] = getDiagnosticsSchema;
+    tools.push_back(getDiagnostics);
+
+    json getAudioStatus;
+    getAudioStatus["name"] = "get_audio_status";
+    getAudioStatus["description"] = "Get current audio engine status: transport state (running, BPM, sample rate, gain), per-slot playback, worker thread status, and active voice count";
+    getAudioStatus["inputSchema"] = noArgSchema;
+    tools.push_back(getAudioStatus);
 
     json result;
     result["tools"] = tools;
@@ -328,6 +459,64 @@ static std::string buildHathorCommand(const std::string& toolName, const json& a
 
         return "get-context " + filtered.dump();
     }
+    if (toolName == "slot-play")
+    {
+        if (!args.contains("slot"))
+            return {};
+        const std::string slot = args["slot"].get<std::string>();
+        return "slot-play " + slot;
+    }
+    if (toolName == "slot-stop")
+    {
+        if (!args.contains("slot"))
+            return {};
+        const std::string slot = args["slot"].get<std::string>();
+        return "slot-stop " + slot;
+    }
+    if (toolName == "set-eq-preset")
+    {
+        if (!args.contains("preset"))
+            return {};
+        const std::string preset = args["preset"].get<std::string>();
+        return "set-eq-preset " + preset;
+    }
+    if (toolName == "clear-pattern")
+    {
+        if (args.contains("slot"))
+            return "clear-pattern " + args["slot"].get<std::string>();
+        return "clear-pattern";
+    }
+    if (toolName == "list-patterns")
+        return "list-patterns";
+    if (toolName == "list-samples")
+        return "list-samples";
+    if (toolName == "inspect_project")
+        return "inspect_project";
+    if (toolName == "get_current_song")
+        return "get_current_song";
+    if (toolName == "list_assets")
+        return "list_assets";
+    if (toolName == "list_samples")
+        return "list_samples";
+    if (toolName == "list_chuck_instruments")
+    {
+        if (args.contains("project_dir") && args["project_dir"].is_string())
+            return "list_chuck_instruments " + args["project_dir"].get<std::string>();
+        return "list_chuck_instruments";
+    }
+    if (toolName == "get_diagnostics")
+    {
+        if (!args.contains("source_id") || !args["source_id"].is_string()
+            || !args.contains("is_chuck") || !args["is_chuck"].is_boolean()
+            || !args.contains("content") || !args["content"].is_string())
+            return {};
+        const std::string sourceId = args["source_id"].get<std::string>();
+        const bool isChuck = args["is_chuck"].get<bool>();
+        const std::string content = args["content"].get<std::string>();
+        return "get_diagnostics " + sourceId + " " + (isChuck ? "true" : "false") + " " + content;
+    }
+    if (toolName == "get_audio_status")
+        return "get_audio_status";
     return {};
 }
 
