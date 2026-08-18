@@ -228,6 +228,38 @@ public:
     bool closeTab(int index);
 
     /**
+      * Save the active tab to its existing file path.
+      * For .ck tabs: writes raw document content.
+      * For .hathor tabs: serializes front matter + body via serialiseHathorFile().
+      * Shows an error in the status bar if the tab has no file path — use
+      * saveActiveTabAs() in that case.
+      *
+      * @return true if saved successfully, false otherwise.
+      */
+    bool saveActiveTab();
+
+    /**
+      * Show a Save-As dialog for the active tab and write to the chosen path.
+      * Updates the tab's file path and clears the unsaved dot on success.
+      */
+    void saveActiveTabAs();
+
+    /**
+      * Reload the active tab's content from disk.
+      * If the tab has no file path, shows an error status.
+      * Unsaved changes are discarded (the disk content wins).
+      */
+    void reloadActiveTab();
+
+    /**
+      * Reopen the most recently closed tab (L-1 §1).
+      * Pops a TabSnapshot from recentlyClosedTabs_ and recreates the tab
+      * with the saved content, cursor position, and (if the file still exists)
+      * the file path.
+      */
+    void reopenLastClosedTab();
+
+    /**
       * Open or focus the Settings tab (A2).
       * If the Settings tab is already open, focuses it; otherwise creates it
       * and activates it.  The caller should install onSettingsApplied on the
@@ -723,6 +755,9 @@ private:
     /// When active, it occupies the same content area as HathorTab tabs.
     std::unique_ptr<SettingsComponent>       settingsTab_;
     bool                                     settingsActive_{ false };
+
+    /// Recently closed tab snapshots (L-1 §1) — for undo-close (Cmd+Shift+T).
+    RecentlyClosedTabs                        recentlyClosedTabs_;
 
     /// Petdex manifest service (Phase G / D1) — app-lifetime so the Settings
     /// tab can be opened/closed without losing catalog state. Does no network

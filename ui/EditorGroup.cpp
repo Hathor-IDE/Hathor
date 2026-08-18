@@ -760,18 +760,11 @@ void EditorGroup::handleKeyPress(const juce::KeyPress& key)
     }
 
     // Mini-notation (.hathor) path
-    juce::String slotName;
-    const std::string engineName = audio_.slotName(tab->slotIndex());
-    if (!engineName.empty())
-        slotName = juce::String(engineName);
-    else
-        slotName = "d" + juce::String(tab->slotIndex());
-
     if (altHeld)
     {
         // Ctrl+Alt+Enter — evaluate entire buffer (Req 23.3)
         const juce::String text = tab->document().getAllContent();
-        evalOnWorkerThread(tab, slotName, text);
+        evalOnWorkerThread(tab, resolveSlotName(*tab), text);
         return;
     }
 
@@ -785,7 +778,7 @@ void EditorGroup::handleKeyPress(const juce::KeyPress& key)
         return;
     }
 
-    evalOnWorkerThread(tab, slotName, *block);
+    evalOnWorkerThread(tab, resolveSlotName(*tab), *block);
 }
 
 void EditorGroup::setEditorErgonomicsEnabled(bool /*enabled*/) noexcept

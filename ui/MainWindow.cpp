@@ -205,12 +205,18 @@ MainWindow::MainWindow(AudioEngine& audio,
                  });
          });
 
-     // B6: Restore persisted chat threads (if any) so closed tabs are not
-     // resurrected.  Falls back to a single thread when no persisted state
-     // exists (preserving the original startup behaviour).
-     chatSidebar_->setApplicationProperties(&appProperties_);
-     if (!agentExePath.empty())
-         chatSidebar_->restoreChatThreads(agentExePath, projectDir, hathorMcpPath);
+      // B6: Restore persisted chat threads (if any) so closed tabs are not
+      // resurrected.  Falls back to a single thread when no persisted state
+      // exists (preserving the original startup behaviour).
+      chatSidebar_->setApplicationProperties(&appProperties_);
+      if (!agentExePath.empty())
+      {
+          chatSidebar_->restoreChatThreads(agentExePath, projectDir, hathorMcpPath);
+          // If no threads were restored (first launch or all were closed),
+          // create a default single thread — same as the original behaviour.
+          if (chatSidebar_->threadCount() == 0)
+              chatSidebar_->addThread(agentExePath, projectDir, hathorMcpPath);
+      }
 
     // -----------------------------------------------------------------------
     // Wire ActivityRibbon panel toggles (H1: Explorer)

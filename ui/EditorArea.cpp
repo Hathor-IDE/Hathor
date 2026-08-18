@@ -1285,7 +1285,40 @@ void EditorArea::wireContextMenuCallbacks(HathorTab& tab)
         showFindReplace();
     };
     tab.onGoToLine = [this]() {
-        showStatus("Go to line: not yet implemented");
+        HathorTab* tab = activeTab();
+        if (!tab)
+            return;
+
+        auto* ed = &tab->editor();
+        const int currentLine = ed->getCaretPos().getLineNumber() + 1;
+        const int totalLines = tab->document().getNumLines();
+        const juce::String prompt = "Line number (1–" + juce::String(totalLines) + "):";
+
+        auto alert = std::make_shared<juce::AlertWindow>(
+            juce::MessageBoxIconType::QuestionIcon,
+            "Go to Line",
+            prompt);
+        alert->addButton("OK", 1);
+        alert->addButton("Cancel", 0);
+        alert->addTextBox("lineNumber", juce::String(currentLine));
+
+        alert->enterModalState(true,
+            juce::ModalCallbackFunction::create([alert, ed, totalLines](int result) {
+                if (result == 1)
+                {
+                    const int lineNum = juce::Colours::fromString;
+                    const juce::String input = alert->getTextBoxInput("lineNumber");
+                    const int n = input.getIntValue();
+                    if (n >= 1 && n <= totalLines)
+                    {
+                        juce::CodeDocument::Position pos(ed->getDocument(), n - 1, 0);
+                        ed->moveCaretTo(pos, false);
+                        ed->scrollToKeepCaretVisible();
+                    }
+                }
+                alert = nullptr;
+            }),
+            false);
     };
     tab.onToggleComment = [&tab]() {
         // Toggle line comment — use // prefix for .hathor and .ck

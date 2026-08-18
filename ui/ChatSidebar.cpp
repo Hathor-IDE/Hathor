@@ -259,7 +259,7 @@ void ChatSidebar::buildTabButtons()
                             juce::Colours::transparentWhite);
         closeBtn->setColour(juce::TextButton::buttonOnColourId,
                             juce::Colours::transparentWhite);
-        closeBtn->setColour(juce::TextButton::textColourId,
+        closeBtn->setColour(juce::TextButton::textColourOffId,
                             palette.textSecondary);
         closeBtn->onClick = [this, idx]()
         {
@@ -355,7 +355,7 @@ void ChatSidebar::closeTab(int index)
     // -----------------------------------------------------------------------
     if (activeThreadIndex_ == index)
     {
-        if (!threads_.empty())
+        if (!threads_.isEmpty())
         {
             // Prefer the tab to the left; if that was the last tab, pick 0.
             activeThreadIndex_ = std::min(index,
