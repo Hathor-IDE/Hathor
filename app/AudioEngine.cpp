@@ -382,12 +382,11 @@ std::shared_ptr<hathor::MasterEqState> AudioEngine::loadEqState() const noexcept
 std::vector<int> AudioEngine::getAvailableSampleRates() const noexcept
 {
     if (auto* device = deviceManager_.getCurrentAudioDevice()) {
-        juce::Array<int> rates;
-        device->getAvailableSampleRates(rates);
+        juce::Array<double> rates = device->getAvailableSampleRates();
         std::vector<int> out;
         out.reserve(static_cast<size_t>(rates.size()));
-        for (int r : rates)
-            out.push_back(r);
+        for (double r : rates)
+            out.push_back(static_cast<int>(r));
         return out;
     }
     return {};
@@ -396,8 +395,7 @@ std::vector<int> AudioEngine::getAvailableSampleRates() const noexcept
 std::vector<int> AudioEngine::getAvailableBufferSizes() const noexcept
 {
     if (auto* device = deviceManager_.getCurrentAudioDevice()) {
-        juce::Array<int> sizes;
-        device->getAvailableBufferSizes(sizes);
+        juce::Array<int> sizes = device->getAvailableBufferSizes();
         std::vector<int> out;
         out.reserve(static_cast<size_t>(sizes.size()));
         for (int s : sizes)
@@ -419,9 +417,8 @@ std::string AudioEngine::setSampleRate(int rate)
         return "No audio device open";
 
     // Check if the rate is actually supported.
-    juce::Array<int> rates;
-    device->getAvailableSampleRates(rates);
-    if (!rates.contains(rate))
+    juce::Array<double> rates = device->getAvailableSampleRates();
+    if (!rates.contains(static_cast<double>(rate)))
         return "Sample rate not supported by current device";
 
     juce::AudioDeviceManager::AudioDeviceSetup setup;
@@ -449,17 +446,16 @@ std::string AudioEngine::setBufferSize(int size)
         return "No audio device open";
 
     // Check if the size is supported.
-    juce::Array<int> sizes;
-    device->getAvailableBufferSizes(sizes);
+    juce::Array<int> sizes = device->getAvailableBufferSizes();
     if (!sizes.contains(size))
         return "Buffer size not supported by current device";
 
     juce::AudioDeviceManager::AudioDeviceSetup setup;
     deviceManager_.getAudioDeviceSetup(setup);
-    if (setup.bufferSizeSamples == size)
+    if (setup.bufferSize == size)
         return {}; // already at this size
 
-    setup.bufferSizeSamples = size;
+    setup.bufferSize = size;
     juce::String error = deviceManager_.setAudioDeviceSetup(setup, /*usePlatformsDefaultDevice=*/false);
     if (error.isNotEmpty())
         return error.toStdString();

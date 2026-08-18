@@ -993,7 +993,7 @@ void MainWindow::saveWorkspace()
     if (!editorArea_)
         return;
 
-    WorkspaceSession session = editorArea_->exportWorkspace();
+    hathor::ui::WorkspaceSession session = editorArea_->saveWorkspace();
     std::string json = session.toJson();
 
     if (auto* props = appProperties_.getUserSettings())
@@ -1001,7 +1001,7 @@ void MainWindow::saveWorkspace()
         props->setValue("workspaceData",
                         juce::String(json));
         props->setValue("workspaceSchemaVersion",
-                        WorkspaceSession::kSchemaVersion);
+                        hathor::ui::WorkspaceSession::kSchemaVersion);
         props->saveIfNeeded();
     }
 }
@@ -1016,9 +1016,8 @@ void MainWindow::restoreWorkspace()
         juce::String json = props->getValue("workspaceData");
         if (!json.isEmpty())
         {
-            WorkspaceSession session;
-            if (WorkspaceSession::fromJson(json.toStdString(), session))
-                editorArea_->restoreWorkspace(session);
+            if (auto session = hathor::ui::WorkspaceSession::fromJson(json.toStdString()))
+                editorArea_->restoreWorkspace(*session, &appProperties_);
         }
     }
 }

@@ -10,6 +10,8 @@
 #include "SettingsComponent.hpp"
 
 #include <cstdlib>
+#include <cstdio>
+#include <string>
 
 #include "MasterEq.hpp"
 #include "AudioEngineFacade.hpp"
@@ -156,6 +158,9 @@ SettingsComponent::loadSettings() const
                               : "";
         m.petSelection    = "";
         m.eqPreset        = hathor::EqPreset::Flat;
+        m.sampleRate      = 44100;
+        m.bufferSize      = 512;
+        m.vmFlags         = "";
         return m;
     }
 
@@ -647,7 +652,7 @@ void SettingsComponent::buildChuckSection()
 
     // Show current device rate alongside pending.
     if (audioEngine_) {
-        int currentRate = static_cast<int>(audioEngine_->getSampleRate());
+        int currentRate = audioEngine_->getAudioStatus().sampleRate;
         if (currentRate != pending_.sampleRate) {
             sampleRateCombo_.setText(juce::String(pending_.sampleRate)
                                      + " (current: " + std::to_string(currentRate) + ")",
@@ -1002,6 +1007,14 @@ void SettingsComponent::buttonClicked(juce::Button* button)
         // engine — the UI does NOT touch coefficients or audio-thread state.
         applyEqPreset(committed_.eqPreset);
 
+        // Phase 4.4: Apply sample rate / buffer size changes to the live engine.
+        if (audioEngine_)
+            applyDeviceSettings(committed_.sampleRate, committed_.bufferSize);
+
+        // Phase 4.4: Apply VM flags to the live engine / worker.
+        if (audioEngine_)
+            applyVmFlags(committed_.vmFlags);
+
         pendingChanges_ = false;
         applyButton_.setEnabled(false);
         resetButton_.setEnabled(false);
@@ -1094,6 +1107,20 @@ void SettingsComponent::comboBoxChanged(juce::ComboBox* comboBox)
             updateDirtyFlag();
         }
     }
+    else if (comboBox == &sampleRateCombo_)
+    {
+        const int rate = comboBox->getSelectedId();
+        if (rate > 0)
+            pending_.sampleRate = rate;
+        updateDirtyFlag();
+    }
+    else if (comboBox == &bufferSizeCombo_)
+    {
+        const int size = comboBox->getSelectedId();
+        if (size > 0)
+            pending_.bufferSize = size;
+        updateDirtyFlag();
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1112,6 +1139,11 @@ void SettingsComponent::textEditorTextChanged(juce::TextEditor& editor)
         // Filtering the catalog never changes the (pending) selection itself.
         rebuildPetList();
     }
+    else if (&editor == &vmFlagsEditor_)
+    {
+        pending_.vmFlags = editor.getText().toStdString();
+        updateDirtyFlag();
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1126,7 +1158,10 @@ void SettingsComponent::updateDirtyFlag()
                    || (pending_.windowsAcrylic  != committed_.windowsAcrylic)
                    || (pending_.agentExePath    != committed_.agentExePath)
                    || (pending_.petSelection    != committed_.petSelection)
-                   || (pending_.eqPreset        != committed_.eqPreset);
+                   || (pending_.eqPreset        != committed_.eqPreset)
+                   || (pending_.sampleRate      != committed_.sampleRate)
+                   || (pending_.bufferSize      != committed_.bufferSize)
+                   || (pending_.vmFlags         != committed_.vmFlags);
 
     applyButton_.setEnabled(pendingChanges_);
     resetButton_.setEnabled(pendingChanges_);
@@ -1186,6 +1221,37 @@ void SettingsComponent::applyEqPreset(hathor::EqPreset preset)
         audioEngine_->setMasterEqPreset(preset);
 }
 
+// Phase 4.4: Apply sample rate / buffer size to the live audio device.
+void SettingsComponent::applyDeviceSettings(int sampleRate, int bufferSize)
+{
+    if (audioEngine_ == nullptr)
+        return;
+
+    // Apply sample rate if changed.
+    if (audioEngine_->getAudioStatus().sampleRate != sampleRate) {
+        std::string err = audioEngine_->setSampleRate(sampleRate);
+        if (!err.empty())
+            std::fprintf(stderr, "[Settings] setSampleRate(%d) failed: %s\n",
+                         sampleRate, err.c_str());
+    }
+
+    // Apply buffer size if changed.
+    if (audioEngine_->getBufferSize() != bufferSize) {
+        std::string err = audioEngine_->setBufferSize(bufferSize);
+        if (!err.empty())
+            std::fprintf(stderr, "[Settings] setBufferSize(%d) failed: %s\n",
+                         bufferSize, err.c_str());
+    }
+}
+
+// Phase 4.4: Apply ChucK VM flags to the live engine / worker process.
+void SettingsComponent::applyVmFlags(const std::string& flags)
+{
+    if (audioEngine_ == nullptr)
+        return;
+    audioEngine_->setVmFlags(flags);
+}
+
 void SettingsComponent::updateBlurControlState()
 {
     // B5: When opacity is 100%, blur has no visible effect — disable blur controls
@@ -1235,6 +1301,11 @@ void SettingsComponent::resetToCommitted()
     // Reset does NOT push to the engine — the live audio stays on the applied preset.
     eqPresetCombo_.setSelectedId(static_cast<int>(pending_.eqPreset) + 1,
                                  juce::dontSendNotification);
+
+    // Phase 4.4: Restore sample rate / buffer size / VM flags combos to committed.
+    sampleRateCombo_.setText(juce::String(pending_.sampleRate), juce::dontSendNotification);
+    bufferSizeCombo_.setText(juce::String(pending_.bufferSize), juce::dontSendNotification);
+    vmFlagsEditor_.setText(juce::String(pending_.vmFlags), juce::dontSendNotification);
 
     // Restore live preview to the committed state
     applyWindowAppearance(committed_);

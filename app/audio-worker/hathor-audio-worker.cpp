@@ -471,7 +471,7 @@ static void controlPlaneThread() {
         // Phase 4.4: Set ChucK VM flags — stored and applied to new VMs.
         else if (cmd.rfind("vm_set_flags", 0) == 0) {
             std::string rest = cmd.substr(12);
-            trimSpace(rest);
+            trimSpaces(rest);
             {
                 const std::lock_guard<std::mutex> lock(gVmFlagsMtx);
                 gVmFlags = rest;

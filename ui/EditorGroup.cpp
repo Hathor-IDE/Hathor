@@ -179,17 +179,6 @@ void EnhancedTabBar::mouseDown(const juce::MouseEvent& e)
     }
 }
 
-void EnhancedTabBar::mouseUp(const juce::MouseEvent& e)
-{
-    if (isDragging_ && e.mouseWasDraggedSinceMouseDown())
-    {
-        isDragging_ = false;
-        draggedTabIndex_ = -1;
-        if (onReorderRequested)
-            onReorderRequested();
-    }
-}
-
 void EnhancedTabBar::mouseDrag(const juce::MouseEvent& e)
 {
     if (!isDragging_ && e.mouseWasDraggedSinceMouseDown())
@@ -201,9 +190,30 @@ void EnhancedTabBar::mouseDrag(const juce::MouseEvent& e)
                 isDragging_ = true;
                 draggedTabIndex_ = static_cast<int>(i);
                 dragStartPoint_ = e.position.toFloat().roundToInt();
+                if (onTabDragStarted)
+                    onTabDragStarted(draggedTabIndex_);
                 return;
             }
         }
+    }
+}
+
+void EnhancedTabBar::mouseUp(const juce::MouseEvent& e)
+{
+    if (isDragging_ && e.mouseWasDraggedSinceMouseDown())
+    {
+        isDragging_ = false;
+        int tabIdx = draggedTabIndex_;
+        draggedTabIndex_ = -1;
+
+        // Allow cross-pane handler to consume the drag first.
+        bool consumed = false;
+        if (onTabDragEnded)
+            consumed = onTabDragEnded(e);
+
+        // If not consumed by cross-pane logic, fall back to local reorder.
+        if (!consumed && onReorderRequested)
+            onReorderRequested();
     }
 }
 
@@ -250,20 +260,7 @@ HathorTab* EditorGroup::openUntitledTab()
 
     reorderModel_.resize(tabs_.size());
 
-    // Wire unsaved-dot callback
-    ptr->onUnsavedDotChanged = [this, ptr]() {
-        if (ptr == activeTab())
-            refreshTabBar();
-    };
-
-    // Wire LSP/Ghost if available
-    if (lspClient_)
-        ptr->installLspClient(lspClient_);
-    if (ghostClient_)
-        ptr->installGhostClient(ghostClient_);
-
-    activateTab(static_cast<int>(tabs_.size()) - 1);
-
+    wireTabCallbacks(ptr);
     if (onTabCountChanged)
         onTabCountChanged();
 
@@ -585,6 +582,92 @@ bool EditorGroup::isTabPinned(int index) const noexcept
 {
     return index >= 0 && index < static_cast<int>(tabs_.size()) &&
            reorderModel_.isPinned(static_cast<size_t>(index));
+}
+
+// ---------------------------------------------------------------------------
+// Cross-pane tab transfer
+// ---------------------------------------------------------------------------
+
+std::unique_ptr<HathorTab> EditorGroup::takeTab(int index)
+{
+    if (index < 0 || index >= static_cast<int>(tabs_.size()))
+        return nullptr;
+
+    // Detach from component tree first
+    if (HathorTab* tab = tabs_[static_cast<size_t>(index)].get())
+        tab->removeFromParent();
+
+    // Extract from vector
+    auto it = tabs_.begin() + index;
+    auto detached = std::move(*it);
+    tabs_.erase(it);
+    reorderModel_.resize(tabs_.size());
+
+    // Adjust active index
+    if (activeIndex_ >= static_cast<int>(tabs_.size()))
+        activeIndex_ = static_cast<int>(tabs_.size()) - 1;
+
+    refreshTabBar();
+
+    if (onTabCountChanged)
+        onTabCountChanged();
+
+    return detached;
+}
+
+HathorTab* EditorGroup::insertTab(std::unique_ptr<HathorTab> tab, int index)
+{
+    if (!tab)
+        return nullptr;
+
+    HathorTab* ptr = tab.get();
+
+    if (index < 0)
+        index = static_cast<int>(tabs_.size());
+    else
+        index = std::min(index, static_cast<int>(tabs_.size()));
+
+    tabs_.insert(tabs_.begin() + index, std::move(tab));
+
+    addAndMakeVisible(*ptr);
+    ptr->setVisible(false);
+    reorderModel_.resize(tabs_.size());
+
+    // Wire callbacks
+    wireTabCallbacks(ptr);
+
+    // Wire LSP/Ghost if available
+    if (lspClient_)
+        ptr->installLspClient(lspClient_);
+    if (ghostClient_)
+        ptr->installGhostClient(ghostClient_);
+
+    refreshTabBar();
+
+    if (onTabCountChanged)
+        onTabCountChanged();
+
+    return ptr;
+}
+
+void EditorGroup::reorderTab(int fromIndex, int toIndex)
+{
+    if (fromIndex < 0 || fromIndex >= static_cast<int>(tabs_.size()) ||
+        toIndex < 0 || toIndex >= static_cast<int>(tabs_.size()))
+        return;
+
+    // Apply the reorder to the model first (handles pin clamping)
+    size_t newIndex = reorderModel_.applyReorder(
+        static_cast<size_t>(fromIndex),
+        static_cast<size_t>(toIndex));
+
+    // Actually move the tab in the vector
+    auto it = tabs_.begin() + fromIndex;
+    auto tab = std::move(*it);
+    tabs_.erase(it);
+    tabs_.insert(tabs_.begin() + static_cast<int>(newIndex), std::move(tab));
+
+    refreshTabBar();
 }
 
 void EditorGroup::handleKeyPress(const juce::KeyPress& key)

@@ -161,6 +161,25 @@ public:
     bool isTabPinned(int index) const noexcept;
 
     // -----------------------------------------------------------------------
+    // Cross-pane tab transfer (delegated from EditorSplitSurface)
+    // -----------------------------------------------------------------------
+
+    /** Remove and return the tab at index (detach from component tree). */
+    std::unique_ptr<HathorTab> takeTab(int index);
+
+    /** Insert a tab at index. Returns raw pointer for convenience. */
+    HathorTab* insertTab(std::unique_ptr<HathorTab> tab, int index);
+
+    /** Reorder tab from one index to another (local reorder). */
+    void reorderTab(int fromIndex, int toIndex);
+
+    // -----------------------------------------------------------------------
+    // Drag callbacks (installed by EditorSplitSurface)
+    // -----------------------------------------------------------------------
+    std::function<void(int)> onTabDragStarted;
+    std::function<bool(const juce::MouseEvent&)> onTabDragEnded;
+
+    // -----------------------------------------------------------------------
     // Callbacks (installed by EditorArea or parent)
     // -----------------------------------------------------------------------
     std::function<void(HathorTab*)> onActiveTabChanged;
@@ -198,6 +217,7 @@ public:
 
 private:
     void refreshTabBar();
+    void wireTabCallbacks(HathorTab* tab);
     std::vector<EnhancedTabBar::TabDisplayInfo> buildTabDisplayInfos() const;
     std::vector<HathorTab*> buildHathorTabPointers() const;
 
