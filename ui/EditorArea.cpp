@@ -42,7 +42,8 @@ namespace hathor::ui {
 namespace {
 
 /// Resolve a resource inside the .app bundle (Contents/Resources/), falling
-/// back to the development relative path when not running from a bundle.
+/// back to the development relative path (reference/) when not running from
+/// a bundle.
 juce::File resolveBundledResource(const std::string& relativePath)
 {
     const juce::File exeFile =
@@ -52,8 +53,8 @@ juce::File resolveBundledResource(const std::string& relativePath)
         .getChildFile("Resources").getChildFile(relativePath);
     if (bundled.existsAsFile())
         return bundled;
-    // Development fallback: relative to cwd (project root)
-    return juce::File(relativePath);
+    // Development fallback: reference/<relativePath> (repo root)
+    return juce::File("reference/" + relativePath);
 }
 
 /// Resolve the Node.js executable.  Tries common install locations first,
