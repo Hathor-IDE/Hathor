@@ -310,9 +310,45 @@ if(CHUCK_AVAILABLE)
         target_link_options(libchuck PUBLIC "-Wl,-undefined,dynamic_lookup")
     endif()
 
-    find_package(PkgConfig QUIET)
-    if(PkgConfig_FOUND)
-        pkg_check_modules(SNDFILE IMPORTED_TARGET sndfile)
+    # ---------------------------------------------------------------------------
+    # libsndfile — Phase 6.1 universal dependency
+    # ---------------------------------------------------------------------------
+    # Hathor ships a prebuilt UNIVERSAL (x86_64 + arm64) static libsndfile in
+    # third_party/lib/macos/ rather than relying on a developer's Homebrew
+    # install.  The Homebrew libsndfile on an Intel machine is x86_64-only and
+    # is discovered as a *dynamic* dylib at /usr/local/opt/libsndfile/..., which
+    # (a) breaks the universal binaries on Apple Silicon at runtime and (b) drags
+    # in an x86_64-only tree of FLAC/Vorbis/Opus/mpg123 transitive dylibs.
+    #
+    # Linking the universal static archive instead:
+    #   * makes the arm64 slice genuinely loadable on Apple Silicon,
+    #   * removes the absolute /usr/local/opt/libsndfile runtime dependency,
+    #   * keeps ChucK's SndBuf (ugen_xxx) sf_open/sf_close/sf_read symbols
+    #     available without external codecs (ENABLE_EXTERNAL_LIBS=OFF build:
+    #     core WAV/AIFF/RAW support, which is all ChucK needs).
+    #
+    # The header is vendored next to the archive so we never pick up the
+    # developer's <sndfile.h> (which would re-introduce the broken dylib link
+    # via pkg-config Cflags).
+    set(HATHOR_SNDFILE_LIB
+        "${CMAKE_CURRENT_SOURCE_DIR}/third_party/lib/macos/libsndfile-universal.a")
+    set(HATHOR_SNDFILE_INCLUDE
+        "${CMAKE_CURRENT_SOURCE_DIR}/third_party/lib/macos")
+
+    if(EXISTS "${HATHOR_SNDFILE_LIB}")
+        message(STATUS "Hathor: using bundled universal libsndfile "
+            "(${HATHOR_SNDFILE_LIB})")
+        target_include_directories(libchuck PUBLIC "${HATHOR_SNDFILE_INCLUDE}")
+        target_link_libraries(libchuck PUBLIC "${HATHOR_SNDFILE_LIB}")
+    else()
+        # Fallback: only if the developer has not built the universal archive.
+        # Prefer static linkage; otherwise fall back to dynamic pkg-config.
+        find_library(SNDFILE_STATIC sndfile
+            PATHS "${HATHOR_SNDFILE_INCLUDE}/.." NO_DEFAULT_PATH)
+        find_package(PkgConfig QUIET)
+        if(PkgConfig_FOUND)
+            pkg_check_modules(SNDFILE IMPORTED_TARGET sndfile)
+        endif()
         if(SNDFILE_FOUND)
             target_link_libraries(libchuck PUBLIC PkgConfig::SNDFILE)
         endif()

@@ -51,3 +51,10 @@ build*/
 reference/strudel-lsp/node_modules/
 reference/strudel-lsp/package-lock.json
 
+# Vendored prebuilt universal libsndfile (Phase 6.1) — KEEP the prebuilt archive
+# and header so a clean checkout can build without rebuilding libsndfile, but
+# ignore the intermediate per-architecture build trees generated from source.
+third_party/src/libsndfile/build-*/
+!third_party/lib/macos/libsndfile-universal.a
+!third_party/lib/macos/sndfile.h
+
