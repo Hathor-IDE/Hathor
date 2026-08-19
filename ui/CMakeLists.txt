@@ -156,7 +156,8 @@ target_sources(hathor-ui
           TabReorderModel.cpp   # L-1: JUCE-free tab reorder model
           RecentlyClosedTabs.cpp # L-1: JUCE-free tab close history
           ActionRegistry.cpp    # L-1: JUCE-free action/keystroke registry
-         FindReplacePanel.cpp  # L-1: find/replace UI
+          FindReplaceModel.cpp # L-1: find/replace search engine (JUCE-free)
+          FindReplacePanel.cpp  # L-1: find/replace UI
          CommandPalette.cpp    # L-1: command palette UI
          BreadcrumbsBar.cpp    # L-1: breadcrumbs navigation bar
          MiniNotationTokeniser.cpp # task 3.5
