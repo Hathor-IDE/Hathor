@@ -647,17 +647,9 @@ juce::PopupMenu HathorTab::prepareEditorContextMenu()
 
     menu.addSeparator();
 
-    // Language-specific eval (only for active tabs)
-    if (isChuckTab())
-    {
-        menu.addItem(cmdEvalLine, "Eval Line (Ctrl+Enter)");
-        menu.addItem(cmdEvalBlock, "Eval Block (Ctrl+Alt+Enter)");
-    }
-    else
-    {
-        menu.addItem(cmdEvalLine,  "Eval Line (Ctrl+Enter)");
-        menu.addItem(cmdEvalBlock, "Eval Block (Ctrl+Alt+Enter)");
-    }
+    // Language-specific eval
+    menu.addItem(cmdEvalLine,  "Eval Line (Ctrl+Enter)");
+    menu.addItem(cmdEvalBlock, "Eval Block (Ctrl+Alt+Enter)");
 
     menu.addSeparator();
 

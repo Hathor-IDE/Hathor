@@ -749,15 +749,9 @@ bool EditorArea::openUntitledTab()
       addAndMakeVisible(*tab);
       tabs_.push_back(std::move(tab));
 
-     activateTab(static_cast<int>(tabs_.size()) - 1);
+      activateTab(static_cast<int>(tabs_.size()) - 1);
 
-     // A5 — SongChuck eval wiring: auto-evaluate .ck files on open so that
-     // a single Explorer click performs open + ckEval, mirroring .hathor's
-     // Ctrl+Enter eval surface (same evalCkOnWorkerThread path).
-     if (auto* newTab = tabs_.back().get(); newTab->isChuckTab())
-         triggerChuckEval(newTab);
-
-     return true;
+      return true;
  }
 
 bool EditorArea::openFile(const juce::File& file)
@@ -776,9 +770,6 @@ bool EditorArea::openFile(const juce::File& file)
         if (fp.has_value() && *fp == file)
         {
             activateTab(i);
-            // A5 — SongChuck eval wiring: re-evaluate .ck files on re-open.
-            if (auto* t = tabs_[static_cast<std::size_t>(i)].get(); t->isChuckTab())
-                triggerChuckEval(t);
             return true;
         }
     }
@@ -1694,17 +1685,17 @@ void EditorArea::wireContextMenuCallbacks(HathorTab& tab)
         if (tab.isChuckTab())
             evalOnWorkerThread(&tab, "slot" + std::to_string(tab.slotIndex()), tab.document().getAllContent());
         else
-            bakeActiveTab();
+            evalHathorTab(tab, EvalScope::Line);
     };
     tab.onEvalBlock = [this, &tab]() {
-        // Eval selected text (or current line if no selection)
-        juce::String text = tab.editor().getTextInRange(tab.editor().getHighlightedRegion());
-        if (text.isEmpty())
-            text = tab.document().getLine(tab.editor().getCaretPos().getLineNumber());
         if (tab.isChuckTab())
-            evalOnWorkerThread(&tab, "slot" + std::to_string(tab.slotIndex()), text);
+        {
+            // ChucK has no block semantics — always compile the whole file.
+            evalOnWorkerThread(&tab, "slot" + std::to_string(tab.slotIndex()),
+                               tab.document().getAllContent());
+        }
         else
-            bakeActiveTab();
+            evalHathorTab(tab, EvalScope::Block);
     };
 }
 
@@ -2010,37 +2001,57 @@ bool EditorArea::handleKeyPress(const juce::KeyPress& key, HathorTab* tab)
     // -----------------------------------------------------------------
     // Mini-notation path (existing — .hathor tabs)
     // -----------------------------------------------------------------
+    evalHathorTab(*tab, altHeld ? EvalScope::WholeFile : EvalScope::Block);
+    return true;
+}
 
+// ---------------------------------------------------------------------------
+// evalHathorTab — single source of truth for .hathor (mini-notation) eval
+// ---------------------------------------------------------------------------
+
+void EditorArea::evalHathorTab(HathorTab& tab, EvalScope scope)
+{
     // Determine slot name from the AudioEngine (e.g. "d0").
     // If the engine hasn't registered the slot yet, derive a default name.
     juce::String slotName;
-    const std::string engineName = audio_.slotName(tab->slotIndex());
+    const std::string engineName = audio_.slotName(tab.slotIndex());
     if (!engineName.empty())
         slotName = juce::String(engineName);
     else
-        slotName = "d" + juce::String(tab->slotIndex()); // fallback
+        slotName = "d" + juce::String(tab.slotIndex()); // fallback
 
-    if (altHeld)
+    if (scope == EvalScope::WholeFile)
     {
-        // Ctrl+Alt+Enter — evaluate entire buffer (Req 23.3)
-        const juce::String text = tab->document().getAllContent();
-        evalOnWorkerThread(tab, slotName, text);
-        return true;
+        // Whole buffer (Req 23.3)
+        evalOnWorkerThread(&tab, slotName, tab.document().getAllContent());
+        return;
     }
 
-    // Ctrl+Enter — evaluate Eval_Block (Req 23.1, 23.2)
-    const int cursorLine = tab->editor().getCaretPos().getLineNumber();
-    const auto block = extractEvalBlock(tab->document(), cursorLine);
+    if (scope == EvalScope::Line)
+    {
+        const int cursorLine = tab.editor().getCaretPos().getLineNumber();
+        const juce::String line = tab.document().getLine(cursorLine);
+        if (line.trim().isEmpty())
+        {
+            showStatus("Cursor is on a blank line \xe2\x80\x94 nothing to evaluate");
+            return;
+        }
+        evalOnWorkerThread(&tab, slotName, line);
+        return;
+    }
+
+    // Block — evaluate Eval_Block (Req 23.1, 23.2)
+    const int cursorLine = tab.editor().getCaretPos().getLineNumber();
+    const auto block = extractEvalBlock(tab.document(), cursorLine);
 
     if (!block.has_value())
     {
         // Cursor is on a blank line (Req 23.2)
         showStatus("Cursor is on a blank line \xe2\x80\x94 nothing to evaluate");
-        return true;
+        return;
     }
 
-    evalOnWorkerThread(tab, slotName, *block);
-    return true;
+    evalOnWorkerThread(&tab, slotName, *block);
 }
 
 // ---------------------------------------------------------------------------
@@ -2218,25 +2229,6 @@ void EditorArea::evalCkOnWorkerThread(HathorTab* tab,
                 }
             });
     }).detach();
-}
-
-// ---------------------------------------------------------------------------
-// A5: triggerChuckEval — guard + dispatch for .ck auto-evaluation on open
-// ---------------------------------------------------------------------------
-
-void EditorArea::triggerChuckEval(HathorTab* tab)
-{
-    // Guard: the audio worker must be running before we can evaluate.
-    if (!audio_.hasWorker())
-    {
-        showStatus("ChucK runtime unavailable — cannot evaluate .ck file.");
-        tab->setCkEvalState(HathorTab::CkevalState::Error);
-        return;
-    }
-
-    // Dispatch via the existing Ctrl+Enter path (same evalCkOnWorkerThread).
-    const juce::String code = tab->document().getAllContent();
-    evalCkOnWorkerThread(tab, code);
 }
 
 // ---------------------------------------------------------------------------

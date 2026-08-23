@@ -57,6 +57,10 @@ public:
     // open/closed logic themselves and call setActivePanel() with the result.
     std::function<void(Panel)> onPanelToggled;
 
+    /// 0.2: right-click context menu (workspace actions: Open Folder…,
+    /// Open Recent). Position is local to the ribbon.
+    std::function<void(const juce::Point<int>&)> onContextMenu;
+
     //==========================================================================
     // State
 

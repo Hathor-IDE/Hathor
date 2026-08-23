@@ -259,6 +259,39 @@ MainWindow::MainWindow(AudioEngine& audio,
     // The callback toggles the explorer open/closed and syncs the ribbon's
     // active-button accent highlight via setActivePanel().
     // -----------------------------------------------------------------------
+    activityRibbon_->onContextMenu =
+        [this](const juce::Point<int>&)
+        {
+            // 0.2: ribbon context menu — Open Folder… + Open Recent entries.
+            juce::PopupMenu menu;
+            menu.addItem(1, "Open Folder…");
+
+            const std::vector<std::string> recent = loadRecentProjects();
+            if (!recent.empty())
+            {
+                juce::PopupMenu recentMenu;
+                for (std::size_t i = 0; i < recent.size(); ++i)
+                    recentMenu.addItem(static_cast<int>(100 + i),
+                                       "Open Recent: " + juce::String(recent[i]));
+                menu.addSubMenu("Open Recent", recentMenu);
+            }
+
+            menu.showMenuAsync(
+                juce::PopupMenu::Options(),
+                [this](int result)
+                {
+                    if (result == 1)
+                        openFolderChooser();
+                    else if (result >= 100)
+                    {
+                        const std::vector<std::string> recents = loadRecentProjects();
+                        const int idx = result - 100;
+                        if (juce::isPositiveAndBelow(idx, recents.size()))
+                            switchWorkspace(juce::File(recents[static_cast<std::size_t>(idx)]));
+                    }
+                });
+        };
+
     activityRibbon_->onPanelToggled =
         [this](hathor::ui::Panel panel)
         {
@@ -1211,7 +1244,7 @@ void MainWindow::showWelcomeScreen()
 
 void MainWindow::refreshRecentActions()
 {
-{    auto* reg = editorArea_ != nullptr ? editorArea_->actionRegistry() : nullptr;
+    auto* reg = editorArea_ != nullptr ? editorArea_->actionRegistry() : nullptr;
     if (reg == nullptr)
         return;
 

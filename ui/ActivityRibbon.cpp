@@ -116,6 +116,15 @@ void ActivityRibbon::mouseDown(const juce::MouseEvent& e)
 {
     const juce::Point<int> pos = e.getPosition();
 
+    // 0.2: right-click anywhere on the ribbon opens the workspace
+    // context menu (owned by MainWindow via onContextMenu).
+    if (e.mods.isRightButtonDown())
+    {
+        if (onContextMenu)
+            onContextMenu(pos);
+        return;
+    }
+
     // Check navigation buttons
     for (const auto& btn : navButtons_)
     {

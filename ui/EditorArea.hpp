@@ -689,6 +689,15 @@ private:
         int cursorLine) noexcept;
 
     /**
+     * Single source of truth for .hathor (mini-notation) eval.
+     * Resolves the AudioEngine slot name and dispatches the given scope's
+     * text via evalOnWorkerThread(). Shared by handleKeyPress, the
+     * ActionRegistry callbacks (onEvalLine/onEvalBlock) and the context menu.
+     */
+    enum class EvalScope { Line, Block, WholeFile };
+    void evalHathorTab(HathorTab& tab, EvalScope scope);
+
+    /**
       * Dispatch `set-pattern <slotName> <text>` on the worker thread (Req 23.7)
       * ...existing doc...
       *
@@ -715,17 +724,6 @@ private:
       *              Ctrl+Enter and Ctrl+Alt+Enter on .ck tabs).
       */
      void evalCkOnWorkerThread(HathorTab* tab, const juce::String& code);
-
-     /**
-      * A5: Trigger ChucK evaluation on a .ck tab, guarding against a
-      * missing audio worker.  Called from openFile() so that clicking a
-      * .ck file in the Explorer performs open + ckEval as one action,
-      * mirroring .hathor's Ctrl+Enter eval surface.
-      *
-      * If the audio worker is unavailable, sets the tab state to Error
-      * and shows a status message instead of silently no-op'ing.
-      */
-     void triggerChuckEval(HathorTab* tab);
 
      // -----------------------------------------------------------------------
      // Per-tab KeyListener — bridges CodeEditorComponent key events into

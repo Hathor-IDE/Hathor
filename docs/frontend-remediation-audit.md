@@ -116,6 +116,11 @@ Each wave's tasks are independent of each other; dependencies are between waves.
 Every agent must build with `cmake --build build --target hathor-ui` and run
 `hathor-ui-tests` before reporting done. Commit one logical change per agent.
 
+> **Testing note:** When running the full test suite (`hathor-ui-tests` / ctest),
+> do NOT run audio tests (audio device / playback / engine-audio tests). They
+> require a live audio device and should only be run explicitly when working on
+> those specific audio tests or features.
+
 ---
 
 ## Wave 0 — Unblock usability fundamentals (no deps, all parallel)
