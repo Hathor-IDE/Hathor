@@ -263,6 +263,7 @@ public:
 private:
     void refreshTabBar();
     void wireTabCallbacks(HathorTab* tab);
+    void removeTabInternal(int index);
     juce::String resolveSlotName(const HathorTab& tab) const;
     std::vector<EnhancedTabBar::TabDisplayInfo> buildTabDisplayInfos() const;
     std::vector<HathorTab*> buildHathorTabPointers() const;

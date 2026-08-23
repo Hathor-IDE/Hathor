@@ -10,7 +10,8 @@
  *   - BPM slider:  range [20, 400], step 1, initial display 120
  *   - Gain slider: range [0.0, 2.0], continuous, initial display 1.0
  *
- * Dispatches commands on a worker thread (std::thread fire-and-forget):
+ * Dispatches commands on the JUCE message thread via juce::AsyncUpdater
+ * (0.5/C2 — coalesces to the latest value; no threads, no dangling refs):
  *   - BPM:  "bpm <value>"      (integer, only when changed)
  *   - Gain: "set-gain <value>" (2 decimal places, clamped [0.0, 2.0])
  *
@@ -39,7 +40,8 @@ namespace hathor::ui {
  *
  * Requirements: 26.1, 26.2, 26.3, 26.4, 26.9
  */
-class SliderPanel : public juce::Component
+class SliderPanel : public juce::Component,
+                    private juce::AsyncUpdater
 {
 public:
     /**
@@ -49,7 +51,7 @@ public:
      */
     explicit SliderPanel(hathor::control::ControlInterface& ci);
 
-    ~SliderPanel() override = default;
+    ~SliderPanel() override;
 
     // Non-copyable / non-movable (holds a reference and JUCE components).
     SliderPanel(SliderPanel&&)                 = delete;
@@ -84,6 +86,19 @@ private:
     // -----------------------------------------------------------------------
     void setupBpmSlider();
     void setupGainSlider();
+
+    // -----------------------------------------------------------------------
+    // Async dispatch (0.5/C2) — coalesces latest values onto the message
+    // thread; nothing outlives the panel.
+    // -----------------------------------------------------------------------
+    void handleAsyncUpdate() override;
+    void postDispatch();
+
+    /// Pending flags/values set by onValueChange, drained in handleAsyncUpdate.
+    bool  bpmPending_   = false;
+    int   pendingBpm_   = 120;
+    bool  gainPending_  = false;
+    float pendingGain_  = 1.0f;
 
     // -----------------------------------------------------------------------
     // Members

@@ -225,9 +225,8 @@ private:
     // L-3: Unified Problems / Diagnostics status ribbon (bottom of window)
     std::unique_ptr<hathor::ui::StatusRibbon>        statusRibbon_;
 
-    /// Real SliderPanel — created in the constructor with ci_.
-    /// Passed to UITimer for bidirectional BPM/gain sync (Req 26.4, 26.9).
-    std::unique_ptr<hathor::ui::SliderPanel>       sliderPanel_;
+    // 0.5/S4: orphan SliderPanel removed — ChatSidebar's instance is the
+    // single BPM/gain surface (synced via chatSidebar_->getSliderPanel()).
 
     // Phase G — Petdex (D2–D4): sprite acquisition + D4-gated mascot display.
     // Declared service-first so destruction order stops the widget's timer

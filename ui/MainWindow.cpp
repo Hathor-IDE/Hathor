@@ -172,9 +172,6 @@ MainWindow::MainWindow(AudioEngine& audio,
         }
     };
 
-    // Task 3.9: Create real SliderPanel with ControlInterface for dispatching.
-    sliderPanel_ = std::make_unique<hathor::ui::SliderPanel>(ci_);
-
     // -----------------------------------------------------------------------
     // Create and wire chat sidebar (B6: multi-thread tabs, C2: per-thread reconnect)
     // -----------------------------------------------------------------------
@@ -655,12 +652,12 @@ MainWindow::MainWindow(AudioEngine& audio,
     // Signature: UITimer(SpscRingBuffer<128>&, VisualizerPanel&,
     //                    SliderPanel&, AudioEngine&)
     //
-    // sliderPanel_ is the real SliderPanel (task 3.9 now implemented).
+    // sliderPanel comes from ChatSidebar (0.5/S4 — single BPM/gain surface).
     // -----------------------------------------------------------------------
     uiTimer_ = std::make_unique<hathor::ui::UITimer>(
         audio_.visualizerBuffer(),
         *visualizerPanel_,
-        *sliderPanel_,
+        chatSidebar_->getSliderPanel(),
         audio_);
     uiTimer_->startTimerHz(60);
 

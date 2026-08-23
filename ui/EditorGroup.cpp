@@ -428,90 +428,119 @@ bool EditorGroup::closeTab(int index)
                 if (result == 3 || result == 0)
                     return;  // Cancel — keep tab open
 
-                if (result == 1)
+                if (result == 2)
                 {
-                    HathorTab* t = tabs_[static_cast<size_t>(index)].get();
-                    if (!t->filePath().has_value())
-                    {
-                        statusBar_.setText("Error: cannot save untitled buffer", juce::dontSendNotification);
-                        return;
-                    }
-
-                    const juce::File& f = *t->filePath();
-                    bool saveOk = false;
-
-                    if (ChuckTokeniser::isChuckFile(f))
-                    {
-                        saveOk = f.replaceWithText(t->document().getAllContent());
-                    }
-                    else
-                    {
-                        HathorFile hf;
-                        if (t->frontMatter().has_value())
-                            hf.front = *t->frontMatter();
-                        hf.body = t->document().getAllContent().toStdString();
-                        const std::string serialized = serialiseHathorFile(hf);
-                        saveOk = f.replaceWithText(juce::String(serialized));
-                    }
-
-                    if (!saveOk)
-                    {
-                        statusBar_.setText("Error: failed to save file", juce::dontSendNotification);
-                        return;
-                    }
-
-                    t->clearUnsavedDot();
+                    // Discard
+                    this->removeTabInternal(index);
+                    return;
                 }
 
-                // Proceed with closing
-                if (index < 0 || index >= static_cast<int>(this->tabs_.size()))
-                    return;
+                // result == 1 → Save
+                HathorTab* t = tabs_[static_cast<size_t>(index)].get();
 
-                HathorTab* closureTab = this->tabs_[static_cast<size_t>(index)].get();
-
-                TabSnapshot snap;
-                snap.label = closureTab->tabLabel().toStdString();
-                snap.fileName = closureTab->filePath().has_value()
-                                    ? closureTab->filePath()->getFullPathName().toStdString()
-                                    : "";
-                snap.content = closureTab->document().getAllContent().toStdString();
-                snap.cursorOffset = static_cast<size_t>(closureTab->editor().getCaretPosition());
-                this->closedTabsHistory_.push(std::move(snap));
-
-                if (this->activeIndex_ == index)
-                    this->activeIndex_ = -1;
-
-                closureTab->setVisible(false);
-                this->tabs_.erase(this->tabs_.begin() + index);
-                this->reorderModel_.resize(this->tabs_.size());
-
-                if (!this->tabs_.empty())
+                if (!t->filePath().has_value())
                 {
-                    this->activeIndex_ = std::min(this->activeIndex_,
-                                                  static_cast<int>(this->tabs_.size()) - 1);
-                    this->activateTab(this->activeIndex_);
+                    // Untitled buffer — fall back to a native save-as chooser
+                    // (mirrors EditorArea::closeTab). Cancel cancels the close;
+                    // a successful save closes the tab cleanly.
+                    auto chooser = std::make_shared<juce::FileChooser>(
+                        "Save Buffer As…",
+                        juce::File::getSpecialLocation(
+                            juce::File::userDocumentsDirectory),
+                        "*.hathor;*.ck");
+
+                    chooser->launchAsync(
+                        juce::FileBrowserComponent::saveMode |
+                        juce::FileBrowserComponent::canSelectFiles,
+                        [this, index, chooser](const juce::FileChooser& fc)
+                        {
+                            const auto chosen = fc.getResult();
+                            if (chosen.getFullPathName().isEmpty())
+                                return;  // Cancel — keep tab open
+
+                            HathorTab* tt = tabs_[static_cast<size_t>(index)].get();
+                            bool saveOk = false;
+
+                            if (ChuckTokeniser::isChuckFile(chosen))
+                            {
+                                saveOk = chosen.replaceWithText(
+                                    tt->document().getAllContent());
+                            }
+                            else
+                            {
+                                HathorFile hf;
+                                if (tt->frontMatter().has_value())
+                                    hf.front = *tt->frontMatter();
+                                hf.body = tt->document().getAllContent().toStdString();
+                                const std::string serialized = serialiseHathorFile(hf);
+                                saveOk = chosen.replaceWithText(juce::String(serialized));
+                            }
+
+                            if (!saveOk)
+                            {
+                                showStatus("Error: failed to save file");
+                                return;  // keep tab open
+                            }
+
+                            tt->setFilePath(chosen);
+                            tt->clearUnsavedDot();
+
+                            removeTabInternal(index);
+                        });
+                    return;  // async — close continues in chooser callback
+                }
+
+                const juce::File& f = *t->filePath();
+                bool saveOk = false;
+
+                if (ChuckTokeniser::isChuckFile(f))
+                {
+                    saveOk = f.replaceWithText(t->document().getAllContent());
                 }
                 else
                 {
-                    this->activeIndex_ = -1;
+                    HathorFile hf;
+                    if (t->frontMatter().has_value())
+                        hf.front = *t->frontMatter();
+                    hf.body = t->document().getAllContent().toStdString();
+                    const std::string serialized = serialiseHathorFile(hf);
+                    saveOk = f.replaceWithText(juce::String(serialized));
                 }
 
-                this->refreshTabBar();
+                if (!saveOk)
+                {
+                    showStatus("Error: failed to save file");
+                    return;
+                }
 
-                if (this->onTabCountChanged)
-                    this->onTabCountChanged();
+                t->clearUnsavedDot();
+
+                removeTabInternal(index);
             });
 
         // The close is async — return true (if Cancel, the tab remains).
         return true;
     }
 
-    // Save snapshot for reopen
+    // No unsaved changes — close immediately.
+    removeTabInternal(index);
+    return true;
+}
+
+void EditorGroup::removeTabInternal(int index)
+{
+    if (index < 0 || index >= static_cast<int>(tabs_.size()))
+        return;
+
+    HathorTab* closureTab = tabs_[static_cast<size_t>(index)].get();
+
     TabSnapshot snap;
-    snap.label = tab->tabLabel().toStdString();
-    snap.fileName = tab->filePath().has_value() ? tab->filePath()->getFullPathName().toStdString() : "";
-    snap.content = tab->document().getAllContent().toStdString();
-    snap.cursorOffset = static_cast<size_t>(tab->editor().getCaretPosition());
+    snap.label = closureTab->tabLabel().toStdString();
+    snap.fileName = closureTab->filePath().has_value()
+                        ? closureTab->filePath()->getFullPathName().toStdString()
+                        : "";
+    snap.content = closureTab->document().getAllContent().toStdString();
+    snap.cursorOffset = static_cast<size_t>(closureTab->editor().getCaretPosition());
     closedTabsHistory_.push(std::move(snap));
 
     // If this tab is active, deactivate first
@@ -519,7 +548,7 @@ bool EditorGroup::closeTab(int index)
         activeIndex_ = -1;
 
     // Hide before removing from component hierarchy
-    tab->setVisible(false);
+    closureTab->setVisible(false);
 
     // Erase from vector — HathorTab destructor removes itself from parent
     tabs_.erase(tabs_.begin() + index);
@@ -540,8 +569,6 @@ bool EditorGroup::closeTab(int index)
 
     if (onTabCountChanged)
         onTabCountChanged();
-
-    return true;
 }
 
 void EditorGroup::reopenLastClosedTab()

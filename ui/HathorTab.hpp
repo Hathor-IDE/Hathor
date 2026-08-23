@@ -110,6 +110,14 @@ public:
       */
     HathorTab(int slotIndex, const juce::File& file = juce::File());
 
+    /**
+      * Construct an untitled tab with an explicit tokeniser choice.
+      *
+      * Used by the New Buffer dialog: templates for unsaved buffers can pick
+      * ChucK highlighting before any file exists on disk (Agent 0.4 / E5).
+      */
+    explicit HathorTab(int slotIndex, bool useChuckTokeniser);
+
     ~HathorTab() override;
 
     // Non-copyable / non-movable (owns a document + component).

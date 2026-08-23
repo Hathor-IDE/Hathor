@@ -206,13 +206,26 @@ public:
     // -----------------------------------------------------------------------
 
     /**
+      * Template choice for new untitled buffers (Agent 0.4 / E5).
+      */
+    enum class NewBufferKind { Blank, Hathor, Chuck };
+
+    /**
      * Open a new untitled buffer.
      * Calls nextFreeSlot(); if all 16 slots are taken, shows an error in the
      * status bar and returns false without opening a tab.  (Req 22.6)
      *
+     * @param kind  Buffer template — selects seed content and the tokeniser
+     *              immediately (ChucK highlighting before any save).
      * @return true if the tab was created, false if all slots are occupied.
      */
-    bool openUntitledTab();
+    bool openUntitledTab(NewBufferKind kind = NewBufferKind::Blank);
+
+    /**
+     * Show the New Buffer dialog (Cmd+N / "tab.new") offering template
+     * choices: Empty .hathor, Empty .ck, Blank.  Creates the chosen buffer.
+     */
+    void showNewBufferDialog();
 
     /**
      * Open a file in a new tab (or focus an existing tab for the same file).

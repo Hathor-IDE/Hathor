@@ -14,12 +14,11 @@
 #include <cmath>
 #include <iomanip>
 #include <sstream>
-#include <thread>
 
 namespace hathor::ui {
 
 // ===========================================================================
-// Construction
+// Construction / destruction
 // ===========================================================================
 
 SliderPanel::SliderPanel(hathor::control::ControlInterface& ci)
@@ -32,6 +31,12 @@ SliderPanel::SliderPanel(hathor::control::ControlInterface& ci)
     addAndMakeVisible(bpmSlider_);
     addAndMakeVisible(gainLabel_);
     addAndMakeVisible(gainSlider_);
+}
+
+SliderPanel::~SliderPanel()
+{
+    // 0.5/C2: cancel any pending async dispatch before members die.
+    cancelPendingUpdate();
 }
 
 // ===========================================================================
@@ -62,7 +67,7 @@ void SliderPanel::setupBpmSlider()
     bpmSlider_.setValue(120.0, juce::dontSendNotification);
 
     // -----------------------------------------------------------------------
-    // BPM onValueChange — dispatch "bpm <value>" on worker thread (Req 26.2)
+    // BPM onValueChange — post "bpm <value>" via AsyncUpdater (0.5/C2)
     // Does NOT dispatch if new integer value == last dispatched BPM.
     // -----------------------------------------------------------------------
     bpmSlider_.onValueChange = [this]()
@@ -78,13 +83,9 @@ void SliderPanel::setupBpmSlider()
 
         lastDispatchedBpm_ = newBpm;
 
-        const std::string cmd = "bpm " + std::to_string(newBpm);
-        hathor::control::ControlInterface& ci = ci_;
-
-        std::thread([&ci, cmd]()
-        {
-            ci.dispatch(cmd);
-        }).detach();
+        pendingBpm_  = newBpm;
+        bpmPending_  = true;
+        postDispatch();
     };
 }
 
@@ -112,7 +113,7 @@ void SliderPanel::setupGainSlider()
     gainSlider_.setValue(1.0, juce::dontSendNotification);
 
     // -----------------------------------------------------------------------
-    // Gain onValueChange — dispatch "set-gain <value>" on worker thread (Req 26.3)
+    // Gain onValueChange — post "set-gain <value>" via AsyncUpdater (0.5/C2).
     // Value is formatted to 2 decimal places and clamped to [0.0, 2.0].
     // -----------------------------------------------------------------------
     gainSlider_.onValueChange = [this]()
@@ -127,15 +128,40 @@ void SliderPanel::setupGainSlider()
         // Format to exactly 2 decimal places (Req 26.3)
         std::ostringstream oss;
         oss << std::fixed << std::setprecision(2) << gain;
-        const std::string cmd = "set-gain " + oss.str();
 
-        hathor::control::ControlInterface& ci = ci_;
-
-        std::thread([&ci, cmd]()
-        {
-            ci.dispatch(cmd);
-        }).detach();
+        pendingGain_ = std::clamp(gain, 0.0f, 2.0f);
+        gainPending_ = true;
+        postDispatch();
     };
+}
+
+// ===========================================================================
+// Async dispatch (0.5/C2) — debounced, message-thread only
+// ===========================================================================
+
+void SliderPanel::postDispatch()
+{
+    // AsyncUpdater coalesces: multiple triggers before the next message-loop
+    // pass result in a single handleAsyncUpdate() with the latest values.
+    triggerAsyncUpdate();
+}
+
+void SliderPanel::handleAsyncUpdate()
+{
+    if (bpmPending_)
+    {
+        bpmPending_ = false;
+        ci_.dispatch("bpm " + std::to_string(pendingBpm_));
+    }
+
+    if (gainPending_)
+    {
+        gainPending_ = false;
+        std::ostringstream oss;
+        oss << std::fixed << std::setprecision(2)
+            << std::clamp(pendingGain_, 0.0f, 2.0f);
+        ci_.dispatch("set-gain " + oss.str());
+    }
 }
 
 // ===========================================================================

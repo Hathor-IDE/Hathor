@@ -694,7 +694,7 @@ const hathor::language::MetadataCompatibility& EditorArea::metadataCompatibility
 // Public API
 // ---------------------------------------------------------------------------
 
-bool EditorArea::openUntitledTab()
+bool EditorArea::openUntitledTab(NewBufferKind kind)
 {
     const int slot = nextFreeSlot(buildHathorTabPointers());
     if (slot == -1)
@@ -704,7 +704,22 @@ bool EditorArea::openUntitledTab()
         return false;
     }
 
-    auto tab = std::make_unique<HathorTab>(slot);
+    // Agent 0.4 (E5): the tokeniser is chosen at construction time via the
+    // bool overload so .ck templates get ChucK highlighting before any save.
+    const bool chuck = (kind == NewBufferKind::Chuck);
+    auto tab = std::make_unique<HathorTab>(slot, chuck);
+
+    if (kind == NewBufferKind::Chuck)
+    {
+        tab->document().replaceAllContent(
+            "// untitled ChucK sketch\n// Ctrl+Enter to compile & run\n\n");
+    }
+    else if (kind == NewBufferKind::Hathor)
+    {
+        tab->document().replaceAllContent(
+            "[hathor]\nslot = d0\nbpm = 120.0\nlabel = untitled\n\n");
+    }
+
     wireUnsavedCallback(*tab);
     wirePlayStopCallback(*tab);
     wireContextMenuCallbacks(*tab);
@@ -753,6 +768,47 @@ bool EditorArea::openUntitledTab()
 
       return true;
  }
+
+void EditorArea::showNewBufferDialog()
+{
+    auto window = std::make_unique<juce::AlertWindow>(
+        "New Buffer", "Choose a template for the new buffer:",
+        juce::MessageBoxIconType::QuestionIcon);
+
+    window->addComboBox("template", { "Blank",
+                                      "Empty .hathor (front-matter skeleton)",
+                                      "Empty .ck (skeleton comment)" },
+                        "Template");
+    window->getComboBoxComponent("template")->setSelectedId(1, juce::dontSendNotification);
+
+    window->addButton("Create", 1, juce::KeyPress::returnKey);
+    window->addButton("Cancel", 0, juce::KeyPress::escapeKey);
+
+    // Keep the window alive across the async dialog.
+    auto* raw = window.get();
+    auto retain = std::shared_ptr<juce::AlertWindow>(std::move(window));
+
+    raw->enterModalState(true,
+        juce::ModalCallbackFunction::create(
+            [this, retain](int result)
+            {
+                if (result != 1)
+                    return;  // Cancel
+
+                NewBufferKind kind = NewBufferKind::Blank;
+                if (auto* combo = retain->getComboBoxComponent("template"))
+                {
+                    switch (combo->getSelectedId())
+                    {
+                        case 2: kind = NewBufferKind::Hathor; break;
+                        case 3: kind = NewBufferKind::Chuck;  break;
+                        default: break;
+                    }
+                }
+                openUntitledTab(kind);
+            }),
+        false);
+}
 
 bool EditorArea::openFile(const juce::File& file)
 {
@@ -3147,6 +3203,7 @@ void EditorArea::registerEditorActions()
     if (auto k = parseKeyEquivalent("Cmd+S"))     actionRegistry_->bindKey(*k, "file.save");
     if (auto k = parseKeyEquivalent("Cmd+Shift+S")) actionRegistry_->bindKey(*k, "file.saveAs");
     if (auto k = parseKeyEquivalent("Cmd+W"))     actionRegistry_->bindKey(*k, "tab.close");
+    if (auto k = parseKeyEquivalent("Cmd+N"))     actionRegistry_->bindKey(*k, "tab.new");
 
     // L-2: Navigation & workspace search actions
     actionRegistry_->registerAction("editor.quickOpen",         "Quick Open…",      "Go",    "Open file by name");
@@ -3197,7 +3254,7 @@ void EditorArea::registerEditorActions()
     });
     actionRegistry_->setCallback("editor.reopenClosed", [this]() { reopenLastClosedTab(); });
     actionRegistry_->setCallback("editor.toggleSplit", [this]() { toggleSplit(); });
-    actionRegistry_->setCallback("tab.new", [this]() { openUntitledTab(); });
+    actionRegistry_->setCallback("tab.new", [this]() { showNewBufferDialog(); });
     actionRegistry_->setCallback("tab.close", [this]() {
         if (activeIndex_ >= 0 && activeIndex_ < static_cast<int>(tabs_.size()))
             closeTab(activeIndex_);

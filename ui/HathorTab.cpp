@@ -24,9 +24,14 @@ namespace hathor::ui {
 // ---------------------------------------------------------------------------
 
 HathorTab::HathorTab(int slotIndex, const juce::File& file)
+    : HathorTab(slotIndex, ChuckTokeniser::isChuckFile(file))
+{
+}
+
+HathorTab::HathorTab(int slotIndex, bool chuck)
     : slotIndex_(slotIndex)
-    , useChuckTokeniser_(ChuckTokeniser::isChuckFile(file))
-    , editor_(document_, useChuckTokeniser_
+    , useChuckTokeniser_(chuck)
+    , editor_(document_, chuck
                                   ? static_cast<juce::CodeTokeniser*>(&chuckTokeniser_)
                                   : static_cast<juce::CodeTokeniser*>(&miniTokeniser_))
 {
