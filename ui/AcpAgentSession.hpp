@@ -476,10 +476,10 @@ public:
     std::thread readerThread_;
 
     /// Owned permission auto-cancel timers (issue A5). These are joined in
-    /// stop() (and on destruction via jthread semantics), so a timer can
-    /// never fire against a destroyed session.
+    /// stopPermissionTimers() (called from stop() and the destructor), so a
+    /// timer can never fire against a destroyed session.
     std::mutex timerMutex_;
-    std::vector<std::jthread> permissionTimers_;
+    std::vector<std::thread> permissionTimers_;
 
     // -----------------------------------------------------------------------
     // Callbacks (installed by caller before start())
