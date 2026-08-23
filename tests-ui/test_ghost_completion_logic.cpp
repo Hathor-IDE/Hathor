@@ -26,9 +26,26 @@
 
 #include <chrono>
 #include <cstdlib>
+#include <filesystem>
+#include <system_error>
 #include <string>
 
 using namespace hathor::lsp;
+
+// Agent 1.3: keep ghost-endpoint overrides hermetic for the whole test binary
+// (no file I/O, empty cache) so the env-var-based resolver tests are unaffected
+// by any stale persistence file on the developer's machine.
+namespace {
+struct GhostOverridesTestGuard
+{
+    GhostOverridesTestGuard()
+    {
+        GhostProviderResolver::setOverridesFilePath("");
+        GhostProviderResolver::clearUrlOverrides();
+    }
+};
+static GhostOverridesTestGuard ghostOverridesTestGuard;
+}
 
 // ===========================================================================
 // FIM context builder — AI-G2: explicit prefix/suffix computation
@@ -1947,4 +1964,113 @@ TEST_CASE("GhostCompletionLogic: selection cleared re-enables trigger at same po
     logic.onEditorChanged(ctx, 2);
     auto r2 = logic.onTimerTick(3);
     REQUIRE(r2.has_value());
+}
+
+// ===========================================================================
+// Agent 1.3: GhostProviderResolver persisted per-backend URL overrides
+// ===========================================================================
+
+TEST_CASE("defaultUrlForBackend returns documented defaults",
+          "[ghost][provider][override][ghost1.3]")
+{
+    REQUIRE(GhostProviderResolver::defaultUrlForBackend(LlmBackend::Ollama) == "http://localhost:11434");
+    REQUIRE(GhostProviderResolver::defaultUrlForBackend(LlmBackend::LlamaCpp) == "http://localhost:8080");
+    REQUIRE(GhostProviderResolver::defaultUrlForBackend(LlmBackend::OpenAi) == "https://api.openai.com");
+    REQUIRE(GhostProviderResolver::defaultUrlForBackend(LlmBackend::HuggingFace) == "https://api-inference.huggingface.co");
+    REQUIRE(GhostProviderResolver::defaultUrlForBackend(LlmBackend::Tgi).empty());
+}
+
+TEST_CASE("isValidGhostUrl accepts blank and well-formed URLs",
+          "[ghost][provider][override][ghost1.3]")
+{
+    REQUIRE(GhostProviderResolver::isValidGhostUrl(""));
+    REQUIRE(GhostProviderResolver::isValidGhostUrl("   "));
+    REQUIRE(GhostProviderResolver::isValidGhostUrl("http://localhost:11434"));
+    REQUIRE(GhostProviderResolver::isValidGhostUrl("https://myhost:9999"));
+    REQUIRE(GhostProviderResolver::isValidGhostUrl("http://10.0.0.5:8080/v1"));
+}
+
+TEST_CASE("isValidGhostUrl rejects malformed URLs",
+          "[ghost][provider][override][ghost1.3]")
+{
+    REQUIRE_FALSE(GhostProviderResolver::isValidGhostUrl("not a url"));
+    REQUIRE_FALSE(GhostProviderResolver::isValidGhostUrl("ftp://host"));
+    REQUIRE_FALSE(GhostProviderResolver::isValidGhostUrl("http://"));
+    REQUIRE_FALSE(GhostProviderResolver::isValidGhostUrl("://host"));
+    REQUIRE_FALSE(GhostProviderResolver::isValidGhostUrl("http:// host:80"));
+}
+
+TEST_CASE("setUrlOverride takes priority over default and GHOST_URL env",
+          "[ghost][provider][override][ghost1.3]")
+{
+    const char* savedUrl = std::getenv("GHOST_URL");
+    std::string savedUrlVal = savedUrl ? std::string(savedUrl) : "";
+
+    GhostProviderResolver::setOverridesFilePath("");
+    GhostProviderResolver::clearUrlOverrides();
+    setenv("GHOST_URL", "http://localhost:11434", 1);
+    GhostProviderResolver::setUrlOverride(LlmBackend::Ollama, "http://myhost:9999");
+
+    auto result = GhostProviderResolver::resolveForBackend("ollama", "codellama", "");
+    REQUIRE(result.has_value());
+    REQUIRE(result->url == "http://myhost:9999");
+
+    if (!savedUrlVal.empty())
+        setenv("GHOST_URL", savedUrlVal.c_str(), 1);
+    else
+        unsetenv("GHOST_URL");
+    GhostProviderResolver::clearUrlOverrides();
+}
+
+TEST_CASE("blank override clears and falls back to default",
+          "[ghost][provider][override][ghost1.3]")
+{
+    const char* savedUrl = std::getenv("GHOST_URL");
+    std::string savedUrlVal = savedUrl ? std::string(savedUrl) : "";
+    unsetenv("GHOST_URL");
+
+    GhostProviderResolver::setOverridesFilePath("");
+    GhostProviderResolver::clearUrlOverrides();
+    GhostProviderResolver::setUrlOverride(LlmBackend::Ollama, "http://myhost:9999");
+    REQUIRE(GhostProviderResolver::getUrlOverride(LlmBackend::Ollama) == "http://myhost:9999");
+
+    // With the in-memory cache dropped, resolve() must fall back to the default.
+    GhostProviderResolver::clearUrlOverrides();
+
+    auto result = GhostProviderResolver::resolveForBackend("ollama", "codellama", "");
+    REQUIRE(result.has_value());
+    REQUIRE(result->url == GhostProviderResolver::defaultUrlForBackend(LlmBackend::Ollama));
+
+    if (!savedUrlVal.empty())
+        setenv("GHOST_URL", savedUrlVal.c_str(), 1);
+    GhostProviderResolver::clearUrlOverrides();
+}
+
+TEST_CASE("overrides persist across cache eviction via the file",
+          "[ghost][provider][override][ghost1.3]")
+{
+    std::error_code ec;
+    const std::string tmp = (std::filesystem::temp_directory_path() / "hathor-ghost-override-test.json").string();
+    std::filesystem::remove(tmp, ec);
+
+    const char* savedUrl = std::getenv("GHOST_URL");
+    std::string savedUrlVal = savedUrl ? std::string(savedUrl) : "";
+    unsetenv("GHOST_URL");
+
+    GhostProviderResolver::setOverridesFilePath(tmp);
+    GhostProviderResolver::clearUrlOverrides();
+    GhostProviderResolver::setUrlOverride(LlmBackend::Ollama, "http://persisted:1234");
+
+    // Evict the in-memory cache; the next resolve must re-load from the file.
+    GhostProviderResolver::clearUrlOverrides();
+
+    auto result = GhostProviderResolver::resolveForBackend("ollama", "codellama", "");
+    REQUIRE(result.has_value());
+    REQUIRE(result->url == "http://persisted:1234");
+
+    if (!savedUrlVal.empty())
+        setenv("GHOST_URL", savedUrlVal.c_str(), 1);
+    std::filesystem::remove(tmp, ec);
+    GhostProviderResolver::setOverridesFilePath("");
+    GhostProviderResolver::clearUrlOverrides();
 }

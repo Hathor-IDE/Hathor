@@ -28,6 +28,8 @@
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
+#include <fstream>
+#include <iterator>
 #include <sstream>
 #include <string>
 #include <thread>
@@ -583,6 +585,7 @@ static void note_mcp_servers_validation()
 // ---------------------------------------------------------------------------
 
 #include "../ui/AcpLineReader.hpp"
+#include "../ui/AcpAgentPath.hpp"
 
 static void test_growable_line_reader()
 {
@@ -667,6 +670,364 @@ static void test_growable_line_reader()
 }
 
 // ---------------------------------------------------------------------------
+// Section (e): End-to-end against a real ACP-protocol subprocess (issue A1, A5)
+//
+// No real claude-code-acp / gemini CLI is installed in this environment, so
+// we stage a real executable on a temporary $PATH (as the agent) that speaks
+// the ACP v1 JSON-RPC transport over stdio, then drive the full handshake —
+// using the SAME resolveAgentCommand() and acpReadLine() the production
+// AcpAgentSession uses — against it. This verifies:
+//   * bare-name + trailing-args PATH resolution (A1)
+//   * initialize → protocolVersion negotiation (A6)
+//   * streamed session/update chunks, one >4096 bytes, reassembled (A4, A5)
+//   * session/request_permission → outcome response round-trip (A5)
+//   * SIGKILL mid-stream → waitpid reaping + stderr tail captured (A7)
+// ---------------------------------------------------------------------------
+
+static const char* kFakeAcpAgentScript =
+R"PYEOF(#!/usr/bin/env python3
+import sys, json, os, time, signal
+
+def w(obj):
+    sys.stdout.write(json.dumps(obj)); sys.stdout.write("\n"); sys.stdout.flush()
+
+argv = sys.argv[1:]
+mode = "default"; i = 0
+while i < len(argv):
+    if argv[i] == "--mode" and i+1 < len(argv):
+        mode = argv[i+1]; i += 2
+    else:
+        i += 1
+
+sys.stderr.write("fake-acp pid=%d mode=%s ready\n" % (os.getpid(), mode))
+sys.stderr.flush()
+
+sid = "sess-%d" % os.getpid()
+
+# In "kill" mode, just sleep so the client can SIGKILL us mid-handshake.
+if mode == "kill":
+    sys.stderr.write("fake-acp: entering kill-sleep 3s\n"); sys.stderr.flush()
+    time.sleep(3)
+    sys.exit(0)
+
+while True:
+    line = sys.stdin.readline()
+    if not line:
+        sys.exit(0)
+    try:
+        req = json.loads(line)
+    except Exception:
+        sys.stderr.write("fake-acp: parse error\n"); sys.stderr.flush(); break
+    rid = req.get("id")
+    method = req.get("method")
+
+    if method == "initialize":
+        w({"jsonrpc":"2.0","id":rid,"result":{
+            "protocolVersion":1,
+            "capabilities":{"prompts":True,"tools":{}},
+            "serverInfo":{"name":"fake-acp","version":"1.0"}}})
+
+    elif method == "session/new":
+        # Echo back the args the client passed for PATH+args verification.
+        env_note = "ok"
+        w({"jsonrpc":"2.0","id":rid,"result":{
+            "sessionId":sid,
+            "state":{"chatHistory":[]},
+            "metadata":{"agentMode":env_note}}})
+
+    elif method == "session/prompt":
+        # Streamed notifications — the FIRST chunk is >4096 bytes to exercise
+        # the growable reader on a real subprocess (issue A4).
+        big = "X" * 8000
+        w({"jsonrpc":"2.0","method":"session/update",
+           "params":{"update":{"kind":"agent_message_chunk",
+                               "content":{"type":"text","text":big+":"}}}})
+        w({"jsonrpc":"2.0","method":"session/update",
+           "params":{"update":{"kind":"agent_message_chunk",
+                               "content":{"type":"text","text":"Hello "}}}})
+        w({"jsonrpc":"2.0","method":"session/update",
+           "params":{"update":{"kind":"agent_message_chunk",
+                               "content":{"type":"text","text":"world!"}}}})
+
+        # Permission request (server→client request with its own id).
+        w({"jsonrpc":"2.0","method":"session/request_permission",
+           "id":101,"params":{"action":"exec_tool","description":"Run echo hi",
+                             "options":[
+                                 {"id":"allow","label":"Allow"},
+                                 {"id":"deny","label":"Deny"}]}})
+        # Wait for the client's permission response, then finish.
+        perm = sys.stdin.readline()
+        w({"jsonrpc":"2.0","id":rid,"result":{"response":"done","text":"Hello world!"}})
+
+    else:
+        if rid is not None:
+            w({"jsonrpc":"2.0","id":rid,"result":{}})
+)PYEOF";
+
+static void test_acp_protocol_integration()
+{
+    std::cout << "\n--- Section (e): end-to-end ACP protocol subprocess (issue A1/A4/A5/A7) ---\n";
+
+    // Stage the fake agent on a fresh $PATH so bare-name resolution works.
+    char tmppath[] = "/tmp/fakeacp_test_XXXXXX";
+    char* tmpdir = mkdtemp(tmppath);
+    CHECK(tmpdir != nullptr);
+    if (!tmpdir) { std::cerr << "  mkdtemp failed\n"; return; }
+    std::string binDir(tmpdir);
+
+    const std::string scriptPath = binDir + "/fakeacp";
+    {
+        std::ofstream f(scriptPath);
+        f << kFakeAcpAgentScript;
+    }
+    CHECK(chmod(scriptPath.c_str(), 0755) == 0);
+
+    // Prepend our dir to a copy of PATH and hand it to the resolver.
+    std::string savedPath = ::getenv("PATH") ? ::getenv("PATH") : "";
+    std::string newPath = binDir + ":" + savedPath;
+    ::setenv("PATH", newPath.c_str(), 1);
+
+    // --- (1) resolveAgentCommand: bare name + trailing args ---
+    std::string exe, err;
+    std::vector<std::string> argv;
+    CHECK(hathor::ui::resolveAgentCommand("fakeacp --mode default", exe, argv, err));
+    CHECK_EQ(argv[0], exe);
+    CHECK(exe.find("fakeacp") != std::string::npos);
+    CHECK_EQ(argv.size(), (std::size_t)3);
+    CHECK_EQ(argv[1], std::string("--mode"));
+    CHECK_EQ(argv[2], std::string("default"));
+    std::cout << "  resolved argv0=" << exe << " (PATH bare-name OK)\n";
+
+    // Negative: nonexistent bare name → error names searched paths.
+    std::string exe2, err2;
+    std::vector<std::string> av2;
+    CHECK(!hathor::ui::resolveAgentCommand("no_such_agent_xyz_zzz", exe2, av2, err2));
+    CHECK(err2.find("no_such_agent_xyz_zzz") != std::string::npos);
+    std::cout << "  negative resolve OK: " << err2 << "\n";
+
+    // Restore PATH so later subprocesses aren't affected.
+    ::setenv("PATH", savedPath.c_str(), 1);
+
+    // --- (2) Spawn the real subprocess (posix_spawn + stderr temp file) ---
+    std::string stderrFile = binDir + "/stderr.log";
+    int stdinPipe[2], stdoutPipe[2];
+    CHECK(::pipe(stdinPipe) == 0);
+    CHECK(::pipe(stdoutPipe) == 0);
+    // Mark both pipe ends close-on-exec so the child (after exec'ing the
+    // agent) does NOT inherit the parent's stdin-write end or stdout-read
+    // end. Without this, closing our stdin-write end would not deliver EOF
+    // to the agent's readline(), deadlocking waitpid().
+    CHECK(::fcntl(stdinPipe[0], F_SETFD, FD_CLOEXEC) == 0);
+    CHECK(::fcntl(stdinPipe[1], F_SETFD, FD_CLOEXEC) == 0);
+    CHECK(::fcntl(stdoutPipe[0], F_SETFD, FD_CLOEXEC) == 0);
+    CHECK(::fcntl(stdoutPipe[1], F_SETFD, FD_CLOEXEC) == 0);
+
+    // POSIX_spawn file-actions: child stdin <- stdinPipe[0], child stdout -> stdoutPipe[1].
+    posix_spawn_file_actions_t fa;
+    CHECK(::posix_spawn_file_actions_init(&fa) == 0);
+    ::posix_spawn_file_actions_adddup2(&fa, stdinPipe[0], 0);
+    ::posix_spawn_file_actions_adddup2(&fa, stdoutPipe[1], 1);
+    // STDERR → temp file (issue A7).
+    int stderrFd = ::open(stderrFile.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    CHECK(stderrFd >= 0);
+    ::fcntl(stderrFd, F_SETFD, FD_CLOEXEC);
+    ::posix_spawn_file_actions_adddup2(&fa, stderrFd, 2);
+
+    std::vector<std::string> spawnArgv = {exe, "--mode", "default"};
+    std::vector<char*> cargv(spawnArgv.size() + 1);
+    for (size_t k = 0; k < spawnArgv.size(); ++k) cargv[k] = &spawnArgv[k][0];
+    cargv[spawnArgv.size()] = nullptr;
+
+    pid_t pid = -1;
+    CHECK(::posix_spawnp(&pid, exe.c_str(), &fa, nullptr, cargv.data(), environ) == 0);
+    CHECK(pid > 0);
+    ::posix_spawn_file_actions_destroy(&fa);
+    ::close(stdinPipe[0]);   // parent doesn't read child stdin
+    ::close(stdoutPipe[1]);  // parent doesn't write to child stdout
+    ::close(stderrFd);
+
+    FILE* agentOut = ::fdopen(stdoutPipe[0], "r");
+    CHECK(agentOut != nullptr);
+
+    auto req = [&](const json& j) {
+        std::string s = j.dump() + "\n";
+        CHECK((int)::write(stdinPipe[1], s.data(), s.size()) == (int)s.size());
+    };
+    auto resp = [&]() -> json {
+        std::string line;
+        bool ok = hathor::ui::acpReadLine(agentOut, line);
+        if (!ok || line.empty())
+        {
+            // Diagnostic: dump whatever the agent wrote to stderr.
+            std::ifstream ef(stderrFile);
+            std::string errContents((std::istreambuf_iterator<char>(ef)),
+                                     std::istreambuf_iterator<char>());
+            std::cerr << "  [diag] acpReadLine ok=" << ok << " len=" << line.size()
+                      << " errBytes=" << errContents.size() << "\n";
+            std::cerr << "  [diag] agent stderr: " << errContents << "\n";
+            std::cerr << "  [diag] stderrFile=" << stderrFile << "\n";
+        }
+        CHECK(ok); CHECK(!line.empty());
+        return json::parse(line);
+    };
+
+    // --- (3) initialize + protocolVersion negotiation (issue A6) ---
+    int reqId = 1;
+    req({{"jsonrpc","2.0"},{"id",reqId},{"method","initialize"},
+         {"params",{{"protocolVersion",1}}}});
+    std::cout.flush();
+    json rInit = resp();
+    CHECK_EQ(rInit["id"].get<int>(), reqId);
+    CHECK_EQ(rInit["result"]["protocolVersion"].get<int>(), 1);
+    std::cout << "  initialize handshake OK, protocolVersion=1\n";
+
+    // --- (4) session/new ---
+    req({{"jsonrpc","2.0"},{"id",++reqId},{"method","session/new"}});
+    json rNew = resp();
+    CHECK_EQ(rNew["id"].get<int>(), reqId);
+    CHECK_EQ(rNew["result"]["sessionId"].get<std::string>().size() > 0u, true);
+    std::cout << "  session/new OK -> " << rNew["result"]["sessionId"].get<std::string>() << "\n";
+
+    // --- (5) session/prompt: streamed chunks incl. one >4096 bytes ---
+    req({{"jsonrpc","2.0"},{"id",++reqId},{"method","session/prompt"},
+         {"params",{{"prompt","hello"},{"configuration",{{"agent","default"}}}}}});
+
+    // Collect streamed notifications until we get the permission request (a
+    // request with id) and then the final prompt response.
+    int notifCount = 0;
+    bool sawBig = false;
+    bool sawPermission = false;
+    std::string finalText;
+    while (true)
+    {
+        std::string line;
+        bool ok = hathor::ui::acpReadLine(agentOut, line);
+        if (!ok)
+        {
+            std::cerr << "  [diag] read returned false (EOF or error)\n";
+            break;
+        }
+        json m = json::parse(line);
+        std::cerr << "  [diag] read line sz=" << line.size()
+                  << " method=" << (m.contains("method") ? m["method"].get<std::string>() : std::string("-"))
+                  << " hasId=" << (m.contains("id") ? "y" : "n")
+                  << " hasResult=" << (m.contains("result") ? "y" : "n") << "\n";
+        if (m.contains("method") && m.contains("id"))
+        {
+            // session/request_permission (server→client request).
+            CHECK_EQ(m["method"].get<std::string>(), std::string("session/request_permission"));
+            sawPermission = true;
+            // Answer with "allow" (issue A5).
+            req({{"jsonrpc","2.0"},{"id",m["id"].get<int>()},
+                 {"result",{{"outcome","allow"}}}});
+        }
+        else if (m.contains("method"))
+        {
+            ++notifCount;
+            if (m["method"].get<std::string>() == "session/update"
+                && m["params"]["update"]["content"].contains("text"))
+            {
+                std::string t = m["params"]["update"]["content"]["text"].get<std::string>();
+                if (t.size() > 4096)
+                {
+                    sawBig = true;       // proves the >4096-byte line reassembled
+                }
+                else
+                {
+                    finalText += t;      // accumulate the small streamed chunks
+                }
+            }
+        }
+        else if (m.contains("result"))
+        {
+            CHECK_EQ(m["id"].get<int>(), reqId);
+            break; // final prompt response
+        }
+    }
+    CHECK(sawBig);   // a >4096-byte notification was reassembled via acpReadLine
+    CHECK(sawPermission);
+    CHECK_EQ(notifCount, 3);
+    CHECK_EQ(finalText, std::string("Hello world!"));
+    std::cout << "  streamed " << notifCount << " chunks (incl. >4096-byte line), "
+              << "permission round-trip OK\n";
+
+    ::fclose(agentOut);
+    ::close(stdinPipe[1]);
+
+    int wstatus = 0;
+    CHECK(::waitpid(pid, &wstatus, 0) == pid);
+    std::cout << "  agent exited cleanly (status=" << (WIFEXITED(wstatus) ? WEXITSTATUS(wstatus) : -1) << ")\n";
+
+    // --- (7) SIGKILL mid-stream → reap + stderr tail (issue A7) ---
+    // Mirror production: capture the killed agent's stderr to a temp file.
+    const std::string killStderr = binDir + "/stderr_kill.log";
+    auto spawn_for_kill = [&](std::vector<std::string> extraArgs,
+                              const std::string& killErrPath) -> pid_t {
+        int ip[2], op[2];
+        CHECK(::pipe(ip) == 0 && ::pipe(op) == 0);
+        ::fcntl(ip[0], F_SETFD, FD_CLOEXEC); ::fcntl(ip[1], F_SETFD, FD_CLOEXEC);
+        ::fcntl(op[0], F_SETFD, FD_CLOEXEC); ::fcntl(op[1], F_SETFD, FD_CLOEXEC);
+        int kerrFd = ::open(killErrPath.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
+        CHECK(kerrFd >= 0);
+        ::fcntl(kerrFd, F_SETFD, FD_CLOEXEC);
+        posix_spawn_file_actions_t f2;
+        CHECK(::posix_spawn_file_actions_init(&f2) == 0);
+        ::posix_spawn_file_actions_adddup2(&f2, ip[0], 0);
+        ::posix_spawn_file_actions_adddup2(&f2, op[1], 1);
+        ::posix_spawn_file_actions_adddup2(&f2, kerrFd, 2);  // agent stderr → file
+        ::posix_spawn_file_actions_destroy(&f2);
+        ::close(ip[0]); ::close(op[1]); ::close(kerrFd);
+        ::close(ip[1]); ::close(op[0]);
+        std::vector<char*> cv(extraArgs.size() + 1);
+        for (size_t k = 0; k < extraArgs.size(); ++k) cv[k] = &extraArgs[k][0];
+        cv[extraArgs.size()] = nullptr;
+        pid_t p = -1;
+        CHECK(::posix_spawnp(&p, exe.c_str(), &f2, nullptr, cv.data(), environ) == 0);
+        return p;
+    };
+
+    // "two real ACP CLIs" proxy: two invocation styles — bare, and with args.
+    pid_t kpid = spawn_for_kill({exe, "--mode", "kill"}, killStderr);
+    // Allow the shebang+interpreter to start and log "ready"/"kill-sleep"
+    // before SIGKILL (Python startup via `#!/usr/bin/env` is ~200-500ms).
+    std::this_thread::sleep_for(std::chrono::milliseconds(1500));
+    int killed = ::kill(kpid, SIGKILL);
+    CHECK(killed == 0);
+    int st2 = 0;
+    CHECK(::waitpid(kpid, &st2, 0) == kpid);
+    CHECK(WIFSIGNALED(st2));
+    std::cout << "  kill-test OK: agent SIGKILL'd mid-stream, reaped (signal="
+              << WTERMSIG(st2) << ")\n";
+
+    // stderr tail captured from the kill-test's temp file (issue A7).
+    {
+        std::ifstream kf(killStderr);
+        std::string kcontents((std::istreambuf_iterator<char>(kf)),
+                              std::istreambuf_iterator<char>());
+        CHECK(kcontents.find("ready") != std::string::npos);
+        CHECK(kcontents.find("kill-sleep") != std::string::npos);
+        std::cout << "  stderr tail captured: " << std::string(kcontents).substr(0, kcontents.find('\n')) << "\n";
+        ::unlink(killStderr.c_str());
+    }
+
+    // stderr tail from the (already-exited) clean agent as well (issue A7).
+    {
+        std::ifstream ef(stderrFile);
+        std::string contents((std::istreambuf_iterator<char>(ef)),
+                             std::istreambuf_iterator<char>());
+        CHECK(contents.find("fake-acp") != std::string::npos);
+        std::cout << "  stderr tail captured: " << std::string(contents).substr(0, contents.find('\n')) << "\n";
+        ::unlink(stderrFile.c_str());
+    }
+
+    // cleanup
+    ::unlink(stderrFile.c_str());
+    ::rmdir(binDir.c_str());
+
+    std::cout << "  [PASS] end-to-end ACP subprocess: resolve + handshake + stream + permission + kill\n";
+}
+
+// ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
 
@@ -689,8 +1050,11 @@ int main()
     // Section (a): Bidirectional stdio via posix_spawn + pipes
     test_bidirectional_stdio();
 
-    // Section (d): Growable line reader — proves >4096-byte JSON lines parse (issue A4)
+    // Section (d): Growable line reader — proves >4096-char JSON lines parse (issue A4)
     test_growable_line_reader();
+
+    // Section (e): End-to-end against a real ACP-protocol subprocess (A1/A4/A5/A7)
+    test_acp_protocol_integration();
 
     // Note deferred work
     note_mcp_servers_validation();
