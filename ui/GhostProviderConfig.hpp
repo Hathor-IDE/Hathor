@@ -18,6 +18,7 @@
 
 #include <optional>
 #include <string>
+#include <string_view>
 
 namespace hathor::lsp {
 
@@ -89,6 +90,44 @@ public:
         std::string_view modelOverride,
         std::string_view tokenOverride);
 
+    // -----------------------------------------------------------------------
+    // Agent 1.3: persisted per-backend URL overrides (Settings UI)
+    // -----------------------------------------------------------------------
+    // Consulted in resolveForBackend() with the priority:
+    //   1. persisted per-backend override (this API)   <- Settings UI / file
+    //   2. GHOST_URL env var                           <- existing behavior
+    //   3. backend-specific default                    <- existing behavior
+    // A blank override (the default) falls back to (2)/(3). An empty string
+    // passed to setUrlOverride() clears the override for that backend.
+    //
+    // Overrides are persisted to a JUCE-free JSON file so that a changed
+    // endpoint survives restart and takes effect on the next completion
+    // request without re-opening Settings (the file is lazily loaded on
+    // first resolve()).
+
+    /** Store/overwrite the URL override for @p backend. Pass "" to clear. */
+    static void setUrlOverride(LlmBackend backend, std::string_view url);
+
+    /** Drop the in-memory override cache. The persistence file is untouched. */
+    static void clearUrlOverrides() noexcept;
+
+    /** Return the current override for @p backend, or "" if none. Triggers the
+        one-time lazy load from the persistence file on first call. */
+    static std::string getUrlOverride(LlmBackend backend);
+
+    /** Default (hardcoded) endpoint URL for a backend — used as a Settings
+        hint and as the fallback in resolveForBackend(). */
+    static std::string defaultUrlForBackend(LlmBackend backend) noexcept;
+
+    /** Validate a URL entered in the Settings UI. Blank is accepted (means
+        "use default"). A non-blank value must parse as http(s)://<host>...   */
+    static bool isValidGhostUrl(std::string_view url) noexcept;
+
+    /** Tests only: redirect the persistence file. Pass "" to disable file
+        I/O (in-memory cache only) — keeps unit tests hermetic.             */
+    static void setOverridesFilePath(const std::string& path);
+    static std::string getOverridesFilePath() noexcept;
+
 private:
     /**
      * Parse a backend name string to LlmBackend enum.
@@ -105,6 +144,11 @@ private:
      * Parse "true"/"1"/etc. to bool.
      */
     static bool parseBool(std::string_view val) noexcept;
+
+    // Agent 1.3: override-cache accessors (defined in .cpp).
+    static std::string getUrlOverrideUnlocked(LlmBackend backend) noexcept;
+    static void ensureOverridesLoaded();
+    static void writeOverridesFile();
 };
 
 } // namespace hathor::lsp
