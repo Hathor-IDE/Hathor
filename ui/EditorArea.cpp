@@ -781,8 +781,8 @@ void EditorArea::showNewBufferDialog()
                         "Template");
     window->getComboBoxComponent("template")->setSelectedId(1, juce::dontSendNotification);
 
-    window->addButton("Create", 1, juce::KeyPress::returnKey);
-    window->addButton("Cancel", 0, juce::KeyPress::escapeKey);
+    window->addButton("Create", 1, juce::KeyPress(juce::KeyPress::returnKey));
+    window->addButton("Cancel", 0, juce::KeyPress(juce::KeyPress::escapeKey));
 
     // Keep the window alive across the async dialog.
     auto* raw = window.get();
