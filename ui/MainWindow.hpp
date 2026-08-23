@@ -81,6 +81,7 @@ namespace hathor::ui {
 
 class VisualizerPanel;
 class UITimer;
+class WelcomeScreen;
 
 } // namespace hathor::ui
 
@@ -153,6 +154,13 @@ private:
      void restoreWorkspace();
 
      // -----------------------------------------------------------------------
+     // Agent 0.1: Welcome screen (shown when no workspace was persisted)
+     // -----------------------------------------------------------------------
+
+     /// Create + show the welcome overlay, seeded with the persisted MRU.
+     void showWelcomeScreen();
+
+     // -----------------------------------------------------------------------
      // Phase G (D2–D4) — Petdex selection lifecycle
      // -----------------------------------------------------------------------
 
@@ -164,6 +172,26 @@ private:
     /// Restore a persisted pet selection at startup (offline-safe: disk cache
     /// when present, D4 snapshot gate re-run from disk, never a manifest fetch).
     void restorePetSelection();
+
+    // -----------------------------------------------------------------------
+    // 0.2 — Workspace lifecycle (Open Folder + recent-projects MRU)
+    // -----------------------------------------------------------------------
+
+    /// Show a native directory chooser and switch workspace on confirmation.
+    void openFolderChooser();
+
+    /// Switch the workspace root at runtime: closes tabs under the old root
+    /// (with save prompts), re-roots the Explorer and the EditorArea.
+    void switchWorkspace(const juce::File& dir);
+
+    /// Load the persisted recent-projects list (most-recent-first).
+    std::vector<std::string> loadRecentProjects();
+
+    /// Insert @p path at the front of the MRU (dedup) and persist (max 10).
+    void pushRecentProject(const std::string& path);
+
+    /// Re-register "Open Recent: <path>" palette actions from the MRU.
+    void refreshRecentActions();
 
     // =========================================================================
     // Layout constants
@@ -207,6 +235,9 @@ private:
     std::unique_ptr<hathor::ui::PetdexResourceService> petdexResourceService_;
     std::unique_ptr<hathor::ui::PetWidget>              petWidget_;
 
+    // Agent 0.1: startup welcome overlay (no persisted workspace).
+    std::unique_ptr<hathor::ui::WelcomeScreen>       welcomeScreen_;
+
     // -----------------------------------------------------------------------
     // L-1: Editor ergonomics — owned by EditorArea, accessed via accessors.
     // MainWindow just triggers actions and adds the components to its layout.
@@ -217,6 +248,12 @@ private:
     /// The hathorMcpPath_ is resolved at startup and reused for all threads.
     std::string                                    agentExePath_;
     std::string                                    hathorMcpPath_;
+
+    // 0.2: current workspace root (initialised in ctor; changed via Open Folder)
+    std::string                                    workspaceDir_;
+
+    // 0.2: kept alive for the duration of an async directory chooser
+    std::unique_ptr<juce::FileChooser>             folderChooser_;
 
     // -----------------------------------------------------------------------
     // AI-8: Dynamic authoring context bridges (JUCE-dependent providers)

@@ -141,6 +141,7 @@ target_sources(hathor-ui
     PRIVATE
         HathorApplication.cpp
         MainWindow.cpp
+        WelcomeScreen.cpp          # Agent 0.1: startup welcome overlay
         HathorLookAndFeel.cpp
         ActivityRibbon.cpp
         ExplorerPanel.cpp

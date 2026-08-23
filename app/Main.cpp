@@ -210,11 +210,34 @@ int main(int argc, char* argv[])
               << samplesPath   << "'\n";
 
     // B8-K4 §4: Reload Studio-persisted baked WAV assets from the current
-    // project directory (<cwd>/.hathor_assets/chuck_instruments/).  This makes
-    // previously-baked instruments available for `s "name"` without re-baking.
+    // project directory (0.2 / P6: resolved from the persisted workspace root
+    // when available, falling back to <cwd>/.hathor_assets/chuck_instruments/).
+    // This makes previously-baked instruments available for `s "name"`
+    // without re-baking even when launched from outside the project.
     {
+        std::filesystem::path projectRoot = std::filesystem::current_path();
+        {
+            const juce::File propsFile =
+                juce::File::getSpecialLocation(juce::File::userApplicationDataDirectory)
+                    .getChildFile("Hathor").getChildFile("hathor.props");
+            if (propsFile.existsAsFile()) {
+                if (auto xml = juce::XmlDocument::parse(propsFile)) {
+                    for (auto* value : xml->getChildWithTagNameIterator("VALUE")) {
+                        if (value->getStringAttribute("id") == "explorerLastDirectory") {
+                            const std::filesystem::path persisted(
+                                value->getStringAttribute("val").toStdString());
+                            if (!persisted.empty()
+                                && std::filesystem::is_directory(persisted)) {
+                                projectRoot = persisted;
+                            }
+                            break;
+                        }
+                    }
+                }
+            }
+        }
         const std::filesystem::path studioDir =
-            std::filesystem::current_path() / ".hathor_assets" / "chuck_instruments";
+            projectRoot / ".hathor_assets" / "chuck_instruments";
         if (std::filesystem::is_directory(studioDir)) {
             bank.reloadStudioAssets(studioDir, formatManager, 44100.0);
             std::cerr << "[hathor] reloaded " << bank.loadedCount()

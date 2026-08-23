@@ -506,6 +506,10 @@ public:
      */
     void setWorkspaceRoot(const std::filesystem::path& root);
 
+    /** Close every tab whose file lives under the given root, using the
+     *  existing per-tab save prompts for dirty buffers. */
+    void closeTabsUnderRoot(const std::filesystem::path& root);
+
     /// Get the action registry (non-owning).
     hathor::ui::ActionRegistry* actionRegistry() noexcept
     {

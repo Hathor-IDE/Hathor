@@ -50,6 +50,9 @@
 // UITimer (task 3.7) — real implementation is now available.
 #include "UITimer.hpp"
 
+// Agent 0.1: startup welcome overlay
+#include "WelcomeScreen.hpp"
+
 // HathorLookAndFeel is defined in HathorLookAndFeel.hpp/.cpp (design system)
 
 // ==========================================================================
@@ -177,13 +180,46 @@ MainWindow::MainWindow(AudioEngine& audio,
     // -----------------------------------------------------------------------
      chatSidebar_     = std::make_unique<hathor::ui::ChatSidebar>(audio_, ci_);
 
-      // Determine the project directory (cwd at launch time).
-      const std::string projectDir =
-          juce::File::getCurrentWorkingDirectory().getFullPathName().toStdString();
+      // -------------------------------------------------------------------
+      // Agent 0.1: Resolve the workspace root from persisted state instead
+      // of the process CWD (audit P1). Prefers "lastWorkspacePath"; falls
+      // back to the older "explorerLastDirectory" key. If neither yields a
+      // valid directory the welcome screen is shown after construction.
+      // -------------------------------------------------------------------
+      appProperties_.setStorageParameters(makePropertiesOptions());
 
-      // L-2: Set the workspace root for navigation & search components.
-      if (editorArea_)
-          editorArea_->setWorkspaceRoot(std::filesystem::path(projectDir));
+      std::string projectDir;
+      if (const auto* props = appProperties_.getUserSettings())
+      {
+          const juce::File last(props->getValue("lastWorkspacePath"));
+          if (last.isDirectory())
+              projectDir = last.getFullPathName().toStdString();
+          else
+          {
+              const juce::File legacy(props->getValue("explorerLastDirectory"));
+              if (legacy.isDirectory())
+                  projectDir = legacy.getFullPathName().toStdString();
+          }
+      }
+      if (!projectDir.empty())
+      {
+          workspaceDir_ = projectDir;
+
+          // 0.2: seed the recent-projects MRU with the startup workspace.
+          pushRecentProject(projectDir);
+
+          // L-2: Set the workspace root for navigation & search components.
+          if (editorArea_)
+              editorArea_->setWorkspaceRoot(std::filesystem::path(projectDir));
+      }
+
+      // Chat threads need *some* working directory even before a workspace
+      // has been chosen — use the user's home folder, never the process CWD.
+      const std::string threadWorkingDir =
+          !workspaceDir_.empty()
+              ? workspaceDir_
+              : juce::File::getSpecialLocation(juce::File::userHomeDirectory)
+                    .getFullPathName().toStdString();
 
      // Store MCP path for thread creation and Settings updates (A2).
      hathorMcpPath_ = hathorMcpPath;
@@ -211,11 +247,11 @@ MainWindow::MainWindow(AudioEngine& audio,
       chatSidebar_->setApplicationProperties(&appProperties_);
       if (!agentExePath.empty())
       {
-          chatSidebar_->restoreChatThreads(agentExePath, projectDir, hathorMcpPath);
+          chatSidebar_->restoreChatThreads(agentExePath, threadWorkingDir, hathorMcpPath);
           // If no threads were restored (first launch or all were closed),
           // create a default single thread — same as the original behaviour.
           if (chatSidebar_->threadCount() == 0)
-              chatSidebar_->addThread(agentExePath, projectDir, hathorMcpPath);
+              chatSidebar_->addThread(agentExePath, threadWorkingDir, hathorMcpPath);
       }
 
     // -----------------------------------------------------------------------
@@ -260,11 +296,14 @@ MainWindow::MainWindow(AudioEngine& audio,
                               if (newAgentPath != agentExePath_)
                               {
                                   agentExePath_ = newAgentPath;
-                                  const std::string projectDir =
-                                      juce::File::getCurrentWorkingDirectory()
-                                          .getFullPathName().toStdString();
+                                  const std::string threadWorkingDir =
+                                      !workspaceDir_.empty()
+                                          ? workspaceDir_
+                                          : juce::File::getSpecialLocation(
+                                                juce::File::userHomeDirectory)
+                                                .getFullPathName().toStdString();
                                   chatSidebar_->restartAllThreads(
-                                      agentExePath_, projectDir, hathorMcpPath_);
+                                      agentExePath_, threadWorkingDir, hathorMcpPath_);
                               }
                           };
 
@@ -379,8 +418,20 @@ MainWindow::MainWindow(AudioEngine& audio,
     if (editorArea_)
         editorArea_->registerEditorActions();
 
+    // 0.2: Register workspace-lifecycle actions (Open Folder…).
+    // Recent-project entries are refreshed dynamically right before the
+    // palette is shown (see onCommandPaletteClicked below).
+    if (auto* reg = editorArea_->actionRegistry())
+    {
+        reg->registerAction("workspace.openFolder", "Open Folder…", "File",
+                            "Switch the workspace to another directory");
+        reg->setCallback("workspace.openFolder", [this]() { openFolderChooser(); });
+        refreshRecentActions();
+    }
+
     // Wire breadcrumbs callbacks (accessed via EditorArea)
     editorArea_->breadcrumbsBar()->onCommandPaletteClicked = [this]() {
+        refreshRecentActions();  // 0.2: keep MRU entries current in the palette
         editorArea_->commandPalette()->show(getContentComponent());
     };
     editorArea_->breadcrumbsBar()->onFindClicked = [this]() {
@@ -410,9 +461,8 @@ MainWindow::MainWindow(AudioEngine& audio,
         editorArea_->hideFindReplace();
     };
 
-    // Set up ApplicationProperties early so the ExplorerPanel can persist
-    // and restore its last-used root directory (A4).
-    appProperties_.setStorageParameters(makePropertiesOptions());
+    // ApplicationProperties storage was configured above; hand the properties
+    // to the ExplorerPanel so it can persist/restore its last-used root (A4).
     explorerPanel_->setApplicationProperties(&appProperties_);
 
     // Restore the persisted theme on startup (B3). SettingsComponent persists
@@ -498,11 +548,12 @@ MainWindow::MainWindow(AudioEngine& audio,
     // completes the explicitly-requested download in the background.
     restorePetSelection();
 
-    // Restore the last-used root directory if one was persisted; otherwise
-    // fall back to the project directory (cwd at launch).
+    // Restore the last-used root directory if one was persisted. With no
+    // workspace resolved (fresh launch) leave the explorer empty — the
+    // welcome screen will drive the first selection (Agent 0.1).
     explorerPanel_->restoreLastDirectoryAndRefresh();
-    if (explorerPanel_->directory() == juce::File())
-        explorerPanel_->setDirectory(juce::File(projectDir));
+    if (explorerPanel_->directory() == juce::File() && !workspaceDir_.empty())
+        explorerPanel_->setDirectory(juce::File(workspaceDir_));
 
      // J-6: Load persisted ghost completion telemetry (quality metrics) from disk.
      // Restores per-tab event history so metrics accumulate across sessions.
@@ -558,6 +609,11 @@ MainWindow::MainWindow(AudioEngine& audio,
     // -----------------------------------------------------------------------
     const juce::Rectangle<int> bounds = resolveInitialBounds();
     setBounds(bounds);
+
+    // Agent 0.1: fresh launch with no persisted workspace → show the welcome
+    // overlay on top of the shell until a folder is opened or created.
+    if (workspaceDir_.empty())
+        showWelcomeScreen();
 
     // -----------------------------------------------------------------------
     // Start UITimer at 60 Hz — audio device is open at this point (Req 28.5)
@@ -717,6 +773,10 @@ void MainWindow::resized()
         const int h = hathor::ui::PetWidget::kPetHeight;
         petWidget_->setBounds(b.getRight() - w - 8, b.getBottom() - h - 8, w, h);
     }
+
+    // Agent 0.1: welcome overlay covers the entire content area while shown.
+    if (welcomeScreen_ != nullptr && welcomeScreen_->isVisible())
+        welcomeScreen_->setBounds(content->getLocalBounds());
 }
 
 // ---------------------------------------------------------------------------
@@ -730,6 +790,10 @@ void MainWindow::closeButtonPressed()
     {
         props->setValue("windowBounds",
                         getBounds().toString());
+        // Agent 0.1: persist the workspace root so relaunch restores it
+        // directly (no welcome screen).
+        if (!workspaceDir_.empty())
+            props->setValue("lastWorkspacePath", juce::String(workspaceDir_));
         // ExplorerPanel::saveLastDirectory is called on setDirectory(),
         // but call it again here to be certain the latest directory is persisted
         // even if setDirectory was never explicitly called.
@@ -997,6 +1061,171 @@ bool MainWindow::keyPressed(const juce::KeyPress& key)
     }
 
     return false;
+}
+
+// ---------------------------------------------------------------------------
+// 0.2 — Workspace lifecycle (Open Folder + recent-projects MRU)
+// ---------------------------------------------------------------------------
+
+void MainWindow::openFolderChooser()
+{
+    folderChooser_ = std::make_unique<juce::FileChooser>(
+        "Open Folder…",
+        juce::File(workspaceDir_.empty()
+                       ? juce::File::getSpecialLocation(
+                             juce::File::userHomeDirectory).getFullPathName()
+                       : juce::String(workspaceDir_)));
+
+    folderChooser_->launchAsync(
+        juce::FileBrowserComponent::openMode |
+            juce::FileBrowserComponent::canSelectDirectories,
+        [this](const juce::FileChooser& fc)
+        {
+            const juce::File dir = fc.getResult();
+            if (dir.isDirectory())
+                switchWorkspace(dir);
+            folderChooser_.reset();
+        });
+}
+
+void MainWindow::switchWorkspace(const juce::File& dir)
+{
+    if (!dir.isDirectory())
+        return;
+
+    const std::string newDir = dir.getFullPathName().toStdString();
+
+    pushRecentProject(newDir);
+
+    if (newDir == workspaceDir_)
+        return;
+
+    // Close tabs that belong to the old workspace first — dirty buffers go
+    // through the existing Save/Discard/Cancel prompt (Req 22.7).
+    const std::string oldDir = workspaceDir_;
+    if (editorArea_ && !oldDir.empty())
+        editorArea_->closeTabsUnderRoot(std::filesystem::path(oldDir));
+
+    // Re-root the explorer (persists explorerLastDirectory) and the editor
+    // area (workspace search + quick open).
+    if (explorerPanel_)
+        explorerPanel_->setDirectory(dir);
+    if (editorArea_)
+        editorArea_->setWorkspaceRoot(std::filesystem::path(newDir));
+
+    workspaceDir_ = newDir;
+
+    // Agent 0.1: persist the chosen root so relaunch restores it directly.
+    if (auto* props = appProperties_.getUserSettings())
+    {
+        props->setValue("lastWorkspacePath", juce::String(newDir));
+        props->saveIfNeeded();
+    }
+
+    // A workspace now exists — dismiss the welcome overlay if it was up.
+    if (welcomeScreen_ != nullptr && welcomeScreen_->isVisible())
+    {
+        welcomeScreen_->setVisible(false);
+        resized();
+    }
+}
+
+std::vector<std::string> MainWindow::loadRecentProjects()
+{
+    std::vector<std::string> out;
+    auto* props = appProperties_.getUserSettings();
+    if (props == nullptr)
+        return out;
+
+    juce::StringArray entries;
+    entries.addLines(props->getValue("recent.projects"));
+    for (const auto& line : entries)
+    {
+        std::string p = line.toStdString();
+        while (!p.empty() && (p.back() == '\r'))
+            p.pop_back();
+        if (!p.empty() && juce::File(p).isDirectory())
+            out.push_back(p);
+    }
+    return out;
+}
+
+void MainWindow::pushRecentProject(const std::string& path)
+{
+    if (auto* props = appProperties_.getUserSettings())
+    {
+        // Dedup, most-recent-first, capped at 10.
+        std::vector<std::string> mru;
+        mru.push_back(path);
+        for (const auto& p : loadRecentProjects())
+        {
+            if (p != path && mru.size() < 10)
+                mru.push_back(p);
+        }
+
+        juce::String joined;
+        for (const auto& p : mru)
+        {
+            if (joined.isNotEmpty())
+                joined += "\n";
+            joined += juce::String(p);
+        }
+        props->setValue("recent.projects", joined);
+        props->saveIfNeeded();
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Agent 0.1 — Welcome screen (no persisted workspace at launch)
+// ---------------------------------------------------------------------------
+
+void MainWindow::showWelcomeScreen()
+{
+    if (welcomeScreen_ == nullptr)
+    {
+        welcomeScreen_ = std::make_unique<hathor::ui::WelcomeScreen>();
+
+        welcomeScreen_->onWorkspaceChosen =
+            [this](juce::File dir)
+            {
+                switchWorkspace(dir);
+
+                // Chat threads started before a workspace existed should
+                // follow the newly chosen root.
+                if (chatSidebar_ && !agentExePath_.empty())
+                    chatSidebar_->restartAllThreads(
+                        agentExePath_, workspaceDir_, hathorMcpPath_);
+            };
+    }
+
+    juce::StringArray recent;
+    for (const auto& p : loadRecentProjects())
+        recent.add(juce::String(p));
+    welcomeScreen_->setRecentPaths(recent);
+
+    if (auto* content = getContentComponent())
+        content->addAndMakeVisible(welcomeScreen_.get());
+    welcomeScreen_->setVisible(true);
+    resized();
+}
+
+void MainWindow::refreshRecentActions()
+{
+{    auto* reg = editorArea_ != nullptr ? editorArea_->actionRegistry() : nullptr;
+    if (reg == nullptr)
+        return;
+
+    const std::vector<std::string> recent = loadRecentProjects();
+    for (std::size_t i = 0; i < recent.size(); ++i)
+    {
+        const std::string id = "workspace.openRecent." + std::to_string(i);
+        reg->registerAction(id, "Open Recent: " + recent[i], "File",
+                            "Reopen this project as the workspace");
+        reg->setCallback(id, [this, path = recent[i]]()
+        {
+            switchWorkspace(juce::File(path));
+        });
+    }
 }
 
 // ---------------------------------------------------------------------------

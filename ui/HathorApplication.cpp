@@ -32,6 +32,33 @@
 // HathorApplication
 // ---------------------------------------------------------------------------
 
+// 0.2 (P6): Resolve the project/workspace root — prefer the explorer root
+// persisted by the previous session; fall back to the process CWD. Used so
+// `.hathor_assets` resolves under the opened project even when the binary is
+// launched from elsewhere (e.g. `/`).
+static std::filesystem::path resolveProjectRoot()
+{
+    juce::PropertiesFile::Options opts;
+    opts.applicationName      = "Hathor";
+    opts.filenameSuffix       = ".props";
+    opts.folderName           = "Hathor";
+    opts.storageFormat        = juce::PropertiesFile::storeAsXML;
+    opts.commonToAllUsers     = false;
+    opts.ignoreCaseOfKeyNames = false;
+
+    juce::ApplicationProperties props;
+    props.setStorageParameters(opts);
+    if (auto* settings = props.getUserSettings())
+    {
+        const std::filesystem::path persisted(
+            settings->getValue("explorerLastDirectory").toStdString());
+        std::error_code ec;
+        if (!persisted.empty() && std::filesystem::is_directory(persisted, ec))
+            return persisted;
+    }
+    return std::filesystem::current_path();
+}
+
 class HathorApplication : public juce::JUCEApplication
 {
 public:
@@ -118,14 +145,13 @@ public:
              return;
          }
 
-         // B8-K4 §4: Reload Studio-persisted baked WAV assets from the
-         // current project directory so previously-baked instruments are
-         // available for `s "name"` without re-baking.
+         // 0.2 (P6): Reload Studio-persisted baked WAV assets from the
+         // resolved project root (persisted workspace, not the process CWD)
+         // so previously-baked instruments are available for `s "name"`
+         // without re-baking.
          {
-             const std::filesystem::path cwd =
-                 std::filesystem::current_path();
              const std::filesystem::path studioDir =
-                 cwd / ".hathor_assets" / "chuck_instruments";
+                 resolveProjectRoot() / ".hathor_assets" / "chuck_instruments";
              if (std::filesystem::is_directory(studioDir)) {
                  bank_->reloadStudioAssets(studioDir, formatManager_, 44100.0);
              }
@@ -135,10 +161,11 @@ public:
         audio_ = std::make_unique<AudioEngine>(*bank_);
         audio_->setBpm(initialBpm);
 
-        // Initialize the AudioEngine's project directory from the application's
-        // working directory so that currentProjectDir(), studioInstrumentsDir(),
-        // and listChuckInstruments() all resolve against the correct project root.
-        audio_->setProjectDir(std::filesystem::current_path());
+        // Initialize the AudioEngine's project directory from the resolved
+        // project root so that currentProjectDir(), studioInstrumentsDir(),
+        // and listChuckInstruments() all resolve against the correct project
+        // root (0.2 / P6 — no longer the process CWD).
+        audio_->setProjectDir(resolveProjectRoot());
 
         const std::string initError = audio_->initialise();
         if (!initError.empty())

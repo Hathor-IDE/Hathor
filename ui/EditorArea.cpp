@@ -2443,8 +2443,10 @@ void EditorArea::toggleSplit()
 void EditorArea::setWorkspaceRoot(const std::filesystem::path& root)
 {
     workspaceRoot_ = root;
-    if (workspaceSearchModel_)
-        workspaceSearchModel_ = std::make_unique<WorkspaceSearchModel>(root);
+    // P5 fix: always rebuild the search model so a runtime workspace switch
+    // re-roots workspace search even on the first call (previously an
+    // inverted guard left stale state when the model did not yet exist).
+    workspaceSearchModel_ = std::make_unique<WorkspaceSearchModel>(root);
     if (quickOpenDialog_)
     {
         // Rebuild the quick-open file list with the new root
@@ -2458,6 +2460,35 @@ void EditorArea::setWorkspaceRoot(const std::filesystem::path& root)
         };
         addChildComponent(quickOpenDialog_.get());
         quickOpenDialog_->setVisible(false);
+    }
+}
+
+void EditorArea::closeTabsUnderRoot(const std::filesystem::path& root)
+{
+    if (root.empty())
+        return;
+
+    std::error_code ec;
+    const std::filesystem::path canonical = std::filesystem::weakly_canonical(root, ec);
+    const std::filesystem::path base = ec ? root : canonical;
+
+    // Iterate descending so removal indices stay valid. closeTab() routes
+    // dirty buffers through the Save/Discard/Cancel prompt (Req 22.7) —
+    // a "Cancel" simply leaves that tab open, which is acceptable.
+    for (int i = static_cast<int>(tabs_.size()) - 1; i >= 0; --i)
+    {
+        const auto& tab = tabs_[static_cast<std::size_t>(i)];
+        if (!tab->filePath().has_value())
+            continue;
+
+        std::filesystem::path p = tab->filePath()->getFullPathName().toStdString();
+        std::error_code ec2;
+        auto canonicalTab = std::filesystem::weakly_canonical(p, ec2);
+        if (!ec2)
+            p = canonicalTab;
+
+        if (p == base || p.native().rfind(base.native(), 0) == 0)
+            closeTab(i);
     }
 }
 
