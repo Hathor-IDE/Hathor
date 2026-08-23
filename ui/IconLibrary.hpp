@@ -57,10 +57,6 @@ public:
     static void drawIcon(juce::Graphics& g, Icon icon,
                          juce::Rectangle<float> bounds, juce::Colour colour);
 
-    /// Convenience integer-bounds overload.
-    static void drawIcon(juce::Graphics& g, Icon icon,
-                         juce::Rectangle<int> bounds, juce::Colour colour);
-
 private:
     static const char* resourceName(Icon icon);
     static const juce::Drawable* cachedDrawable(Icon icon, juce::Colour colour);

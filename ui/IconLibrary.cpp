@@ -109,10 +109,4 @@ void IconLibrary::drawIcon(juce::Graphics& g, Icon icon,
     }
 }
 
-void IconLibrary::drawIcon(juce::Graphics& g, Icon icon,
-                           juce::Rectangle<int> bounds, juce::Colour colour)
-{
-    drawIcon(g, icon, bounds.toFloat(), colour);
-}
-
 } // namespace hathor::ui

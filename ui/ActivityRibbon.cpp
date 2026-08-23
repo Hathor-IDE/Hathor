@@ -105,7 +105,7 @@ void ActivityRibbon::paintButton(juce::Graphics& g, const RibbonButton& btn) con
 
     constexpr int kIconSize = 18;
     IconLibrary::drawIcon(g, btn.icon,
-                          btn.bounds.withSizeKeepingCentre(kIconSize, kIconSize),
+                          btn.bounds.withSizeKeepingCentre(kIconSize, kIconSize).toFloat(),
                           iconCol);
 }
 
