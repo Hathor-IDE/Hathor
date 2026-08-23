@@ -8,6 +8,7 @@
  */
 
 #include "BreadcrumbsBar.hpp"
+#include "IconLibrary.hpp"
 
 namespace hathor::ui {
 
@@ -104,12 +105,14 @@ void BreadcrumbsBar::paint(juce::Graphics& g)
                          juce::Justification::centred, 1);
     }
 
-    // Icon buttons (simplified as text)
-    g.setColour(juce::Colours::lightgrey);
-    g.setFont(font);
-    g.drawText("⚡", commandPaletteBtn_, juce::Justification::centred, true);
-    g.drawText("🔍", findBtn_, juce::Justification::centred, true);
-    g.drawText("⊞", splitBtn_, juce::Justification::centred, true);
+    // Icon buttons (monochrome Lucide glyphs via IconLibrary, Agent 0.6)
+    const juce::Colour iconCol(juce::Colours::lightgrey);
+    IconLibrary::drawIcon(g, IconLibrary::Icon::Zap,
+                          commandPaletteBtn_.toFloat(), iconCol);
+    IconLibrary::drawIcon(g, IconLibrary::Icon::Search,
+                          findBtn_.toFloat(), iconCol);
+    IconLibrary::drawIcon(g, IconLibrary::Icon::Columns,
+                          splitBtn_.toFloat(), iconCol);
 }
 
 void BreadcrumbsBar::mouseDown(const juce::MouseEvent& e)

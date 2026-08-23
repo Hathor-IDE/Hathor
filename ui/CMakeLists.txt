@@ -144,6 +144,7 @@ target_sources(hathor-ui
         WelcomeScreen.cpp          # Agent 0.1: startup welcome overlay
         HathorLookAndFeel.cpp
         ActivityRibbon.cpp
+        IconLibrary.cpp           # Agent 0.6: central SVG icon system
         ExplorerPanel.cpp
         ExplorerFileTypes.cpp
         ExplorerTreeItems.cpp
@@ -273,12 +274,36 @@ juce_add_binary_data(hathor_font_data
         ${CMAKE_CURRENT_SOURCE_DIR}/resources/JetBrainsMono-Bold.ttf
 )
 
+juce_add_binary_data(hathor_icon_data
+    SOURCES
+        ${CMAKE_CURRENT_SOURCE_DIR}/resources/icons/activity.svg
+        ${CMAKE_CURRENT_SOURCE_DIR}/resources/icons/audio-waveform.svg
+        ${CMAKE_CURRENT_SOURCE_DIR}/resources/icons/bot.svg
+        ${CMAKE_CURRENT_SOURCE_DIR}/resources/icons/bug.svg
+        ${CMAKE_CURRENT_SOURCE_DIR}/resources/icons/columns-2.svg
+        ${CMAKE_CURRENT_SOURCE_DIR}/resources/icons/file-code-2.svg
+        ${CMAKE_CURRENT_SOURCE_DIR}/resources/icons/file.svg
+        ${CMAKE_CURRENT_SOURCE_DIR}/resources/icons/folder-open.svg
+        ${CMAKE_CURRENT_SOURCE_DIR}/resources/icons/folder.svg
+        ${CMAKE_CURRENT_SOURCE_DIR}/resources/icons/git-branch.svg
+        ${CMAKE_CURRENT_SOURCE_DIR}/resources/icons/music-2.svg
+        ${CMAKE_CURRENT_SOURCE_DIR}/resources/icons/play.svg
+        ${CMAKE_CURRENT_SOURCE_DIR}/resources/icons/search.svg
+        ${CMAKE_CURRENT_SOURCE_DIR}/resources/icons/settings.svg
+        ${CMAKE_CURRENT_SOURCE_DIR}/resources/icons/square.svg
+        ${CMAKE_CURRENT_SOURCE_DIR}/resources/icons/terminal.svg
+        ${CMAKE_CURRENT_SOURCE_DIR}/resources/icons/triangle-alert.svg
+        ${CMAKE_CURRENT_SOURCE_DIR}/resources/icons/x.svg
+        ${CMAKE_CURRENT_SOURCE_DIR}/resources/icons/zap.svg
+)
+
 target_link_libraries(hathor-ui
     PRIVATE
         hathor-engine
         hathor-control
         hathor-audio-worker-lib
         hathor_font_data
+        hathor_icon_data
         juce::juce_gui_basics
         juce::juce_gui_extra
         juce::juce_audio_devices

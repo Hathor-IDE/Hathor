@@ -8,6 +8,7 @@
  */
 
 #include "StatusRibbon.hpp"
+#include "IconLibrary.hpp"
 
 namespace hathor::ui {
 
@@ -152,13 +153,13 @@ void StatusRibbon::paint(juce::Graphics& g)
 
     g.setFont(HathorLookAndFeel::fontMedium(HathorLookAndFeel::Typography::labelMd));
 
-    // --- Error indicator ---
+    // --- Error indicator (Lucide triangle-alert) ---
     {
-        const juce::Colour dotCol = errorCount_ > 0 ? palette.error : palette.textMuted;
-        g.setColour(dotCol);
-        g.fillEllipse(static_cast<float>(errorBox_.bounds.getX() + 4),
-                      static_cast<float>(errorBox_.bounds.getY() + (errorBox_.bounds.getHeight() - 8) / 2),
-                      8.0f, 8.0f);
+        const juce::Colour col = errorCount_ > 0 ? palette.error : palette.textMuted;
+        IconLibrary::drawIcon(g, IconLibrary::Icon::Warning,
+                              {static_cast<float>(errorBox_.bounds.getX() + 3),
+                               static_cast<float>(errorBox_.bounds.getY() + (errorBox_.bounds.getHeight() - 12) / 2),
+                               12.0f, 12.0f}, col);
         g.setColour(palette.textPrimary);
         juce::String text = juce::String(errorCount_) + " error" + (errorCount_ != 1 ? "s" : "");
         g.drawText(text,
@@ -167,13 +168,13 @@ void StatusRibbon::paint(juce::Graphics& g)
                    juce::Justification::centredLeft, false);
     }
 
-    // --- Warning indicator ---
+    // --- Warning indicator (Lucide triangle-alert) ---
     {
-        const juce::Colour dotCol = warningCount_ > 0 ? palette.warning : palette.textMuted;
-        g.setColour(dotCol);
-        g.fillEllipse(static_cast<float>(warningBox_.bounds.getX() + 4),
-                      static_cast<float>(warningBox_.bounds.getY() + (warningBox_.bounds.getHeight() - 8) / 2),
-                      8.0f, 8.0f);
+        const juce::Colour col = warningCount_ > 0 ? palette.warning : palette.textMuted;
+        IconLibrary::drawIcon(g, IconLibrary::Icon::Warning,
+                              {static_cast<float>(warningBox_.bounds.getX() + 3),
+                               static_cast<float>(warningBox_.bounds.getY() + (warningBox_.bounds.getHeight() - 12) / 2),
+                               12.0f, 12.0f}, col);
         g.setColour(palette.textPrimary);
         juce::String text = juce::String(warningCount_) + " warning" + (warningCount_ != 1 ? "s" : "");
         g.drawText(text,
@@ -182,26 +183,15 @@ void StatusRibbon::paint(juce::Graphics& g)
                    juce::Justification::centredLeft, false);
     }
 
-    // --- Transport indicator ---
+    // --- Transport indicator (Lucide play / stop) ---
     {
         const juce::Colour col = transportRunning_ ? palette.accent : palette.textMuted;
-        g.setColour(col);
-        // Play triangle or stop squares
-        if (transportRunning_)
-        {
-            // Pause/Stop icon (two bars)
-            constexpr int barW = 3, barH = 10;
-            g.fillRect(transportBox_.bounds.getX() + 8, transportBox_.bounds.getY() + (transportBox_.bounds.getHeight() - barH) / 2,
-                       barW, barH);
-            g.fillRect(transportBox_.bounds.getX() + 14, transportBox_.bounds.getY() + (transportBox_.bounds.getHeight() - barH) / 2,
-                       barW, barH);
-        }
-        else
-        {
-            // Stop icon (square)
-            g.fillRect(transportBox_.bounds.getX() + 8, transportBox_.bounds.getY() + (transportBox_.bounds.getHeight() - 12) / 2,
-                       12, 12);
-        }
+        const auto icon = transportRunning_ ? IconLibrary::Icon::Stop
+                                            : IconLibrary::Icon::Play;
+        IconLibrary::drawIcon(g, icon,
+                              {static_cast<float>(transportBox_.bounds.getX() + 5),
+                               static_cast<float>(transportBox_.bounds.getY() + (transportBox_.bounds.getHeight() - 12) / 2),
+                               12.0f, 12.0f}, col);
         g.setColour(palette.textPrimary);
         juce::String text = juce::String(static_cast<int>(std::round(bpm_))) + " BPM";
         g.drawText(text,
@@ -210,13 +200,13 @@ void StatusRibbon::paint(juce::Graphics& g)
                    juce::Justification::centredLeft, false);
     }
 
-    // --- Worker indicator ---
+    // --- Worker indicator (Lucide activity pulse) ---
     {
         const juce::Colour col = workerAlive_ ? juce::Colours::green : palette.error;
-        g.setColour(col);
-        g.fillEllipse(static_cast<float>(workerBox_.bounds.getX() + 4),
-                      static_cast<float>(workerBox_.bounds.getY() + (workerBox_.bounds.getHeight() - 8) / 2),
-                      8.0f, 8.0f);
+        IconLibrary::drawIcon(g, IconLibrary::Icon::Activity,
+                              {static_cast<float>(workerBox_.bounds.getX() + 3),
+                               static_cast<float>(workerBox_.bounds.getY() + (workerBox_.bounds.getHeight() - 12) / 2),
+                               12.0f, 12.0f}, col);
         g.setColour(palette.textPrimary);
         g.drawText(workerAlive_ ? "Audio worker: OK" : "Audio worker: DOWN",
                    juce::Rectangle<int>(workerBox_.bounds.getX() + 16, workerBox_.bounds.getY(),
@@ -224,13 +214,13 @@ void StatusRibbon::paint(juce::Graphics& g)
                    juce::Justification::centredLeft, false);
     }
 
-    // --- LSP indicator ---
+    // --- LSP indicator (Lucide activity pulse) ---
     {
         const juce::Colour col = lspConnected_ ? palette.accent : palette.textMuted;
-        g.setColour(col);
-        g.fillEllipse(static_cast<float>(lspBox_.bounds.getX() + 4),
-                      static_cast<float>(lspBox_.bounds.getY() + (lspBox_.bounds.getHeight() - 8) / 2),
-                      8.0f, 8.0f);
+        IconLibrary::drawIcon(g, IconLibrary::Icon::Activity,
+                              {static_cast<float>(lspBox_.bounds.getX() + 3),
+                               static_cast<float>(lspBox_.bounds.getY() + (lspBox_.bounds.getHeight() - 12) / 2),
+                               12.0f, 12.0f}, col);
         g.setColour(palette.textPrimary);
         g.drawText(lspConnected_ ? "LSP: connected" : "LSP: disconnected",
                    juce::Rectangle<int>(lspBox_.bounds.getX() + 16, lspBox_.bounds.getY(),
@@ -238,15 +228,14 @@ void StatusRibbon::paint(juce::Graphics& g)
                    juce::Justification::centredLeft, false);
     }
 
-    // --- Git indicator ---
+    // --- Git indicator (Lucide git-branch) ---
     {
         const bool hasChanges = (gitStagedCount_ + gitUnstagedCount_) > 0;
-        const juce::Colour dotCol = hasChanges ? palette.accent : palette.textMuted;
-        g.setColour(dotCol);
-        // Draw a git "branch" icon (filled circle)
-        g.fillEllipse(static_cast<float>(gitBox_.bounds.getX() + 4),
-                      static_cast<float>(gitBox_.bounds.getY() + (gitBox_.bounds.getHeight() - 8) / 2),
-                      8.0f, 8.0f);
+        const juce::Colour col = hasChanges ? palette.accent : palette.textMuted;
+        IconLibrary::drawIcon(g, IconLibrary::Icon::GitBranch,
+                              {static_cast<float>(gitBox_.bounds.getX() + 3),
+                               static_cast<float>(gitBox_.bounds.getY() + (gitBox_.bounds.getHeight() - 12) / 2),
+                               12.0f, 12.0f}, col);
 
         g.setColour(palette.textPrimary);
         juce::String text = gitBranch_.empty()

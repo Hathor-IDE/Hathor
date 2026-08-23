@@ -9,6 +9,8 @@
 
 #include <juce_gui_extra/juce_gui_extra.h>
 
+#include "IconLibrary.hpp"
+
 namespace hathor::ui {
 
 // ---------------------------------------------------------------------------
@@ -51,35 +53,16 @@ void SongTreeItem::paintItem(juce::Graphics& g, int width, int height)
     const int textX = iconX + iconSize + 6;
     const int textW = width - textX - 4;
 
-    // Draw file-type icon
+    // Draw file-type icon (Lucide via IconLibrary, Agent 0.6)
+    IconLibrary::Icon icon = IconLibrary::Icon::FileGeneric;
     if (node_.fileType == FileType::SongHathor)
-    {
-        // .hathor: a small rectangle with an accent dot — pattern icon
-        g.setColour(textCol.withAlpha(0.7f));
-        g.fillRect(iconX, iconY, iconSize, iconSize);
-        g.setColour(palette.accent);
-        const int dotSize = 4;
-        g.fillEllipse(
-            static_cast<float>(iconX + (iconSize - dotSize) / 2),
-            static_cast<float>(iconY + (iconSize - dotSize) / 2),
-            static_cast<float>(dotSize),
-            static_cast<float>(dotSize));
-    }
+        icon = IconLibrary::Icon::FileHathor;
     else if (node_.fileType == FileType::SongChuck)
-    {
-        // .ck: a small rectangle with brackets — ChucK icon
-        g.setColour(textCol.withAlpha(0.7f));
-        g.fillRect(iconX, iconY, iconSize, iconSize);
-        g.setColour(textCol);
-        g.drawText("[ ]", iconX, iconY, iconSize, iconSize,
-                   juce::Justification::centred, false);
-    }
-    else
-    {
-        // Fallback for any other song type
-        g.setColour(textCol.withAlpha(0.7f));
-        g.fillRect(iconX, iconY, iconSize, iconSize);
-    }
+        icon = IconLibrary::Icon::FileChuck;
+
+    juce::Rectangle<float> iconBounds(static_cast<float>(iconX), static_cast<float>(iconY), static_cast<float>(iconSize), static_cast<float>(iconSize));
+    IconLibrary::drawIcon(g, icon, iconBounds,
+                          textCol);
 
     // Draw filename (stem + extension so user sees ".hathor")
     const juce::File f(juce::String(node_.path.string()));
@@ -131,17 +114,11 @@ void AssetTreeItem::paintItem(juce::Graphics& g, int width, int height)
     const int textX = iconX + iconSize + 6;
     const int textW = width - textX - 12;
 
-    // Icon: an instrument glyph — a small rectangle with a wave/note symbol
+    // Icon: an instrument glyph — audio waveform (Lucide via IconLibrary)
     // to distinguish from ordinary .ck song files.
-    g.setColour(textCol.withAlpha(0.7f));
-    g.fillRect(iconX, iconY, iconSize, iconSize);
-    g.setColour(palette.accent);
-    // Draw a small "sound wave" — two vertical bars indicating an audio asset.
-    const int barW = 2;
-    const int gap = 1;
-    g.fillRect(iconX + 2, iconY + 2, barW, iconSize - 4);
-    g.fillRect(iconX + 2 + barW + gap, iconY + 4, barW, iconSize - 6);
-    g.fillRect(iconX + 2 + (barW + gap) * 2, iconY + 3, barW, iconSize - 5);
+    juce::Rectangle<float> iconBounds(static_cast<float>(iconX), static_cast<float>(iconY), static_cast<float>(iconSize), static_cast<float>(iconSize));
+    IconLibrary::drawIcon(g, IconLibrary::Icon::AudioWave, iconBounds,
+                          textCol);
 
     // Draw the logical instrument name (stem, not ".ck" / ".wav")
     g.setColour(textCol);
@@ -281,12 +258,16 @@ void FolderTreeItem::paintItem(juce::Graphics& g, int width, int height)
     const int textX = iconX + iconSize + 6;
     const int textW = width - textX - 4;
 
-    // Draw folder icon: a small folder shape (rectangle + tab)
-    g.setColour(textCol.withAlpha(0.7f));
-    const int tabW = 8;
-    const int tabH = 4;
-    g.fillRect(iconX, iconY, tabW, tabH);       // folder tab
-    g.fillRect(iconX, iconY + tabH, iconSize, iconSize - tabH); // folder body
+    // Draw folder icon (Lucide folder via IconLibrary, Agent 0.6)
+    // Managed asset folders get the open-folder variant.
+    const bool managedFolder = node_.managedCategories.size() + node_.managedAssets.size() > 0
+                               && node_.folders.empty() && node_.songs.empty();
+    const juce::Rectangle<float> iconBounds(static_cast<float>(iconX), static_cast<float>(iconY),
+                                            static_cast<float>(iconSize), static_cast<float>(iconSize));
+    IconLibrary::drawIcon(g, managedFolder ? IconLibrary::Icon::Explorer
+                                           : IconLibrary::Icon::Folder,
+                          iconBounds,
+                          textCol);
 
     // Draw folder name
     g.setColour(textCol);

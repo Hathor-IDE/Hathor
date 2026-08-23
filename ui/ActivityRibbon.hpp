@@ -20,6 +20,7 @@
 #include <functional>
 
 #include "HathorLookAndFeel.hpp"
+#include "IconLibrary.hpp"
 
 namespace hathor::ui {
 
@@ -89,22 +90,22 @@ private:
     struct RibbonButton
     {
         Panel       panel;   ///< which panel this button controls (None for settings)
-        juce::String label;  ///< single-char label rendered in the 32×32 box
+        IconLibrary::Icon icon; ///< icon rendered in the 32×32 box
         juce::Rectangle<int> bounds; ///< set in resized()
     };
 
     std::array<RibbonButton, 7> navButtons_
  {{
-        { Panel::Explorer,       "E", {} },
-        { Panel::Search,         "S", {} },
-        { Panel::VersionControl, "V", {} },
-        { Panel::Debug,          "D", {} },
-        { Panel::Terminal,       ">", {} },
-        { Panel::Problems,       "!", {} },
-        { Panel::AIAgent,        "A", {} },
+        { Panel::Explorer,       IconLibrary::Icon::Explorer, {} },
+        { Panel::Search,         IconLibrary::Icon::Search, {} },
+        { Panel::VersionControl, IconLibrary::Icon::GitBranch, {} },
+        { Panel::Debug,          IconLibrary::Icon::Bug, {} },
+        { Panel::Terminal,       IconLibrary::Icon::Terminal, {} },
+        { Panel::Problems,       IconLibrary::Icon::Warning, {} },
+        { Panel::AIAgent,        IconLibrary::Icon::Bot, {} },
     }};
 
-    RibbonButton settingsButton_ { Panel::None, "P", {} };
+    RibbonButton settingsButton_ { Panel::None, IconLibrary::Icon::Settings, {} };
 
     Panel activePanel_ { Panel::None };
 

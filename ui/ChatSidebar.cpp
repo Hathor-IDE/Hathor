@@ -22,12 +22,36 @@
 
 #include "ChatSidebar.hpp"
 #include "HathorLookAndFeel.hpp"
+#include "IconLibrary.hpp"
 
 #include <algorithm>
 #include <cmath>
 #include <string>
 
 namespace hathor::ui {
+
+namespace {
+
+/// TextButton that paints an IconLibrary glyph instead of a text label
+/// (Agent 0.6 — replaces the Font Awesome PUA close glyph).
+class IconButton : public juce::TextButton
+{
+public:
+    explicit IconButton(IconLibrary::Icon icon) : icon_(icon) {}
+
+    void paintButton(juce::Graphics& g, bool over, bool /*down*/) override
+    {
+        juce::ignoreUnused(over);
+        const auto& palette = HathorLookAndFeel::fromComponent(*this).getPalette();
+        IconLibrary::drawIcon(g, icon_, getLocalBounds().toFloat().reduced(3.0f),
+                              palette.textSecondary);
+    }
+
+private:
+    IconLibrary::Icon icon_;
+};
+
+} // namespace
 
 // ===========================================================================
 // ChatSidebar — Construction / destruction
@@ -251,9 +275,9 @@ void ChatSidebar::buildTabButtons()
         tabButtons_.add(btn);
         tabBarArea_.addAndMakeVisible(btn);
 
-        // Close button — small × on the right edge of the tab button.
-        auto* closeBtn = new juce::TextButton();
-        closeBtn->setButtonText("\xef\x80\x8d");  // ×
+        // Close button — small × on the right edge of the tab button
+        // (Lucide "x" via IconLibrary, Agent 0.6).
+        auto* closeBtn = new IconButton(IconLibrary::Icon::Close);
         closeBtn->setTooltip("Close tab");
         closeBtn->setColour(juce::TextButton::buttonColourId,
                             juce::Colours::transparentWhite);

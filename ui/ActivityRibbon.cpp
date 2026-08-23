@@ -98,14 +98,15 @@ void ActivityRibbon::paintButton(juce::Graphics& g, const RibbonButton& btn) con
         g.fillRect(btn.bounds);
     }
 
-    // Icon label centred in the 32×32 box
-    const juce::Colour textCol = isActive
+    // Icon centred in the 32×32 box (tinted from theme, Agent 0.6)
+    const juce::Colour iconCol = isActive
         ? palette.accent
         : palette.textSecondary;
 
-    g.setColour(textCol);
-    g.setFont(HathorLookAndFeel::fontBold(14.0f));
-    g.drawText(btn.label, btn.bounds, juce::Justification::centred, false);
+    constexpr int kIconSize = 18;
+    IconLibrary::drawIcon(g, btn.icon,
+                          btn.bounds.withSizeKeepingCentre(kIconSize, kIconSize),
+                          iconCol);
 }
 
 // ---------------------------------------------------------------------------

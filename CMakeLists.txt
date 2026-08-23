@@ -61,6 +61,11 @@ enable_testing()
 option(HATHOR_BUILD_APP "Build the full JUCE audio application (hathor)" ON)
 
 # ---------------------------------------------------------------------------
+# Audio-engine test suites (B4-K4 execution tests + integration scripts).
+# OFF by default: slow and requires a usable audio device.
+option(HATHOR_ENABLE_AUDIO_TESTS "Enable audio-engine test suites (ctest)" OFF)
+
+# ---------------------------------------------------------------------------
 # FetchContent dependencies
 # ---------------------------------------------------------------------------
 include(FetchContent)

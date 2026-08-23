@@ -15,10 +15,11 @@
  *   and recursively contains child SongTreeItem / FolderTreeItem nodes.
  *   Only folders with children render as expandable.
  *
- * Icons are drawn inline using simple geometry (no external icon framework):
- *   - Folder: a small folder shape
- *   - Song (.hathor): a small rectangle with an accent dot (pattern icon)
- *   - Song (.ck): a small rectangle with brackets (ChucK icon)
+ * Icons come from the embedded Lucide set via IconLibrary (Agent 0.6):
+ *   - Folder: a folder glyph
+ *   - Song (.hathor): a music-note file icon
+ *   - Song (.ck): a code-file icon
+ *   - Assets: an audio-waveform icon
  *
  * Requirements: A4
  */

@@ -30,6 +30,11 @@ endif()
 # Samples directory (committed minimal bank: bd/0.wav, sn/0.wav)
 set(HATHOR_SAMPLES_DIR "${CMAKE_SOURCE_DIR}/samples")
 
+if(NOT HATHOR_ENABLE_AUDIO_TESTS)
+    message(STATUS "Integration (audio-engine) tests disabled (HATHOR_ENABLE_AUDIO_TESTS=OFF)")
+    return()
+endif()
+
 # Helper macro: register a shell-script integration test
 # Usage: add_integration_test(<name> <script>)
 macro(add_integration_test test_name script_name)

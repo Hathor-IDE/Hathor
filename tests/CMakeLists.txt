@@ -481,7 +481,9 @@ target_compile_definitions(hathor-b4-k4-execution-tests PRIVATE
 )
 
 include(Catch)
-catch_discover_tests(hathor-b4-k4-execution-tests DISCOVERY_MODE PRE_TEST)
+if(HATHOR_ENABLE_AUDIO_TESTS)
+    catch_discover_tests(hathor-b4-k4-execution-tests DISCOVERY_MODE PRE_TEST)
+endif()
 
 # ---------------------------------------------------------------------------
 # hathor-b4-k8-hard-gate-tests — B4-K8 hard gate (DoD §6.2)
@@ -730,5 +732,7 @@ catch_discover_tests(hathor-b8-real-audio-bake-tests DISCOVERY_MODE PRE_TEST)
 
 # ---------------------------------------------------------------------------
 # Integration tests (require the full hathor binary; skipped if app is off)
+# Audio-engine test suites are gated behind HATHOR_ENABLE_AUDIO_TESTS (OFF by
+# default — they are slow/flaky on machines without a usable audio device).
 # ---------------------------------------------------------------------------
 add_subdirectory(integration)
