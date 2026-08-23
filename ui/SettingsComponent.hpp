@@ -41,6 +41,10 @@
 #include "MasterEq.hpp"
 
 #include "PetdexTypes.hpp"
+#include "GhostProviderConfig.hpp"
+
+#include <unordered_map>
+#include <vector>
 
 class AudioEngineFacade;
 
@@ -172,6 +176,10 @@ private:
         int       sampleRate      = 44100;            ///< pending sample rate selection
         int       bufferSize      = 512;              ///< pending buffer size selection
         std::string vmFlags;                          ///< pending ChucK VM flags string
+
+        // Agent 1.3: Ghost completion endpoint overrides, keyed by backend.
+        // Blank entry => use env/default (resolved by GhostProviderResolver).
+        std::unordered_map<hathor::lsp::LlmBackend, std::string> ghostUrls;
     };
 
     // -----------------------------------------------------------------------
@@ -180,6 +188,21 @@ private:
 
     SettingsModel committed_;   ///< last Applied values (persisted)
     SettingsModel pending_;     ///< current UI control values
+
+    // -----------------------------------------------------------------------
+    // Internal: Ghost completion endpoint rows (Agent 1.3)
+    // -----------------------------------------------------------------------
+    // One per provider in the "Ghost Completion" Settings section. Held by
+    // OwnedArray (heap, stable address) so the editor/listener pointers stay
+    // valid; the contained Components are parented to contentPanel_ (which
+    // never deletes them), so destruction order is safe.
+    struct GhostUrlField
+    {
+        hathor::lsp::LlmBackend backend;
+        juce::Label      nameLabel;
+        juce::TextEditor urlEditor;
+        juce::Label      hintLabel;
+    };
 
     // -----------------------------------------------------------------------
     // Child components
@@ -205,6 +228,10 @@ private:
     juce::TextEditor agentPathEditor_;
     juce::Label*     agentPathLabel_ = nullptr;
     juce::Label      mcpPathLabel_;
+
+    // Agent 1.3: Ghost completion endpoint editors (one per provider).
+    juce::OwnedArray<GhostUrlField> ghostUrlFields_;
+    juce::Label                     ghostErrorLabel_;
 
     // Petdex section (Phase G / D1)
     juce::ComboBox   petCombo_;
@@ -277,6 +304,9 @@ private:
     /** Build the Agent / ACP section UI. */
     void buildAgentSection(const std::string& hathorMcpPath);
 
+    /** Build the Ghost Completion section UI (Agent 1.3). */
+    void buildGhostCompletionSection();
+
     /** Build the Petdex section UI. */
     void buildPetdexSection();
 
@@ -327,6 +357,15 @@ private:
 
     /** Update the enabled/disabled state of blur controls based on opacity. */
     void updateBlurControlState();
+
+    /** Refresh the Ghost URL editors to match committed_/pending_ (Agent 1.3). */
+    void refreshGhostUrlEditors();
+
+    /** Validate every Ghost URL editor; returns true if all are acceptable. */
+    bool validateGhostUrls() const;
+
+    /** Update the hint label + validation styling for one Ghost URL row. */
+    void refreshGhostUrlRow(GhostUrlField& field);
 
     /** Layout constants */
     static constexpr int kLabelWidth   = 120;

@@ -74,6 +74,7 @@ SettingsComponent::SettingsComponent(juce::ApplicationProperties* props,
     hathorMcpPath = mcpFile.getFullPathName().toStdString();
 
     buildAgentSection(hathorMcpPath);
+    buildGhostCompletionSection();
      buildPetdexSection();
      buildChuckSection();
      buildActionButtons();
@@ -128,6 +129,16 @@ SettingsComponent::SettingsModel
 SettingsComponent::loadSettings() const
 {
     SettingsModel m;
+
+    // Agent 1.3: load persisted per-backend ghost URL overrides from the
+    // resolver (they live in the resolver's own file, not ApplicationProperties).
+    const hathor::lsp::LlmBackend backends[] = {
+        hathor::lsp::LlmBackend::Ollama, hathor::lsp::LlmBackend::LlamaCpp,
+        hathor::lsp::LlmBackend::Tgi,    hathor::lsp::LlmBackend::OpenAi,
+        hathor::lsp::LlmBackend::HuggingFace,
+    };
+    for (const auto b : backends)
+        m.ghostUrls[b] = hathor::lsp::GhostProviderResolver::getUrlOverride(b);
 
     if (appProperties_ == nullptr)
     {
@@ -214,6 +225,11 @@ void SettingsComponent::saveSettings(const SettingsModel& model) const
     props->setValue("settings.sampleRate",     model.sampleRate);
     props->setValue("settings.bufferSize",     model.bufferSize);
     props->setValue("settings.vmFlags",        juce::String(model.vmFlags));
+
+    // Agent 1.3: persist ghost URL overrides through the provider-config
+    // mechanism (resolver file + cache) — not ApplicationProperties.
+    for (const auto& [backend, url] : model.ghostUrls)
+        hathor::lsp::GhostProviderResolver::setUrlOverride(backend, url);
 
     props->saveIfNeeded();
 }
@@ -997,6 +1013,18 @@ void SettingsComponent::buttonClicked(juce::Button* button)
 {
     if (button == &applyButton_)
     {
+        // Agent 1.3: reject invalid endpoint URLs inline (no modal dialog).
+        if (! validateGhostUrls())
+        {
+            ghostErrorLabel_.setVisible(true);
+            ghostErrorLabel_.setText(
+                "One or more Ghost endpoint URLs are invalid (expected http(s)://host[:port])."
+                " Fix them before applying.",
+                juce::dontSendNotification);
+            return;
+        }
+        ghostErrorLabel_.setVisible(false);
+
         committed_ = pending_;
         saveSettings(committed_);
         applyTheme(committed_.theme);
@@ -1129,6 +1157,18 @@ void SettingsComponent::comboBoxChanged(juce::ComboBox* comboBox)
 
 void SettingsComponent::textEditorTextChanged(juce::TextEditor& editor)
 {
+    // Agent 1.3: Ghost completion endpoint editors — live validation + dirty flag.
+    for (auto* field : ghostUrlFields_)
+    {
+        if (&editor == &field->urlEditor)
+        {
+            pending_.ghostUrls[field->backend] = editor.getText().trim().toStdString();
+            refreshGhostUrlRow(*field);
+            updateDirtyFlag();
+            return;
+        }
+    }
+
     if (&editor == &agentPathEditor_)
     {
         pending_.agentExePath = editor.getText().toStdString();
@@ -1161,9 +1201,11 @@ void SettingsComponent::updateDirtyFlag()
                    || (pending_.eqPreset        != committed_.eqPreset)
                    || (pending_.sampleRate      != committed_.sampleRate)
                    || (pending_.bufferSize      != committed_.bufferSize)
-                   || (pending_.vmFlags         != committed_.vmFlags);
+                       || (pending_.vmFlags         != committed_.vmFlags)
+                       || (pending_.ghostUrls       != committed_.ghostUrls);
 
-    applyButton_.setEnabled(pendingChanges_);
+    const bool ghostValid = validateGhostUrls();
+    applyButton_.setEnabled(pendingChanges_ && ghostValid);
     resetButton_.setEnabled(pendingChanges_);
 }
 
@@ -1307,6 +1349,9 @@ void SettingsComponent::resetToCommitted()
     bufferSizeCombo_.setText(juce::String(pending_.bufferSize), juce::dontSendNotification);
     vmFlagsEditor_.setText(juce::String(pending_.vmFlags), juce::dontSendNotification);
 
+    // Agent 1.3: Restore ghost endpoint editors to committed values.
+    refreshGhostUrlEditors();
+
     // Restore live preview to the committed state
     applyWindowAppearance(committed_);
     if (appearanceController_ != nullptr && committed_.opacityPercent < 100.0f)
@@ -1320,6 +1365,140 @@ void SettingsComponent::resetToCommitted()
 
     updateBlurControlState();
     updateDirtyFlag();
+}
+
+// ===========================================================================
+// Ghost Completion section (Agent 1.3)
+// ===========================================================================
+
+void SettingsComponent::buildGhostCompletionSection()
+{
+    const auto& palette = HathorLookAndFeel::fromComponent(*this).getPalette();
+    const int labelW   = kLabelWidth;
+    const int controlX = labelW + 8;
+    const int controlW = 300;
+    const int hintW    = 264;
+    const int contentW = 600;
+
+    int y = contentPanel_->getHeight() + 8;
+
+    // --- Section header ---
+    auto* header = new juce::Label();
+    header->setText("Ghost Completion", juce::dontSendNotification);
+    header->setFont(HathorLookAndFeel::fontSemiBold(HathorLookAndFeel::Typography::headlineMd));
+    header->setColour(juce::Label::textColourId, palette.textPrimary);
+    header->setJustificationType(juce::Justification::centredLeft);
+    header->setBounds(0, y, contentW, kControlHeight);
+    contentPanel_->addAndMakeVisible(header);
+    y += kControlHeight + 8;
+
+    auto* hint = new juce::Label();
+    hint->setText("Endpoint override per LLM provider. Blank reverts to the default.",
+                 juce::dontSendNotification);
+    hint->setFont(HathorLookAndFeel::fontRegular(HathorLookAndFeel::Typography::bodySm));
+    hint->setColour(juce::Label::textColourId, palette.textMuted);
+    hint->setJustificationType(juce::Justification::centredLeft);
+    hint->setBounds(0, y, contentW, kControlHeight);
+    contentPanel_->addAndMakeVisible(hint);
+    y += kControlHeight + 4;
+
+    struct ProviderInfo
+    {
+        hathor::lsp::LlmBackend backend;
+        const char* name;
+    };
+    const ProviderInfo providers[] = {
+        { hathor::lsp::LlmBackend::Ollama,      "Ollama" },
+        { hathor::lsp::LlmBackend::LlamaCpp,    "llm-ls (llama.cpp)" },
+        { hathor::lsp::LlmBackend::Tgi,         "TGI" },
+        { hathor::lsp::LlmBackend::OpenAi,      "OpenAI" },
+        { hathor::lsp::LlmBackend::HuggingFace, "HuggingFace" },
+    };
+
+    for (const auto& p : providers)
+    {
+        auto* field = new GhostUrlField();
+        field->backend = p.backend;
+
+        field->nameLabel.setText(juce::String(p.name) + ":", juce::dontSendNotification);
+        field->nameLabel.setFont(HathorLookAndFeel::fontMedium(HathorLookAndFeel::Typography::bodySm));
+        field->nameLabel.setColour(juce::Label::textColourId, palette.textSecondary);
+        field->nameLabel.setJustificationType(juce::Justification::centredRight);
+        field->nameLabel.setBounds(0, y, labelW, kControlHeight);
+        contentPanel_->addAndMakeVisible(field->nameLabel);
+
+        field->urlEditor.addListener(this);
+        field->urlEditor.setBounds(controlX, y, controlW, kControlHeight);
+        contentPanel_->addAndMakeVisible(field->urlEditor);
+
+        field->hintLabel.setFont(HathorLookAndFeel::fontRegular(HathorLookAndFeel::Typography::bodySm));
+        field->hintLabel.setJustificationType(juce::Justification::centredLeft);
+        field->hintLabel.setBounds(controlX + controlW + 8, y, hintW, kControlHeight);
+        contentPanel_->addAndMakeVisible(field->hintLabel);
+
+        ghostUrlFields_.add(field);
+        y += kControlHeight + 6;
+    }
+
+    // Inline validation summary (hidden when all URLs are valid).
+    ghostErrorLabel_.setFont(HathorLookAndFeel::fontRegular(HathorLookAndFeel::Typography::bodySm));
+    ghostErrorLabel_.setColour(juce::Label::textColourId, palette.error);
+    ghostErrorLabel_.setJustificationType(juce::Justification::centredLeft);
+    ghostErrorLabel_.setBounds(0, y, contentW, kControlHeight);
+    contentPanel_->addAndMakeVisible(ghostErrorLabel_);
+    y += kControlHeight + 8;
+
+    contentPanel_->setBounds(0, 0, contentW, juce::jmax(contentPanel_->getHeight(), y));
+
+    refreshGhostUrlEditors();
+}
+
+void SettingsComponent::refreshGhostUrlEditors()
+{
+    for (auto* field : ghostUrlFields_)
+    {
+        field->urlEditor.setText(juce::String(pending_.ghostUrls[field->backend]),
+                                 juce::dontSendNotification);
+        refreshGhostUrlRow(*field);
+    }
+
+    const bool allValid = validateGhostUrls();
+    ghostErrorLabel_.setText(allValid ? juce::String()
+                                      : "Invalid endpoint URL — correct before applying.",
+                             juce::dontSendNotification);
+    ghostErrorLabel_.setVisible(! allValid);
+}
+
+void SettingsComponent::refreshGhostUrlRow(GhostUrlField& field)
+{
+    const auto& palette = HathorLookAndFeel::fromComponent(*this).getPalette();
+    const std::string url = pending_.ghostUrls[field.backend];
+    const bool        valid = hathor::lsp::GhostProviderResolver::isValidGhostUrl(url);
+
+    const std::string def = hathor::lsp::GhostProviderResolver::defaultUrlForBackend(field.backend);
+    if (! valid)
+    {
+        field.hintLabel.setText("Invalid URL", juce::dontSendNotification);
+    }
+    else if (def.empty())
+    {
+        field.hintLabel.setText("blank = environment variable", juce::dontSendNotification);
+    }
+    else
+    {
+        field.hintLabel.setText("blank = " + def, juce::dontSendNotification);
+    }
+
+    field.hintLabel.setColour(juce::Label::textColourId,
+                              valid ? palette.textMuted : palette.error);
+}
+
+bool SettingsComponent::validateGhostUrls() const
+{
+    for (const auto& [backend, url] : pending_.ghostUrls)
+        if (! hathor::lsp::GhostProviderResolver::isValidGhostUrl(url))
+            return false;
+    return true;
 }
 
 } // namespace hathor::ui
