@@ -51,6 +51,7 @@ const char* IconLibrary::resourceName(Icon icon)
         case Icon::Bot:         return "bot_svg";
         case Icon::Settings:    return "settings_svg";
         case Icon::Close:       return "x_svg";
+        case Icon::Refresh:     return "refresh-cw_svg";
         case Icon::Zap:         return "zap_svg";
         case Icon::Columns:     return "columns-2_svg";
         case Icon::Play:        return "play_svg";

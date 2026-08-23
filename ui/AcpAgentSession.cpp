@@ -35,6 +35,8 @@
 #include <deque>
 #include <sys/wait.h>
 
+#include <algorithm>
+
 // Declare environ in the global namespace so we can reference it as ::environ
 // from within namespace hathor::ui below.
 // On macOS, <unistd.h> declares environ but not in the global namespace when
@@ -968,26 +970,27 @@ void AcpAgentSession::startPermissionTimer(int requestId)
 {
     // Issue A5: the original used a detached std::thread capturing bare `this`,
     // risking use-after-free if the session was destroyed within the 30 s
-    // window. We now launch a session-owned std::jthread stored in
-    // permissionTimers_. stop() (and the destructor) request stop + join, so
-    // the timer can never outlive the session.
+    // window. We now launch a session-owned std::thread stored in
+    // permissionTimers_. stopPermissionTimers() joins every timer (the threads
+    // poll stopRequested_ in 100 ms increments so they exit promptly), so no
+    // background thread can outlive the session.
     {
         std::lock_guard<std::mutex> lk(timerMutex_);
         // Opportunistic: prune already-finished timers to keep the vector small.
         permissionTimers_.erase(
             std::remove_if(permissionTimers_.begin(), permissionTimers_.end(),
-                           [](const std::jthread& t) { return !t.joinable(); }),
+                           [](const std::thread& t) { return !t.joinable(); }),
             permissionTimers_.end());
     }
 
     permissionTimers_.emplace_back(
-        [this, requestId](std::stop_token st)
+        [this, requestId]()
         {
-            // Sleep in 100 ms increments so a stop_request from stop() /
-            // destruction interrupts us promptly instead of blocking for 30 s.
+            // Sleep in 100 ms increments so stopRequested_ (set by stop())
+            // interrupts us promptly instead of blocking for 30 s.
             for (int i = 0; i < (kPermissionTimeoutSec * 1000) / 100; ++i)
             {
-                if (st.stop_requested() || stopRequested_.load(std::memory_order_acquire))
+                if (stopRequested_.load(std::memory_order_acquire))
                     return;
                 std::this_thread::sleep_for(std::chrono::milliseconds(100));
             }
@@ -1022,18 +1025,10 @@ void AcpAgentSession::startPermissionTimer(int requestId)
 
 void AcpAgentSession::stopPermissionTimers()
 {
-    // Issue A5: request stop on every owned timer thread and join. This
-    // guarantees no background thread can touch AcpAgentSession state
-    // after stop() returns. jthread destructors also auto-join, so this is
-    // safe even if called outside stop().
-    {
-        std::lock_guard<std::mutex> lk(timerMutex_);
-        for (auto& t : permissionTimers_)
-        {
-            if (t.joinable())
-                t.request_stop();
-        }
-    }
+    // Issue A5: join every owned timer thread. They are woken by the
+    // stopRequested_ flag (already set by stop() before this is called) and
+    // exit within ~100 ms. This guarantees no background thread touches
+    // AcpAgentSession state after stop() returns.
     {
         std::lock_guard<std::mutex> lk(timerMutex_);
         for (auto& t : permissionTimers_)

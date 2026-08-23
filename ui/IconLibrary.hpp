@@ -36,6 +36,8 @@ public:
         Settings,      ///< settings gear
         // ChatSidebar
         Close,         ///< x
+        // ChatSidebar header
+        Refresh,       ///< refresh-cw (reconnect button)
         // BreadcrumbsBar
         Zap,           ///< command palette
         Columns,       ///< split editor

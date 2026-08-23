@@ -174,6 +174,7 @@ target_sources(hathor-ui
           ChatThread.cpp                # B6: per-thread session + connection state
           MessageHistoryView.cpp        # extracted from ChatSidebar (B6)
           ChatSessionState.cpp          # B6: JUCE-free chat thread persistence model
+          AgentRegistry.cpp              # A2: JUCE-free known-agent registry (presets + JSON config)
           SettingsComponent.cpp         # A2
           WorkspaceSession.cpp         # 20.7: JUCE-free workspace persistence model
          # Phase G — Petdex (D1): JUCE-free core + service glue
@@ -293,8 +294,9 @@ juce_add_binary_data(hathor_icon_data
         ${CMAKE_CURRENT_SOURCE_DIR}/resources/icons/square.svg
         ${CMAKE_CURRENT_SOURCE_DIR}/resources/icons/terminal.svg
         ${CMAKE_CURRENT_SOURCE_DIR}/resources/icons/triangle-alert.svg
-        ${CMAKE_CURRENT_SOURCE_DIR}/resources/icons/x.svg
-        ${CMAKE_CURRENT_SOURCE_DIR}/resources/icons/zap.svg
+         ${CMAKE_CURRENT_SOURCE_DIR}/resources/icons/x.svg
+         ${CMAKE_CURRENT_SOURCE_DIR}/resources/icons/refresh-cw.svg
+         ${CMAKE_CURRENT_SOURCE_DIR}/resources/icons/zap.svg
 )
 
 target_link_libraries(hathor-ui

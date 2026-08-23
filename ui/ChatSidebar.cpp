@@ -21,6 +21,7 @@
  */
 
 #include "ChatSidebar.hpp"
+#include "AgentRegistry.hpp"
 #include "HathorLookAndFeel.hpp"
 #include "IconLibrary.hpp"
 
@@ -104,6 +105,27 @@ ChatSidebar::ChatSidebar(AudioEngine& /*audio*/,
     // -----------------------------------------------------------------------
     sliderPanel_ = std::make_unique<SliderPanel>(ci);
     addAndMakeVisible(*sliderPanel_);
+
+    // -----------------------------------------------------------------------
+    // A2: Agent-selector header (compact strip above the tab bar).
+    // Lets the user switch the active tab's agent with one click; switching
+    // restarts that tab's session. A Refresh icon triggers a reconnect.
+    // -----------------------------------------------------------------------
+    agentCombo_.setEditableText(false);
+    agentCombo_.setSelectedId(0);
+    agentCombo_.onChange = [this]() { onAgentComboChanged(); };
+    agentCombo_.setTooltip("Current agent for this tab — click to switch");
+    addAndMakeVisible(agentCombo_);
+
+    reconnectBtn_ = std::make_unique<IconButton>(IconLibrary::Icon::Refresh);
+    reconnectBtn_->setButtonText("");
+    reconnectBtn_->setTooltip("Reconnect agent session");
+    reconnectBtn_->onClick = [this]()
+    {
+        if (auto* t = activeThread())
+            t->reconnect();
+    };
+    addAndMakeVisible(*reconnectBtn_);
 }
 
 ChatSidebar::~ChatSidebar()
@@ -229,6 +251,9 @@ void ChatSidebar::setActiveThread(int threadIndex)
         newThread->toFront(true);
         newThread->resized();
     }
+
+    // A2: keep the header agent-selector in sync with the active tab.
+    refreshAgentSelector();
 
     updateTabButtons();
     resized();
@@ -425,6 +450,11 @@ void ChatSidebar::resized()
 {
     auto b = getLocalBounds();
 
+    // A2: agent-selector header (compact strip above the tab bar).
+    auto headerArea = b.removeFromTop(kHeaderH);
+    reconnectBtn_->setBounds(headerArea.removeFromRight(kHeaderH).reduced(4, 4));
+    agentCombo_.setBounds(headerArea.reduced(4, 4));
+
     // Tab bar at top (B6).
     tabBarArea_.setBounds(b.removeFromTop(kTabAreaH));
 
@@ -503,9 +533,13 @@ void ChatSidebar::paint(juce::Graphics& g)
     g.setColour(palette.surfaceHighest);
     g.drawVerticalLine(0, 0.0f, static_cast<float>(getHeight()));
 
-    // Tab bar separator.
+    // Tab bar / header separators.
     g.setColour(palette.surfaceHighest);
-    g.drawHorizontalLine(kTabAreaH, 0.0f, static_cast<float>(getWidth()));
+    // Bottom edge of the A2 agent-selector header strip.
+    g.drawHorizontalLine(kHeaderH, 0.0f, static_cast<float>(getWidth()));
+    // Bottom edge of the tab bar.
+    g.drawHorizontalLine(kHeaderH + kTabAreaH, 0.0f,
+                         static_cast<float>(getWidth()));
 
      // Separator above slider panel.
      const int sepY = getHeight() - kSliderH - 1;
@@ -596,6 +630,143 @@ void ChatSidebar::restoreChatThreads(const std::string& agentExePath,
 
     // Persist the restored list so the schema version key is current.
     saveChatState();
+}
+
+// ---------------------------------------------------------------------------
+// A2: Agent-selector header helpers
+// ---------------------------------------------------------------------------
+
+void ChatSidebar::populateAgentCombo() noexcept
+{
+    agentCombo_.clear(juce::dontSendNotification);
+
+    if (agentRegistry_ == nullptr)
+    {
+        agentCombo_.addItem("(no agents configured)", 1);
+        agentCombo_.setSelectedId(0, juce::dontSendNotification);
+        agentCombo_.setEnabled(false);
+        return;
+    }
+
+    agentCombo_.setEnabled(true);
+    int id = 1;
+    for (const auto& preset : agentRegistry_->presets())
+    {
+        // JUCE ComboBox item ids must be positive; use (index + 1).
+        agentCombo_.addItem(preset.name, id);
+        ++id;
+    }
+    agentCombo_.setSelectedId(0, juce::dontSendNotification);
+}
+
+void ChatSidebar::refreshAgentSelector() noexcept
+{
+    agentCombo_.setSelectedId(0, juce::dontSendNotification);
+    agentCombo_.setEditableText(false);
+
+    if (agentRegistry_ == nullptr)
+        return;
+
+    auto* thread = activeThread();
+    if (thread == nullptr)
+        return;
+
+    const std::string& current = thread->agentExePath_;
+    if (current.empty())
+        return;
+
+    // Match the active thread's executable against a known preset by
+    // comparing basenames (handles both "gemini" and "/usr/bin/gemini").
+    const auto tokens = AgentRegistry::splitCommandLine(current);
+    if (tokens.empty())
+        return;
+    const juce::String progBase = juce::File(juce::String(tokens.front())).getFileName();
+
+    const auto& presets = agentRegistry_->presets();
+    for (size_t i = 0; i < presets.size(); ++i)
+    {
+        if (presets[i].argv.empty())
+            continue;
+        const juce::String presetBase =
+            juce::File(juce::String(presets[i].argv.front())).getFileName();
+        if (presetBase == progBase)
+        {
+            agentCombo_.setSelectedId(static_cast<int>(i) + 1,
+                                      juce::dontSendNotification);
+            return;
+        }
+    }
+    // No preset matched — leave the header unselected (custom/unknown agent).
+}
+
+std::string ChatSidebar::commandStringForPreset(const std::string& presetId) const noexcept
+{
+    if (agentRegistry_ == nullptr)
+        return {};
+
+    const auto* preset = agentRegistry_->findById(presetId);
+    if (preset == nullptr || preset->argv.empty())
+        return {};
+
+    // Resolve the executable name against $PATH (issue A1).
+    const auto exePath = AgentRegistry::findOnPath(preset->argv.front());
+    if (!exePath.has_value())
+        return {}; // executable not installed / not on PATH
+
+    // Build the command string: resolved exe + default args (argv[1..]).
+    std::string result = *exePath;
+    for (size_t i = 1; i < preset->argv.size(); ++i)
+    {
+        result.push_back(' ');
+        result += preset->argv[i];
+    }
+    return result;
+}
+
+void ChatSidebar::onAgentComboChanged()
+{
+    const int itemId = agentCombo_.getSelectedId();
+    if (itemId <= 0 || agentRegistry_ == nullptr)
+        return;
+
+    const size_t idx = static_cast<size_t>(itemId - 1);
+    const auto& presets = agentRegistry_->presets();
+    if (idx >= presets.size())
+        return;
+
+    const auto& preset = presets[idx];
+    if (preset.id == "__custom__")
+        return; // Custom agents are configured via Settings Browse, not here.
+
+    switchActiveThreadAgent(preset.id);
+}
+
+void ChatSidebar::switchActiveThreadAgent(const std::string& presetId)
+{
+    if (agentRegistry_ == nullptr)
+        return;
+
+    auto* thread = activeThread();
+    if (thread == nullptr)
+        return;
+
+    const auto* preset = agentRegistry_->findById(presetId);
+    if (preset == nullptr)
+        return;
+
+    std::string cmd = commandStringForPreset(presetId);
+    if (cmd.empty())
+    {
+        thread->showStatus("Agent \"" + juce::String(preset->name)
+                           + "\" not found on PATH");
+        return;
+    }
+
+    // Update the stored exe path (ChatSidebar is a friend of ChatThread) then
+    // reuse the existing reconnect() path (C2 §1) — reconnect() reads
+    // agentExePath_ when invoking session_->restart(...).
+    thread->agentExePath_ = std::move(cmd);
+    thread->reconnect();
 }
 
 } // namespace hathor::ui
