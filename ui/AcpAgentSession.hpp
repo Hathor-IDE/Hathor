@@ -26,6 +26,7 @@
 // POSIX / system headers
 #include <spawn.h>
 #include <fcntl.h>
+#include <sys/stat.h>
 #include <unistd.h>
 #include <sys/socket.h>
 #include <sys/un.h>
@@ -43,6 +44,7 @@
 #include <string>
 #include <thread>
 #include <unordered_map>
+#include <vector>
 
 // Third-party
 #include <nlohmann/json.hpp>
@@ -95,6 +97,19 @@ public:
     /// Called when the agent subprocess exits unexpectedly (reader EOF).
     using OnAgentDisconnectedFn = std::function<void()>;
 
+    /// Called with a human-readable status during the init handshake
+    /// ("Connecting to agent…", "Initializing…", "Creating session…").
+    /// Allows the UI to show a visible "connecting" state (issue A6).
+    using OnConnectingFn       = std::function<void(std::string status)>;
+
+    /// Called when the init handshake completes successfully.
+    using OnAgentReadyFn       = std::function<void()>;
+
+    /// Called when a post-init prompt error response (JSON-RPC "error") is
+    /// received that is not matched to a blocking init request. Allows
+    /// ChatThread to surface the failure to the user (issue A5/A6).
+    using OnPromptErrorFn      = std::function<void(std::string error)>;
+
     // -----------------------------------------------------------------------
     // Construction / destruction
     // -----------------------------------------------------------------------
@@ -115,6 +130,15 @@ public:
     void setOnToolCallUpdate(OnToolCallUpdateFn fn)      { onToolCallUpdate_    = std::move(fn); }
     void setOnPermissionRequest(OnPermissionRequestFn fn){ onPermissionRequest_ = std::move(fn); }
     void setOnAgentDisconnected(OnAgentDisconnectedFn fn){ onAgentDisconnected_ = std::move(fn); }
+
+    /// Called with status text during the init handshake (issue A6).
+    void setOnConnecting(OnConnectingFn fn)                 { onConnecting_       = std::move(fn); }
+
+    /// Called once when the session becomes ready after a successful handshake.
+    void setOnAgentReady(OnAgentReadyFn fn)                 { onAgentReady_       = std::move(fn); }
+
+    /// Called when a post-init prompt error response is received (issue A5).
+    void setOnPromptError(OnPromptErrorFn fn)               { onPromptError_      = std::move(fn); }
 
     /**
      * Install the dispatcher used to handle MCP/control commands received on
@@ -139,22 +163,31 @@ public:
      * Start the agent session.
      *
      * Spawns the sender thread which:
-     *   1. Creates the Unix socket listener
-     *   2. Spawns the agent subprocess
-     *   3. Runs initialize + session/new (blocking on sender thread, 5 s each)
-     *   4. Starts the reader thread
+     *   1. Resolves the agent command (PATH lookup / arg split — issue A1)
+     *   2. Creates the Unix socket listener
+     *   3. Spawns the agent subprocess (stderr captured to a temp file)
+     *   4. Runs initialize + session/new (blocking on sender thread, timeout
+     *      configurable, default 15 s — issue A6) with protocolVersion
+     *      negotiation (issue A5)
+     *   5. Starts the reader thread and enters the dequeue loop
      *
      * On any failure, onStartFailed() is marshalled to the JUCE message thread.
      *
-     * @param agentExePath   Absolute path to the agent executable
+     * @param agentExePath   Path or bare name of the agent executable
+     *                       (resolved against $PATH if no '/' — issue A1).
+     *                       May include command-line args (e.g.
+     *                       "gemini --experimental-acp").
      * @param projectDir     Current project directory (cwd for session/new)
      * @param hathorMcpPath  Absolute path to the hathor-mcp executable
+     * @param initTimeoutMs  Override for the init handshake timeout in ms
+     *                       (0 = use the configured default, 15000 ms — issue A6).
      *
      * Requirements: 32.1, 32.2
      */
     void start(const std::string& agentExePath,
                const std::string& projectDir,
-               const std::string& hathorMcpPath);
+               const std::string& hathorMcpPath,
+               int initTimeoutMs = 0);
 
     /**
      * Re-run the start() sequence with a fresh socket path.
@@ -165,6 +198,12 @@ public:
     void restart(const std::string& agentExePath,
                  const std::string& projectDir,
                  const std::string& hathorMcpPath);
+
+    /**
+     * Configure the init-handshake timeout (issue A6). Default 15000 ms.
+     * A value <= 0 falls back to the default. Safe to call before start().
+     */
+    void setInitTimeoutMs(int ms) { initTimeoutMs_ = ms > 0 ? ms : kDefaultInitTimeoutMs; }
 
     /**
      * Gracefully stop: kill subprocess, join threads, clean up socket.
@@ -213,13 +252,54 @@ private:
     /// Marshals to JUCE message thread, invokes onError_.
     void onStartFailed(std::string reason);
 
+    /// Marshal a handshake status string to the JUCE message thread via
+    /// onConnecting_ (issue A6). Safe to call from the sender thread.
+    void notifyConnecting(std::string status);
+
+    /// Marshal the agent-ready signal to the JUCE message thread (issue A6).
+    void notifyReady();
+
     /// Main loop for the sender thread.
-    void senderLoop(const std::string& agentExePath,
+    void senderLoop(const std::string& rawAgentCmd,
                     const std::string& projectDir,
                     const std::string& hathorMcpPath);
 
     /// Main loop for the reader thread.
     void readerLoop();
+
+    /**
+     * Resolve a (possibly bare) agent command string into a concrete
+     * executable path + argv.
+     *
+     *  - If the program token contains '/', it is treated as a path and
+     *    must exist and be executable.
+     *  - Otherwise the program token is resolved against $PATH (issue A1).
+     *  - Additional whitespace-separated tokens become argv entries, so
+     *    forms like "gemini --experimental-acp" work (issue A1, A6 DOD).
+     *
+     * On success, outExe is the resolved absolute path and outArgv is the
+     * full argv (outExe first). On failure, outError names what was searched.
+     */
+    static bool resolveAgentCommand(const std::string& rawCmd,
+                                    std::string& outExe,
+                                    std::vector<std::string>& outArgv,
+                                    std::string& outError);
+
+    /**
+    /// Read up to `maxLines` trailing lines from the agent stderr temp file
+    /// captured during spawn. Returns an empty string if none was captured.
+    /// Called on the sender/reader thread; never on the audio thread.
+    */
+    std::string readStderrTail(int maxLines) const;
+
+    /**
+     * Reap the spawned agent subprocess (if still running) and return its
+     * exit code. Called from the reader thread on abnormal exit; safe to call
+     * from stop().
+     *
+     * @return exit status (WEXITSTATUS) or -1 if killed by signal / not run.
+     */
+    int reapExitedAgent();
 
     /**
      * Create the Unix domain socket listener.
@@ -241,9 +321,11 @@ private:
 
     /**
      * Spawn the agent subprocess using posix_spawn + pipes.
-     * @return true on success; false on failure.
+     * @param argv  Fully resolved argv (argv[0] is the executable path).
+     *              stderr is redirected to a captured temp file (issue A7).
+     * @return true on success; false on failure (lastError_ / onStartFailed reason).
      */
-    bool spawnAgentProcess(const std::string& agentExePath);
+    bool spawnAgentProcess(const std::vector<std::string>& argv);
 
     /**
      * Send a JSON-RPC request on the sender thread and block until a
@@ -276,10 +358,20 @@ private:
 
     /**
      * Start the 30-second auto-cancel timer for a permission request.
-     * Creates a detached std::thread that sleeps and then, if the permission
-     * hasn't been answered yet, enqueues a "cancelled" response.
+     *
+     * Issue A5: the original implementation spawned a detached std::thread
+     * capturing bare `this`, risking use-after-free if the session was
+     * destroyed within the 30 s window. This version launches a session-owned
+     * std::jthread stored in permissionTimers_; stop() requests stop on every
+     * timer and joins, so no background thread can outlive the session.
      */
     void startPermissionTimer(int requestId);
+
+    /**
+     * Request stop + join on every owned permission timer thread (issue A5).
+     * Called from stop() and the destructor path; safe to call repeatedly.
+     */
+    void stopPermissionTimers();
 
     /**
      * Dispatch a JSON-RPC notification (no id) received from agent stdout.
@@ -304,6 +396,10 @@ private:
 
     /// PID of the spawned agent subprocess (0 if not running)
     pid_t agentPid_ = 0;
+
+    /// Temp-file path capturing the agent's stderr for diagnostics on
+    /// abnormal exit (issue A7).
+    std::string stderrPath_;
 
     // -----------------------------------------------------------------------
     // Unix socket
@@ -353,6 +449,20 @@ private:
     /// Next JSON-RPC request id
     std::atomic<int> nextId_{1};
 
+    /// Init handshake timeout in ms. Default 15000 (issue A6). Zero means
+    /// "use default" so callers that pass through can omit it.
+    int initTimeoutMs_ = kDefaultInitTimeoutMs;
+
+public:
+    // -----------------------------------------------------------------------
+    /// ACP protocol version this client negotiates (issue A5/A6).
+    /// Currently 1 — sent in initialize; the agent's response is checked for
+    /// a matching version instead of assuming success.
+    // -----------------------------------------------------------------------
+    static constexpr int kAcpProtocolVersion       = 1;
+    static constexpr int kDefaultInitTimeoutMs     = 15000;
+    static constexpr int kPermissionTimeoutSec     = 30;
+
     // -----------------------------------------------------------------------
     // MCP Unix-socket accept loop (Phase 2.5 H0)
     // -----------------------------------------------------------------------
@@ -365,6 +475,12 @@ private:
     std::thread senderThread_;
     std::thread readerThread_;
 
+    /// Owned permission auto-cancel timers (issue A5). These are joined in
+    /// stop() (and on destruction via jthread semantics), so a timer can
+    /// never fire against a destroyed session.
+    std::mutex timerMutex_;
+    std::vector<std::jthread> permissionTimers_;
+
     // -----------------------------------------------------------------------
     // Callbacks (installed by caller before start())
     // -----------------------------------------------------------------------
@@ -373,6 +489,9 @@ private:
     OnToolCallUpdateFn    onToolCallUpdate_;
     OnPermissionRequestFn onPermissionRequest_;
     OnAgentDisconnectedFn onAgentDisconnected_;
+    OnConnectingFn        onConnecting_;
+    OnAgentReadyFn        onAgentReady_;
+    OnPromptErrorFn       onPromptError_;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(AcpAgentSession)
 };

@@ -24,6 +24,7 @@
  */
 
 #include "AcpAgentSession.hpp"
+#include "AcpLineReader.hpp"
 #include "../control/SocketServer.hpp"
 
 // POSIX
@@ -31,6 +32,7 @@
 #include <csignal>
 #include <cstdlib>
 #include <cstring>
+#include <deque>
 #include <sys/wait.h>
 
 // Declare environ in the global namespace so we can reference it as ::environ
@@ -49,6 +51,23 @@ namespace hathor::ui {
 // ---------------------------------------------------------------------------
 
 std::atomic<int> AcpAgentSession::socketSeq_{0};
+
+namespace {
+
+// Issue A1: validate that `path` is a regular file that the current process
+// can execute. Uses access(X_OK) for the check; does NOT follow symlinks
+// specially (a symlink to an executable is fine).
+bool isExecutableFile(const std::string& path)
+{
+    struct stat st{};
+    if (::stat(path.c_str(), &st) != 0)
+        return false;
+    if (!S_ISREG(st.st_mode))
+        return false;
+    return ::access(path.c_str(), X_OK) == 0;
+}
+
+}
 
 // ---------------------------------------------------------------------------
 // Construction / destruction
@@ -76,7 +95,8 @@ bool AcpAgentSession::isReady() const noexcept
 
 void AcpAgentSession::start(const std::string& agentExePath,
                             const std::string& projectDir,
-                            const std::string& hathorMcpPath)
+                            const std::string& hathorMcpPath,
+                            int initTimeoutMs)
 {
     // Ensure any previous session is cleaned up first.
     stop();
@@ -84,8 +104,14 @@ void AcpAgentSession::start(const std::string& agentExePath,
     stopRequested_.store(false, std::memory_order_release);
     isReady_.store(false, std::memory_order_release);
 
+    // Apply the (possibly configured) init timeout. A non-positive value keeps
+    // the instance default (15 s — issue A6).
+    if (initTimeoutMs > 0)
+        initTimeoutMs_ = initTimeoutMs;
+
     // Launch the sender thread; it runs the blocking init sequence, then
     // starts the reader thread and enters the dequeue loop.
+    // initTimeoutMs_ is read by senderLoop via the instance member.
     senderThread_ = std::thread([this, agentExePath, projectDir, hathorMcpPath]
     {
         senderLoop(agentExePath, projectDir, hathorMcpPath);
@@ -167,9 +193,18 @@ void AcpAgentSession::stop()
     if (mcpServerThread_.joinable())
         mcpServerThread_.join();
 
+    // ----------------------------------------------------------------------
+    // Permission auto-cancel timers (issue A5): request stop on each and join.
+    // These are session-owned std::jthread (not detached), so they cannot
+    // outlive the session. Requesting stop lets a sleeping timer exit promptly
+    // instead of blocking shutdown for up to kPermissionTimeoutSec.
+    // ----------------------------------------------------------------------
+    stopPermissionTimers();
+
     // Reset state.
     isReady_.store(false, std::memory_order_release);
     sessionId_.clear();
+    stderrPath_.clear();
 
     {
         std::lock_guard<std::mutex> lk(queueMutex_);
@@ -335,13 +370,16 @@ void AcpAgentSession::mcpServerLoop()
 // Internal — subprocess spawn
 // ---------------------------------------------------------------------------
 
-bool AcpAgentSession::spawnAgentProcess(const std::string& agentExePath)
+bool AcpAgentSession::spawnAgentProcess(const std::vector<std::string>& argv)
 {
     // Create pipes for bidirectional stdio:
     //   stdinPipe_[0]  → read end (child stdin)
     //   stdinPipe_[1]  → write end (parent writes → child reads)
-    //   stdoutPipe_[0] → read end (parent reads ← child writes)
+    //   stdoutPipe_[0] → read end  (parent reads ← child writes)
     //   stdoutPipe_[1] → write end (child stdout)
+
+    if (argv.empty())
+        return false;
 
     if (::pipe(stdinPipe_)  != 0) return false;
     if (::pipe(stdoutPipe_) != 0)
@@ -351,8 +389,21 @@ bool AcpAgentSession::spawnAgentProcess(const std::string& agentExePath)
         return false;
     }
 
+    // ------------------------------------------------------------------
+    // Capture agent stderr to a temp file (issue A7) so that, on abnormal
+    // exit, we can show the user the last N lines of diagnostics.
+    // ------------------------------------------------------------------
+    stderrPath_.clear();
+    std::string stderrTpl = "/tmp/hathor-stderr-XXXXXX";
+    int stderrFd = ::mkstemp(&stderrTpl[0]);
+    if (stderrFd != -1)
+        stderrPath_ = stderrTpl;   // parent closes stderrFd after spawn
+    else
+        stderrPath_.clear();      // fall back to inherited stderr
+
     // Set up posix_spawn file actions to connect the pipe ends to child
-    // stdin (fd 0) and stdout (fd 1).
+    // stdin (fd 0) and stdout (fd 1), and redirect stderr (fd 2) to the
+    // capture temp file when available.
     posix_spawn_file_actions_t fileActions;
     posix_spawn_file_actions_init(&fileActions);
 
@@ -361,33 +412,49 @@ bool AcpAgentSession::spawnAgentProcess(const std::string& agentExePath)
     // Child stdout = stdoutPipe_[1] (write end)
     posix_spawn_file_actions_adddup2(&fileActions, stdoutPipe_[1], STDOUT_FILENO);
 
-    // Close all pipe ends in child (they've been dup2'd already).
+    // Child stderr = captured temp file (issue A7).
+    if (stderrFd != -1)
+        posix_spawn_file_actions_adddup2(&fileActions, stderrFd, STDERR_FILENO);
+
+    // Close all pipe ends + stderr capture fd in child (dup2'd already).
     posix_spawn_file_actions_addclose(&fileActions, stdinPipe_[0]);
     posix_spawn_file_actions_addclose(&fileActions, stdinPipe_[1]);
     posix_spawn_file_actions_addclose(&fileActions, stdoutPipe_[0]);
     posix_spawn_file_actions_addclose(&fileActions, stdoutPipe_[1]);
+    if (stderrFd != -1)
+        posix_spawn_file_actions_addclose(&fileActions, stderrFd);
 
-    // Build argv: ["<agent>", nullptr]
-    // posix_spawn expects a non-const char* const* argv.
-    std::string exeCopy = agentExePath;
-    char* argv[] = { exeCopy.data(), nullptr };
+    // ------------------------------------------------------------------
+    // Build argv as char* const[] (posix_spawn expects non-const pointers).
+    // argv[0] is the resolved executable path; remaining entries are args
+    // such as "--experimental-acp" (issue A1).
+    // ------------------------------------------------------------------
+    std::vector<std::string> argCopies = argv;          // own the storage
+    std::vector<char*>       argPtrs;
+    argPtrs.reserve(argCopies.size() + 1);
+    for (auto& s : argCopies)
+        argPtrs.push_back(s.data());
+    argPtrs.push_back(nullptr);
 
     // Inherit parent's environment.
     // environ is the global POSIX environment array declared in <unistd.h>.
     // We use the global-scope ::environ explicitly since we're inside a namespace.
 
     const int rc = ::posix_spawn(&agentPid_,
-                                 agentExePath.c_str(),
+                                 argv[0].c_str(),
                                  &fileActions,
                                  nullptr,   // posix_spawnattr_t (default)
-                                 argv,
+                                 argPtrs.data(),
                                  ::environ);
 
     posix_spawn_file_actions_destroy(&fileActions);
+    if (stderrFd != -1)
+        ::close(stderrFd);
 
     if (rc != 0)
     {
         agentPid_ = 0;
+        stderrPath_.clear();
         ::close(stdinPipe_[0]);  ::close(stdinPipe_[1]);
         ::close(stdoutPipe_[0]); ::close(stdoutPipe_[1]);
         stdinPipe_[0]  = stdinPipe_[1]  = -1;
@@ -475,11 +542,23 @@ void AcpAgentSession::senderLoop(const std::string& agentExePath,
         mcpServerThread_ = std::thread([this] { mcpServerLoop(); });
 
     // ------------------------------------------------------------------
-    // Step 2: Spawn agent subprocess
+    // Step 2: Resolve + spawn the agent subprocess (issue A1).
     // ------------------------------------------------------------------
-    if (!spawnAgentProcess(agentExePath))
+    notifyConnecting("Connecting to agent…");
+
+    std::string resolvedExe;
+    std::vector<std::string> argv;
+    std::string resolveError;
+    if (!resolveAgentCommand(agentExePath, resolvedExe, argv, resolveError))
     {
-        onStartFailed("Failed to spawn agent subprocess");
+        onStartFailed(resolveError);
+        return;
+    }
+
+    if (!spawnAgentProcess(argv))
+    {
+        onStartFailed("Failed to spawn agent subprocess: "
+                      + std::to_string(errno) + " (" + std::strerror(errno) + ")");
         return;
     }
 
@@ -489,28 +568,66 @@ void AcpAgentSession::senderLoop(const std::string& agentExePath,
     // ------------------------------------------------------------------
     readerThread_ = std::thread([this] { readerLoop(); });
 
+    const int timeoutMs = initTimeoutMs_;
+
     // ------------------------------------------------------------------
-    // Step 4: initialize (blocking, 5 s timeout)
+    // Step 4: initialize (blocking, configurable timeout — default 15 s)
     // ------------------------------------------------------------------
+    notifyConnecting("Initializing ACP protocol…");
+
     const int initId = nextId_.fetch_add(1, std::memory_order_relaxed);
     auto initResp = sendRequestBlocking(
         initId,
         "initialize",
         {
-            {"protocolVersion", 1},
+            {"protocolVersion", kAcpProtocolVersion},
             {"clientInfo", {{"name", "hathor"}, {"version", "2.0.0"}}}
         },
-        5000);
+        timeoutMs);
 
     if (!initResp)
     {
-        onStartFailed("Agent did not respond to initialize");
+        onStartFailed("Agent did not respond to initialize"
+                      + readStderrTail(20));
+        return;
+    }
+
+    // Handle an explicit JSON-RPC error on initialize (issue A5/A6).
+    if (initResp->contains("error"))
+    {
+        onStartFailed("Agent rejected initialize request: "
+                      + (*initResp)["error"].dump());
+        return;
+    }
+
+    // Protocol-version negotiation (issue A5): the agent's initialize response
+    // carries the agreed protocolVersion. If it does not match our negotiated
+    // version, fail gracefully with an actionable message rather than
+    // silently continuing with an incompatible protocol.
+    try
+    {
+        const int agreedVersion =
+            (*initResp)["result"]["protocolVersion"].get<int>();
+        if (agreedVersion != kAcpProtocolVersion)
+        {
+            onStartFailed("ACP protocol version mismatch: agent reported "
+                          + std::to_string(agreedVersion)
+                          + ", client requires "
+                          + std::to_string(kAcpProtocolVersion));
+            return;
+        }
+    }
+    catch (const nlohmann::json::exception&)
+    {
+        onStartFailed("Agent initialize response missing protocolVersion");
         return;
     }
 
     // ------------------------------------------------------------------
-    // Step 5: session/new (blocking, 5 s timeout)
+    // Step 5: session/new (blocking, configurable timeout)
     // ------------------------------------------------------------------
+    notifyConnecting("Creating session…");
+
     const int newId = nextId_.fetch_add(1, std::memory_order_relaxed);
     auto newResp = sendRequestBlocking(
         newId,
@@ -527,11 +644,19 @@ void AcpAgentSession::senderLoop(const std::string& agentExePath,
                 }})}
             }})}
         },
-        5000);
+        timeoutMs);
 
     if (!newResp)
     {
-        onStartFailed("Agent did not respond to session/new");
+        onStartFailed("Agent did not respond to session/new"
+                      + readStderrTail(20));
+        return;
+    }
+
+    if (newResp->contains("error"))
+    {
+        onStartFailed("Agent rejected session/new request: "
+                      + (*newResp)["error"].dump());
         return;
     }
 
@@ -542,12 +667,16 @@ void AcpAgentSession::senderLoop(const std::string& agentExePath,
     }
     catch (const nlohmann::json::exception&)
     {
-        onStartFailed("session/new response missing sessionId");
+        onStartFailed("session/new response missing sessionId"
+                      + readStderrTail(20));
         return;
     }
 
     // Signal that the session is open for user interaction.
     isReady_.store(true, std::memory_order_release);
+
+    // Tell the UI the handshake completed (issue A6).
+    notifyReady();
 
     // ------------------------------------------------------------------
     // Step 6: Enter the dequeue loop — write outgoing requests until stop.
@@ -578,8 +707,10 @@ void AcpAgentSession::senderLoop(const std::string& agentExePath,
 
 void AcpAgentSession::readerLoop()
 {
-    // Read stdout pipe line-by-line.
-    // Use a FILE* wrapper over the fd for buffered line reading.
+    // Read stdout pipe line-by-line using the growable acpReadLine (issue A4).
+    // The original fixed fgets(4096) reader silently dropped any line longer
+    // than 4094 bytes; acpReadLine assembles arbitrarily long lines across
+    // multiple reads before returning.
     if (stdoutPipe_[0] == -1)
         return;
 
@@ -594,32 +725,24 @@ void AcpAgentSession::readerLoop()
     stdoutPipe_[0] = -1;
 
     std::string line;
-    line.reserve(4096);
-
-    char buf[4096];
 
     while (!stopRequested_.load(std::memory_order_acquire))
     {
-        if (::fgets(buf, static_cast<int>(sizeof(buf)), fpRaw) == nullptr)
+        if (!acpReadLine(fpRaw, line))
         {
             // EOF or error — subprocess exited or pipe closed.
             break;
         }
 
-        // Strip trailing newline.
-        const std::size_t len = std::strlen(buf);
-        if (len > 0 && buf[len - 1] == '\n')
-            buf[len - 1] = '\0';
-
         // Skip empty lines.
-        if (buf[0] == '\0')
+        if (line.empty())
             continue;
 
         // Parse as JSON-RPC 2.0.
         nlohmann::json parsed;
         try
         {
-            parsed = nlohmann::json::parse(buf);
+            parsed = nlohmann::json::parse(line);
         }
         catch (const nlohmann::json::parse_error&)
         {
@@ -631,6 +754,7 @@ void AcpAgentSession::readerLoop()
         //   - Has "method" but no "id" → notification
         //   - Has "method" and "id"    → request (session/request_permission)
         //   - Has "result" or "error"  → response to a blocking init send
+        //     or a post-init prompt response (issue A5).
 
         const bool hasMethod = parsed.contains("method");
         const bool hasId     = parsed.contains("id");
@@ -655,31 +779,91 @@ void AcpAgentSession::readerLoop()
         else if (hasResult || hasError)
         {
             // ----------------------------------------------------------------
-            // JSON-RPC Response — deliver to sendRequestBlocking waiters
-            // (used only during init sequence)
+            // JSON-RPC Response
+            // ----------------------------------------------------------------
+            // Two consumers:
+            //  (a) blocking sendRequestBlocking waiters during init (isReady_
+            //      is false), delivered via pendingResponses_.
+            //  (b) post-init prompt responses (isReady_ true) — fire-and-forget.
+            //      Success is surfaced via session/update notifications; ERROR
+            //      responses must be surfaced to the user (issue A5).
             // ----------------------------------------------------------------
             if (hasId)
             {
                 const int id = parsed["id"].get<int>();
-                std::lock_guard<std::mutex> lk(responseMutex_);
-                pendingResponses_[id] = std::move(parsed);
-                responseCv_.notify_all();
+                const bool isInitPhase =
+                    !isReady_.load(std::memory_order_acquire);
+
+                if (isInitPhase)
+                {
+                    // Deliver to the blocking init caller.
+                    std::lock_guard<std::mutex> lk(responseMutex_);
+                    pendingResponses_[id] = std::move(parsed);
+                    responseCv_.notify_all();
+                }
+                else if (hasError)
+                {
+                    // Post-init prompt error: the caller of sendPrompt() is no
+                    // longer blocked, so surface the error to the UI.
+                    std::string errMsg;
+                    try { errMsg = parsed["error"].dump(); }
+                    catch (...) {}
+
+                    OnPromptErrorFn cb = onPromptError_;
+                    if (cb)
+                    {
+                        juce::MessageManager::callAsync(
+                            [cb, errMsg = std::move(errMsg)]() mutable
+                            {
+                                cb(std::move(errMsg));
+                            });
+                    }
+                }
+                // else: post-init success response — nothing to surface;
+                // the streamed output arrives via session/update notifications.
             }
         }
     }
 
     ::fclose(fpRaw);
+    fpRaw = nullptr;
 
+    // ----------------------------------------------------------------------
     // If we exited the loop and stop wasn't requested, the subprocess exited
-    // unexpectedly — marshal onAgentDisconnected to the JUCE message thread.
+    // unexpectedly. Capture its exit code + stderr tail and surface them as a
+    // visible error (issue A5/A7). Stop first (in case of a pending reap),
+    // then fall back to onAgentDisconnected for callers that only installed
+    // that lighter-weight callback.
+    // ----------------------------------------------------------------------
     if (!stopRequested_.load(std::memory_order_acquire))
     {
-        OnAgentDisconnectedFn cb = onAgentDisconnected_;
-        if (cb)
+        const int exitCode = reapExitedAgent();
+        isReady_.store(false, std::memory_order_release);
+
+        std::string diag = "Agent process exited unexpectedly"
+                           " (exit code "
+                           + std::to_string(exitCode) + ")";
+
+        std::string stderrTail = readStderrTail(20);
+        if (!stderrTail.empty())
+            diag += "\nstderr:\n" + stderrTail;
+
+        OnErrorFn errCb          = onError_;
+        OnAgentDisconnectedFn discCb = onAgentDisconnected_;
+
+        if (errCb)
         {
-            juce::MessageManager::callAsync([cb]() mutable
+            juce::MessageManager::callAsync(
+                [errCb, diag = std::move(diag)]() mutable
+                {
+                    errCb(std::move(diag));
+                });
+        }
+        else if (discCb)
+        {
+            juce::MessageManager::callAsync([discCb]() mutable
             {
-                cb();
+                discCb();
             });
         }
     }
@@ -782,38 +966,83 @@ void AcpAgentSession::handleIncomingRequest(const nlohmann::json& msg)
 
 void AcpAgentSession::startPermissionTimer(int requestId)
 {
-    // Detached thread: sleeps 30 s, then checks if the permission was answered.
-    // If not, enqueues a "cancelled" response.
-    std::thread([this, requestId]
+    // Issue A5: the original used a detached std::thread capturing bare `this`,
+    // risking use-after-free if the session was destroyed within the 30 s
+    // window. We now launch a session-owned std::jthread stored in
+    // permissionTimers_. stop() (and the destructor) request stop + join, so
+    // the timer can never outlive the session.
     {
-        std::this_thread::sleep_for(std::chrono::seconds(30));
+        std::lock_guard<std::mutex> lk(timerMutex_);
+        // Opportunistic: prune already-finished timers to keep the vector small.
+        permissionTimers_.erase(
+            std::remove_if(permissionTimers_.begin(), permissionTimers_.end(),
+                           [](const std::jthread& t) { return !t.joinable(); }),
+            permissionTimers_.end());
+    }
 
-        if (stopRequested_.load(std::memory_order_acquire))
-            return;
-
-        bool alreadyAnswered = false;
+    permissionTimers_.emplace_back(
+        [this, requestId](std::stop_token st)
         {
-            std::lock_guard<std::mutex> lk(permissionMutex_);
-            alreadyAnswered = answeredPermissions_.count(requestId) > 0;
-        }
-
-        if (!alreadyAnswered)
-        {
-            // Mark as answered to prevent respondPermission() from double-responding.
+            // Sleep in 100 ms increments so a stop_request from stop() /
+            // destruction interrupts us promptly instead of blocking for 30 s.
+            for (int i = 0; i < (kPermissionTimeoutSec * 1000) / 100; ++i)
             {
-                std::lock_guard<std::mutex> lk(permissionMutex_);
-                answeredPermissions_.insert(requestId);
+                if (st.stop_requested() || stopRequested_.load(std::memory_order_acquire))
+                    return;
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
             }
 
-            nlohmann::json resp = {
-                {"jsonrpc", "2.0"},
-                {"id",      requestId},
-                {"result",  {{"outcome", "cancelled"}}}
-            };
+            if (stopRequested_.load(std::memory_order_acquire))
+                return;
 
-            enqueueRaw(std::move(resp));
+            bool alreadyAnswered = false;
+            {
+                std::lock_guard<std::mutex> lk(permissionMutex_);
+                alreadyAnswered = answeredPermissions_.count(requestId) > 0;
+            }
+
+            if (!alreadyAnswered)
+            {
+                // Mark as answered to prevent respondPermission() double-responding.
+                {
+                    std::lock_guard<std::mutex> lk(permissionMutex_);
+                    answeredPermissions_.insert(requestId);
+                }
+
+                nlohmann::json resp = {
+                    {"jsonrpc", "2.0"},
+                    {"id",      requestId},
+                    {"result",  {{"outcome", "cancelled"}}}
+                };
+
+                enqueueRaw(std::move(resp));
+            }
+        });
+}
+
+void AcpAgentSession::stopPermissionTimers()
+{
+    // Issue A5: request stop on every owned timer thread and join. This
+    // guarantees no background thread can touch AcpAgentSession state
+    // after stop() returns. jthread destructors also auto-join, so this is
+    // safe even if called outside stop().
+    {
+        std::lock_guard<std::mutex> lk(timerMutex_);
+        for (auto& t : permissionTimers_)
+        {
+            if (t.joinable())
+                t.request_stop();
         }
-    }).detach();
+    }
+    {
+        std::lock_guard<std::mutex> lk(timerMutex_);
+        for (auto& t : permissionTimers_)
+        {
+            if (t.joinable())
+                t.join();
+        }
+        permissionTimers_.clear();
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -838,6 +1067,13 @@ void AcpAgentSession::onStartFailed(std::string reason)
     for (int& fd : stdoutPipe_)
         if (fd != -1) { ::close(fd); fd = -1; }
 
+    // Remove the stderr capture temp file (issue A7).
+    if (!stderrPath_.empty())
+    {
+        ::unlink(stderrPath_.c_str());
+        stderrPath_.clear();
+    }
+
     // Marshal the error callback to the JUCE message thread (Req 32.1).
     OnErrorFn cb = onError_;
     if (cb)
@@ -847,6 +1083,235 @@ void AcpAgentSession::onStartFailed(std::string reason)
             cb(std::move(reason));
         });
     }
+}
+
+// ---------------------------------------------------------------------------
+// Internal — handshake status + ready marshaling (issue A6)
+// ---------------------------------------------------------------------------
+
+void AcpAgentSession::notifyConnecting(std::string status)
+{
+    OnConnectingFn cb = onConnecting_;
+    if (cb)
+    {
+        juce::MessageManager::callAsync([cb, status = std::move(status)]() mutable
+        {
+            cb(std::move(status));
+        });
+    }
+}
+
+void AcpAgentSession::notifyReady()
+{
+    OnAgentReadyFn cb = onAgentReady_;
+    if (cb)
+    {
+        juce::MessageManager::callAsync([cb]() mutable { cb(); });
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Internal — agent command resolution (issue A1)
+// ---------------------------------------------------------------------------
+
+bool AcpAgentSession::resolveAgentCommand(const std::string& rawCmd,
+                                          std::string& outExe,
+                                          std::vector<std::string>& outArgv,
+                                          std::string& outError)
+{
+    if (rawCmd.empty())
+    {
+        outError = "No agent executable configured.";
+        return false;
+    }
+
+    // Split the raw command into tokens on whitespace. argv[0] is the
+    // program (resolved via PATH if bare); the rest are pass-through args
+    // (e.g. "--experimental-acp" for `gemini`).
+    std::vector<std::string> tokens;
+    {
+        std::string cur;
+        for (char c : rawCmd)
+        {
+            if (c == ' ' || c == '\t')
+            {
+                if (!cur.empty()) { tokens.push_back(cur); cur.clear(); }
+            }
+            else
+            {
+                cur.push_back(c);
+            }
+        }
+        if (!cur.empty()) tokens.push_back(cur);
+    }
+
+    if (tokens.empty())
+    {
+        outError = "Agent executable is empty.";
+        return false;
+    }
+
+    const std::string& program = tokens[0];
+
+    // If the program contains a path separator, treat it as a path and do NOT
+    // search $PATH — validate it directly (issue A1).
+    const bool isPath = program.find('/') != std::string::npos;
+
+    std::string resolved;
+    std::vector<std::string> searched;
+
+    if (isPath)
+    {
+        resolved = program;
+        if (!isExecutableFile(resolved))
+        {
+            outError = "Agent executable not found or not executable: "
+                       + resolved;
+            return false;
+        }
+    }
+    else
+    {
+        // Bare name: search $PATH (issue A1).
+        const char* pathEnv = ::getenv("PATH");
+        if (pathEnv == nullptr || pathEnv[0] == '\0')
+        {
+            outError = "No agent executable path provided and $PATH is unset, "
+                       "cannot resolve bare agent name '" + program + "'.";
+            return false;
+        }
+
+        std::vector<std::string> pathDirs;
+        {
+            std::string token;
+            for (const char* p = pathEnv; ; ++p)
+            {
+                if (*p == '\0' || *p == ':')
+                {
+                    if (!token.empty()) pathDirs.push_back(token);
+                    token.clear();
+                    if (*p == '\0') break;
+                }
+                else
+                {
+                    token.push_back(*p);
+                }
+            }
+        }
+
+        bool found = false;
+        for (const auto& dir : pathDirs)
+        {
+            std::string candidate = dir + "/" + program;
+            searched.push_back(candidate);
+
+            struct stat st{};
+            if (::stat(candidate.c_str(), &st) == 0 && S_ISREG(st.st_mode))
+            {
+                if (isExecutableFile(candidate))
+                {
+                    resolved = candidate;
+                    found = true;
+                    break;
+                }
+            }
+        }
+
+        if (!found)
+        {
+            std::string msg = "Agent '" + program + "' not found in $PATH.";
+            if (!searched.empty())
+            {
+                msg += " Searched:";
+                for (const auto& s : searched)
+                    msg += " " + s;
+            }
+            outError = msg;
+            return false;
+        }
+    }
+
+    outExe    = resolved;
+    outArgv   = tokens;
+    outArgv[0] = resolved;   // argv[0] is the resolved path
+    return true;
+}
+
+// ---------------------------------------------------------------------------
+// Internal — agent subprocess stderr diagnostics (issue A7)
+// ---------------------------------------------------------------------------
+
+std::string AcpAgentSession::readStderrTail(int maxLines) const
+{
+    if (stderrPath_.empty())
+        return {};
+
+    FILE* f = std::fopen(stderrPath_.c_str(), "r");
+    if (f == nullptr)
+        return {};
+
+    // Keep only the trailing `maxLines` (deque-based ring).
+    std::deque<std::string> tail;
+    {
+        char buf[512];
+        while (std::fgets(buf, static_cast<int>(sizeof(buf)), f) != nullptr)
+        {
+            std::size_t n = std::strlen(buf);
+            while (n > 0 && (buf[n - 1] == '\n' || buf[n - 1] == '\r'))
+                buf[--n] = '\0';
+            tail.emplace_back(buf, n);
+            if (static_cast<int>(tail.size()) > maxLines)
+                tail.pop_front();
+        }
+    }
+    std::fclose(f);
+
+    if (tail.empty())
+        return {};
+
+    std::string out;
+    for (const auto& s : tail)
+    {
+        out += s;
+        out += '\n';
+    }
+    return out;
+}
+
+// ---------------------------------------------------------------------------
+// Internal — subprocess reaping (issue A7)
+// ---------------------------------------------------------------------------
+
+int AcpAgentSession::reapExitedAgent()
+{
+    pid_t pid = agentPid_;
+    agentPid_ = 0;
+
+    if (pid <= 0)
+        return -1;
+
+    int status = 0;
+    // Non-blocking first (it should already be dead — stdout hit EOF).
+    pid_t r = ::waitpid(pid, &status, WNOHANG);
+    if (r == 0)
+    {
+        // Still running? It shouldn't be, but reap it synchronously to avoid
+        // a zombie (the reader saw EOF so the child's stdout is gone; if it
+        // lingers we SIGTERM/SIGKILL).
+        ::kill(pid, SIGTERM);
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        ::kill(pid, SIGKILL);
+        r = ::waitpid(pid, &status, 0);
+    }
+
+    if (r < 0)
+        return -1;
+
+    if (WIFEXITED(status))
+        return WEXITSTATUS(status);
+    if (WIFSIGNALED(status))
+        return -WTERMSIG(status);  // negative: killed by signal
+    return -1;
 }
 
 } // namespace hathor::ui

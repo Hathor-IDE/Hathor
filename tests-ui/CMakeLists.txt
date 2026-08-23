@@ -116,6 +116,9 @@ add_executable(hathor-ui-tests
         ${CMAKE_SOURCE_DIR}/ui/ChatSessionState.cpp
         test_workspace_session.cpp
         test_chat_session_state.cpp
+        # A2: known-agent registry (JUCE-free model + config)
+        ${CMAKE_SOURCE_DIR}/ui/AgentRegistry.cpp
+        test_agent_registry.cpp
 )
 
 target_compile_features(hathor-ui-tests PRIVATE cxx_std_20)
