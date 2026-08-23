@@ -22,7 +22,9 @@ namespace hathor::ui {
 // ---------------------------------------------------------------------------
 
 ExplorerPanel::ExplorerPanel()
-    : directory_(juce::File::getCurrentWorkingDirectory())
+    // Agent 0.1: never default to the process CWD as workspace root — the
+    // owner (MainWindow) always sets/restores the real root before display.
+    : directory_(juce::File::getSpecialLocation(juce::File::userHomeDirectory))
 {
     const auto& palette = HathorLookAndFeel::fromComponent(*this).getPalette();
 
