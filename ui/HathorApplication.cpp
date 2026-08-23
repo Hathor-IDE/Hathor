@@ -50,6 +50,20 @@ public:
         // Parse arguments from the command line string provided by JUCE.
         juce::StringArray args;
         args.addTokens(commandLine, true);
+        // addTokens(..., true) preserves surrounding quote characters in the
+        // token (e.g. "--samples \"/path with spaces\"" → token is
+        // "\"/path with spaces\"").  Strip leading/trailing quotes so
+        // paths with spaces resolve correctly.
+        args.removeEmptyStrings();
+        for (int i = 0; i < args.size(); ++i)
+        {
+            if (args[i].startsWith("\"") && args[i].endsWith("\"")
+                && args[i].length() >= 2)
+            {
+                juce::String stripped = args[i].substring(1, args[i].length() - 1);
+                args.set(i, stripped);
+            }
+        }
 
         std::string samplesPath;
         double      initialBpm   = 120.0;
