@@ -170,6 +170,10 @@ public:
     void onDisconnected();
     void onError(const std::string& reason);
     void onReady();
+    /// Handshake status update (issue A6) — e.g. "Connecting to agent…".
+    void onConnecting(const std::string& status);
+    /// Post-init prompt error response (issue A5) — show as a visible message.
+    void onPromptError(const std::string& error);
     void onAgentMessageChunk(const std::string& text);
     void onToolCallUpdate(nlohmann::json update);
     void onPermissionRequest(int requestId, nlohmann::json options);
@@ -220,6 +224,10 @@ private:
     // Status label — thread-scoped.
     juce::Label statusLabel_;
     bool statusVisible_ = false;
+
+    /// True while the init handshake is in progress (issue A6). Suppresses
+    /// the "Reconnected." success bubble on a fresh (non-reconnecting) start.
+    bool connecting_ = false;
 
     // Permission prompt — thread-scoped.
     std::unique_ptr<PermissionPromptComponent> permissionPrompt_;

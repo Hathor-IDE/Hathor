@@ -570,6 +570,103 @@ static void note_mcp_servers_validation()
 }
 
 // ---------------------------------------------------------------------------
+// Section (d): Growable JSON-RPC line reader (issue A4)
+//
+// The readerLoop() originally used a fixed 4096-byte fgets() buffer and
+// treated every returned chunk as a complete line. A single JSON-RPC line
+// longer than ~4094 bytes was split across multiple fgets() calls and
+// silently dropped (each fragment failed JSON parse). acpReadLine() in
+// ui/AcpLineReader.hpp assembles arbitrarily long lines by accumulating
+// bytes across reads until a newline is found.
+//
+// This test proves a >4096-byte JSON line is reassembled intact and re-parses.
+// ---------------------------------------------------------------------------
+
+#include "../ui/AcpLineReader.hpp"
+
+static void test_growable_line_reader()
+{
+    std::cout << "\n--- Section (d): growable JSON-RPC line reader (issue A4) ---\n";
+
+    // Build a JSON-RPC notification whose serialized form exceeds 4096 bytes.
+    json longNotify;
+    longNotify["jsonrpc"] = "2.0";
+    longNotify["method"]  = "session/update";
+    longNotify["params"]  = {
+        {"update", {
+            {"sessionUpdate", "agent_message_chunk"},
+            {"content", {{"type", "text"}, {"text", std::string(8000, 'x')}}}
+        }}
+    };
+    std::string longLine = longNotify.dump();
+    CHECK(longLine.size() > 4096);
+
+    std::string shortLine =
+        R"({"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"tool_call","toolName":"set_pattern"}}})";
+
+    // --- Pipe: writer thread feeds both lines in small pieces so the reader's
+    //     4096-byte staging buffer MUST span multiple fgets() calls to
+    //     reassemble the long line (the exact failure mode of the old reader).
+    // ----------------------------------------------------------------------
+    int p[2];
+    CHECK(::pipe(p) == 0);
+    if (::pipe(p) != 0)
+    {
+        std::cerr << "  ERROR: pipe() failed\n";
+        return;
+    }
+
+    std::thread writer([&longLine, &shortLine, &p]() {
+        const std::string full = longLine + "\n" + shortLine + "\n";
+        const std::size_t len = full.size();
+        std::size_t off = 0;
+        while (off < len)
+        {
+            const std::size_t chunk = std::min<std::size_t>(512, len - off);
+            const ssize_t w = ::write(p[1], full.data() + off, chunk);
+            if (w <= 0) break;
+            off += static_cast<std::size_t>(w);
+            // Force the reader's staging buffer to refill mid-line.
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+        ::close(p[1]);
+    });
+
+    FILE* fp = ::fdopen(p[0], "r");
+    CHECK(fp != nullptr);
+
+    std::string out1, out2;
+    bool ok1 = false, ok2 = false;
+    if (fp != nullptr)
+    {
+        ok1 = hathor::ui::acpReadLine(fp, out1);
+        ok2 = hathor::ui::acpReadLine(fp, out2);
+        ::fclose(fp);   // fclose closes p[0]
+    }
+    else
+    {
+        ::close(p[0]);
+    }
+    writer.join();
+
+    CHECK(ok1);
+    CHECK(ok2);
+    CHECK_EQ(out1, longLine);
+    CHECK_EQ(out2, shortLine);
+
+    // The reassembled long line must round-trip as valid JSON.
+    json reparsed = json::parse(out1);
+    CHECK_EQ(reparsed["method"].get<std::string>(), std::string("session/update"));
+    CHECK_EQ(reparsed["params"]["update"]["content"]["text"].get<std::string>().size(),
+             std::size_t{8000});
+
+    std::cout << "  long line length:  " << out1.size()
+              << " (>4096: " << (out1.size() > 4096 ? "YES" : "NO") << ")\n";
+    std::cout << "  short line length: " << out2.size() << "\n";
+    std::cout << "  [PASS] growable reader reassembled >4096-byte JSON line intact\n";
+}
+
+// ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
 
@@ -591,6 +688,9 @@ int main()
 
     // Section (a): Bidirectional stdio via posix_spawn + pipes
     test_bidirectional_stdio();
+
+    // Section (d): Growable line reader — proves >4096-byte JSON lines parse (issue A4)
+    test_growable_line_reader();
 
     // Note deferred work
     note_mcp_servers_validation();

@@ -248,6 +248,11 @@ private:
     std::string                                    agentExePath_;
     std::string                                    hathorMcpPath_;
 
+    /// A2: Known-agent registry — powers the ChatSidebar header's agent
+    /// selector combo. Loaded from the platform config dir at startup so the
+    /// picker is live, not inert.
+    std::unique_ptr<hathor::ui::AgentRegistry>     agentRegistry_;
+
     // 0.2: current workspace root (initialised in ctor; changed via Open Folder)
     std::string                                    workspaceDir_;
 

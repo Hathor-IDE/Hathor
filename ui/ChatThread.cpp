@@ -168,6 +168,26 @@ void ChatThread::setSession(AcpAgentSession& session,
         if (safeThread)
             safeThread->onPermissionRequest(requestId, std::move(options));
     });
+
+    // Handshake lifecycle (issue A6) — connecting status + ready signal.
+    session_->setOnConnecting([safeThread](std::string status)
+    {
+        if (safeThread)
+            safeThread->onConnecting(std::move(status));
+    });
+
+    session_->setOnAgentReady([safeThread]()
+    {
+        if (safeThread)
+            safeThread->onReady();
+    });
+
+    // Post-init prompt error response (issue A5).
+    session_->setOnPromptError([safeThread](std::string error)
+    {
+        if (safeThread)
+            safeThread->onPromptError(std::move(error));
+    });
 }
 
 // ---------------------------------------------------------------------------
@@ -267,21 +287,51 @@ void ChatThread::onError(const std::string& reason)
 
 void ChatThread::onReady()
 {
-    // Session restarted successfully — transition from Reconnecting to
-    // Connected (C2 §5).
+    // The init handshake completed successfully (issue A6). Was this a
+    // reconnect or a fresh start? Only the reconnect path posts a
+    // "Reconnected." status line; a fresh connection silently clears the
+    // "Connecting…" status.
+    const bool wasReconnecting = connState_.isReconnecting();
     connState_.onReconnectSuccess();
 
+    connecting_ = false;
     reconnectBanner_.setVisible(false);
     setInputEnabled(true);
     clearStatus();
     resized();
 
-    // Add a status line for visibility.
-    historyContainer_->addBubble("Reconnected.",
-                                 MessageBubble::Role::StatusLine);
+    // Add a status line only for the reconnect case (preserves prior UX).
+    if (wasReconnecting)
+    {
+        historyContainer_->addBubble("Reconnected.",
+                                     MessageBubble::Role::StatusLine);
+        lastAgentBubble_ = nullptr;
+        scrollToBottom();
+    }
+}
+
+void ChatThread::onConnecting(const std::string& status)
+{
+    // Visible "connecting" state during the ACP handshake (issue A6).
+    connecting_ = true;
+    showStatus(juce::String("Connecting: ") + juce::String(status));
+    // Don't let the user submit a prompt before the session is ready.
+    setInputEnabled(false);
+}
+
+void ChatThread::onPromptError(const std::string& error)
+{
+    // Post-init prompt error response — surface it as a visible message
+    // rather than silently dropping it (issue A5).
+    juce::String msg = juce::String("Agent error: ") + juce::String(error);
+
+    showStatus(msg);
+
+    historyContainer_->addBubble(msg, MessageBubble::Role::StatusLine);
     lastAgentBubble_ = nullptr;
     scrollToBottom();
 }
+
 
 // ---------------------------------------------------------------------------
 // Agent message callbacks

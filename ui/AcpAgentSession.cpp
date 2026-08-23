@@ -25,6 +25,7 @@
 
 #include "AcpAgentSession.hpp"
 #include "AcpLineReader.hpp"
+#include "AcpAgentPath.hpp"
 #include "../control/SocketServer.hpp"
 
 // POSIX
@@ -53,23 +54,6 @@ namespace hathor::ui {
 // ---------------------------------------------------------------------------
 
 std::atomic<int> AcpAgentSession::socketSeq_{0};
-
-namespace {
-
-// Issue A1: validate that `path` is a regular file that the current process
-// can execute. Uses access(X_OK) for the check; does NOT follow symlinks
-// specially (a symlink to an executable is fine).
-bool isExecutableFile(const std::string& path)
-{
-    struct stat st{};
-    if (::stat(path.c_str(), &st) != 0)
-        return false;
-    if (!S_ISREG(st.st_mode))
-        return false;
-    return ::access(path.c_str(), X_OK) == 0;
-}
-
-}
 
 // ---------------------------------------------------------------------------
 // Construction / destruction
@@ -1103,133 +1087,6 @@ void AcpAgentSession::notifyReady()
     {
         juce::MessageManager::callAsync([cb]() mutable { cb(); });
     }
-}
-
-// ---------------------------------------------------------------------------
-// Internal — agent command resolution (issue A1)
-// ---------------------------------------------------------------------------
-
-bool AcpAgentSession::resolveAgentCommand(const std::string& rawCmd,
-                                          std::string& outExe,
-                                          std::vector<std::string>& outArgv,
-                                          std::string& outError)
-{
-    if (rawCmd.empty())
-    {
-        outError = "No agent executable configured.";
-        return false;
-    }
-
-    // Split the raw command into tokens on whitespace. argv[0] is the
-    // program (resolved via PATH if bare); the rest are pass-through args
-    // (e.g. "--experimental-acp" for `gemini`).
-    std::vector<std::string> tokens;
-    {
-        std::string cur;
-        for (char c : rawCmd)
-        {
-            if (c == ' ' || c == '\t')
-            {
-                if (!cur.empty()) { tokens.push_back(cur); cur.clear(); }
-            }
-            else
-            {
-                cur.push_back(c);
-            }
-        }
-        if (!cur.empty()) tokens.push_back(cur);
-    }
-
-    if (tokens.empty())
-    {
-        outError = "Agent executable is empty.";
-        return false;
-    }
-
-    const std::string& program = tokens[0];
-
-    // If the program contains a path separator, treat it as a path and do NOT
-    // search $PATH — validate it directly (issue A1).
-    const bool isPath = program.find('/') != std::string::npos;
-
-    std::string resolved;
-    std::vector<std::string> searched;
-
-    if (isPath)
-    {
-        resolved = program;
-        if (!isExecutableFile(resolved))
-        {
-            outError = "Agent executable not found or not executable: "
-                       + resolved;
-            return false;
-        }
-    }
-    else
-    {
-        // Bare name: search $PATH (issue A1).
-        const char* pathEnv = ::getenv("PATH");
-        if (pathEnv == nullptr || pathEnv[0] == '\0')
-        {
-            outError = "No agent executable path provided and $PATH is unset, "
-                       "cannot resolve bare agent name '" + program + "'.";
-            return false;
-        }
-
-        std::vector<std::string> pathDirs;
-        {
-            std::string token;
-            for (const char* p = pathEnv; ; ++p)
-            {
-                if (*p == '\0' || *p == ':')
-                {
-                    if (!token.empty()) pathDirs.push_back(token);
-                    token.clear();
-                    if (*p == '\0') break;
-                }
-                else
-                {
-                    token.push_back(*p);
-                }
-            }
-        }
-
-        bool found = false;
-        for (const auto& dir : pathDirs)
-        {
-            std::string candidate = dir + "/" + program;
-            searched.push_back(candidate);
-
-            struct stat st{};
-            if (::stat(candidate.c_str(), &st) == 0 && S_ISREG(st.st_mode))
-            {
-                if (isExecutableFile(candidate))
-                {
-                    resolved = candidate;
-                    found = true;
-                    break;
-                }
-            }
-        }
-
-        if (!found)
-        {
-            std::string msg = "Agent '" + program + "' not found in $PATH.";
-            if (!searched.empty())
-            {
-                msg += " Searched:";
-                for (const auto& s : searched)
-                    msg += " " + s;
-            }
-            outError = msg;
-            return false;
-        }
-    }
-
-    outExe    = resolved;
-    outArgv   = tokens;
-    outArgv[0] = resolved;   // argv[0] is the resolved path
-    return true;
 }
 
 // ---------------------------------------------------------------------------

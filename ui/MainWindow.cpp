@@ -46,6 +46,7 @@
 // ChatSidebar and AcpAgentSession are now fully implemented (task 5.1).
 #include "ChatSidebar.hpp"
 #include "AcpAgentSession.hpp"
+#include "AgentRegistry.hpp"
 
 // UITimer (task 3.7) — real implementation is now available.
 #include "UITimer.hpp"
@@ -176,6 +177,13 @@ MainWindow::MainWindow(AudioEngine& audio,
     // Create and wire chat sidebar (B6: multi-thread tabs, C2: per-thread reconnect)
     // -----------------------------------------------------------------------
      chatSidebar_     = std::make_unique<hathor::ui::ChatSidebar>(audio_, ci_);
+
+     // A2: Install the known-agent registry so the sidebar's header picker is
+     // live. The registry is JUCE-free; load() reads the platform config dir
+     // (agent-presets.json) and falls back to compiled-in defaults if absent.
+     agentRegistry_ = std::make_unique<hathor::ui::AgentRegistry>();
+     agentRegistry_->load();
+     chatSidebar_->setAgentRegistry(agentRegistry_.get());
 
       // -------------------------------------------------------------------
       // Agent 0.1: Resolve the workspace root from persisted state instead

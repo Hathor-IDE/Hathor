@@ -268,28 +268,10 @@ private:
     void readerLoop();
 
     /**
-     * Resolve a (possibly bare) agent command string into a concrete
-     * executable path + argv.
-     *
-     *  - If the program token contains '/', it is treated as a path and
-     *    must exist and be executable.
-     *  - Otherwise the program token is resolved against $PATH (issue A1).
-     *  - Additional whitespace-separated tokens become argv entries, so
-     *    forms like "gemini --experimental-acp" work (issue A1, A6 DOD).
-     *
-     * On success, outExe is the resolved absolute path and outArgv is the
-     * full argv (outExe first). On failure, outError names what was searched.
+     * Read up to `maxLines` trailing lines from the agent stderr temp file
+     * captured during spawn. Returns an empty string if none was captured.
+     * Called on the sender/reader thread; never on the audio thread.
      */
-    static bool resolveAgentCommand(const std::string& rawCmd,
-                                    std::string& outExe,
-                                    std::vector<std::string>& outArgv,
-                                    std::string& outError);
-
-    /**
-    /// Read up to `maxLines` trailing lines from the agent stderr temp file
-    /// captured during spawn. Returns an empty string if none was captured.
-    /// Called on the sender/reader thread; never on the audio thread.
-    */
     std::string readStderrTail(int maxLines) const;
 
     /**
