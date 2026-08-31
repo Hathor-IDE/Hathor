@@ -253,7 +253,7 @@ void SettingsComponent::buildAppearanceSection()
     // --- Section header ---
     auto* header = new juce::Label();
     header->setText("Appearance", juce::dontSendNotification);
-    header->setFont(HathorLookAndFeel::fontSemiBold(HathorLookAndFeel::Typography::headlineMd));
+    header->setFont(HathorLookAndFeel::uiFontSemiBold(HathorLookAndFeel::Typography::headlineMd));
     header->setColour(juce::Label::textColourId, palette.textPrimary);
     header->setJustificationType(juce::Justification::centredLeft);
     header->setBounds(0, y, contentW, kControlHeight);
@@ -264,7 +264,7 @@ void SettingsComponent::buildAppearanceSection()
     // --- Theme picker ---
     auto* themeLabel = new juce::Label();
     themeLabel->setText("Theme:", juce::dontSendNotification);
-    themeLabel->setFont(HathorLookAndFeel::fontMedium(HathorLookAndFeel::Typography::bodySm));
+    themeLabel->setFont(HathorLookAndFeel::uiFontMedium(HathorLookAndFeel::Typography::bodySm));
     themeLabel->setColour(juce::Label::textColourId, palette.textSecondary);
     themeLabel->setJustificationType(juce::Justification::centredRight);
     themeLabel->setBounds(0, y, labelW, kControlHeight);
@@ -289,7 +289,7 @@ void SettingsComponent::buildAppearanceSection()
     // --- Window subsection header ---
     auto* windowHeader = new juce::Label();
     windowHeader->setText("Window", juce::dontSendNotification);
-    windowHeader->setFont(HathorLookAndFeel::fontSemiBold(HathorLookAndFeel::Typography::headlineMd));
+    windowHeader->setFont(HathorLookAndFeel::uiFontSemiBold(HathorLookAndFeel::Typography::headlineMd));
     windowHeader->setColour(juce::Label::textColourId, palette.textPrimary);
     windowHeader->setJustificationType(juce::Justification::centredLeft);
     windowHeader->setBounds(0, y, contentW, kControlHeight);
@@ -304,7 +304,7 @@ void SettingsComponent::buildAppearanceSection()
     // Master EQ preset selector lives under Appearance > Audio.
     auto* audioHeader = new juce::Label();
     audioHeader->setText("Audio", juce::dontSendNotification);
-    audioHeader->setFont(HathorLookAndFeel::fontSemiBold(HathorLookAndFeel::Typography::headlineMd));
+    audioHeader->setFont(HathorLookAndFeel::uiFontSemiBold(HathorLookAndFeel::Typography::headlineMd));
     audioHeader->setColour(juce::Label::textColourId, palette.textPrimary);
     audioHeader->setJustificationType(juce::Justification::centredLeft);
     audioHeader->setBounds(0, y, contentW, kControlHeight);
@@ -328,7 +328,7 @@ void SettingsComponent::buildWindowSubsection(int& y)
     // --- Opacity slider ---
     auto* opacityLabel = new juce::Label();
     opacityLabel->setText("Opacity:", juce::dontSendNotification);
-    opacityLabel->setFont(HathorLookAndFeel::fontMedium(HathorLookAndFeel::Typography::bodySm));
+    opacityLabel->setFont(HathorLookAndFeel::uiFontMedium(HathorLookAndFeel::Typography::bodySm));
     opacityLabel->setColour(juce::Label::textColourId, palette.textSecondary);
     opacityLabel->setJustificationType(juce::Justification::centredRight);
     opacityLabel->setBounds(0, y, labelW, kControlHeight);
@@ -343,7 +343,7 @@ void SettingsComponent::buildWindowSubsection(int& y)
     contentPanel_->addAndMakeVisible(opacitySlider_);
 
     opacityValueLabel_.setBounds(controlX + controlW + 8, y, 48, kControlHeight);
-    opacityValueLabel_.setFont(HathorLookAndFeel::fontRegular(HathorLookAndFeel::Typography::bodySm));
+    opacityValueLabel_.setFont(HathorLookAndFeel::uiFontRegular(HathorLookAndFeel::Typography::bodySm));
     opacityValueLabel_.setColour(juce::Label::textColourId, palette.textSecondary);
     opacityValueLabel_.setJustificationType(juce::Justification::centredLeft);
     opacityValueLabel_.setText(juce::String(pending_.opacityPercent, 0) + "%",
@@ -370,7 +370,7 @@ void SettingsComponent::buildWindowSubsection(int& y)
         opacityWarningLabel_->setText("Background transparency and blur are unavailable "
                                       "on this Linux environment (no compositor detected).",
                                       juce::dontSendNotification);
-        opacityWarningLabel_->setFont(HathorLookAndFeel::fontRegular(HathorLookAndFeel::Typography::bodySm));
+        opacityWarningLabel_->setFont(HathorLookAndFeel::uiFontRegular(HathorLookAndFeel::Typography::bodySm));
         opacityWarningLabel_->setColour(juce::Label::textColourId, palette.textMuted);
         opacityWarningLabel_->setJustificationType(juce::Justification::centredLeft);
         opacityWarningLabel_->setBounds(0, y, 600, kControlHeight * 2);
@@ -387,7 +387,7 @@ void SettingsComponent::buildWindowSubsection(int& y)
         // --- Blur slider ---
         auto* blurLabel = new juce::Label();
         blurLabel->setText("Blur:", juce::dontSendNotification);
-        blurLabel->setFont(HathorLookAndFeel::fontMedium(HathorLookAndFeel::Typography::bodySm));
+        blurLabel->setFont(HathorLookAndFeel::uiFontMedium(HathorLookAndFeel::Typography::bodySm));
         blurLabel->setColour(juce::Label::textColourId, palette.textSecondary);
         blurLabel->setJustificationType(juce::Justification::centredRight);
         blurLabel->setBounds(0, y, labelW, kControlHeight);
@@ -401,7 +401,7 @@ void SettingsComponent::buildWindowSubsection(int& y)
         contentPanel_->addAndMakeVisible(blurSlider_);
 
         blurValueLabel_.setBounds(controlX + controlW + 8, y, 48, kControlHeight);
-        blurValueLabel_.setFont(HathorLookAndFeel::fontRegular(HathorLookAndFeel::Typography::bodySm));
+        blurValueLabel_.setFont(HathorLookAndFeel::uiFontRegular(HathorLookAndFeel::Typography::bodySm));
         blurValueLabel_.setColour(juce::Label::textColourId, palette.textSecondary);
         blurValueLabel_.setJustificationType(juce::Justification::centredLeft);
         blurValueLabel_.setText(juce::String(pending_.macosBlurRadius),
@@ -421,7 +421,7 @@ void SettingsComponent::buildWindowSubsection(int& y)
 
         acrylicLabel_.setBounds(0, y, labelW, kControlHeight);
         acrylicLabel_.setText("Acrylic:", juce::dontSendNotification);
-        acrylicLabel_.setFont(HathorLookAndFeel::fontMedium(HathorLookAndFeel::Typography::bodySm));
+        acrylicLabel_.setFont(HathorLookAndFeel::uiFontMedium(HathorLookAndFeel::Typography::bodySm));
         acrylicLabel_.setColour(juce::Label::textColourId, palette.textSecondary);
         acrylicLabel_.setJustificationType(juce::Justification::centredRight);
         contentPanel_->addAndMakeVisible(acrylicLabel_);
@@ -432,7 +432,7 @@ void SettingsComponent::buildWindowSubsection(int& y)
         auto* blurInfo = new juce::Label();
         blurInfo->setText("Background blur requires a compositor with blur support.",
                           juce::dontSendNotification);
-        blurInfo->setFont(HathorLookAndFeel::fontRegular(HathorLookAndFeel::Typography::bodySm));
+        blurInfo->setFont(HathorLookAndFeel::uiFontRegular(HathorLookAndFeel::Typography::bodySm));
         blurInfo->setColour(juce::Label::textColourId, palette.textMuted);
         blurInfo->setJustificationType(juce::Justification::centredLeft);
         blurInfo->setBounds(0, y, 600, kControlHeight);
@@ -460,7 +460,7 @@ void SettingsComponent::buildAgentSection(const std::string& hathorMcpPath)
     // --- Section header ---
     auto* header = new juce::Label();
     header->setText("Agent / ACP", juce::dontSendNotification);
-    header->setFont(HathorLookAndFeel::fontSemiBold(HathorLookAndFeel::Typography::headlineMd));
+    header->setFont(HathorLookAndFeel::uiFontSemiBold(HathorLookAndFeel::Typography::headlineMd));
     header->setColour(juce::Label::textColourId, palette.textPrimary);
     header->setJustificationType(juce::Justification::centredLeft);
     header->setBounds(0, y, contentW, kControlHeight);
@@ -472,7 +472,7 @@ void SettingsComponent::buildAgentSection(const std::string& hathorMcpPath)
     auto* presetLabel = new juce::Label();
     presetLabel->setText("Agent preset:", juce::dontSendNotification);
     presetLabel->setBounds(0, y, labelW, kControlHeight);
-    presetLabel->setFont(HathorLookAndFeel::fontMedium(HathorLookAndFeel::Typography::bodySm));
+    presetLabel->setFont(HathorLookAndFeel::uiFontMedium(HathorLookAndFeel::Typography::bodySm));
     presetLabel->setColour(juce::Label::textColourId, palette.textSecondary);
     presetLabel->setJustificationType(juce::Justification::centredRight);
     contentPanel_->addAndMakeVisible(presetLabel);
@@ -503,7 +503,7 @@ void SettingsComponent::buildAgentSection(const std::string& hathorMcpPath)
 
     // --- Status label (detected / custom path / not found) ---
     agentStatusLabel_.setBounds(controlX + 176, y, controlW - 176, kControlHeight);
-    agentStatusLabel_.setFont(HathorLookAndFeel::fontRegular(HathorLookAndFeel::Typography::bodySm));
+    agentStatusLabel_.setFont(HathorLookAndFeel::uiFontRegular(HathorLookAndFeel::Typography::bodySm));
     agentStatusLabel_.setColour(juce::Label::textColourId, palette.textMuted);
     agentStatusLabel_.setJustificationType(juce::Justification::centredLeft);
     agentStatusLabel_.setInterceptsMouseClicks(false, false);
@@ -515,7 +515,7 @@ void SettingsComponent::buildAgentSection(const std::string& hathorMcpPath)
     agentPathLabel_ = new juce::Label();
     agentPathLabel_->setText("Agent exe:", juce::dontSendNotification);
     agentPathLabel_->setBounds(0, y, labelW, kControlHeight);
-    agentPathLabel_->setFont(HathorLookAndFeel::fontMedium(HathorLookAndFeel::Typography::bodySm));
+    agentPathLabel_->setFont(HathorLookAndFeel::uiFontMedium(HathorLookAndFeel::Typography::bodySm));
     agentPathLabel_->setColour(juce::Label::textColourId, palette.textSecondary);
     agentPathLabel_->setJustificationType(juce::Justification::centredRight);
     agentPathLabel_->setVisible(false);
@@ -533,7 +533,7 @@ void SettingsComponent::buildAgentSection(const std::string& hathorMcpPath)
     auto* argsLabel = new juce::Label();
     argsLabel->setText("Args:", juce::dontSendNotification);
     argsLabel->setBounds(0, y, labelW, kControlHeight);
-    argsLabel->setFont(HathorLookAndFeel::fontMedium(HathorLookAndFeel::Typography::bodySm));
+    argsLabel->setFont(HathorLookAndFeel::uiFontMedium(HathorLookAndFeel::Typography::bodySm));
     argsLabel->setColour(juce::Label::textColourId, palette.textSecondary);
     argsLabel->setJustificationType(juce::Justification::centredRight);
     contentPanel_->addAndMakeVisible(argsLabel);
@@ -550,7 +550,7 @@ void SettingsComponent::buildAgentSection(const std::string& hathorMcpPath)
     // --- hathor-mcp path (read-only, inferred) ---
     auto* mcpLabel = new juce::Label();
     mcpLabel->setText("hathor-mcp:", juce::dontSendNotification);
-    mcpLabel->setFont(HathorLookAndFeel::fontMedium(HathorLookAndFeel::Typography::bodySm));
+    mcpLabel->setFont(HathorLookAndFeel::uiFontMedium(HathorLookAndFeel::Typography::bodySm));
     mcpLabel->setColour(juce::Label::textColourId, palette.textSecondary);
     mcpLabel->setJustificationType(juce::Justification::centredRight);
     mcpLabel->setBounds(0, y, labelW, kControlHeight);
@@ -561,7 +561,7 @@ void SettingsComponent::buildAgentSection(const std::string& hathorMcpPath)
                                ? "(not found beside executable)"
                                : juce::String(hathorMcpPath),
                            juce::dontSendNotification);
-    mcpPathLabel_.setFont(HathorLookAndFeel::fontRegular(HathorLookAndFeel::Typography::bodySm));
+    mcpPathLabel_.setFont(HathorLookAndFeel::uiFontRegular(HathorLookAndFeel::Typography::bodySm));
     mcpPathLabel_.setColour(juce::Label::textColourId, palette.textMuted);
     mcpPathLabel_.setJustificationType(juce::Justification::centredLeft);
     contentPanel_->addAndMakeVisible(mcpPathLabel_);
@@ -584,7 +584,7 @@ void SettingsComponent::buildPetdexSection()
     // --- Section header ---
     auto* header = new juce::Label();
     header->setText("Petdex", juce::dontSendNotification);
-    header->setFont(HathorLookAndFeel::fontSemiBold(HathorLookAndFeel::Typography::headlineMd));
+    header->setFont(HathorLookAndFeel::uiFontSemiBold(HathorLookAndFeel::Typography::headlineMd));
     header->setColour(juce::Label::textColourId, palette.textPrimary);
     header->setJustificationType(juce::Justification::centredLeft);
     header->setBounds(0, y, contentW, kControlHeight);
@@ -594,7 +594,7 @@ void SettingsComponent::buildPetdexSection()
 
     // --- Catalog status ---
     petStatusLabel_.setBounds(0, y, contentW, kControlHeight * 2);
-    petStatusLabel_.setFont(HathorLookAndFeel::fontRegular(HathorLookAndFeel::Typography::bodySm));
+    petStatusLabel_.setFont(HathorLookAndFeel::uiFontRegular(HathorLookAndFeel::Typography::bodySm));
     petStatusLabel_.setColour(juce::Label::textColourId, palette.textMuted);
     petStatusLabel_.setJustificationType(juce::Justification::centredLeft);
     petStatusLabel_.setInterceptsMouseClicks(false, false);
@@ -605,7 +605,7 @@ void SettingsComponent::buildPetdexSection()
     // --- Catalog search filter (browse a dynamic catalog, no manual config) ---
     auto* searchLabel = new juce::Label();
     searchLabel->setText("Search:", juce::dontSendNotification);
-    searchLabel->setFont(HathorLookAndFeel::fontMedium(HathorLookAndFeel::Typography::bodySm));
+    searchLabel->setFont(HathorLookAndFeel::uiFontMedium(HathorLookAndFeel::Typography::bodySm));
     searchLabel->setColour(juce::Label::textColourId, palette.textSecondary);
     searchLabel->setJustificationType(juce::Justification::centredRight);
     searchLabel->setBounds(0, y, labelW, kControlHeight);
@@ -622,7 +622,7 @@ void SettingsComponent::buildPetdexSection()
     // --- Pet selection combo ---
     petLabel_.setBounds(0, y, labelW, kControlHeight);
     petLabel_.setText("Mascot:", juce::dontSendNotification);
-    petLabel_.setFont(HathorLookAndFeel::fontMedium(HathorLookAndFeel::Typography::bodySm));
+    petLabel_.setFont(HathorLookAndFeel::uiFontMedium(HathorLookAndFeel::Typography::bodySm));
     petLabel_.setColour(juce::Label::textColourId, palette.textSecondary);
     petLabel_.setJustificationType(juce::Justification::centredRight);
     contentPanel_->addAndMakeVisible(petLabel_);
@@ -645,7 +645,7 @@ void SettingsComponent::buildPetdexSection()
 
     // --- D4 attribution / licensing status for the selected pet ---
     petAttributionLabel_.setBounds(0, y, contentW, kControlHeight * 3);
-    petAttributionLabel_.setFont(HathorLookAndFeel::fontRegular(HathorLookAndFeel::Typography::bodySm));
+    petAttributionLabel_.setFont(HathorLookAndFeel::uiFontRegular(HathorLookAndFeel::Typography::bodySm));
     petAttributionLabel_.setColour(juce::Label::textColourId, palette.textMuted);
     petAttributionLabel_.setJustificationType(juce::Justification::topLeft);
     petAttributionLabel_.setInterceptsMouseClicks(false, false);
@@ -697,7 +697,7 @@ void SettingsComponent::buildChuckSection()
     // --- Section header ---
     auto* header = new juce::Label();
     header->setText("Audio Device", juce::dontSendNotification);
-    header->setFont(HathorLookAndFeel::fontSemiBold(HathorLookAndFeel::Typography::headlineMd));
+    header->setFont(HathorLookAndFeel::uiFontSemiBold(HathorLookAndFeel::Typography::headlineMd));
     header->setColour(juce::Label::textColourId, palette.textPrimary);
     header->setJustificationType(juce::Justification::centredLeft);
     header->setBounds(0, y, contentW, kControlHeight);
@@ -707,7 +707,7 @@ void SettingsComponent::buildChuckSection()
 
     // --- Sample rate combo ---
     sampleRateLabel_.setText("Sample Rate:", juce::dontSendNotification);
-    sampleRateLabel_.setFont(HathorLookAndFeel::fontMedium(HathorLookAndFeel::Typography::bodySm));
+    sampleRateLabel_.setFont(HathorLookAndFeel::uiFontMedium(HathorLookAndFeel::Typography::bodySm));
     sampleRateLabel_.setColour(juce::Label::textColourId, palette.textSecondary);
     sampleRateLabel_.setJustificationType(juce::Justification::centredRight);
     sampleRateLabel_.setBounds(0, y, labelW, kControlHeight);
@@ -745,7 +745,7 @@ void SettingsComponent::buildChuckSection()
 
     // --- Buffer size combo ---
     bufferSizeLabel_.setText("Buffer Size:", juce::dontSendNotification);
-    bufferSizeLabel_.setFont(HathorLookAndFeel::fontMedium(HathorLookAndFeel::Typography::bodySm));
+    bufferSizeLabel_.setFont(HathorLookAndFeel::uiFontMedium(HathorLookAndFeel::Typography::bodySm));
     bufferSizeLabel_.setColour(juce::Label::textColourId, palette.textSecondary);
     bufferSizeLabel_.setJustificationType(juce::Justification::centredRight);
     bufferSizeLabel_.setBounds(0, y, labelW, kControlHeight);
@@ -781,14 +781,14 @@ void SettingsComponent::buildChuckSection()
 
     // --- VM flags editor ---
     vmFlagsLabel_.setText("VM Flags:", juce::dontSendNotification);
-    vmFlagsLabel_.setFont(HathorLookAndFeel::fontMedium(HathorLookAndFeel::Typography::bodySm));
+    vmFlagsLabel_.setFont(HathorLookAndFeel::uiFontMedium(HathorLookAndFeel::Typography::bodySm));
     vmFlagsLabel_.setColour(juce::Label::textColourId, palette.textSecondary);
     vmFlagsLabel_.setJustificationType(juce::Justification::centredLeft);
     vmFlagsLabel_.setBounds(0, y, labelW, kControlHeight);
     contentPanel_->addAndMakeVisible(vmFlagsLabel_);
 
     vmFlagsEditor_.setBounds(controlX, y, 400, kControlHeight);
-    vmFlagsEditor_.setFont(HathorLookAndFeel::fontRegular(HathorLookAndFeel::Typography::bodySm));
+    vmFlagsEditor_.setFont(HathorLookAndFeel::uiFontRegular(HathorLookAndFeel::Typography::bodySm));
     vmFlagsEditor_.setText(juce::String(pending_.vmFlags), juce::dontSendNotification);
     vmFlagsEditor_.addListener(this);
     contentPanel_->addAndMakeVisible(vmFlagsEditor_);
@@ -797,7 +797,7 @@ void SettingsComponent::buildChuckSection()
     auto* flagsHint = new juce::Label();
     flagsHint->setText("Comma-separated key=value (e.g. DUMP_INSTRUCTIONS=1,AUTO_DEPEND=0)",
                        juce::dontSendNotification);
-    flagsHint->setFont(HathorLookAndFeel::fontRegular(HathorLookAndFeel::Typography::bodySm));
+    flagsHint->setFont(HathorLookAndFeel::uiFontRegular(HathorLookAndFeel::Typography::bodySm));
     flagsHint->setColour(juce::Label::textColourId, palette.textMuted);
     flagsHint->setJustificationType(juce::Justification::centredLeft);
     flagsHint->setBounds(controlX, y + kControlHeight + 2, 400, kControlHeight);
@@ -819,7 +819,7 @@ void SettingsComponent::buildAudioSection(int& y)
     // --- Master EQ Preset label ---
     eqPresetLabel_.setBounds(0, y, labelW, kControlHeight);
     eqPresetLabel_.setText("Master EQ Preset:", juce::dontSendNotification);
-    eqPresetLabel_.setFont(HathorLookAndFeel::fontMedium(HathorLookAndFeel::Typography::bodySm));
+    eqPresetLabel_.setFont(HathorLookAndFeel::uiFontMedium(HathorLookAndFeel::Typography::bodySm));
     eqPresetLabel_.setColour(juce::Label::textColourId, palette.textSecondary);
     eqPresetLabel_.setJustificationType(juce::Justification::centredRight);
     contentPanel_->addAndMakeVisible(eqPresetLabel_);
@@ -1453,7 +1453,7 @@ void SettingsComponent::buildGhostCompletionSection()
     // --- Section header ---
     auto* header = new juce::Label();
     header->setText("Ghost Completion", juce::dontSendNotification);
-    header->setFont(HathorLookAndFeel::fontSemiBold(HathorLookAndFeel::Typography::headlineMd));
+    header->setFont(HathorLookAndFeel::uiFontSemiBold(HathorLookAndFeel::Typography::headlineMd));
     header->setColour(juce::Label::textColourId, palette.textPrimary);
     header->setJustificationType(juce::Justification::centredLeft);
     header->setBounds(0, y, contentW, kControlHeight);
@@ -1463,7 +1463,7 @@ void SettingsComponent::buildGhostCompletionSection()
     auto* hint = new juce::Label();
     hint->setText("Endpoint override per LLM provider. Blank reverts to the default.",
                  juce::dontSendNotification);
-    hint->setFont(HathorLookAndFeel::fontRegular(HathorLookAndFeel::Typography::bodySm));
+    hint->setFont(HathorLookAndFeel::uiFontRegular(HathorLookAndFeel::Typography::bodySm));
     hint->setColour(juce::Label::textColourId, palette.textMuted);
     hint->setJustificationType(juce::Justification::centredLeft);
     hint->setBounds(0, y, contentW, kControlHeight);
@@ -1489,7 +1489,7 @@ void SettingsComponent::buildGhostCompletionSection()
         field->backend = p.backend;
 
         field->nameLabel.setText(juce::String(p.name) + ":", juce::dontSendNotification);
-        field->nameLabel.setFont(HathorLookAndFeel::fontMedium(HathorLookAndFeel::Typography::bodySm));
+        field->nameLabel.setFont(HathorLookAndFeel::uiFontMedium(HathorLookAndFeel::Typography::bodySm));
         field->nameLabel.setColour(juce::Label::textColourId, palette.textSecondary);
         field->nameLabel.setJustificationType(juce::Justification::centredRight);
         field->nameLabel.setBounds(0, y, labelW, kControlHeight);
@@ -1499,7 +1499,7 @@ void SettingsComponent::buildGhostCompletionSection()
         field->urlEditor.setBounds(controlX, y, controlW, kControlHeight);
         contentPanel_->addAndMakeVisible(field->urlEditor);
 
-        field->hintLabel.setFont(HathorLookAndFeel::fontRegular(HathorLookAndFeel::Typography::bodySm));
+        field->hintLabel.setFont(HathorLookAndFeel::uiFontRegular(HathorLookAndFeel::Typography::bodySm));
         field->hintLabel.setJustificationType(juce::Justification::centredLeft);
         field->hintLabel.setBounds(controlX + controlW + 8, y, hintW, kControlHeight);
         contentPanel_->addAndMakeVisible(field->hintLabel);
@@ -1509,7 +1509,7 @@ void SettingsComponent::buildGhostCompletionSection()
     }
 
     // Inline validation summary (hidden when all URLs are valid).
-    ghostErrorLabel_.setFont(HathorLookAndFeel::fontRegular(HathorLookAndFeel::Typography::bodySm));
+    ghostErrorLabel_.setFont(HathorLookAndFeel::uiFontRegular(HathorLookAndFeel::Typography::bodySm));
     ghostErrorLabel_.setColour(juce::Label::textColourId, palette.error);
     ghostErrorLabel_.setJustificationType(juce::Justification::centredLeft);
     ghostErrorLabel_.setBounds(0, y, contentW, kControlHeight);

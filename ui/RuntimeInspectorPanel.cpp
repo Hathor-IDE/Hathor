@@ -67,7 +67,7 @@ RuntimeInspectorPanel::RuntimeInspectorPanel(AudioEngineFacade& audio,
 
     titleLabel_ = std::make_unique<juce::Label>();
     titleLabel_->setText("Runtime Inspector", juce::dontSendNotification);
-    titleLabel_->setFont(HathorLookAndFeel::fontSemiBold(12.0f));
+    titleLabel_->setFont(HathorLookAndFeel::uiFontSemiBold(12.0f));
     addAndMakeVisible(*titleLabel_);
 
     problemsBtn_ = std::make_unique<juce::TextButton>("Open Problems");
@@ -109,7 +109,7 @@ RuntimeInspectorPanel::RuntimeInspectorPanel(AudioEngineFacade& audio,
             if (row.kind == RuntimeInspectorPanel::Row::Kind::Section)
             {
                 g.setColour(pal.textMuted);
-                g.setFont(HathorLookAndFeel::fontMedium(10.0f));
+                g.setFont(HathorLookAndFeel::uiFontMedium(10.0f));
                 g.drawText(juce::String(row.label).toUpperCase(),
                            juce::Rectangle<int>(kMargin, y, width - 2 * kMargin, kSectionHeight),
                            juce::Justification::left, false);
@@ -122,7 +122,7 @@ RuntimeInspectorPanel::RuntimeInspectorPanel(AudioEngineFacade& audio,
 
             const int labelW = std::max(70, width / 4);
             g.setColour(pal.textSecondary);
-            g.setFont(HathorLookAndFeel::fontRegular(11.0f));
+            g.setFont(HathorLookAndFeel::uiFontRegular(11.0f));
             g.drawText(juce::String(row.label),
                        juce::Rectangle<int>(kMargin, y, labelW, kRowHeight),
                        juce::Justification::left, false);

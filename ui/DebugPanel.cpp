@@ -84,7 +84,7 @@ void DebugPanel::paint(juce::Graphics& g)
         g.fillRect(juce::Rectangle<int>(btn.bounds.getX(), btn.bounds.getBottom() - 2,
                                         btn.bounds.getWidth(), 2));
         g.setColour(active ? pal.textPrimary : pal.textSecondary);
-        g.setFont(HathorLookAndFeel::fontMedium(11.0f));
+        g.setFont(HathorLookAndFeel::uiFontMedium(11.0f));
         g.drawText(btn.label, btn.bounds, juce::Justification::centred, false);
     }
 }

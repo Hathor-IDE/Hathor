@@ -34,14 +34,14 @@ WelcomeScreen::WelcomeScreen()
     const auto& palette = HathorLookAndFeel::defaultPalette();
 
     titleLabel_.setText("Hathor", juce::dontSendNotification);
-    titleLabel_.setFont(HathorLookAndFeel::fontBold(32.0f));
+    titleLabel_.setFont(HathorLookAndFeel::uiFontBold(32.0f));
     titleLabel_.setColour(juce::Label::textColourId, palette.textPrimary);
     titleLabel_.setJustificationType(juce::Justification::centred);
     addAndMakeVisible(titleLabel_);
 
     subtitleLabel_.setText("Open a folder to start live-coding, or create a new project.",
                            juce::dontSendNotification);
-    subtitleLabel_.setFont(HathorLookAndFeel::fontRegular(15.0f));
+    subtitleLabel_.setFont(HathorLookAndFeel::uiFontRegular(15.0f));
     subtitleLabel_.setColour(juce::Label::textColourId, palette.textSecondary);
     subtitleLabel_.setJustificationType(juce::Justification::centred);
     addAndMakeVisible(subtitleLabel_);

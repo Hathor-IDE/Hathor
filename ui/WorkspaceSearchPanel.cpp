@@ -11,6 +11,7 @@
  */
 
 #include "WorkspaceSearchPanel.hpp"
+#include "HathorLookAndFeel.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -41,7 +42,7 @@ WorkspaceSearchPanel::WorkspaceSearchPanel(std::filesystem::path workspaceRoot,
 {
     searchField_ = std::make_unique<juce::TextEditor>();
     searchField_->addListener(this);
-    searchField_->setFont(juce::FontOptions{15.0f});
+    searchField_->setFont(HathorLookAndFeel::getUiFont(15.0f));
     searchField_->setColour(juce::TextEditor::backgroundColourId,
                             juce::Colours::black.withAlpha(0.7f));
     searchField_->setColour(juce::TextEditor::textColourId, juce::Colours::white);
@@ -50,7 +51,7 @@ WorkspaceSearchPanel::WorkspaceSearchPanel(std::filesystem::path workspaceRoot,
     addAndMakeVisible(searchField_.get());
 
     replaceField_ = std::make_unique<juce::TextEditor>();
-    replaceField_->setFont(juce::FontOptions{15.0f});
+    replaceField_->setFont(HathorLookAndFeel::getUiFont(15.0f));
     replaceField_->setColour(juce::TextEditor::backgroundColourId,
                              juce::Colours::black.withAlpha(0.7f));
     replaceField_->setColour(juce::TextEditor::textColourId, juce::Colours::white);
@@ -101,7 +102,7 @@ WorkspaceSearchPanel::WorkspaceSearchPanel(std::filesystem::path workspaceRoot,
 
     hintLabel_ = std::make_unique<juce::Label>();
     hintLabel_->setText("Workspace search (Esc to close)", juce::dontSendNotification);
-    hintLabel_->setFont(juce::FontOptions{14.0f});
+    hintLabel_->setFont(HathorLookAndFeel::getUiFont(14.0f));
     hintLabel_->setColour(juce::Label::textColourId, juce::Colours::white.withAlpha(0.7f));
     addAndMakeVisible(hintLabel_.get());
 
@@ -253,17 +254,17 @@ void WorkspaceSearchPanel::paintListBoxItem(int row, juce::Graphics& g,
         const auto& item = displayItems_[row];
 
         g.setColour(juce::Colours::white.withAlpha(0.5f));
-        g.setFont(juce::FontOptions{13.0f});
+        g.setFont(HathorLookAndFeel::getUiFont(13.0f));
         g.drawText(item.relativePath, bounds.removeFromLeft(width / 3).reduced(4, 2),
                    juce::Justification::centredLeft, false);
 
         g.setColour(juce::Colours::white);
-        g.setFont(juce::FontOptions{14.0f});
+        g.setFont(HathorLookAndFeel::getUiFont(14.0f));
         juce::String displayText = juce::String(item.match->line) + ": " + juce::String(item.match->lineText.c_str());
         g.drawText(displayText, bounds.reduced(4, 2), juce::Justification::centredLeft, false);
 
         g.setColour(juce::Colours::yellow.withAlpha(0.8f));
-        g.setFont(juce::FontOptions{13.0f});
+        g.setFont(HathorLookAndFeel::getUiFont(13.0f));
         juce::String matchText = juce::String(item.match->matchText.c_str());
         g.drawText(matchText, bounds.removeFromRight(width / 4).reduced(4, 2),
                    juce::Justification::centredLeft, false);

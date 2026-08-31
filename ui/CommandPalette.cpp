@@ -8,6 +8,7 @@
  */
 
 #include "CommandPalette.hpp"
+#include "HathorLookAndFeel.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -25,7 +26,7 @@ CommandPalette::CommandPalette()
     filterField_ = std::make_unique<juce::TextEditor>();
     filterField_->setMultiLine(false);
     filterField_->setInputRestrictions(0, juce::String());
-    filterField_->setFont(juce::Font(juce::FontOptions{}.withHeight(14.0f)));
+    filterField_->setFont(HathorLookAndFeel::getUiFont(14.0f));
     addAndMakeVisible(filterField_.get());
     filterField_->onTextChange = [this]() {
         setFilter(filterField_->getText());

@@ -54,7 +54,7 @@ GitDiffView::GitDiffView()
 
     // File label
     fileLabel_ = std::make_unique<juce::Label>();
-    fileLabel_->setFont(HathorLookAndFeel::fontMedium(12.0f));
+    fileLabel_->setFont(HathorLookAndFeel::uiFontMedium(12.0f));
     addAndMakeVisible(fileLabel_.get());
 }
 

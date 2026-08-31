@@ -40,7 +40,7 @@ ChatThread::ChatThread()
     // Status label (hidden by default) — thread-scoped (C2 §7)
     // -----------------------------------------------------------------------
     addChildComponent(statusLabel_);
-    statusLabel_.setFont(HathorLookAndFeel::fontMedium(HathorLookAndFeel::Typography::labelMd));
+    statusLabel_.setFont(HathorLookAndFeel::uiFontMedium(HathorLookAndFeel::Typography::labelMd));
     statusLabel_.setColour(juce::Label::backgroundColourId,
                            palette.error.withAlpha(0.2f));
     statusLabel_.setColour(juce::Label::textColourId,
@@ -89,7 +89,7 @@ ChatThread::ChatThread()
     inputField_.setMultiLine(false);
     inputField_.setReturnKeyStartsNewLine(false);
     inputField_.setScrollbarsShown(false);
-    inputField_.setFont(HathorLookAndFeel::fontRegular(13.0f));
+    inputField_.setFont(HathorLookAndFeel::uiFontRegular(13.0f));
     inputField_.setColour(juce::TextEditor::backgroundColourId,
                            inputPalette.surfaceContainer);
     inputField_.setColour(juce::TextEditor::textColourId,

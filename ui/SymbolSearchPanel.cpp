@@ -10,6 +10,7 @@
  */
 
 #include "SymbolSearchPanel.hpp"
+#include "HathorLookAndFeel.hpp"
 
 namespace hathor::ui {
 
@@ -35,7 +36,7 @@ SymbolSearchPanel::SymbolSearchPanel(SymbolSearchModel* model)
 {
     searchField_ = std::make_unique<juce::TextEditor>();
     searchField_->addListener(this);
-    searchField_->setFont(juce::FontOptions{16.0f});
+    searchField_->setFont(HathorLookAndFeel::getUiFont(16.0f));
     searchField_->setColour(juce::TextEditor::backgroundColourId,
                             juce::Colours::black.withAlpha(0.7f));
     searchField_->setColour(juce::TextEditor::textColourId, juce::Colours::white);
@@ -45,7 +46,7 @@ SymbolSearchPanel::SymbolSearchPanel(SymbolSearchModel* model)
 
     hintLabel_ = std::make_unique<juce::Label>();
     hintLabel_->setText("Search symbols (Esc to close)", juce::dontSendNotification);
-    hintLabel_->setFont(juce::FontOptions{14.0f});
+    hintLabel_->setFont(HathorLookAndFeel::getUiFont(14.0f));
     hintLabel_->setColour(juce::Label::textColourId, juce::Colours::white.withAlpha(0.7f));
     hintLabel_->setJustificationType(juce::Justification::centredLeft);
     addAndMakeVisible(hintLabel_.get());
@@ -223,14 +224,14 @@ void SymbolSearchPanel::paintListBoxItem(int row, juce::Graphics& g,
 
         // Left: symbol name
         g.setColour(juce::Colours::white);
-        g.setFont(juce::Font(juce::FontOptions{15.0f}).boldened());
+        g.setFont(HathorLookAndFeel::uiFontBold(15.0f));
         juce::String nameText = juce::String(sym.name.c_str());
         g.drawText(nameText, bounds.removeFromLeft(width / 3).reduced(4, 2),
                    juce::Justification::centredLeft, false);
 
         // Middle: kind + detail
         juce::String kindText = juce::String(sym.kind.c_str()) + "  " + juce::String(sym.detail.c_str());
-        g.setFont(juce::FontOptions{13.0f});
+        g.setFont(HathorLookAndFeel::getUiFont(13.0f));
         g.setColour(juce::Colours::white.withAlpha(0.7f));
         g.drawText(kindText, bounds.removeFromLeft(width / 3).reduced(4, 2),
                    juce::Justification::centredLeft, false);

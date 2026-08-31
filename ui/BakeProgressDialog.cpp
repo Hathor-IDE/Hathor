@@ -90,19 +90,19 @@ BakeProgressDialog::BakeProgressDialog(juce::String instrumentName,
     // Title
     titleLabel_.setText("Baking \"" + instrumentName_ + "\"…",
                         juce::dontSendNotification);
-    titleLabel_.setFont(HathorLookAndFeel::fontSemiBold(16.0f));
+    titleLabel_.setFont(HathorLookAndFeel::uiFontSemiBold(16.0f));
     titleLabel_.setColour(juce::Label::textColourId, palette.textPrimary);
     titleLabel_.setJustificationType(juce::Justification::centred);
     addAndMakeVisible(titleLabel_);
 
     // Stage label
-    stageLabel_.setFont(HathorLookAndFeel::fontMedium(13.0f));
+    stageLabel_.setFont(HathorLookAndFeel::uiFontMedium(13.0f));
     stageLabel_.setColour(juce::Label::textColourId, palette.textPrimary);
     stageLabel_.setJustificationType(juce::Justification::centred);
     addAndMakeVisible(stageLabel_);
 
     // Detail label
-    detailLabel_.setFont(HathorLookAndFeel::fontRegular(11.0f));
+    detailLabel_.setFont(HathorLookAndFeel::uiFontRegular(11.0f));
     detailLabel_.setColour(juce::Label::textColourId, palette.textSecondary);
     detailLabel_.setJustificationType(juce::Justification::centred);
     addAndMakeVisible(detailLabel_);

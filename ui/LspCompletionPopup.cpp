@@ -153,8 +153,9 @@ void LspCompletionPopup::paintListBoxItem(int row, juce::Graphics& g,
             break;
     }
 
+    // Inter UI font for the completion popup (proportional), not JetBrains Mono.
     juce::FontOptions iconFontOpts;
-    iconFontOpts = iconFontOpts.withName(juce::Font::getDefaultMonospacedFontName());
+    iconFontOpts = iconFontOpts.withTypeface(HathorLookAndFeel::interRegularTypeface());
     iconFontOpts = iconFontOpts.withHeight(11.0f);
     juce::Font iconFont(iconFontOpts);
     g.setFont(iconFont);
@@ -170,7 +171,7 @@ void LspCompletionPopup::paintListBoxItem(int row, juce::Graphics& g,
     g.setColour(labelColour);
 
     juce::FontOptions labelFontOpts;
-    labelFontOpts = labelFontOpts.withName(juce::Font::getDefaultMonospacedFontName());
+    labelFontOpts = labelFontOpts.withTypeface(HathorLookAndFeel::interRegularTypeface());
     labelFontOpts = labelFontOpts.withHeight(12.0f);
     g.setFont(juce::Font(labelFontOpts));
 
@@ -182,7 +183,7 @@ void LspCompletionPopup::paintListBoxItem(int row, juce::Graphics& g,
         g.setColour(palette.textSecondary);
 
         juce::FontOptions detailFontOpts;
-        detailFontOpts = detailFontOpts.withName(juce::Font::getDefaultMonospacedFontName());
+        detailFontOpts = detailFontOpts.withTypeface(HathorLookAndFeel::interRegularTypeface());
         detailFontOpts = detailFontOpts.withHeight(10.0f);
         juce::Font detailFont(detailFontOpts);
         g.setFont(detailFont);

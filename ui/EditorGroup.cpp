@@ -12,6 +12,7 @@
 #include "../app/AudioEngine.hpp"
 #include "HathorFileParser.hpp"
 #include "ChuckTokeniser.hpp"
+#include "HathorLookAndFeel.hpp"
 #include "EditorArea.hpp"  // for nextFreeSlot()
 
 #include <nlohmann/json.hpp>
@@ -113,11 +114,9 @@ void EnhancedTabBar::paint(juce::Graphics& g)
             g.fillPath(pinPath);
         }
 
-        // Label
+        // Label — Inter UI font (proportional), not JetBrains Mono.
         g.setColour(juce::Colours::white);
-        g.setFont(juce::Font(juce::FontOptions{}
-            .withName(juce::Font::getDefaultSansSerifFontName())
-            .withHeight(13.0f)));
+        g.setFont(HathorLookAndFeel::uiFontRegular(13.0f));
         g.drawFittedText(tg.label,
                          juce::Rectangle<int>(tg.bounds.getX() + 4, tg.bounds.getY(),
                                               tg.bounds.getWidth() - 8, tg.bounds.getHeight()),

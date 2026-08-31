@@ -34,7 +34,7 @@ QuickOpenDialog::QuickOpenDialog(const std::filesystem::path& workspaceRoot)
 {
     filterField_ = std::make_unique<juce::TextEditor>();
     filterField_->addListener(this);
-    filterField_->setFont(juce::FontOptions{16.0f});
+    filterField_->setFont(HathorLookAndFeel::getUiFont(16.0f));
     filterField_->setColour(juce::TextEditor::backgroundColourId,
                             juce::Colours::black.withAlpha(0.6f));
     filterField_->setColour(juce::TextEditor::textColourId, juce::Colours::white);
@@ -44,7 +44,7 @@ QuickOpenDialog::QuickOpenDialog(const std::filesystem::path& workspaceRoot)
 
     hintLabel_ = std::make_unique<juce::Label>();
     hintLabel_->setText("Type to filter files (Esc to close)", juce::dontSendNotification);
-    hintLabel_->setFont(juce::FontOptions{14.0f});
+    hintLabel_->setFont(HathorLookAndFeel::getUiFont(14.0f));
     hintLabel_->setColour(juce::Label::textColourId, juce::Colours::white.withAlpha(0.7f));
     hintLabel_->setJustificationType(juce::Justification::centredLeft);
     addAndMakeVisible(hintLabel_.get());
@@ -304,7 +304,7 @@ void QuickOpenDialog::paintListBoxItem(int row, juce::Graphics& g,
     }
 
     g.setColour(juce::Colours::white);
-    g.setFont(juce::FontOptions{15.0f});
+    g.setFont(HathorLookAndFeel::getUiFont(15.0f));
     g.drawText(displayText, bounds.reduced(4, 2), juce::Justification::centredLeft, false);
 }
 

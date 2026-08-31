@@ -262,13 +262,13 @@ void TabBarComponent::paint(juce::Graphics& g)
                                              labelRight - labelLeft,
                                              tg.bounds.getHeight());
         g.setColour(isActive ? palette.textPrimary : palette.textSecondary);
-        g.setFont(HathorLookAndFeel::fontMedium(12.0f));
+        g.setFont(HathorLookAndFeel::uiFontMedium(12.0f));
         g.drawText(tg.label, labelRect,
                    juce::Justification::centredLeft, true);
 
         // Close button (×)
         g.setColour(palette.textSecondary);
-        g.setFont(HathorLookAndFeel::fontMedium(11.0f));
+        g.setFont(HathorLookAndFeel::uiFontMedium(11.0f));
         g.drawText(juce::CharPointer_UTF8("\xC3\x97"), // × U+00D7
                    tg.closeBtnBounds,
                    juce::Justification::centred, false);
@@ -473,7 +473,7 @@ EditorArea::EditorArea(AudioEngine& audio,
     const auto& palette = HathorLookAndFeel::fromComponent(*this).getPalette();
 
     // Status bar styling — label-md: 11px, Medium 500 (mockup)
-    statusBar_.setFont(HathorLookAndFeel::fontMedium(HathorLookAndFeel::Typography::labelMd));
+    statusBar_.setFont(HathorLookAndFeel::uiFontMedium(HathorLookAndFeel::Typography::labelMd));
     statusBar_.setColour(juce::Label::backgroundColourId, palette.surfaceLow);
     statusBar_.setColour(juce::Label::textColourId,       palette.textSecondary);
     statusBar_.setJustificationType(juce::Justification::centredLeft);

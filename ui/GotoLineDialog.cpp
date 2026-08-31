@@ -27,7 +27,7 @@ GotoLineDialog::GotoLineDialog(const int numLines,
     promptLabel_ = std::make_unique<juce::Label>();
     promptLabel_->setText("Go to line (1\u2013" + juce::String(numLines_) + "):",
                           juce::dontSendNotification);
-    promptLabel_->setFont(HathorLookAndFeel::fontRegular(14.0f));
+    promptLabel_->setFont(HathorLookAndFeel::uiFontRegular(14.0f));
     promptLabel_->setColour(juce::Label::textColourId,
                             HathorLookAndFeel::defaultPalette().textPrimary);
     promptLabel_->setJustificationType(juce::Justification::centredLeft);
@@ -35,7 +35,7 @@ GotoLineDialog::GotoLineDialog(const int numLines,
 
     // Error label (hidden until needed)
     errorLabel_ = std::make_unique<juce::Label>();
-    errorLabel_->setFont(HathorLookAndFeel::fontRegular(12.0f));
+    errorLabel_->setFont(HathorLookAndFeel::uiFontRegular(12.0f));
     errorLabel_->setColour(juce::Label::textColourId,
                            HathorLookAndFeel::defaultPalette().error);
     errorLabel_->setJustificationType(juce::Justification::centredLeft);
@@ -45,7 +45,7 @@ GotoLineDialog::GotoLineDialog(const int numLines,
     // Line number input — digits only.
     lineField_ = std::make_unique<juce::TextEditor>();
     lineField_->addListener(this);
-    lineField_->setFont(HathorLookAndFeel::fontRegular(14.0f));
+    lineField_->setFont(HathorLookAndFeel::uiFontRegular(14.0f));
     lineField_->setColour(juce::TextEditor::backgroundColourId,
                           HathorLookAndFeel::defaultPalette().surfaceContainer);
     lineField_->setColour(juce::TextEditor::textColourId,

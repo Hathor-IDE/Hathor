@@ -57,7 +57,7 @@ void BakeTargetDialog::paint(juce::Graphics& g)
 
     // Title
     g.setColour(palette.textPrimary);
-    g.setFont(HathorLookAndFeel::fontSemiBold(HathorLookAndFeel::Typography::headlineMd));
+    g.setFont(HathorLookAndFeel::uiFontSemiBold(HathorLookAndFeel::Typography::headlineMd));
     g.drawText("Bake to Song", getLocalBounds().removeFromTop(40),
                juce::Justification::centredTop, false);
 
@@ -68,7 +68,7 @@ void BakeTargetDialog::paint(juce::Graphics& g)
     // Studio description
     juce::Rectangle<int> studioDescRect(16, descTop, descWidth, 40);
     g.setColour(palette.textSecondary);
-    g.setFont(HathorLookAndFeel::fontMedium(HathorLookAndFeel::Typography::bodySm));
+    g.setFont(HathorLookAndFeel::uiFontMedium(HathorLookAndFeel::Typography::bodySm));
     g.drawText("Studio — Permanent project asset\nStored in the project's managed asset area",
                studioDescRect,
                juce::Justification::centred, true);

@@ -310,7 +310,7 @@ void GitGraph::paint(juce::Graphics& g)
     if (commits_.empty())
     {
         g.setColour(palette.textMuted);
-        g.setFont(HathorLookAndFeel::fontRegular(12.0f));
+        g.setFont(HathorLookAndFeel::uiFontRegular(12.0f));
         g.drawText("No commits to display.",
                    getLocalBounds().removeFromTop(100),
                    juce::Justification::centredTop, false);
@@ -451,7 +451,7 @@ void GitGraph::drawNode(juce::Graphics& g, const GitGraphNode& node,
     if (node.commit)
     {
         g.setColour(palette.textPrimary);
-        g.setFont(HathorLookAndFeel::fontRegular(9.0f));
+        g.setFont(HathorLookAndFeel::uiFontRegular(9.0f));
         juce::String shaText(node.commit->shortSha);
         if (shaText.isEmpty())
             shaText = node.commit->sha.substr(0, 7);
@@ -468,7 +468,7 @@ void GitGraph::drawLabels(juce::Graphics& g, const GitGraphNode& node,
     if (node.branchLabels.empty())
         return;
 
-    g.setFont(HathorLookAndFeel::fontMedium(10.0f));
+    g.setFont(HathorLookAndFeel::uiFontMedium(10.0f));
 
     int numColumns = 1;
     for (const auto& n : nodes_)
@@ -516,7 +516,7 @@ void GitGraph::drawCommitMessage(juce::Graphics& g, const GitGraphNode& node,
         msg = "* " + msg;
 
     g.setColour(node.isHead ? palette.accent : palette.textPrimary);
-    g.setFont(HathorLookAndFeel::fontMedium(12.0f));
+    g.setFont(HathorLookAndFeel::uiFontMedium(12.0f));
     g.drawText(msg,
                msgX, msgY,
                bounds.getWidth() - kGraphColumnWidth - 16, 16,
@@ -536,7 +536,7 @@ void GitGraph::drawCommitMessage(juce::Graphics& g, const GitGraphNode& node,
     }
 
     g.setColour(palette.textMuted);
-    g.setFont(HathorLookAndFeel::fontRegular(10.0f));
+    g.setFont(HathorLookAndFeel::uiFontRegular(10.0f));
     g.drawText(authorDate,
                msgX, msgY + 16,
                bounds.getWidth() - kGraphColumnWidth - 16, 14,

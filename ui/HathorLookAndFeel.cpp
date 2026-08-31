@@ -9,7 +9,7 @@
  *   - All JUCE colour-ID defaults (setColour calls)
  *   - JetBrains Mono font loading (4 weights, embedded as BinaryData)
  *   - Custom button / slider / scrollbar drawing
- *   - Font-family substitution (getTypefaceForFont override)
+ *   - Font-family policy (getTypefaceForFont NOT overridden — Audit §1.2 I6)
  */
 
 #include "HathorLookAndFeel.hpp"
@@ -57,6 +57,42 @@ juce::Typeface::Ptr HathorLookAndFeel::boldTypeface()
 }
 
 // ===========================================================================
+// Embedded Inter typeface accessors — proportional UI font (OFL)
+// ===========================================================================
+
+juce::Typeface::Ptr HathorLookAndFeel::interRegularTypeface()
+{
+    static juce::Typeface::Ptr tf = juce::Typeface::createSystemTypefaceFor(
+        BinaryData::InterRegular_ttf,
+        static_cast<size_t>(BinaryData::InterRegular_ttfSize));
+    return tf;
+}
+
+juce::Typeface::Ptr HathorLookAndFeel::interMediumTypeface()
+{
+    static juce::Typeface::Ptr tf = juce::Typeface::createSystemTypefaceFor(
+        BinaryData::InterMedium_ttf,
+        static_cast<size_t>(BinaryData::InterMedium_ttfSize));
+    return tf;
+}
+
+juce::Typeface::Ptr HathorLookAndFeel::interSemiBoldTypeface()
+{
+    static juce::Typeface::Ptr tf = juce::Typeface::createSystemTypefaceFor(
+        BinaryData::InterSemiBold_ttf,
+        static_cast<size_t>(BinaryData::InterSemiBold_ttfSize));
+    return tf;
+}
+
+juce::Typeface::Ptr HathorLookAndFeel::interBoldTypeface()
+{
+    static juce::Typeface::Ptr tf = juce::Typeface::createSystemTypefaceFor(
+        BinaryData::InterBold_ttf,
+        static_cast<size_t>(BinaryData::InterBold_ttfSize));
+    return tf;
+}
+
+// ===========================================================================
 // Static font factory methods
 // ===========================================================================
 
@@ -81,42 +117,234 @@ juce::Font HathorLookAndFeel::fontBold(float height) noexcept
 }
 
 // ===========================================================================
+// Inter UI font factory methods (proportional — OFL)
+// ===========================================================================
+
+juce::Font HathorLookAndFeel::uiFontRegular(float height) noexcept
+{
+    return juce::Font(juce::FontOptions{}.withHeight(height).withTypeface(interRegularTypeface()));
+}
+
+juce::Font HathorLookAndFeel::uiFontMedium(float height) noexcept
+{
+    return juce::Font(juce::FontOptions{}.withHeight(height).withTypeface(interMediumTypeface()));
+}
+
+juce::Font HathorLookAndFeel::uiFontSemiBold(float height) noexcept
+{
+    return juce::Font(juce::FontOptions{}.withHeight(height).withTypeface(interSemiBoldTypeface()));
+}
+
+juce::Font HathorLookAndFeel::uiFontBold(float height) noexcept
+{
+    return juce::Font(juce::FontOptions{}.withHeight(height).withTypeface(interBoldTypeface()));
+}
+
+// ===========================================================================
+// getCodeFont / getUiFont — explicit font helpers (Audit §1.2 I6)
+//
+// Components should call these instead of relying on getTypefaceForFont
+// interception.  getCodeFont() returns JetBrains Mono for code surfaces;
+// getUiFont() returns Inter for proportional UI chrome.
+// ===========================================================================
+
+juce::Font HathorLookAndFeel::getCodeFont(float height) noexcept
+{
+    return fontRegular(height);
+}
+
+juce::Font HathorLookAndFeel::getCodeFont(float height, int styleFlags) noexcept
+{
+    if (styleFlags & juce::Font::bold)
+        return fontBold(height);
+
+    return juce::Font(juce::FontOptions{height, styleFlags}.withTypeface(regularTypeface()));
+}
+
+juce::Font HathorLookAndFeel::getUiFont(float height) noexcept
+{
+    return uiFontRegular(height);
+}
+
+juce::Font HathorLookAndFeel::getUiFont(float height, int styleFlags) noexcept
+{
+    if (styleFlags & juce::Font::bold)
+        return uiFontBold(height);
+
+    return juce::Font(juce::FontOptions{height, styleFlags}.withTypeface(interRegularTypeface()));
+}
+
+// ===========================================================================
 // Palette — runtime design-token value-type (A1 design-token engine)
 // ===========================================================================
 
-Palette Palette::defaultPalette() noexcept
+// --- Design rationale: accent green --------------------------------------
+// The original default accent was a pure neon #00FF41 (sRGB green at max
+// saturation). On the near-black #0E0E0E foundation this produced painful
+// halation / eye strain during prolonged sessions. We tone it to #00CC66 —
+// the same reduced-saturation green used by VS Code's "Dark+" default
+// accent — which retains the brand's terminal-green identity while
+// dropping peak luminance from ~0.72 to ~0.44.
+//
+// WCAG 2.1 AA (4.5:1) text-on-surface checks (verified, Aug 2026):
+//   textPrimary #E5E2E1 on #0E0E0E            14.98:1  PASS
+//   textSecondary #B9CCB2 on #0E0E0E          11.35:1  PASS
+//   textMuted #858585 on #0E0E0E               5.23:1  PASS
+//   textDisabled #808080 on #0E0E0E            4.89:1  PASS  (was #666 3.36:1 FAIL)
+//   accentOn #003D14 on accent #00CC66         5.86:1  PASS
+//   accentDim #00B855 on #0E0E0E               7.34:1  PASS
+//   light textPrimary #1A1A1A on #FFFFFF       17.40:1  PASS
+//   light accentOn #D6F5E3 on #006225          6.50:1  PASS
+//   light error #D32F2F on #FFFFFF             4.98:1  PASS
+//   light warning #B75800 on #FFFFFF           4.76:1  PASS  (was #ED6C00 3.11:1 FAIL)
+//   PurpleNeon accentOn #3A1C54 on #B497BD     5.50:1  PASS
+//   Capuchin accentOn #F5F0E8 on #8D5524       5.35:1  PASS  (was #2B1703 2.82:1 FAIL)
+//   Sand accentOn #3A1C03 on #D9730F            4.76:1  PASS
+// ===========================================================================
+
+namespace {
+
+// Foundation selector — true selects the dark token set, false the light set.
+// All other tokens (accent, syntax overrides) are parameterised on top.
+struct Foundation
+{
+    juce::Colour background;
+    juce::Colour surface;
+    juce::Colour surfaceLow;
+    juce::Colour surfaceContainer;
+    juce::Colour surfaceHigh;
+    juce::Colour surfaceHighest;
+    juce::Colour surfaceBright;
+
+    juce::Colour textPrimary;
+    juce::Colour textSecondary;
+    juce::Colour textMuted;
+    juce::Colour textDisabled;
+
+    juce::Colour error;
+    juce::Colour warning;
+
+    juce::Colour codeText;
+    juce::Colour codeComment;
+    juce::Colour codeType;
+    juce::Colour codeString;
+    juce::Colour codeFunction;
+    juce::Colour codeBracket;
+    juce::Colour codeLineNum;
+
+    static Foundation dark() noexcept
+    {
+        return Foundation{
+            /* background        */ juce::Colour(0xff0e0e0eu),
+            /* surface           */ juce::Colour(0xff131313u),
+            /* surfaceLow        */ juce::Colour(0xff1c1b1bu),
+            /* surfaceContainer  */ juce::Colour(0xff201f1fu),
+            /* surfaceHigh       */ juce::Colour(0xff2a2a2au),
+            /* surfaceHighest    */ juce::Colour(0xff353534u),
+            /* surfaceBright     */ juce::Colour(0xff3a3939u),
+
+            /* textPrimary       */ juce::Colour(0xffe5e2e1u),
+            /* textSecondary     */ juce::Colour(0xffb9ccb2u),
+            /* textMuted         */ juce::Colour(0xff858585u),
+            /* textDisabled      */ juce::Colour(0xff808080u),  // WCAG AA: 4.89:1 on #0e0e0e
+
+            /* error             */ juce::Colour(0xffff5f56u),
+            /* warning           */ juce::Colour(0xffe0a020u),
+
+            /* codeText          */ juce::Colour(0xffd4d4d4u),
+            /* codeComment       */ juce::Colour(0xff6a9955u),
+            /* codeType          */ juce::Colour(0xff4ec9b0u),
+            /* codeString        */ juce::Colour(0xffce9178u),
+            /* codeFunction      */ juce::Colour(0xffd4d4d4u),
+            /* codeBracket       */ juce::Colour(0xffffd700u),
+            /* codeLineNum       */ juce::Colour(0xff858585u),
+        };
+    }
+
+    static Foundation light() noexcept
+    {
+        return Foundation{
+            /* background        */ juce::Colour(0xffffffffu),
+            /* surface           */ juce::Colour(0xfff5f5f5u),
+            /* surfaceLow        */ juce::Colour(0xffe8e8e8u),
+            /* surfaceContainer  */ juce::Colour(0xffd8d8d8u),
+            /* surfaceHigh       */ juce::Colour(0xffc8c8c8u),
+            /* surfaceHighest    */ juce::Colour(0xffb8b8b8u),
+            /* surfaceBright     */ juce::Colour(0xffa8a8a8u),
+
+            /* textPrimary       */ juce::Colour(0xff1a1a1au),
+            /* textSecondary     */ juce::Colour(0xff4a4a4au),
+            /* textMuted         */ juce::Colour(0xff7a7a7au),
+            /* textDisabled      */ juce::Colour(0xff9a9a9au),
+
+            /* error             */ juce::Colour(0xffd32f2fu),
+            /* warning           */ juce::Colour(0xffb75800u),  // WCAG AA: 4.76:1 on #ffffff
+
+            /* codeText          */ juce::Colour(0xff2d2d2du),
+            /* codeComment       */ juce::Colour(0xff2e7d32u),
+            /* codeType          */ juce::Colour(0xff00796bu),
+            /* codeString        */ juce::Colour(0xffe65100u),
+            /* codeFunction      */ juce::Colour(0xff5865f5u),
+            /* codeBracket       */ juce::Colour(0xff8a6d00u),
+            /* codeLineNum       */ juce::Colour(0xff555555u),
+        };
+    }
+};
+
+// Build a complete Palette from a foundation + accent family.
+// codeKeyword / codeMacro are optional overrides (defaults are VS Code
+// Dark+ colours); all other syntax tokens come from the foundation so
+// the dark themes share one code-colour spec sheet.
+Palette buildPalette(const Foundation& f,
+                      juce::Colour accent,
+                      juce::Colour accentDim,
+                      juce::Colour accentOn,
+                      juce::Colour codeKeyword = juce::Colour(0xff569cd6u),
+                      juce::Colour codeMacro   = juce::Colour(0xffc586c0u)) noexcept
 {
     return Palette{
-        /* background        */ juce::Colour(0xff0e0e0eu),
-        /* surface           */ juce::Colour(0xff131313u),
-        /* surfaceLow        */ juce::Colour(0xff1c1b1bu),
-        /* surfaceContainer  */ juce::Colour(0xff201f1fu),
-        /* surfaceHigh       */ juce::Colour(0xff2a2a2au),
-        /* surfaceHighest    */ juce::Colour(0xff353534u),
-        /* surfaceBright     */ juce::Colour(0xff3a3939u),
+        /* background        */ f.background,
+        /* surface           */ f.surface,
+        /* surfaceLow        */ f.surfaceLow,
+        /* surfaceContainer  */ f.surfaceContainer,
+        /* surfaceHigh       */ f.surfaceHigh,
+        /* surfaceHighest    */ f.surfaceHighest,
+        /* surfaceBright     */ f.surfaceBright,
 
-        /* textPrimary       */ juce::Colour(0xffe5e2e1u),
-        /* textSecondary     */ juce::Colour(0xffb9ccb2u),
-        /* textMuted         */ juce::Colour(0xff858585u),
-        /* textDisabled      */ juce::Colour(0xff666666u),
+        /* textPrimary       */ f.textPrimary,
+        /* textSecondary     */ f.textSecondary,
+        /* textMuted         */ f.textMuted,
+        /* textDisabled      */ f.textDisabled,
 
-        /* accent            */ juce::Colour(0xff00ff41u),
-        /* accentDim         */ juce::Colour(0xff00e639u),
-        /* accentOn          */ juce::Colour(0xff003907u),
+        /* accent            */ accent,
+        /* accentDim         */ accentDim,
+        /* accentOn          */ accentOn,
 
-        /* error             */ juce::Colour(0xffff5f56u),
-        /* warning           */ juce::Colour(0xffe0a020u),
+        /* error             */ f.error,
+        /* warning           */ f.warning,
 
-        /* codeText          */ juce::Colour(0xffd4d4d4u),
-        /* codeComment       */ juce::Colour(0xff6a9955u),
-        /* codeKeyword       */ juce::Colour(0xff569cd6u),
-        /* codeType          */ juce::Colour(0xff4ec9b0u),
-        /* codeString        */ juce::Colour(0xffce9178u),
-        /* codeFunction      */ juce::Colour(0xffdcdcaau),
-        /* codeMacro         */ juce::Colour(0xffc586c0u),
-        /* codeBracket       */ juce::Colour(0xffffd700u),
-        /* codeLineNum       */ juce::Colour(0xff858585u),
+        /* codeText          */ f.codeText,
+        /* codeComment       */ f.codeComment,
+        /* codeKeyword       */ codeKeyword,
+        /* codeType          */ f.codeType,
+        /* codeString        */ f.codeString,
+        /* codeFunction      */ f.codeFunction,
+        /* codeMacro         */ codeMacro,
+        /* codeBracket       */ f.codeBracket,
+        /* codeLineNum       */ f.codeLineNum,
     };
+}
+
+} // namespace
+
+Palette Palette::defaultPalette() noexcept
+{
+    // Dark foundation + the toned-down brand-green accent family.
+    return buildPalette(
+        Foundation::dark(),
+        /* accent     */ juce::Colour(0xff00cc66u),
+        /* accentDim  */ juce::Colour(0xff00b855u),
+        /* accentOn   */ juce::Colour(0xff003d14u));
 }
 
 // ===========================================================================
@@ -280,149 +508,71 @@ void HathorLookAndFeel::applyPaletteToColours() noexcept
 }
 
 // ===========================================================================
-// Theme registry — five complete themes (§4.1: each defines full token set)
+// Theme registry — five themes derived from a single parameterised palette
+// builder (Agent 2.2).  Each theme is now: foundation + accent family +
+// optional syntax-override pair, with no duplicated literal foundation blocks.
 // ===========================================================================
 
 Palette paletteForTheme(ThemeId id) noexcept
 {
     switch (id)
     {
+        // ---------------------------------------------------------------
+        // Dark — default brand-green accent on the dark foundation.
+        // See Palette::defaultPalette() / design rationale above.
+        // ---------------------------------------------------------------
         case ThemeId::Dark:
             return Palette::defaultPalette();
 
+        // ---------------------------------------------------------------
+        // Purple / Neon — dark foundation + purple accent family.
+        // Only the keyword/macro syntax tokens are overridden to purple
+        // to stay on-theme; everything else is inherited from Foundation::dark().
+        // ---------------------------------------------------------------
         case ThemeId::PurpleNeon:
-            // A complete token set (§4.1): dark foundation with a purple/neon
-            // accent family. No token is left to inherit from the default.
-            return Palette{
-                juce::Colour(0xff0e0e0eu),  // background
-                juce::Colour(0xff131313u),  // surface
-                juce::Colour(0xff1c1b1bu),  // surfaceLow
-                juce::Colour(0xff201f1fu),  // surfaceContainer
-                juce::Colour(0xff2a2a2au),  // surfaceHigh
-                juce::Colour(0xff353534u),  // surfaceHighest
-                juce::Colour(0xff3a3939u),  // surfaceBright
+            return buildPalette(
+                Foundation::dark(),
+                /* accent       */ juce::Colour(0xffb497bdu),
+                /* accentDim    */ juce::Colour(0xffa384acu),
+                /* accentOn     */ juce::Colour(0xff3a1c54u),
+                /* codeKeyword  */ juce::Colour(0xffc678ddu),
+                /* codeMacro    */ juce::Colour(0xffc678ddu));
 
-                juce::Colour(0xffe5e2e1u),  // textPrimary
-                juce::Colour(0xffb9ccb2u),  // textSecondary
-                juce::Colour(0xff858585u),  // textMuted
-                juce::Colour(0xff666666u),  // textDisabled
-
-                juce::Colour(0xffb497bdu),  // accent — muted mauve
-                juce::Colour(0xffa384acu),  // accentDim
-                juce::Colour(0xff3a1c54u),  // accentOn — deep violet (text on accent)
-                juce::Colour(0xffff5f56u),  // error
-                juce::Colour(0xffe0a020u),  // warning
-
-                juce::Colour(0xffd4d4d4u),  // codeText
-                juce::Colour(0xff6a9955u),  // codeComment
-                juce::Colour(0xffc678ddu),  // codeKeyword — purple to match theme
-                juce::Colour(0xff4ec9b0u),  // codeType
-                juce::Colour(0xffce9178u),  // codeString
-                juce::Colour(0xffd4d4d4u),  // codeFunction
-                juce::Colour(0xffc678ddu),  // codeMacro — purple
-                juce::Colour(0xffffd700u),  // codeBracket
-                juce::Colour(0xff858585u),  // codeLineNum
-            };
-
+        // ---------------------------------------------------------------
+        // Capuchin — dark foundation + warm brown accent family.
+        // Accent #8D5524 is a dark brown, so accentOn is a warm cream
+        // (#F5F0E8) to provide WCAG AA text contrast (5.35:1).
+        // ---------------------------------------------------------------
         case ThemeId::Capuchin:
-            // A complete token set: dark foundation with a warm brown
-            // capuchin accent family. No token inherits from the default.
-            return Palette{
-                juce::Colour(0xff0e0e0eu),  // background
-                juce::Colour(0xff131313u),  // surface
-                juce::Colour(0xff1c1b1bu),  // surfaceLow
-                juce::Colour(0xff201f1fu),  // surfaceContainer
-                juce::Colour(0xff2a2a2au),  // surfaceHigh
-                juce::Colour(0xff353534u),  // surfaceHighest
-                juce::Colour(0xff3a3939u),  // surfaceBright
+            return buildPalette(
+                Foundation::dark(),
+                /* accent       */ juce::Colour(0xff8d5524u),
+                /* accentDim    */ juce::Colour(0xff7a4a1du),
+                /* accentOn     */ juce::Colour(0xfff5f0e8u));
 
-                juce::Colour(0xffe5e2e1u),  // textPrimary
-                juce::Colour(0xffb9ccb2u),  // textSecondary
-                juce::Colour(0xff858585u),  // textMuted
-                juce::Colour(0xff666666u),  // textDisabled
-
-                juce::Colour(0xff8d5524u),  // accent — capuchin brown
-                juce::Colour(0xff7a4a1du),  // accentDim
-                juce::Colour(0xff2b1703u),  // accentOn — dark brown (text on accent)
-                juce::Colour(0xffff5f56u),  // error
-                juce::Colour(0xffe0a020u),  // warning
-
-                juce::Colour(0xffd4d4d4u),  // codeText
-                juce::Colour(0xff6a9955u),  // codeComment
-                juce::Colour(0xff569cd6u),  // codeKeyword
-                juce::Colour(0xff4ec9b0u),  // codeType
-                juce::Colour(0xffce9178u),  // codeString
-                juce::Colour(0xffd4d4d4u),  // codeFunction
-                juce::Colour(0xffc586c0u),  // codeMacro
-                juce::Colour(0xffffd700u),  // codeBracket
-                juce::Colour(0xff858585u),  // codeLineNum
-            };
-
+        // ---------------------------------------------------------------
+        // Sand — dark foundation + warm amber accent family.
+        // ---------------------------------------------------------------
         case ThemeId::Sand:
-            // A complete token set: dark foundation with a warm sand/amber
-            // accent family. No token inherits from the default.
-            return Palette{
-                juce::Colour(0xff0e0e0eu),  // background
-                juce::Colour(0xff131313u),  // surface
-                juce::Colour(0xff1c1b1bu),  // surfaceLow
-                juce::Colour(0xff201f1fu),  // surfaceContainer
-                juce::Colour(0xff2a2a2au),  // surfaceHigh
-                juce::Colour(0xff353534u),  // surfaceHighest
-                juce::Colour(0xff3a3939u),  // surfaceBright
+            return buildPalette(
+                Foundation::dark(),
+                /* accent       */ juce::Colour(0xffd9730fu),
+                /* accentDim    */ juce::Colour(0xffbd5e0au),
+                /* accentOn     */ juce::Colour(0xff3a1c03u));
 
-                juce::Colour(0xffe5e2e1u),  // textPrimary
-                juce::Colour(0xffb9ccb2u),  // textSecondary
-                juce::Colour(0xff858585u),  // textMuted
-                juce::Colour(0xff666666u),  // textDisabled
-
-                juce::Colour(0xffd9730fu),  // accent — warm amber/sand
-                juce::Colour(0xffbd5e0au),  // accentDim
-                juce::Colour(0xff3a1c03u),  // accentOn — deep amber (text on accent)
-                juce::Colour(0xffff5f56u),  // error
-                juce::Colour(0xffe0a020u),  // warning
-
-                juce::Colour(0xffd4d4d4u),  // codeText
-                juce::Colour(0xff6a9955u),  // codeComment
-                juce::Colour(0xff569cd6u),  // codeKeyword
-                juce::Colour(0xff4ec9b0u),  // codeType
-                juce::Colour(0xffce9178u),  // codeString
-                juce::Colour(0xffd4d4d4u),  // codeFunction
-                juce::Colour(0xffc586c0u),  // codeMacro
-                juce::Colour(0xffffd700u),  // codeBracket
-                juce::Colour(0xff858585u),  // codeLineNum
-            };
-
+        // ---------------------------------------------------------------
+        // Light — light foundation + forest-green accent family.
+        // All syntax tokens come from Foundation::light(); the light
+        // warning colour (#B75800) was tuned for 4.76:1 on white.
+        // ---------------------------------------------------------------
         case ThemeId::Light:
-            return Palette{
-                juce::Colour(0xffffffffu),  // background
-                juce::Colour(0xfff5f5f5u),  // surface
-                juce::Colour(0xffe8e8e8u),  // surfaceLow
-                juce::Colour(0xffd8d8d8u),  // surfaceContainer
-                juce::Colour(0xffc8c8c8u),  // surfaceHigh
-                juce::Colour(0xffb8b8b8u),  // surfaceHighest
-                juce::Colour(0xffa8a8a8u),  // surfaceBright
-
-                juce::Colour(0xff1a1a1au),  // textPrimary
-                juce::Colour(0xff4a4a4au),  // textSecondary
-                juce::Colour(0xff7a7a7au),  // textMuted
-                juce::Colour(0xff9a9a9au),  // textDisabled
-
-                juce::Colour(0xff006325u),  // accent — forest green
-                juce::Colour(0xff00521cu),  // accentDim
-                juce::Colour(0xffd6f5e3u),  // accentOn — light green (text on accent)
-                juce::Colour(0xffd32f2fu),  // error
-                juce::Colour(0xffed6c00u),  // warning
-
-                juce::Colour(0xff2d2d2du),  // codeText
-                juce::Colour(0xff2e7d32u),  // codeComment
-                juce::Colour(0xff1565c0u),  // codeKeyword
-                juce::Colour(0xff00796bu),  // codeType
-                juce::Colour(0xffe65100u),  // codeString
-                juce::Colour(0xff5865f5u),  // codeFunction
-                juce::Colour(0xffaa00ffu),  // codeMacro
-                juce::Colour(0xff8a6d00u),  // codeBracket — amber (avoids pure yellow on light)
-                juce::Colour(0xff555555u),  // codeLineNum
-            };
+            return buildPalette(
+                Foundation::light(),
+                /* accent       */ juce::Colour(0xff006225u),
+                /* accentDim    */ juce::Colour(0xff00521cu),
+                /* accentOn     */ juce::Colour(0xffd6f5e3u),
+                /* codeKeyword  */ juce::Colour(0xff1565c0u),
+                /* codeMacro    */ juce::Colour(0xffaa00ffu));
     }
 
     return Palette::defaultPalette();
@@ -444,33 +594,19 @@ juce::String themeDisplayName(ThemeId id) noexcept
 const Palette* HathorLookAndFeel::globalPalette_ = nullptr;
 
 // ===========================================================================
-// Font family substitution — intercept all default-font requests
+// getTypefaceForFont — NOT overridden.
+//
+// The previous override hijacked ALL font requests (including sans-serif UI
+// chrome) to JetBrains Mono.  Per Audit §1.2 I6 the global hijack is removed:
+// JetBrains Mono is used only where code is displayed (via getCodeFont()),
+// and Inter (embedded, OFL) is used for all other UI via getUiFont().
+// JUCE's default typeface resolution is allowed to handle fallback for any
+// component that neither calls getUiFont() nor getCodeFont().
 // ===========================================================================
 
-juce::Typeface::Ptr HathorLookAndFeel::getTypefaceForFont(const juce::Font& font)
-{
-    const juce::String family = font.getTypefaceName().trim();
-
-    // Intercept requests for:
-    //   - No specific family (empty / system default sans-serif)
-    //   - The system default monospaced font (e.g. Menlo, Monaco)
-    //   - Explicit "JetBrains Mono" requests
-    if (family.isEmpty()
-        || family == juce::Font::getDefaultSansSerifFontName()
-        || family == juce::Font::getDefaultMonospacedFontName()
-        || family.containsIgnoreCase("jetbrains"))
-    {
-        const int styleFlags = font.getStyleFlags();
-
-        if ((styleFlags & juce::Font::bold) != 0)
-            return boldTypeface();
-
-        return regularTypeface();
-    }
-
-    // For any other family, fall through to the base class.
-    return juce::LookAndFeel_V4::getTypefaceForFont(font);
-}
+// ===========================================================================
+// getTextButtonFont — Inter Medium at ~55% of button height for UI labels
+// ===========================================================================
 
 // ===========================================================================
 // getTextButtonFont — JetBrains Mono Bold for text buttons
@@ -480,8 +616,9 @@ juce::Font HathorLookAndFeel::getTextButtonFont(juce::TextButton& /*button*/,
                                                  int buttonHeight)
 {
     // Use Medium weight at ~55% of button height for label-sized text.
+    // Inter (proportional UI font) — not JetBrains Mono.
     const float h = static_cast<float>(buttonHeight) * 0.55f;
-    return HathorLookAndFeel::fontMedium(juce::jmax(h, 10.0f));
+    return HathorLookAndFeel::uiFontMedium(juce::jmax(h, 10.0f));
 }
 
 // ===========================================================================
@@ -529,13 +666,13 @@ void HathorLookAndFeel::drawButtonText(juce::Graphics& g,
     if (button.getToggleState())
         textCol = p.background; // green bg + dark text when on
 
-    // Get the button's font via the LookAndFeel hook (JetBrains Mono).
+    // Get the button's font via the LookAndFeel hook (Inter UI font).
     juce::Font font = getTextButtonFont(button, button.getHeight());
 
     if (shouldDrawButtonAsHighlighted || shouldDrawButtonAsDown)
-        font = HathorLookAndFeel::fontBold(font.getHeight());
+        font = HathorLookAndFeel::uiFontBold(font.getHeight());
     else
-        font = HathorLookAndFeel::fontRegular(font.getHeight());
+        font = HathorLookAndFeel::uiFontRegular(font.getHeight());
 
     g.setColour(textCol);
     g.setFont(font);

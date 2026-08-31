@@ -51,7 +51,7 @@ void SliderPanel::setupBpmSlider()
     // BPM label (Req 26.1)
     // -----------------------------------------------------------------------
     bpmLabel_.setText("BPM", juce::dontSendNotification);
-    bpmLabel_.setFont(HathorLookAndFeel::fontMedium(
+    bpmLabel_.setFont(HathorLookAndFeel::uiFontMedium(
         HathorLookAndFeel::Typography::labelMd));
     bpmLabel_.setColour(juce::Label::textColourId,
                         palette.textSecondary);
@@ -97,7 +97,7 @@ void SliderPanel::setupGainSlider()
     // Gain label (Req 26.1)
     // -----------------------------------------------------------------------
     gainLabel_.setText("Gain", juce::dontSendNotification);
-    gainLabel_.setFont(HathorLookAndFeel::fontMedium(
+    gainLabel_.setFont(HathorLookAndFeel::uiFontMedium(
         HathorLookAndFeel::Typography::labelMd));
     gainLabel_.setColour(juce::Label::textColourId,
                          palette.textSecondary);

@@ -28,14 +28,14 @@ PeekDefinitionDialog::PeekDefinitionDialog(std::vector<PeekDefinitionEntry> entr
     // Title
     titleLabel_ = std::make_unique<juce::Label>();
     titleLabel_->setText("Peek Definition", juce::dontSendNotification);
-    titleLabel_->setFont(HathorLookAndFeel::fontSemiBold(18.0f));
+    titleLabel_->setFont(HathorLookAndFeel::uiFontSemiBold(18.0f));
     titleLabel_->setColour(juce::Label::textColourId, palette.textPrimary);
     titleLabel_->setJustificationType(juce::Justification::centredLeft);
     addAndMakeVisible(titleLabel_.get());
 
     // Location label (file : line)
     locationLabel_ = std::make_unique<juce::Label>();
-    locationLabel_->setFont(HathorLookAndFeel::fontMedium(12.0f));
+    locationLabel_->setFont(HathorLookAndFeel::uiFontMedium(12.0f));
     locationLabel_->setColour(juce::Label::textColourId, palette.textSecondary);
     locationLabel_->setJustificationType(juce::Justification::centredLeft);
     addAndMakeVisible(locationLabel_.get());
@@ -199,7 +199,7 @@ void PeekDefinitionDialog::paintListBoxItem(int row, juce::Graphics& g,
     juce::String text = e.fileLabel + " : line " + juce::String(e.line1);
 
     g.setColour(isSelected ? palette.accent : palette.textPrimary);
-    g.setFont(HathorLookAndFeel::fontMedium(13.0f));
+    g.setFont(HathorLookAndFeel::uiFontMedium(13.0f));
     g.drawFittedText(text, bounds.reduced(8, 2), juce::Justification::centredLeft, 1);
 }
 

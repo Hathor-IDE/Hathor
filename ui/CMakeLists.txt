@@ -265,7 +265,7 @@ target_compile_features(hathor-ui PRIVATE cxx_std_20)
 target_compile_options(hathor-ui PRIVATE -Wall -Wextra -Werror)
 
 # ---------------------------------------------------------------------------
-# Embedded font resources (Req 5) — JetBrains Mono, 4 weights
+# Embedded font resources (Req 5) — JetBrains Mono (code) + Inter (UI chrome, OFL)
 # ---------------------------------------------------------------------------
 juce_add_binary_data(hathor_font_data
     SOURCES
@@ -273,6 +273,11 @@ juce_add_binary_data(hathor_font_data
         ${CMAKE_CURRENT_SOURCE_DIR}/resources/JetBrainsMono-Medium.ttf
         ${CMAKE_CURRENT_SOURCE_DIR}/resources/JetBrainsMono-SemiBold.ttf
         ${CMAKE_CURRENT_SOURCE_DIR}/resources/JetBrainsMono-Bold.ttf
+        ${CMAKE_CURRENT_SOURCE_DIR}/resources/Inter-Regular.ttf
+        ${CMAKE_CURRENT_SOURCE_DIR}/resources/Inter-Medium.ttf
+        ${CMAKE_CURRENT_SOURCE_DIR}/resources/Inter-SemiBold.ttf
+        ${CMAKE_CURRENT_SOURCE_DIR}/resources/Inter-Bold.ttf
+        ${CMAKE_CURRENT_SOURCE_DIR}/resources/Inter-OFL.txt
 )
 
 juce_add_binary_data(hathor_icon_data

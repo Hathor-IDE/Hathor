@@ -9,6 +9,7 @@
 
 #include "BreadcrumbsBar.hpp"
 #include "IconLibrary.hpp"
+#include "HathorLookAndFeel.hpp"
 
 namespace hathor::ui {
 
@@ -53,7 +54,8 @@ void BreadcrumbsBar::resized()
 
     for (auto& crumb : crumbs_)
     {
-        juce::Font font(juce::FontOptions{}.withHeight(14.0f));
+        juce::Font font(HathorLookAndFeel::getUiFont(14.0f));
+
         int w = static_cast<int>(juce::GlyphArrangement::getStringWidth(font, crumb.label)) + 12;
 
         crumb.bounds = juce::Rectangle<int>(x, y, w, 16);
@@ -63,7 +65,7 @@ void BreadcrumbsBar::resized()
 
 void BreadcrumbsBar::paint(juce::Graphics& g)
 {
-    juce::Font font(juce::FontOptions{}.withHeight(14.0f));
+    juce::Font font(HathorLookAndFeel::getUiFont(14.0f));
 
     // Background
     g.fillAll(juce::Colours::darkgrey.darker(0.6f));

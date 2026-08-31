@@ -122,7 +122,7 @@ void PetWidget::paint(juce::Graphics& g)
         case Status::Loading:
         {
             g.setColour(palette.textMuted);
-            g.setFont(HathorLookAndFeel::fontMedium(11.0f));
+            g.setFont(HathorLookAndFeel::uiFontMedium(11.0f));
             g.drawText("Loading\xE2\x80\xA6", getLocalBounds(),
                        juce::Justification::centred);
             return;
@@ -162,7 +162,7 @@ void PetWidget::paint(juce::Graphics& g)
             if (!snapshot_.submitter.empty())
                 credit = credit + " \xC2\xB7 " + juce::String(snapshot_.submitter);
             g.setColour(palette.textMuted);
-            g.setFont(HathorLookAndFeel::fontRegular(9.0f));
+            g.setFont(HathorLookAndFeel::uiFontRegular(9.0f));
             g.drawFittedText(credit,
                              juce::Rectangle<int>(0, getHeight() - kCaptionHeight,
                                                   getWidth(), kCaptionHeight),
@@ -185,7 +185,7 @@ void PetWidget::drawNotice(juce::Graphics& g, const char* glyph, juce::Colour co
     g.fillEllipse(bounds.getCentreX() - r, bounds.getCentreY() - r,
                   2.0f * r, 2.0f * r);
     g.setColour(palette.background);
-    g.setFont(HathorLookAndFeel::fontSemiBold(13.0f));
+    g.setFont(HathorLookAndFeel::uiFontSemiBold(13.0f));
     g.drawText(juce::String(glyph), juce::Rectangle<int>(
                    bounds.getCentreX() - static_cast<int>(r),
                    bounds.getCentreY() - static_cast<int>(r),

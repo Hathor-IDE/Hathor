@@ -31,7 +31,7 @@ MessageBubble::MessageBubble(const juce::String& text, Role role)
     label_.setScrollbarsShown(false);
     label_.setCaretVisible(false);
     const auto& palette = HathorLookAndFeel::fromComponent(*this).getPalette();
-    label_.setFont(HathorLookAndFeel::fontRegular(13.0f));
+    label_.setFont(HathorLookAndFeel::uiFontRegular(13.0f));
     label_.setColour(juce::TextEditor::backgroundColourId,
                      juce::Colour(0));
     label_.setColour(juce::TextEditor::outlineColourId,
@@ -64,7 +64,7 @@ int MessageBubble::preferredHeight(int width) const
     // Use a temporary AttributedString to measure line wrapping.
     juce::AttributedString as;
     const auto& palette = HathorLookAndFeel::fromComponent(*this).getPalette();
-    as.append(label_.getText(), HathorLookAndFeel::fontRegular(13.0f), palette.textPrimary);
+    as.append(label_.getText(), HathorLookAndFeel::uiFontRegular(13.0f), palette.textPrimary);
     as.setWordWrap(juce::AttributedString::byWord);
     as.setJustification(juce::Justification::topLeft);
 

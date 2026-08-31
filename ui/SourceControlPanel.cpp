@@ -139,7 +139,7 @@ void SourceControlPanel::createComponents()
     commitMessage_ = std::make_unique<juce::TextEditor>();
     commitMessage_->setMultiLine(true, true);
     commitMessage_->setReadOnly(false);
-    commitMessage_->setFont(HathorLookAndFeel::fontRegular(13.0f));
+    commitMessage_->setFont(HathorLookAndFeel::uiFontRegular(13.0f));
     commitMessage_->setColour(juce::TextEditor::backgroundColourId, palette.surfaceLow);
     commitMessage_->setColour(juce::TextEditor::textColourId, palette.textPrimary);
     commitMessage_->addListener(this);
@@ -182,11 +182,11 @@ void SourceControlPanel::createComponents()
     addAndMakeVisible(branchCombo_.get());
 
     statusLabel_ = std::make_unique<juce::Label>();
-    statusLabel_->setFont(HathorLookAndFeel::fontMedium(11.0f));
+    statusLabel_->setFont(HathorLookAndFeel::uiFontMedium(11.0f));
     addAndMakeVisible(statusLabel_.get());
 
     branchLabel_ = std::make_unique<juce::Label>();
-    branchLabel_->setFont(HathorLookAndFeel::fontMedium(11.0f));
+    branchLabel_->setFont(HathorLookAndFeel::uiFontMedium(11.0f));
     addAndMakeVisible(branchLabel_.get());
 
     // History tab components
@@ -211,7 +211,7 @@ void SourceControlPanel::createComponents()
 
     commitDetail_ = std::make_unique<juce::TextEditor>();
     commitDetail_->setReadOnly(true);
-    commitDetail_->setFont(HathorLookAndFeel::fontRegular(11.0f));
+    commitDetail_->setFont(HathorLookAndFeel::uiFontRegular(11.0f));
     addAndMakeVisible(commitDetail_.get());
 
     historyDiffView_ = std::make_unique<GitDiffView>();
@@ -693,7 +693,7 @@ void SourceControlPanel::paint(juce::Graphics& g)
         g.fillRect(tb.bounds);
 
         g.setColour(isActive ? palette.textPrimary : palette.textSecondary);
-        g.setFont(HathorLookAndFeel::fontMedium(HathorLookAndFeel::Typography::labelMd));
+        g.setFont(HathorLookAndFeel::uiFontMedium(HathorLookAndFeel::Typography::labelMd));
         g.drawText(tb.label, tb.bounds.reduced(8, 4),
                    juce::Justification::centred, false);
 
@@ -772,14 +772,14 @@ void SourceControlPanel::paintListBoxItem(int row, juce::Graphics& g,
         // Status icon
         const juce::Colour statusCol = item.statusColor(palette);
         g.setColour(statusCol);
-        g.setFont(HathorLookAndFeel::fontBold(12.0f));
+        g.setFont(HathorLookAndFeel::uiFontBold(12.0f));
         juce::String statusStr(item.statusText());
         g.drawText(statusStr, 4, 2, 24, height - 4,
                    juce::Justification::centred, false);
 
         // File path
         g.setColour(palette.textPrimary);
-        g.setFont(HathorLookAndFeel::fontRegular(12.0f));
+        g.setFont(HathorLookAndFeel::uiFontRegular(12.0f));
         g.drawText(juce::String(item.displayName),
                    32, 2, width - 36, height - 4,
                    juce::Justification::centredLeft, false);
@@ -798,7 +798,7 @@ void SourceControlPanel::paintListBoxItem(int row, juce::Graphics& g,
         g.fillRect(0, 0, width, height);
 
         g.setColour(palette.textPrimary);
-        g.setFont(HathorLookAndFeel::fontRegular(12.0f));
+        g.setFont(HathorLookAndFeel::uiFontRegular(12.0f));
 
         juce::String line = commit.shortSha;
         line << "  " << commit.subject;
@@ -814,7 +814,7 @@ void SourceControlPanel::paintListBoxItem(int row, juce::Graphics& g,
                 authorDate << " · " << t.substr(0, 10).c_str();
         }
         g.setColour(palette.textSecondary);
-        g.setFont(HathorLookAndFeel::fontRegular(10.0f));
+        g.setFont(HathorLookAndFeel::uiFontRegular(10.0f));
         g.drawText(authorDate, 32, 2, width - 36, height - 4,
                    juce::Justification::bottomLeft, false);
     }

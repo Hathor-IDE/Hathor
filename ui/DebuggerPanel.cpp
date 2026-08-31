@@ -39,7 +39,7 @@ DebuggerPanel::DebuggerPanel()
     auto makeEditor = [pal](const juce::String& placeholder)
     {
         auto ed = std::make_unique<juce::TextEditor>();
-        ed->setFont(HathorLookAndFeel::fontRegular(11.0f));
+        ed->setFont(HathorLookAndFeel::uiFontRegular(11.0f));
         ed->setJustification(juce::Justification::centredLeft);
         ed->setTextToShowWhenEmpty(placeholder, pal.textDisabled);
         ed->setColour(juce::TextEditor::outlineColourId, pal.surfaceHighest);
@@ -49,7 +49,7 @@ DebuggerPanel::DebuggerPanel()
     auto makeView = [pal](const juce::String& placeholder)
     {
         auto ed = std::make_unique<juce::TextEditor>();
-        ed->setFont(HathorLookAndFeel::fontRegular(11.0f));
+        ed->setFont(HathorLookAndFeel::uiFontRegular(11.0f));
         ed->setMultiLine(true);
         ed->setReadOnly(true);
         ed->setScrollbarsShown(true);
@@ -59,7 +59,7 @@ DebuggerPanel::DebuggerPanel()
     };
 
     statusLabel_ = std::make_unique<juce::Label>();
-    statusLabel_->setFont(HathorLookAndFeel::fontRegular(11.0f));
+    statusLabel_->setFont(HathorLookAndFeel::uiFontRegular(11.0f));
     addAndMakeVisible(*statusLabel_);
 
     exeField_    = makeEditor("Executable path (e.g. /path/to/hathor-ui)");
@@ -69,11 +69,11 @@ DebuggerPanel::DebuggerPanel()
     watchField_  = makeEditor("Watch expression (e.g. myVar.field)");
 
     stackTitle_  = std::make_unique<juce::Label>("stack", "Call Stack");
-    stackTitle_->setFont(HathorLookAndFeel::fontMedium(10.0f));
+    stackTitle_->setFont(HathorLookAndFeel::uiFontMedium(10.0f));
     localsTitle_ = std::make_unique<juce::Label>("locals", "Locals");
-    localsTitle_->setFont(HathorLookAndFeel::fontMedium(10.0f));
+    localsTitle_->setFont(HathorLookAndFeel::uiFontMedium(10.0f));
     watchesTitle_ = std::make_unique<juce::Label>("watches", "Watches");
-    watchesTitle_->setFont(HathorLookAndFeel::fontMedium(10.0f));
+    watchesTitle_->setFont(HathorLookAndFeel::uiFontMedium(10.0f));
 
     stackView_   = makeView("Stopped frames appear here");
     localsView_  = makeView("Local variables at the stop point");

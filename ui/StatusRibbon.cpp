@@ -151,7 +151,7 @@ void StatusRibbon::paint(juce::Graphics& g)
     g.setColour(palette.surfaceHighest);
     g.fillRect(0, 0, getWidth(), 1);
 
-    g.setFont(HathorLookAndFeel::fontMedium(HathorLookAndFeel::Typography::labelMd));
+    g.setFont(HathorLookAndFeel::uiFontMedium(HathorLookAndFeel::Typography::labelMd));
 
     // --- Error indicator (Lucide triangle-alert) ---
     {
@@ -265,7 +265,7 @@ void StatusRibbon::paint(juce::Graphics& g)
     if (infoCount_ > 0)
     {
         g.setColour(palette.textMuted);
-        g.setFont(HathorLookAndFeel::fontRegular(11.0f));
+        g.setFont(HathorLookAndFeel::uiFontRegular(11.0f));
         g.drawText(juce::String(infoCount_) + " info",
                    juce::Rectangle<int>(std::max(0, gainBox_.bounds.getX() - 80), gainBox_.bounds.getY(),
                                         76, gainBox_.bounds.getHeight()),

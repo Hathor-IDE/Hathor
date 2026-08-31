@@ -68,7 +68,7 @@ void SongTreeItem::paintItem(juce::Graphics& g, int width, int height)
     const juce::File f(juce::String(node_.path.string()));
     const juce::String fileName = f.getFileName();
     g.setColour(textCol);
-    g.setFont(HathorLookAndFeel::fontRegular(13.0f));
+    g.setFont(HathorLookAndFeel::uiFontRegular(13.0f));
     g.drawText(fileName, textX, 0, textW, height,
                juce::Justification::centredLeft, true);
 }
@@ -122,7 +122,7 @@ void AssetTreeItem::paintItem(juce::Graphics& g, int width, int height)
 
     // Draw the logical instrument name (stem, not ".ck" / ".wav")
     g.setColour(textCol);
-    g.setFont(HathorLookAndFeel::fontRegular(13.0f));
+    g.setFont(HathorLookAndFeel::uiFontRegular(13.0f));
     g.drawText(juce::String(node_.name), textX, 0, textW, height,
                juce::Justification::centredLeft, true);
 
@@ -161,7 +161,7 @@ void AssetTreeItem::paintItem(juce::Graphics& g, int width, int height)
     if (!suffix.isEmpty())
     {
         g.setColour(mutedCol);
-        g.setFont(HathorLookAndFeel::fontRegular(11.0f));
+        g.setFont(HathorLookAndFeel::uiFontRegular(11.0f));
         g.drawText(suffix, textX, 0, textW, height,
                    juce::Justification::centredRight, true);
     }
@@ -271,7 +271,7 @@ void FolderTreeItem::paintItem(juce::Graphics& g, int width, int height)
 
     // Draw folder name
     g.setColour(textCol);
-    g.setFont(HathorLookAndFeel::fontRegular(13.0f));
+    g.setFont(HathorLookAndFeel::uiFontRegular(13.0f));
     g.drawText(juce::String(node_.name), textX, 0, textW, height,
                juce::Justification::centredLeft, true);
 
@@ -284,7 +284,7 @@ void FolderTreeItem::paintItem(juce::Graphics& g, int width, int height)
     {
         const juce::String suffix = "(" + juce::String(childCount) + ")";
         g.setColour(mutedCol);
-        g.setFont(HathorLookAndFeel::fontRegular(11.0f));
+        g.setFont(HathorLookAndFeel::uiFontRegular(11.0f));
         g.drawText(suffix, textX, 0, textW, height,
                    juce::Justification::centredRight, true);
     }

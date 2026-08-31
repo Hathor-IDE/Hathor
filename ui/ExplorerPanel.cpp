@@ -30,7 +30,7 @@ ExplorerPanel::ExplorerPanel()
 
     // Header label — label-md: 11px, Medium 500, letter-spacing 0.05em (mockup)
     headerLabel_.setText("EXPLORER", juce::dontSendNotification);
-    headerLabel_.setFont(HathorLookAndFeel::fontMedium(11.0f));
+    headerLabel_.setFont(HathorLookAndFeel::uiFontMedium(11.0f));
     headerLabel_.setColour(juce::Label::textColourId, palette.textSecondary);
     headerLabel_.setJustificationType(juce::Justification::centredLeft);
     addAndMakeVisible(headerLabel_);

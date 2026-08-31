@@ -33,8 +33,9 @@ void LspHoverHandler::showHover(const lsp::Hover& content,
     anchor_ = anchor;
     visible_ = true;
 
+    // Inter UI font for hover tooltip prose (proportional).
     juce::FontOptions fontOpts;
-    fontOpts = fontOpts.withName(juce::Font::getDefaultSansSerifFontName());
+    fontOpts = fontOpts.withTypeface(HathorLookAndFeel::interRegularTypeface());
     fontOpts = fontOpts.withHeight(12.0f);
     juce::Font font(fontOpts);
 
@@ -97,8 +98,9 @@ void LspHoverHandler::paint(juce::Graphics& g)
     g.setColour(palette.accent.withAlpha(0.5f));
     g.drawRect(getLocalBounds(), 1);
 
+    // Inter UI font for hover tooltip (proportional).
     juce::FontOptions fontOpts;
-    fontOpts = fontOpts.withName(juce::Font::getDefaultMonospacedFontName());
+    fontOpts = fontOpts.withTypeface(HathorLookAndFeel::interRegularTypeface());
     fontOpts = fontOpts.withHeight(12.0f);
     juce::Font font(fontOpts);
 

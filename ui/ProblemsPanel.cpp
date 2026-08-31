@@ -69,7 +69,7 @@ ProblemsPanel::ProblemsPanel(hathor::control::DiagnosticRegistry* registry)
 
     hintLabel_ = std::make_unique<juce::Label>();
     hintLabel_->setText("Problems", juce::dontSendNotification);
-    hintLabel_->setFont(HathorLookAndFeel::fontMedium(
+    hintLabel_->setFont(HathorLookAndFeel::uiFontMedium(
         HathorLookAndFeel::Typography::labelMd));
     hintLabel_->setColour(juce::Label::textColourId, palette.textSecondary);
     hintLabel_->setJustificationType(juce::Justification::centredLeft);
@@ -410,7 +410,7 @@ void ProblemsPanel::paintDiagnosticRow(juce::Graphics& g, const ProblemRow& row,
 
     // Source label (narrow, dimmed)
     g.setColour(palette.textMuted);
-    g.setFont(HathorLookAndFeel::fontRegular(12.0f));
+    g.setFont(HathorLookAndFeel::uiFontRegular(12.0f));
     juce::String srcText = juce::String(row.sourceLabel.c_str());
     g.drawText(srcText, juce::Rectangle<int>(x, 0, 130, height),
                juce::Justification::centredLeft, false);
@@ -469,7 +469,7 @@ void ProblemsPanel::paintFileHeader(juce::Graphics& g, const ProblemRow& row,
 
     // Filename
     g.setColour(palette.textPrimary);
-    g.setFont(HathorLookAndFeel::fontMedium(13.0f));
+    g.setFont(HathorLookAndFeel::uiFontMedium(13.0f));
     g.drawText(juce::String(row.displayPath.c_str()),
                juce::Rectangle<int>(x, 0, width - x - 40, height),
                juce::Justification::centredLeft, false);
@@ -538,7 +538,7 @@ void ProblemsPanel::paint(juce::Graphics& g)
 
     // Summary text at the bottom
     g.setColour(palette.textSecondary);
-    g.setFont(HathorLookAndFeel::fontRegular(12.0f));
+    g.setFont(HathorLookAndFeel::uiFontRegular(12.0f));
     g.drawText(buildSummaryText(), kMargin, getHeight() - 20, getWidth() - kMargin * 2, 18,
                juce::Justification::centredLeft, false);
 }
