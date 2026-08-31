@@ -26,10 +26,12 @@ namespace hathor::ui {
 
 SettingsComponent::SettingsComponent(juce::ApplicationProperties* props,
                                        AudioEngineFacade* audio,
-                                       PetdexManifestService* petdex)
+                                       PetdexManifestService* petdex,
+                                       AgentRegistry* registry)
     : appProperties_(props)
     , audioEngine_(audio)
     , petdexService_(petdex)
+    , agentRegistry_(registry)
 {
     setInterceptsMouseClicks(true, true);
 
