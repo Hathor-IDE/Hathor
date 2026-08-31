@@ -478,6 +478,7 @@ void SettingsComponent::buildAgentSection(const std::string& hathorMcpPath)
     agentPathEditor_.setBounds(controlX, y, controlW, kControlHeight);
     agentPathEditor_.setText(juce::String(pending_.agentExePath), juce::dontSendNotification);
     agentPathEditor_.addListener(this);
+    agentPathEditor_.setVisible(false);
     contentPanel_->addAndMakeVisible(agentPathEditor_);
 
     y += kControlHeight + 4;
@@ -1334,6 +1335,9 @@ void SettingsComponent::resetToCommitted()
 
     agentPathEditor_.setText(juce::String(pending_.agentExePath),
                              juce::dontSendNotification);
+    agentArgsEditor_.setText(juce::String(pending_.agentArgs),
+                             juce::dontSendNotification);
+    refreshAgentPresetCombo();
 
     // Restore the committed pet selection (by stable slug) — D1.
     selectPetInCombo(pending_.petSelection);
@@ -1499,6 +1503,246 @@ bool SettingsComponent::validateGhostUrls() const
         if (! hathor::lsp::GhostProviderResolver::isValidGhostUrl(url))
             return false;
     return true;
+}
+
+// ===========================================================================
+// A2: Agent / ACP section — preset dropdown, Detect, Browse, resolve
+// ===========================================================================
+
+void SettingsComponent::populateAgentPresetCombo() noexcept
+{
+    agentPresetCombo_.clear(juce::dontSendNotification);
+
+    if (agentRegistry_ == nullptr)
+    {
+        agentPresetCombo_.addItem("(no registry)", 1);
+        agentPresetCombo_.setSelectedId(0, juce::dontSendNotification);
+        agentPresetCombo_.setEnabled(false);
+        return;
+    }
+
+    int id = 1;
+    for (const auto& preset : agentRegistry_->presets())
+    {
+        agentPresetCombo_.addItem(preset.name, id);
+        ++id;
+    }
+    agentPresetCombo_.setEnabled(true);
+}
+
+void SettingsComponent::refreshAgentPresetCombo() noexcept
+{
+    agentPresetCombo_.setSelectedId(0, juce::dontSendNotification);
+
+    if (agentRegistry_ == nullptr)
+    {
+        agentPathEditor_.setVisible(false);
+        agentArgsEditor_.setVisible(false);
+        agentStatusLabel_.setText("", juce::dontSendNotification);
+        return;
+    }
+
+    // Backward-compat: if no preset id was persisted but an agentExePath was,
+    // treat it as a custom path.
+    if (pending_.agentPresetId.empty() && !pending_.agentExePath.empty())
+        pending_.agentPresetId = "__custom__";
+
+    const auto& presets = agentRegistry_->presets();
+    int matchId = 0;
+    for (size_t i = 0; i < presets.size(); ++i)
+    {
+        if (presets[i].id == pending_.agentPresetId)
+        {
+            matchId = static_cast<int>(i) + 1;
+            break;
+        }
+    }
+
+    if (matchId > 0)
+        agentPresetCombo_.setSelectedId(matchId, juce::dontSendNotification);
+    else if (!presets.empty())
+        agentPresetCombo_.setSelectedId(1, juce::dontSendNotification);
+
+    // Show/hide custom path field for "__custom__"
+    const bool showCustom = (matchId > 0 && matchId <= static_cast<int>(presets.size())
+                             && presets[static_cast<size_t>(matchId - 1)].id == "__custom__");
+    agentPathEditor_.setVisible(showCustom);
+    agentArgsEditor_.setVisible(true);
+
+    // Update status label
+    if (pending_.agentPresetId == "__custom__")
+    {
+        agentStatusLabel_.setText(pending_.agentExePath.empty()
+                                      ? "(no path set)"
+                                      : juce::String(pending_.agentExePath),
+                                  juce::dontSendNotification);
+    }
+    else if (!pending_.agentPresetId.empty())
+    {
+        const auto* preset = agentRegistry_->findById(pending_.agentPresetId);
+        if (preset != nullptr && !preset->argv.empty())
+        {
+            const auto found = AgentRegistry::findOnPath(preset->argv.front());
+            if (found.has_value())
+                agentStatusLabel_.setText("(found on PATH)", juce::dontSendNotification);
+            else
+                agentStatusLabel_.setText("(not found on PATH)", juce::dontSendNotification);
+        }
+    }
+    else
+    {
+        agentStatusLabel_.setText("", juce::dontSendNotification);
+    }
+}
+
+void SettingsComponent::onAgentPresetComboChanged()
+{
+    const int itemId = agentPresetCombo_.getSelectedId();
+    if (itemId <= 0 || agentRegistry_ == nullptr)
+        return;
+
+    const auto& presets = agentRegistry_->presets();
+    const size_t idx = static_cast<size_t>(itemId - 1);
+    if (idx >= presets.size())
+        return;
+
+    const auto& preset = presets[idx];
+    pending_.agentPresetId = preset.id;
+
+    if (preset.id == "__custom__")
+    {
+        // Custom: show path editor, keep existing custom path/args
+        agentPathEditor_.setVisible(true);
+        agentArgsEditor_.setVisible(true);
+        agentPathEditor_.setText(juce::String(pending_.agentExePath), juce::dontSendNotification);
+    }
+    else
+    {
+        // Preset selected: resolve path via PATH, clear custom path
+        agentPathEditor_.setVisible(false);
+        agentArgsEditor_.setVisible(true);
+
+        // Set the default args from the preset (if no custom args were set)
+        if (pending_.agentArgs.empty() && preset.argv.size() > 1)
+        {
+            std::string args;
+            for (size_t i = 1; i < preset.argv.size(); ++i)
+            {
+                if (!args.empty())
+                    args.push_back(' ');
+                args += preset.argv[i];
+            }
+            agentArgsEditor_.setText(juce::String(args), juce::dontSendNotification);
+            pending_.agentArgs = args;
+        }
+    }
+
+    refreshAgentPresetCombo();
+    updateDirtyFlag();
+}
+
+void SettingsComponent::detectAgentOnPath() noexcept
+{
+    if (agentRegistry_ == nullptr)
+        return;
+
+    const auto& presets = agentRegistry_->presets();
+    int firstFoundId = 0;
+    std::string foundInfo;
+
+    for (size_t i = 0; i < presets.size(); ++i)
+    {
+        if (presets[i].id == "__custom__" || presets[i].argv.empty())
+            continue;
+
+        const auto found = AgentRegistry::findOnPath(presets[i].argv.front());
+        if (found.has_value())
+        {
+            if (firstFoundId == 0)
+            {
+                firstFoundId = static_cast<int>(i) + 1;
+                foundInfo = presets[i].name + " (" + *found + ")";
+            }
+        }
+    }
+
+    if (firstFoundId > 0)
+    {
+        agentPresetCombo_.setSelectedId(firstFoundId);
+        agentStatusLabel_.setText(juce::String(foundInfo), juce::dontSendNotification);
+    }
+    else
+    {
+        agentStatusLabel_.setText("(none found on PATH)", juce::dontSendNotification);
+    }
+}
+
+void SettingsComponent::browseForAgentExe()
+{
+    auto chooser = std::make_shared<juce::FileChooser>(
+        "Select an ACP agent executable",
+        juce::File(pending_.agentExePath.empty()
+                       ? juce::File::getSpecialLocation(juce::File::userHomeDirectory)
+                       : juce::File(pending_.agentExePath)),
+        juce::String());
+
+    chooser->launchAsync(
+        juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
+        [this, chooser](const juce::FileChooser& fc)
+        {
+            const juce::File chosen = fc.getResult();
+            if (chosen.getFullPathName().isNotEmpty() && chosen.exists())
+            {
+                const juce::String path = chosen.getFullPathName();
+                pending_.agentExePath = path.toStdString();
+                pending_.agentPresetId = "__custom__";
+                pending_.agentArgs.clear();
+                agentPathEditor_.setText(path, juce::dontSendNotification);
+                agentPathEditor_.setVisible(true);
+                agentArgsEditor_.setVisible(true);
+                agentStatusLabel_.setText(path, juce::dontSendNotification);
+                // "__custom__" is always the first preset (id=1)
+                agentPresetCombo_.setSelectedId(1, juce::dontSendNotification);
+                updateDirtyFlag();
+            }
+        });
+}
+
+std::string SettingsComponent::resolveAgentCommand() const noexcept
+{
+    if (agentRegistry_ == nullptr)
+    {
+        // Fall back to the raw path field (backward-compat when no registry)
+        return pending_.agentExePath;
+    }
+
+    const auto* preset = agentRegistry_->findById(pending_.agentPresetId);
+    if (preset == nullptr || preset->argv.empty())
+    {
+        // "__custom__" or no preset — use the raw path
+        return pending_.agentExePath;
+    }
+
+    // Resolve the executable via PATH
+    const auto exePath = AgentRegistry::findOnPath(preset->argv.front());
+    if (!exePath.has_value())
+        return ""; // not found — MainWindow will handle the empty case
+
+    // Build command: resolved exe + preset args + user args
+    std::string result = *exePath;
+    // Add preset default args (argv[1..])
+    for (size_t i = 1; i < preset->argv.size(); ++i)
+    {
+        result.push_back(' ');
+        result += preset->argv[i];
+    }
+    // Add user-supplied extra args
+    if (!pending_.agentArgs.empty())
+    {
+        result.push_back(' ');
+        result += pending_.agentArgs;
+    }
+    return result;
 }
 
 } // namespace hathor::ui

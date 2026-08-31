@@ -239,12 +239,28 @@ void AcpAgentSession::respondPermission(int requestId, std::string optionId)
         answeredPermissions_.insert(requestId);
     }
 
+    // ACP v1 spec: RequestPermissionResponse.outcome is a discriminated union.
+    //   - "selected" → {"outcome": "selected", "optionId": "<id>"}
+    //   - "cancelled" → {"outcome": "cancelled"}
+    // The auto-cancel timer passes "cancelled" as optionId; user picks pass
+    // the chosen option's id. Both paths produce the spec-correct nested form.
+    nlohmann::json outcome;
+    if (optionId == "cancelled")
+    {
+        outcome = {{"outcome", "cancelled"}};
+    }
+    else
+    {
+        outcome = {
+            {"outcome",    "selected"},
+            {"optionId",   std::move(optionId)}
+        };
+    }
+
     nlohmann::json resp = {
         {"jsonrpc", "2.0"},
         {"id",      requestId},
-        {"result",  {
-            {"outcome",  optionId}
-        }}
+        {"result",  {{"outcome", std::move(outcome)}}}
     };
 
     enqueueRaw(std::move(resp));
@@ -566,8 +582,13 @@ void AcpAgentSession::senderLoop(const std::string& agentExePath,
         initId,
         "initialize",
         {
-            {"protocolVersion", kAcpProtocolVersion},
-            {"clientInfo", {{"name", "hathor"}, {"version", "2.0.0"}}}
+            {"protocolVersion",   kAcpProtocolVersion},
+            {"clientCapabilities", {
+                {"fs",       {{"readTextFile", false}, {"writeTextFile", false}}},
+                {"terminal",  false},
+                {"elicitation", nullptr}
+            }},
+            {"clientInfo",        {{"name", "hathor"}, {"version", "2.0.0"}}}
         },
         timeoutMs);
 
@@ -880,9 +901,19 @@ void AcpAgentSession::handleNotification(const nlohmann::json& msg)
     if (sessionUpdate == "agent_message_chunk")
     {
         // Extract content.text and marshal to message thread (Req 32.5).
+        // Per ACP v1 spec, the content is a ContentBlock discriminated by "type".
+        // We only surface text blocks; images/audio/etc are ignored (future extension).
         std::string text;
-        try { text = params["update"]["content"]["text"].get<std::string>(); }
+        try
+        {
+            const auto& content = params["update"]["content"];
+            if (content.value("type", "text") == "text")
+                text = content["text"].get<std::string>();
+        }
         catch (...) { return; }
+
+        if (text.empty())
+            return;
 
         OnAgentMessageChunkFn cb = onAgentMessageChunk_;
         if (cb)
@@ -990,19 +1021,11 @@ void AcpAgentSession::startPermissionTimer(int requestId)
 
             if (!alreadyAnswered)
             {
-                // Mark as answered to prevent respondPermission() double-responding.
-                {
-                    std::lock_guard<std::mutex> lk(permissionMutex_);
-                    answeredPermissions_.insert(requestId);
-                }
-
-                nlohmann::json resp = {
-                    {"jsonrpc", "2.0"},
-                    {"id",      requestId},
-                    {"result",  {{"outcome", "cancelled"}}}
-                };
-
-                enqueueRaw(std::move(resp));
+                // Use respondPermission("cancelled") so the outcome is formatted
+                // per the ACP spec: {"outcome": {"outcome": "cancelled"}}.
+                // Mark as answered first to prevent respondPermission() from
+                // double-responding if the user clicks in the same window.
+                respondPermission(requestId, "cancelled");
             }
         });
 }

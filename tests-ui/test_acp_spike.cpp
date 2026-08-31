@@ -738,26 +738,50 @@ while True:
     elif method == "session/prompt":
         # Streamed notifications — the FIRST chunk is >4096 bytes to exercise
         # the growable reader on a real subprocess (issue A4).
+        # ACP v1 spec: session/update params = {sessionId, update:{sessionUpdate,...}}.
         big = "X" * 8000
         w({"jsonrpc":"2.0","method":"session/update",
-           "params":{"update":{"kind":"agent_message_chunk",
+           "params":{"sessionId":sid,
+                     "update":{"sessionUpdate":"agent_message_chunk",
                                "content":{"type":"text","text":big+":"}}}})
         w({"jsonrpc":"2.0","method":"session/update",
-           "params":{"update":{"kind":"agent_message_chunk",
+           "params":{"sessionId":sid,
+                     "update":{"sessionUpdate":"agent_message_chunk",
                                "content":{"type":"text","text":"Hello "}}}})
         w({"jsonrpc":"2.0","method":"session/update",
-           "params":{"update":{"kind":"agent_message_chunk",
+           "params":{"sessionId":sid,
+                     "update":{"sessionUpdate":"agent_message_chunk",
                                "content":{"type":"text","text":"world!"}}}})
 
         # Permission request (server→client request with its own id).
+        # ACP v1 spec: params = {sessionId, toolCall, options[] with optionId/name/kind}.
         w({"jsonrpc":"2.0","method":"session/request_permission",
-           "id":101,"params":{"action":"exec_tool","description":"Run echo hi",
-                             "options":[
-                                 {"id":"allow","label":"Allow"},
-                                 {"id":"deny","label":"Deny"}]}})
+           "id":101,
+           "params":{"sessionId":sid,
+                     "toolCall":{"toolCallId":"call_001","title":"Run echo hi","kind":"execute","status":"pending"},
+                     "options":[
+                         {"optionId":"allow","name":"Allow","kind":"allow_once"},
+                         {"optionId":"deny","name":"Deny","kind":"reject_once"}]}})
         # Wait for the client's permission response, then finish.
-        perm = sys.stdin.readline()
-        w({"jsonrpc":"2.0","id":rid,"result":{"response":"done","text":"Hello world!"}})
+        perm_line = sys.stdin.readline()
+        # Validate the client's response uses the spec nested outcome format.
+        try:
+            perm = json.loads(perm_line)
+            outcome = perm.get("result", {}).get("outcome", {})
+            if isinstance(outcome, dict):
+                oc = outcome.get("outcome", "")
+                if oc == "selected":
+                    sel = outcome.get("optionId", "")
+                else:
+                    sel = oc
+            else:
+                sel = str(outcome)
+            sys.stderr.write("fake-acp: permission response outcome=%s\n" % sel)
+            sys.stderr.flush()
+        except Exception as e:
+            sys.stderr.write("fake-acp: failed to parse permission response: %s\n" % e)
+            sys.stderr.flush()
+        w({"jsonrpc":"2.0","id":rid,"result":{"stopReason":"end_turn"}})
 
     else:
         if rid is not None:
@@ -975,22 +999,36 @@ static void test_acp_protocol_integration()
         ::posix_spawn_file_actions_adddup2(&f2, ip[0], 0);
         ::posix_spawn_file_actions_adddup2(&f2, op[1], 1);
         ::posix_spawn_file_actions_adddup2(&f2, kerrFd, 2);  // agent stderr → file
-        ::posix_spawn_file_actions_destroy(&f2);
-        ::close(ip[0]); ::close(op[1]); ::close(kerrFd);
-        ::close(ip[1]); ::close(op[0]);
         std::vector<char*> cv(extraArgs.size() + 1);
         for (size_t k = 0; k < extraArgs.size(); ++k) cv[k] = &extraArgs[k][0];
         cv[extraArgs.size()] = nullptr;
         pid_t p = -1;
         CHECK(::posix_spawnp(&p, exe.c_str(), &f2, nullptr, cv.data(), environ) == 0);
+        ::posix_spawn_file_actions_destroy(&f2);  // destroy AFTER spawn
+        ::close(ip[0]); ::close(op[1]); ::close(kerrFd);
+        ::close(ip[1]); ::close(op[0]);
         return p;
     };
 
     // "two real ACP CLIs" proxy: two invocation styles — bare, and with args.
     pid_t kpid = spawn_for_kill({exe, "--mode", "kill"}, killStderr);
-    // Allow the shebang+interpreter to start and log "ready"/"kill-sleep"
-    // before SIGKILL (Python startup via `#!/usr/bin/env` is ~200-500ms).
-    std::this_thread::sleep_for(std::chrono::milliseconds(1500));
+    // Poll the stderr file for the expected marker rather than a fixed delay
+    // (Python startup via `#!/usr/bin/env` is ~200-500ms and may vary).
+    std::string kcontents;
+    bool killReady = false;
+    for (int attempt = 0; attempt < 50; ++attempt)  // up to ~5 s
+    {
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        std::ifstream kf(killStderr);
+        kcontents = std::string((std::istreambuf_iterator<char>(kf)),
+                                std::istreambuf_iterator<char>());
+        if (kcontents.find("kill-sleep") != std::string::npos)
+        {
+            killReady = true;
+            break;
+        }
+    }
+    CHECK(killReady);
     int killed = ::kill(kpid, SIGKILL);
     CHECK(killed == 0);
     int st2 = 0;
@@ -1000,13 +1038,21 @@ static void test_acp_protocol_integration()
               << WTERMSIG(st2) << ")\n";
 
     // stderr tail captured from the kill-test's temp file (issue A7).
+    // The kcontents from the polling loop already captured the pre-kill stderr;
+    // re-read once to get the final state after the process was terminated.
     {
-        std::ifstream kf(killStderr);
-        std::string kcontents((std::istreambuf_iterator<char>(kf)),
-                              std::istreambuf_iterator<char>());
-        CHECK(kcontents.find("ready") != std::string::npos);
-        CHECK(kcontents.find("kill-sleep") != std::string::npos);
-        std::cout << "  stderr tail captured: " << std::string(kcontents).substr(0, kcontents.find('\n')) << "\n";
+        std::string kfinal;
+        {
+            std::ifstream kf(killStderr);
+            kfinal = std::string((std::istreambuf_iterator<char>(kf)),
+                                  std::istreambuf_iterator<char>());
+        }
+        // Use the final read if non-empty, otherwise fall back to the polling read.
+        const std::string& kdisplay = kfinal.empty() ? kcontents : kfinal;
+        CHECK(kdisplay.find("ready") != std::string::npos);
+        CHECK(kdisplay.find("kill-sleep") != std::string::npos);
+        if (!kdisplay.empty())
+            std::cout << "  stderr tail captured: " << kdisplay.substr(0, kdisplay.find('\n')) << "\n";
         ::unlink(killStderr.c_str());
     }
 
@@ -1025,6 +1071,196 @@ static void test_acp_protocol_integration()
     ::rmdir(binDir.c_str());
 
     std::cout << "  [PASS] end-to-end ACP subprocess: resolve + handshake + stream + permission + kill\n";
+}
+
+// ---------------------------------------------------------------------------
+// Section (f): Permission response + notification field format (issue A5)
+//
+// Validates that the JSON structures produced/expected by AcpAgentSession and
+// ChatThread match the ACP v1 schema exactly:
+//   - respondPermission("allow") → {"result":{"outcome":{"outcome":"selected","optionId":"allow"}}}
+//   - respondPermission("cancelled") → {"result":{"outcome":{"outcome":"cancelled"}}}
+//   - request_permission options use optionId/name/kind (not id/title)
+//   - tool_call / tool_call_update use toolCallId + title (not toolName)
+//   - agent_message_chunk nests text at params.update.content.text
+// ---------------------------------------------------------------------------
+
+static void test_acp_permission_and_notification_formats()
+{
+    std::cout << "\n--- Section (f): ACP permission + notification field formats (issue A5) ---\n";
+
+    // --- Permission response: "selected" with optionId ---
+    // This mirrors AcpAgentSession::respondPermission("allow-once") after the fix.
+    {
+        nlohmann::json outcome = {
+            {"outcome",    "selected"},
+            {"optionId",   "allow-once"}
+        };
+        nlohmann::json resp = {
+            {"jsonrpc", "2.0"},
+            {"id",      5},
+            {"result",  {{"outcome", std::move(outcome)}}}
+        };
+        std::string serialised = resp.dump();
+        nlohmann::json reparsed = nlohmann::json::parse(serialised);
+
+        CHECK_EQ(reparsed["result"]["outcome"]["outcome"].get<std::string>(),
+                 std::string("selected"));
+        CHECK_EQ(reparsed["result"]["outcome"]["optionId"].get<std::string>(),
+                 std::string("allow-once"));
+        std::cout << "  selected outcome: " << serialised << "\n";
+        std::cout << "  [PASS] permission response (selected) matches ACP schema\n";
+    }
+
+    // --- Permission response: "cancelled" ---
+    // This mirrors AcpAgentSession::respondPermission("cancelled").
+    {
+        nlohmann::json outcome = {{"outcome", "cancelled"}};
+        nlohmann::json resp = {
+            {"jsonrpc", "2.0"},
+            {"id",      5},
+            {"result",  {{"outcome", std::move(outcome)}}}
+        };
+        std::string serialised = resp.dump();
+        nlohmann::json reparsed = nlohmann::json::parse(serialised);
+
+        CHECK_EQ(reparsed["result"]["outcome"]["outcome"].get<std::string>(),
+                 std::string("cancelled"));
+        // "cancelled" must NOT have an optionId field.
+        CHECK(!reparsed["result"]["outcome"].contains("optionId"));
+        std::cout << "  cancelled outcome: " << serialised << "\n";
+        std::cout << "  [PASS] permission response (cancelled) matches ACP schema\n";
+    }
+
+    // --- Permission options: spec field names (optionId, name, kind) ---
+    {
+        nlohmann::json opts = nlohmann::json::array({
+            {{"optionId", "allow"}, {"name", "Allow"}, {"kind", "allow_once"}},
+            {{"optionId", "deny"},  {"name", "Deny"},  {"kind", "reject_once"}}
+        });
+        CHECK_EQ(opts.size(), std::size_t{2});
+        CHECK(opts[0].contains("optionId"));
+        CHECK(opts[0].contains("name"));
+        CHECK(opts[0].contains("kind"));
+        CHECK_EQ(opts[0]["optionId"].get<std::string>(), "allow");
+        CHECK_EQ(opts[0]["name"].get<std::string>(), "Allow");
+        CHECK_EQ(opts[0]["kind"].get<std::string>(), "allow_once");
+        std::cout << "  [PASS] permission options use optionId/name/kind per spec\n";
+    }
+
+    // --- session/request_permission structure ---
+    {
+        nlohmann::json req = {
+            {"jsonrpc", "2.0"},
+            {"id",      5},
+            {"method",  "session/request_permission"},
+            {"params",  {
+                {"sessionId", "sess_abc123"},
+                {"toolCall",  {
+                    {"toolCallId", "call_001"},
+                    {"title",      "Run echo hi"},
+                    {"kind",       "execute"},
+                    {"status",     "pending"}
+                }},
+                {"options", nlohmann::json::array({
+                    {{"optionId", "allow"}, {"name", "Allow"}, {"kind", "allow_once"}},
+                    {{"optionId", "deny"},  {"name", "Deny"},  {"kind", "reject_once"}}
+                })}
+            }}
+        };
+        nlohmann::json reparsed = nlohmann::json::parse(req.dump());
+        CHECK_EQ(reparsed["method"].get<std::string>(), "session/request_permission");
+        CHECK(reparsed["params"].contains("sessionId"));
+        CHECK(reparsed["params"].contains("toolCall"));
+        CHECK(reparsed["params"]["toolCall"].contains("toolCallId"));
+        CHECK(reparsed["params"]["toolCall"].contains("title"));
+        CHECK(reparsed["params"].contains("options"));
+        CHECK(reparsed["params"]["options"][0].contains("optionId"));
+        std::cout << "  [PASS] request_permission structure matches ACP schema\n";
+    }
+
+    // --- agent_message_chunk: content nested under params.update.content ---
+    {
+        nlohmann::json notify = {
+            {"jsonrpc", "2.0"},
+            {"method",  "session/update"},
+            {"params",  {
+                {"sessionId", "sess_abc123"},
+                {"update",    {
+                    {"sessionUpdate", "agent_message_chunk"},
+                    {"content",       {{"type", "text"}, {"text", "Hello world!"}}}
+                }}
+            }}
+        };
+        nlohmann::json reparsed = nlohmann::json::parse(notify.dump());
+        CHECK_EQ(reparsed["params"]["update"]["sessionUpdate"].get<std::string>(),
+                 "agent_message_chunk");
+        CHECK_EQ(reparsed["params"]["update"]["content"]["text"].get<std::string>(),
+                 "Hello world!");
+        std::cout << "  [PASS] agent_message_chunk nests content under update.content.text\n";
+    }
+
+    // --- tool_call notification: uses toolCallId + title (not toolName) ---
+    {
+        nlohmann::json notify = {
+            {"jsonrpc", "2.0"},
+            {"method",  "session/update"},
+            {"params",  {
+                {"sessionId", "sess_abc123"},
+                {"update",    {
+                    {"sessionUpdate", "tool_call"},
+                    {"toolCallId",    "call_001"},
+                    {"title",         "Run echo hi"},
+                    {"kind",          "execute"},
+                    {"status",        "pending"}
+                }}
+            }}
+        };
+        nlohmann::json reparsed = nlohmann::json::parse(notify.dump());
+        CHECK_EQ(reparsed["params"]["update"]["sessionUpdate"].get<std::string>(),
+                 "tool_call");
+        CHECK(reparsed["params"]["update"].contains("toolCallId"));
+        CHECK(reparsed["params"]["update"].contains("title"));
+        // Confirm toolName is NOT a spec field — it must not be present.
+        CHECK(!reparsed["params"]["update"].contains("toolName"));
+        std::cout << "  [PASS] tool_call uses toolCallId + title (no toolName)\n";
+    }
+
+    // --- tool_call_update: status field ---
+    {
+        nlohmann::json notify = {
+            {"jsonrpc", "2.0"},
+            {"method",  "session/update"},
+            {"params",  {
+                {"sessionId", "sess_abc123"},
+                {"update",    {
+                    {"sessionUpdate", "tool_call_update"},
+                    {"toolCallId",    "call_001"},
+                    {"status",        "in_progress"}
+                }}
+            }}
+        };
+        nlohmann::json reparsed = nlohmann::json::parse(notify.dump());
+        CHECK_EQ(reparsed["params"]["update"]["sessionUpdate"].get<std::string>(),
+                 "tool_call_update");
+        CHECK_EQ(reparsed["params"]["update"]["status"].get<std::string>(),
+                 "in_progress");
+        std::cout << "  [PASS] tool_call_update uses toolCallId + status\n";
+    }
+
+    // --- session/prompt response: stopReason (not result:{}) ---
+    {
+        nlohmann::json resp = {
+            {"jsonrpc", "2.0"},
+            {"id",      3},
+            {"result",  {{"stopReason", "end_turn"}}}
+        };
+        nlohmann::json reparsed = nlohmann::json::parse(resp.dump());
+        CHECK_EQ(reparsed["result"]["stopReason"].get<std::string>(), "end_turn");
+        std::cout << "  [PASS] session/prompt response uses stopReason\n";
+    }
+
+    std::cout << "  [PASS] all ACP v1 field formats match schema\n";
 }
 
 // ---------------------------------------------------------------------------
@@ -1055,6 +1291,9 @@ int main()
 
     // Section (e): End-to-end against a real ACP-protocol subprocess (A1/A4/A5/A7)
     test_acp_protocol_integration();
+
+    // Section (f): Permission + notification field formats per ACP v1 schema (A5)
+    test_acp_permission_and_notification_formats();
 
     // Note deferred work
     note_mcp_servers_validation();

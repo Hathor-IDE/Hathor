@@ -381,16 +381,20 @@ void ChatThread::onToolCallUpdate(nlohmann::json update)
     try
     {
         const std::string updateType = update.value("sessionUpdate", "tool_call");
-        const std::string toolName   = update.value("toolName", "(unknown tool)");
+        // ACP v1 spec: ToolCall / ToolCallUpdate use "title" (human-readable)
+        // and "toolCallId" for the id. Older code assumed "toolName" which is
+        // not a real ACP field — real agents (claude-code-acp, gemini) use "title".
+        const std::string title = update.value("title",
+                                   update.value("toolCallId", "(unknown tool)"));
 
         if (updateType == "tool_call")
         {
-            label = "\xe2\x86\x92 " + toolName;  // → toolName
+            label = "\xe2\x86\x92 " + title;  // → title
         }
         else
         {
             const std::string status = update.value("status", "");
-            label = "\xe2\x86\x92 " + toolName;
+            label = "\xe2\x86\x92 " + title;
             if (!status.empty())
                 label += " [" + status + "]";
         }

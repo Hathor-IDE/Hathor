@@ -39,6 +39,7 @@
 #include "HathorLookAndFeel.hpp"
 #include "WindowAppearanceController.hpp"
 #include "MasterEq.hpp"
+#include "AgentRegistry.hpp"
 
 #include "PetdexTypes.hpp"
 #include "GhostProviderConfig.hpp"
@@ -162,13 +163,15 @@ private:
     // Internal: settings data model
     // -----------------------------------------------------------------------
 
-    struct SettingsModel
+     struct SettingsModel
     {
         ThemeId   theme          = ThemeId::Dark;
         float     opacityPercent = 70.0f;   // B5: 70% default on mac/win, 100% on Linux
         int       macosBlurRadius = 30;     // macOS only: blur radius 0–100
         bool      windowsAcrylic  = false;  // Windows only: Acrylic on/off
-         std::string agentExePath;
+        std::string agentPresetId;          // A2: selected preset id (e.g. "gemini")
+        std::string agentExePath;           // A2: custom path or resolved preset path
+        std::string agentArgs;               // A2: extra args for custom agent
         std::string petSelection;
         hathor::EqPreset eqPreset  = hathor::EqPreset::Flat;  // B7-K3
 
@@ -224,10 +227,15 @@ private:
     // Appearance — Theme subsection
     juce::ComboBox   themeCombo_;
 
-    // Agent / ACP section
-    juce::TextEditor agentPathEditor_;
-    juce::Label*     agentPathLabel_ = nullptr;
-    juce::Label      mcpPathLabel_;
+    // Agent / ACP section (A2)
+    juce::ComboBox     agentPresetCombo_;
+    juce::TextEditor   agentPathEditor_;      ///< path for "__custom__" preset (Browse)
+    juce::TextEditor   agentArgsEditor_;       ///< extra args for custom/preset agent
+    juce::TextButton   agentDetectBtn_;        ///< scan $PATH for detected agents
+    juce::TextButton   agentBrowseBtn_;        ///< browse-for-file fallback
+    juce::Label*       agentPathLabel_ = nullptr;
+    juce::Label        agentStatusLabel_;       ///< "(found on PATH)" / "(not found)" / custom path
+    juce::Label        mcpPathLabel_;
 
     // Agent 1.3: Ghost completion endpoint editors (one per provider).
     juce::OwnedArray<GhostUrlField> ghostUrlFields_;
@@ -269,6 +277,7 @@ private:
     WindowAppearanceController* appearanceController_ = nullptr;
     AudioEngineFacade*           audioEngine_ = nullptr;  // B7-K3: for setMasterEqPreset
     PetdexManifestService*       petdexService_ = nullptr; // Phase G / D1 (app-lifetime, not owned)
+    AgentRegistry*               agentRegistry_ = nullptr; // A2: known-agent registry (not owned)
 
     // -----------------------------------------------------------------------
     // State
@@ -357,6 +366,28 @@ private:
 
     /** Update the enabled/disabled state of blur controls based on opacity. */
     void updateBlurControlState();
+
+    // -----------------------------------------------------------------------
+    // A2: Agent / ACP section helpers
+    // -----------------------------------------------------------------------
+
+    /** Populate the preset dropdown from the registry (or a fallback entry). */
+    void populateAgentPresetCombo() noexcept;
+
+    /** Reflect the pending agent preset/path in the dropdown + status label. */
+    void refreshAgentPresetCombo() noexcept;
+
+    /** Scan $PATH for each preset's executable and update the status label. */
+    void detectAgentOnPath() noexcept;
+
+    /** Resolve the current preset+path+args into a command string for AcpAgentSession. */
+    std::string resolveAgentCommand() const noexcept;
+
+    /** Update the pending agent preset when the combo selection changes. */
+    void onAgentPresetComboChanged();
+
+    /** Browse for a custom agent executable. */
+    void browseForAgentExe();
 
     /** Refresh the Ghost URL editors to match committed_/pending_ (Agent 1.3). */
     void refreshGhostUrlEditors();

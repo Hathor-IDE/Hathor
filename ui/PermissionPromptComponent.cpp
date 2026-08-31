@@ -48,24 +48,30 @@ PermissionPromptComponent::PermissionPromptComponent(int requestId,
     // -----------------------------------------------------------------------
     // Option buttons — one per element in the options array
     // -----------------------------------------------------------------------
+    // ACP v1 spec (PermissionOption): each option has optionId, name, kind.
+    // We prefer "name" for the display label and "optionId" for the value
+    // sent back in the RequestPermissionOutcome. Falls back gracefully
+    // when an agent omits a field.
     if (options_.is_array())
     {
         for (std::size_t i = 0; i < options_.size(); ++i)
         {
             const auto& opt = options_[i];
 
-            // Determine display label: prefer "title", then "description", then index.
+            // Display label: prefer "name", then "title", then index.
             juce::String buttonLabel;
-            if (opt.contains("title") && opt["title"].is_string())
+            if (opt.contains("name") && opt["name"].is_string())
+                buttonLabel = juce::String(opt["name"].get<std::string>());
+            else if (opt.contains("title") && opt["title"].is_string())
                 buttonLabel = juce::String(opt["title"].get<std::string>());
-            else if (opt.contains("description") && opt["description"].is_string())
-                buttonLabel = juce::String(opt["description"].get<std::string>());
             else
                 buttonLabel = "Option " + juce::String(static_cast<int>(i));
 
-            // Determine the optionId: prefer "id", then index as string.
+            // optionId: prefer "optionId", then "id", then index as string.
             std::string optionId;
-            if (opt.contains("id") && opt["id"].is_string())
+            if (opt.contains("optionId") && opt["optionId"].is_string())
+                optionId = opt["optionId"].get<std::string>();
+            else if (opt.contains("id") && opt["id"].is_string())
                 optionId = opt["id"].get<std::string>();
             else if (opt.contains("id") && opt["id"].is_number_integer())
                 optionId = std::to_string(opt["id"].get<int>());
