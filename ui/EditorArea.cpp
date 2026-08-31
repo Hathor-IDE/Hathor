@@ -3360,7 +3360,25 @@ void EditorArea::registerEditorActions()
          if (sourceControlPanel_)
              sourceControlPanel_->switchBranch();
      });
-}
+
+     // 2.3: View panel toggle actions — wired to the native menu bar
+     // (View menu) so menu items and keyboard shortcuts share one code path.
+     actionRegistry_->registerAction("view.toggleExplorer",      "Show Explorer",          "View", "Toggle the Explorer panel");
+     actionRegistry_->registerAction("view.toggleChat",          "Show Chat",              "View", "Toggle the Chat sidebar");
+     actionRegistry_->registerAction("view.toggleVisualizer",    "Show Visualizer",        "View", "Toggle the Visualizer strip");
+     actionRegistry_->registerAction("view.toggleTerminal",      "Show Terminal",          "View", "Toggle the Terminal panel");
+     actionRegistry_->registerAction("view.toggleProblems",      "Show Problems",          "View", "Toggle the Problems panel");
+     actionRegistry_->registerAction("view.toggleSourceControl", "Show Source Control",    "View", "Toggle the Source Control panel");
+     actionRegistry_->registerAction("view.toggleDebug",         "Show Debug & Inspector", "View", "Toggle the Debug & Runtime Inspector");
+
+     actionRegistry_->setCallback("view.toggleExplorer",      [this]() { onToggleExplorer(); });
+     actionRegistry_->setCallback("view.toggleChat",          [this]() { onToggleChat(); });
+     actionRegistry_->setCallback("view.toggleVisualizer",    [this]() { onToggleVisualizer(); });
+     actionRegistry_->setCallback("view.toggleTerminal",      [this]() { onToggleTerminal(); });
+     actionRegistry_->setCallback("view.toggleProblems",      [this]() { onToggleProblems(); });
+     actionRegistry_->setCallback("view.toggleSourceControl", [this]() { onToggleSourceControl(); });
+     actionRegistry_->setCallback("view.toggleDebug",         [this]() { onToggleDebug(); });
+ }
 
 // ===========================================================================
 // 20.7: Workspace session persistence (save / restore)

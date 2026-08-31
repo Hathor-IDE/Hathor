@@ -521,6 +521,74 @@ public:
         return debugPanel_.get();
     }
 
+    // -----------------------------------------------------------------------
+    // 2.3 — View panel toggle actions (wired to native menu bar)
+    // -----------------------------------------------------------------------
+
+    /// Toggle the Explorer panel (handled by MainWindow, but action lives here
+    /// so the menu bar dispatches through the ActionRegistry).
+    void onToggleExplorer()  { /* handled by MainWindow */ }
+
+    /// Toggle the Chat sidebar.
+    void onToggleChat()  { /* handled by MainWindow */ }
+
+    /// Toggle the Visualizer strip.
+    void onToggleVisualizer()  { /* handled by MainWindow */ }
+
+    /// Toggle the Terminal panel.
+    void onToggleTerminal()
+    {
+        if (terminalPanel_ && terminalPanel_->isVisible())
+            hideTerminalPanel();
+        else
+        {
+            showTerminalPanel();
+            terminalPanel_->openShell();
+        }
+        resized();
+    }
+
+    /// Toggle the Problems panel.
+    void onToggleProblems()
+    {
+        if (problemsPanel_ && problemsPanel_->isVisible())
+            hideProblemsPanel();
+        else
+            showProblemsPanel();
+        resized();
+    }
+
+    /// Toggle the Source Control panel.
+    void onToggleSourceControl()
+    {
+        if (sourceControlPanel_ && sourceControlPanel_->isVisible())
+            hideSourceControlPanel();
+        else
+        {
+            showSourceControlPanel();
+            if (sourceControlPanel_)
+                sourceControlPanel_->refresh();
+        }
+        resized();
+    }
+
+    /// Toggle the Debug & Runtime Inspector panel.
+    void onToggleDebug()
+    {
+        if (debugPanel_ && debugPanel_->isVisible())
+            hideDebugPanel();
+        else
+            showDebugPanel();
+        resized();
+    }
+
+    /// Close the active tab.
+    void closeActiveTab()
+    {
+        if (activeIndex_ >= 0 && activeIndex_ < static_cast<int>(tabs_.size()))
+            closeTab(activeIndex_);
+    }
+
     /**
      * Set the workspace root directory for search and quick-open.
      * Called by MainWindow after project loading.

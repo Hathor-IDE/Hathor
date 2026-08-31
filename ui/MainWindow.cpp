@@ -634,14 +634,47 @@ MainWindow::MainWindow(AudioEngine& audio,
      // -----------------------------------------------------------------------
      restoreWorkspace();
 
-     // Add child components to the content component (DocumentWindow wraps one
-    // content component; we use a plain Component as the layout host).
-    auto* content = new juce::Component();
-    content->addAndMakeVisible(*activityRibbon_);
-    content->addAndMakeVisible(*explorerPanel_);
-    content->addAndMakeVisible(*editorArea_);
-    content->addAndMakeVisible(*chatSidebar_);
-    content->addAndMakeVisible(*visualizerPanel_);
+      // Add child components to the content component (DocumentWindow wraps one
+     // content component; we use a plain Component as the layout host).
+     // 2.3 (S2): The content component also handles file drag-and-drop by
+     // forwarding to MainWindow's FileDragAndDropTarget implementation.
+     class ContentComponent : public juce::Component,
+                              public juce::FileDragAndDropTarget
+     {
+     public:
+         ContentComponent(MainWindow& owner) : owner_(owner) {}
+         bool isInterestedInFileDrag(const juce::StringArray& files) override
+             { return owner_.isInterestedInFileDrag(files); }
+         void fileDragEnter(const juce::StringArray& files, int x, int y) override
+             { owner_.fileDragEnter(files, x, y); }
+         void fileDragMove(const juce::StringArray& files, int x, int y) override
+             { owner_.fileDragMove(files, x, y); }
+         void fileDragExit(const juce::StringArray& files) override
+             { owner_.fileDragExit(files); }
+         void filesDropped(const juce::StringArray& files, int x, int y) override
+             { owner_.filesDropped(files, x, y); }
+     private:
+         MainWindow& owner_;
+     };
+
+     auto* content = new ContentComponent(*this);
+     content->addAndMakeVisible(*activityRibbon_);
+     content->addAndMakeVisible(*explorerPanel_);
+     content->addAndMakeVisible(*editorArea_);
+     content->addAndMakeVisible(*chatSidebar_);
+     content->addAndMakeVisible(*visualizerPanel_);
+
+     // 2.3: Create resizable splitter bars for vertical panel dividers.
+     layoutParams_ = loadLayoutParams();
+     explorerSplitter_ = std::make_unique<hathor::ui::SplitterBar>(
+         [this](int d) { onExplorerSplitterDrag(d); });
+     chatSplitter_ = std::make_unique<hathor::ui::SplitterBar>(
+         [this](int d) { onChatSplitterDrag(d); });
+     visualizerSplitter_ = std::make_unique<hathor::ui::SplitterBar>(
+         [this](int d) { onVisualizerSplitterDrag(d); });
+     content->addAndMakeVisible(*explorerSplitter_);
+     content->addAndMakeVisible(*chatSplitter_);
+     content->addAndMakeVisible(*visualizerSplitter_);
 
     // L-3: StatusRibbon — mounted at MainWindow level, below VisualizerPanel.
     content->addAndMakeVisible(*statusRibbon_);
@@ -655,13 +688,17 @@ MainWindow::MainWindow(AudioEngine& audio,
     // L-4: TerminalPanel is owned by EditorArea (bottom-docked, like ProblemsPanel).
     // MainWindow toggles its visibility via the ActivityRibbon Terminal button.
 
-    // Explorer starts hidden; opens when the user clicks the Explorer button
-    // in the ActivityRibbon (H1).
-    explorerPanel_->setVisible(false);
+    // 2.3 (S6): Explorer is visible on launch when a workspace is restored.
+    // Previously hardcoded to hidden; now we respect the persisted explorer
+    // state and default to visible when a workspace exists.
+    explorerPanel_->setVisible(!workspaceDir_.empty());
 
     setContentOwned(content, false);
     setUsingNativeTitleBar(true);
     setResizable(true, false);
+
+    // 2.3 (S1): Install native menu bar wired to ActionRegistry actions.
+    setupMenuBar();
 
     // -----------------------------------------------------------------------
     // Restore or compute initial window bounds (Req 20.5)
@@ -779,53 +816,97 @@ void MainWindow::resized()
 
     content->setBounds(getLocalBounds());
 
+    // Use the live layout params (modified by splitter drags) for sizing.
+    performLayout(layoutParams_);
+}
+
+// ---------------------------------------------------------------------------
+// 2.3 — Layout engine (resizable panels + splitters)
+// ---------------------------------------------------------------------------
+
+void MainWindow::performLayout(const LayoutParams& p)
+{
+    auto* content = getContentComponent();
+    if (content == nullptr)
+        return;
+
     auto b = content->getLocalBounds();
 
-    // 1. Activity ribbon — fixed 48 px on the left (Req 20.1)
+    // 1. Activity ribbon — fixed 48 px on the left.
     if (activityRibbon_)
         activityRibbon_->setBounds(b.removeFromLeft(48));
 
-    // 2. Explorer panel — fixed 240 px, immediately right of the ribbon,
-    //    only when visible (H1). When closed, the editor fills this space.
+    // 2. Explorer panel — width controlled by splitter; only visible when open.
     if (explorerPanel_)
     {
         if (explorerPanel_->isVisible())
-            explorerPanel_->setBounds(b.removeFromLeft(kExplorerWidth));
+        {
+            const int w = juce::jlimit(LayoutParams::kMinPanelWidth,
+                                       LayoutParams::kMaxPanelWidth, p.explorerWidth);
+            explorerPanel_->setBounds(b.removeFromLeft(w));
+
+            // Splitter between explorer and editor.
+            if (explorerSplitter_)
+                explorerSplitter_->setBounds(b.removeFromLeft(4));
+        }
         else
+        {
             explorerPanel_->setBounds(juce::Rectangle<int>());
+            if (explorerSplitter_)
+                explorerSplitter_->setBounds(juce::Rectangle<int>());
+        }
     }
 
-    // 3. Chat sidebar — fixed 320 px on the right (Req 20.1)
-    //    Visibility is gated so the editor area fills the freed space when
-    //    the ribbon AIAgent button hides it (Agent 2.4), mirroring how the
-    //    Explorer panel is gated above.
+    // 3. Chat sidebar — width controlled by splitter; gated by visibility.
     if (chatSidebar_)
     {
         if (chatSidebar_->isVisible())
-            chatSidebar_->setBounds(b.removeFromRight(320));
+        {
+            const int w = juce::jlimit(LayoutParams::kMinPanelWidth,
+                                       LayoutParams::kMaxPanelWidth, p.chatWidth);
+            // Splitter between editor and chat.
+            if (chatSplitter_)
+                chatSplitter_->setBounds(b.removeFromRight(4));
+            chatSidebar_->setBounds(b.removeFromRight(w));
+        }
         else
+        {
             chatSidebar_->setBounds(juce::Rectangle<int>());
+            if (chatSplitter_)
+                chatSplitter_->setBounds(juce::Rectangle<int>());
+        }
     }
 
-    // 3. Visualizer panel — max(height/4, 120) px at the bottom (Req 20.1, 20.3)
-    //    Absorbs all vertical slack when the window grows taller.
+    // 4. Visualizer panel — collapsible strip at the bottom.
     if (visualizerPanel_)
     {
-        const int vizH = std::max(b.getHeight() / 4, 120);
-        visualizerPanel_->setBounds(b.removeFromBottom(vizH));
+        if (p.visualizerCollapsed)
+        {
+            visualizerPanel_->setVisible(false);
+            visualizerPanel_->setBounds(juce::Rectangle<int>());
+        }
+        else
+        {
+            visualizerPanel_->setVisible(true);
+            const int h = juce::jlimit(LayoutParams::kMinVizHeight,
+                                       LayoutParams::kMaxVizHeight, p.vizHeight);
+            // Splitter between visualizer and editor area.
+            if (visualizerSplitter_)
+                visualizerSplitter_->setBounds(b.removeFromBottom(4));
+            visualizerPanel_->setBounds(b.removeFromBottom(h));
+        }
     }
 
-    // L-3: StatusRibbon — 28 px strip at the very bottom
+    // L-3: StatusRibbon — fixed height strip at the very bottom.
     if (statusRibbon_)
         statusRibbon_->setBounds(b.removeFromBottom(hathor::ui::StatusRibbon::kRibbonHeight));
 
-    // 4. Editor area — fills the remaining centre region (Req 20.1, 20.3)
+    // 5. Editor area — fills the remaining centre region.
     if (editorArea_)
         editorArea_->setBounds(b);
 
     // Phase G (D2–D4): mascot overlay — bottom-right corner of the editor
-    // region. Compact display scale with an 8 px margin; the widget hides
-    // itself entirely while NoPet.
+    // region.
     if (petWidget_)
     {
         const int w = hathor::ui::PetWidget::kPetWidth;
@@ -836,6 +917,79 @@ void MainWindow::resized()
     // Agent 0.1: welcome overlay covers the entire content area while shown.
     if (welcomeScreen_ != nullptr && welcomeScreen_->isVisible())
         welcomeScreen_->setBounds(content->getLocalBounds());
+}
+
+// ---------------------------------------------------------------------------
+// 2.3 — Splitter drag handlers
+// ---------------------------------------------------------------------------
+
+void MainWindow::onExplorerSplitterDrag(int deltaX)
+{
+    layoutParams_.explorerWidth = juce::jlimit(
+        LayoutParams::kMinPanelWidth,
+        LayoutParams::kMaxPanelWidth,
+        layoutParams_.explorerWidth + deltaX);
+    performLayout(layoutParams_);
+}
+
+void MainWindow::onChatSplitterDrag(int deltaX)
+{
+    layoutParams_.chatWidth = juce::jlimit(
+        LayoutParams::kMinPanelWidth,
+        LayoutParams::kMaxPanelWidth,
+        layoutParams_.chatWidth - deltaX);  // drag left shrinks chat
+    performLayout(layoutParams_);
+}
+
+void MainWindow::onVisualizerSplitterDrag(int deltaY)
+{
+    layoutParams_.vizHeight = juce::jlimit(
+        LayoutParams::kMinVizHeight,
+        LayoutParams::kMaxVizHeight,
+        layoutParams_.vizHeight - deltaY);  // drag up shrinks viz
+    performLayout(layoutParams_);
+}
+
+// ---------------------------------------------------------------------------
+// 2.3 — Visualizer toggle
+// ---------------------------------------------------------------------------
+
+void MainWindow::toggleVisualizerCollapse()
+{
+    layoutParams_.visualizerCollapsed = !layoutParams_.visualizerCollapsed;
+    performLayout(layoutParams_);
+}
+
+// ---------------------------------------------------------------------------
+// 2.3 — Layout persistence
+// ---------------------------------------------------------------------------
+
+MainWindow::LayoutParams MainWindow::loadLayoutParams()
+{
+    LayoutParams p;
+    if (const auto* props = appProperties_.getUserSettings())
+    {
+        p.explorerWidth      = props->getIntValue("layout.explorerWidth",
+                                                  LayoutParams::kDefaultExplorerWidth);
+        p.chatWidth          = props->getIntValue("layout.chatWidth",
+                                                  LayoutParams::kDefaultChatWidth);
+        p.vizHeight          = props->getIntValue("layout.vizHeight",
+                                                  LayoutParams::kDefaultVizHeight);
+        p.visualizerCollapsed = props->getBoolValue("layout.visualizerCollapsed", false);
+    }
+    return p;
+}
+
+void MainWindow::saveLayoutParams(const LayoutParams& p)
+{
+    if (auto* props = appProperties_.getUserSettings())
+    {
+        props->setValue("layout.explorerWidth", p.explorerWidth);
+        props->setValue("layout.chatWidth",     p.chatWidth);
+        props->setValue("layout.vizHeight",     p.vizHeight);
+        props->setValue("layout.visualizerCollapsed", p.visualizerCollapsed);
+        props->saveIfNeeded();
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -853,13 +1007,15 @@ void MainWindow::closeButtonPressed()
         // directly (no welcome screen).
         if (!workspaceDir_.empty())
             props->setValue("lastWorkspacePath", juce::String(workspaceDir_));
-        // ExplorerPanel::saveLastDirectory is called on setDirectory(),
-        // but call it again here to be certain the latest directory is persisted
-        // even if setDirectory was never explicitly called.
-        if (explorerPanel_)
-            props->setValue("explorerLastDirectory",
-                            explorerPanel_->directory().getFullPathName());
-        props->saveIfNeeded();
+         // ExplorerPanel::saveLastDirectory is called on setDirectory(),
+         // but call it again here to be certain the latest directory is persisted
+         // even if setDirectory was never explicitly called.
+         if (explorerPanel_)
+             props->setValue("explorerLastDirectory",
+                             explorerPanel_->directory().getFullPathName());
+         // 2.3: Persist layout params (panel widths, visualizer state).
+         saveLayoutParams(layoutParams_);
+         props->saveIfNeeded();
     }
 
     // J-6: Persist ghost completion telemetry (quality metrics) across sessions.
@@ -1280,10 +1436,277 @@ void MainWindow::refreshRecentActions()
         const std::string id = "workspace.openRecent." + std::to_string(i);
         reg->registerAction(id, "Open Recent: " + recent[i], "File",
                             "Reopen this project as the workspace");
-        reg->setCallback(id, [this, path = recent[i]]()
-        {
-            switchWorkspace(juce::File(path));
+     reg->setCallback(id, [this, path = recent[i]]()
+         {
+             switchWorkspace(juce::File(path));
+         });
+     }
+}
+
+// ---------------------------------------------------------------------------
+// 2.3 — Native menu bar setup (S1)
+// ---------------------------------------------------------------------------
+
+void MainWindow::setupMenuBar()
+{
+    menuBarModel_ = std::make_unique<hathor::ui::HathorMenuBarModel>();
+    menuBarModel_->setActionRegistry(editorArea_ != nullptr
+                                         ? editorArea_->actionRegistry()
+                                         : nullptr);
+
+    hathor::ui::HathorMenuBarModel::Callbacks cb;
+    cb.onNewFile          = [this]() { onNewFile(); };
+    cb.onOpenFile         = [this]() { onOpenFile(); };
+    cb.onOpenFolder       = [this]() { openFolderChooser(); };
+    cb.onQuit             = []() { juce::JUCEApplication::getInstance()->systemRequestedQuit(); };
+    // CloseTab dispatches through the action registry ("tab.close").
+    cb.onToggleExplorer   = [this]() { onToggleExplorer(); };
+    cb.onToggleChat       = [this]() { onToggleChat(); };
+    cb.onToggleVisualizer = [this]() { toggleVisualizerCollapse(); };
+    cb.onToggleTerminal   = [this]() { onToggleTerminal(); };
+    cb.onToggleProblems   = [this]() { onToggleProblems(); };
+    cb.onToggleSourceControl = [this]() { onToggleSourceControl(); };
+    cb.onToggleDebug      = [this]() { onToggleDebug(); };
+    cb.onPlay             = [this]() { onTransportPlay(); };
+    cb.onStop             = [this]() { onTransportStop(); };
+    cb.onRecord           = [this]() { onTransportRecord(); };
+    cb.onOpenSettings     = [this]() { onOpenSettings(); };
+    cb.onOpenShortcuts    = [this]() { onOpenShortcuts(); };
+    cb.onOpenDocs         = [this]() { onOpenDocs(); };
+    cb.onAbout            = [this]() { onAbout(); };
+    cb.recentProjects     = {};   // populated just-in-time via getRecentProjects
+    cb.getRecentProjects  = [this]() { return loadRecentProjects(); };
+    cb.onSelectRecent     = [this](int idx) {
+        const auto recent = loadRecentProjects();
+        if (idx >= 0 && idx < static_cast<int>(recent.size()))
+            switchWorkspace(juce::File(recent[static_cast<std::size_t>(idx)]));
+    };
+
+    menuBarModel_->setCallbacks(std::move(cb));
+
+    // Override the view-toggle actions registered by EditorArea with
+    // MainWindow's implementations for panels that MainWindow owns.
+    if (auto* reg = editorArea_ != nullptr ? editorArea_->actionRegistry() : nullptr)
+    {
+        reg->setCallback("view.toggleExplorer",  [this]() { onToggleExplorer(); });
+        reg->setCallback("view.toggleChat",      [this]() { onToggleChat(); });
+        reg->setCallback("view.toggleVisualizer",[this]() { toggleVisualizerCollapse(); });
+    }
+
+    setMenuBar(menuBarModel_.get());
+}
+
+// ---------------------------------------------------------------------------
+// 2.3 — Menu bar callbacks (S1)
+// ---------------------------------------------------------------------------
+
+void MainWindow::onNewFile()
+{
+    if (!editorArea_)
+        return;
+    editorArea_->showNewBufferDialog();
+}
+
+void MainWindow::onOpenFile()
+{
+    if (!editorArea_)
+        return;
+
+    folderChooser_ = std::make_unique<juce::FileChooser>(
+        "Open File…",
+        juce::File(workspaceDir_.empty()
+                       ? juce::File::getSpecialLocation(juce::File::userHomeDirectory).getFullPathName()
+                       : juce::String(workspaceDir_)));
+
+    folderChooser_->launchAsync(juce::FileBrowserComponent::openMode |
+                       juce::FileBrowserComponent::canSelectFiles,
+         [this](const juce::FileChooser& fc)
+         {
+            const juce::File f = fc.getResult();
+            if (f.existsAsFile() && editorArea_)
+                editorArea_->openFile(f);
+            folderChooser_.reset();
         });
+}
+
+void MainWindow::onToggleExplorer()
+{
+    if (!explorerPanel_)
+        return;
+    const bool wantsOpen = !explorerPanel_->isVisible();
+    explorerPanel_->setVisible(wantsOpen);
+    if (activityRibbon_)
+        activityRibbon_->setActivePanel(
+            wantsOpen ? hathor::ui::Panel::Explorer : hathor::ui::Panel::None);
+    resized();
+}
+
+void MainWindow::onToggleChat()
+{
+    if (!chatSidebar_)
+        return;
+    const bool wantsOpen = !chatSidebar_->isVisible();
+    chatSidebar_->setVisible(wantsOpen);
+    if (activityRibbon_)
+        activityRibbon_->setActivePanel(
+            wantsOpen ? hathor::ui::Panel::AIAgent : hathor::ui::Panel::None);
+    resized();
+}
+
+void MainWindow::onToggleTerminal()
+{
+    if (!editorArea_)
+        return;
+    if (editorArea_->terminalPanel() && editorArea_->terminalPanel()->isVisible())
+        editorArea_->hideTerminalPanel();
+    else
+    {
+        editorArea_->showTerminalPanel();
+        editorArea_->terminalPanel()->openShell();
+    }
+    resized();
+}
+
+void MainWindow::onToggleProblems()
+{
+    if (!editorArea_)
+        return;
+    if (editorArea_->problemsPanel() && editorArea_->problemsPanel()->isVisible())
+        editorArea_->hideProblemsPanel();
+    else
+        editorArea_->showProblemsPanel();
+    resized();
+}
+
+void MainWindow::onToggleSourceControl()
+{
+    if (!editorArea_ || !editorArea_->sourceControlPanel())
+        return;
+    const bool wantsOpen = !editorArea_->sourceControlPanel()->isVisible();
+    if (wantsOpen)
+    {
+        editorArea_->showSourceControlPanel();
+        editorArea_->sourceControlPanel()->refresh();
+    }
+    else
+        editorArea_->hideSourceControlPanel();
+    resized();
+}
+
+void MainWindow::onToggleDebug()
+{
+    if (!editorArea_)
+        return;
+    if (editorArea_->debugPanel() && editorArea_->debugPanel()->isVisible())
+        editorArea_->hideDebugPanel();
+    else
+        editorArea_->showDebugPanel();
+    resized();
+}
+
+void MainWindow::onTransportPlay()
+{
+    ci_.dispatch("play");
+}
+
+void MainWindow::onTransportStop()
+{
+    ci_.dispatch("stop");
+}
+
+void MainWindow::onTransportRecord()
+{
+    ci_.dispatch("record");
+}
+
+void MainWindow::onOpenSettings()
+{
+    if (editorArea_)
+        editorArea_->openSettingsTab(&appProperties_);
+}
+
+void MainWindow::onOpenShortcuts()
+{
+    juce::NativeMessageBox::showMessageBoxAsync(
+        juce::MessageBoxIconType::InfoIcon,
+        "Keyboard Shortcuts",
+        "Hathor Keyboard Shortcuts\n\n"
+        "Cmd+N    New Tab\n"
+        "Cmd+S    Save\n"
+        "Cmd+W    Close Tab\n"
+        "Cmd+Enter  Evaluate Block\n"
+        "Cmd+P    Quick Open\n"
+        "Cmd+F    Find\n"
+        "F12      Go to Definition\n"
+        "See docs/SHORTCUTS.md for the full reference.");
+}
+
+void MainWindow::onOpenDocs()
+{
+    juce::URL("https://docs.hathor.com").launchInDefaultBrowser();
+}
+
+void MainWindow::onAbout()
+{
+    juce::NativeMessageBox::showMessageBoxAsync(
+        juce::MessageBoxIconType::InfoIcon,
+        "About Hathor",
+        "Hathor — Live-coding IDE\n"
+        "Version 2.3\n"
+        "Built with JUCE\n\n"
+        "Copyright (C) 2024 Hathor Contributors");
+}
+
+// ---------------------------------------------------------------------------
+// 2.3 — File drag and drop (S2)
+// ---------------------------------------------------------------------------
+
+bool MainWindow::isInterestedInFileDrag(const juce::StringArray& files)
+{
+    // Accept both files (opening tabs) and folders (set as workspace).
+    for (const auto& f : files)
+    {
+        juce::File file(f);
+        if (file.isDirectory() || file.hasFileExtension(".ck") || file.hasFileExtension(".hathor"))
+            return true;
+    }
+    return false;
+}
+
+void MainWindow::fileDragEnter(const juce::StringArray& /*files*/, int /*x*/, int /*y*/)
+{
+    // Visual feedback could be added here (e.g. highlight the window edge).
+}
+
+void MainWindow::filesDropped(const juce::StringArray& files,
+                              int /*x*/, int /*y*/)
+{
+    for (const auto& f : files)
+    {
+        juce::File file(f);
+        if (file.isDirectory())
+        {
+            // Folder drop — prompt to set as workspace.
+            juce::AlertWindow::showOkCancelBox(
+                juce::AlertWindow::QuestionIcon,
+                "Set as Workspace?",
+                "Set \"" + file.getFileName() + "\" as the workspace root?",
+                "Set as Workspace",
+                "Cancel",
+                nullptr,
+                juce::ModalCallbackFunction::create(
+                    [this, file](int result)
+                    {
+                        if (result != 0)
+                            switchWorkspace(file);
+                    }));
+        }
+        else if (file.hasFileExtension(".ck") || file.hasFileExtension(".hathor"))
+        {
+            // File drop — open as a new tab, do NOT auto-evaluate (E2).
+            if (editorArea_)
+                editorArea_->openFile(file);
+        }
     }
 }
 

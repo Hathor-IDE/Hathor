@@ -41,7 +41,7 @@ public:
     }
 
     void mouseEnter(const juce::MouseEvent&) override { repaint(); }
-    void mouseLeave(const juce::MouseEvent&) override { repaint(); }
+    void mouseExit(const juce::MouseEvent&) override { repaint(); }
 
     void mouseDown(const juce::MouseEvent& e) override
     {

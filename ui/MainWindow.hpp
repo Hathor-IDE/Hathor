@@ -8,12 +8,19 @@
  *
  * Layout (Req 20.1, 20.3):
  *   ┌────────────────────────────────────────────────────────────┐
- *   │ ActivityRibbon (48 px) │    EditorArea     │ ChatSidebar  │
- *   │                        │                   │   (320 px)   │
- *   │                        │───────────────────┤              │
- *   │                        │  VisualizerPanel  │              │
- *   │                        │  (max(h/4,120)px) │              │
+ *   │ ActivityRibbon │ Explorer │    EditorArea     │ ChatSidebar │
+ *   │   (48 px)      │ (240 px) │                   │  (320 px)   │
+ *   │                │          │───────────────────┤              │
+ *   │                │          │  VisualizerPanel  │              │
+ *   │                │          │  (collapsed)      │              │
+ *   │                │          ├───────────────────┤ StatusRibbon │
  *   └────────────────────────────────────────────────────────────┘
+ *
+ * All panel widths (explorer, chat, visualizer height) are persisted in
+ * the ApplicationProperties file and restored across restarts.  Vertical
+ * splitter bars separate ribbon/explorer, explorer/editor, and editor/chat
+ * so the user can resize all zones interactively.  The visualizer strip is
+ * collapsible via a toggle (View ▸ Show Visualizer).
  *
  * Dark theme enforced by HathorLookAndFeel (Req 20.2):
  *   - Background luminance ≤ 15% of white  (#0e0e0e ≈ 0.2%)
@@ -23,6 +30,9 @@
  *   - Minimum size 1024×768 (setResizeLimits)
  *   - Restores last bounds from juce::PropertiesFile ("windowBounds" key)
  *   - Falls back to centred 1024×768 if stored bounds are off-screen
+ *
+ * Drag-and-drop: files dropped on the window open as tabs; folders prompt to
+ * set as workspace (S2).
  *
  * UITimer (Req 28.5): started at 60 Hz in constructor after audio device opens.
  *
@@ -72,6 +82,12 @@
 // L-1: Workspace session persistence
 #include "WorkspaceSession.hpp"
 
+// 2.3: Native menu bar model
+#include "HathorMenuBarModel.hpp"
+
+// 2.3: Resizable splitter bar component
+#include "SplitterBar.hpp"
+
 // ---------------------------------------------------------------------------
 // Forward declarations — concrete types defined in their own headers,
 // included only in MainWindow.cpp.  Forward-declared here because MainWindow's
@@ -89,26 +105,27 @@ class WelcomeScreen;
 // MainWindow
 // ---------------------------------------------------------------------------
 
-class MainWindow : public juce::DocumentWindow
+class MainWindow : public juce::DocumentWindow,
+                   private juce::FileDragAndDropTarget
 {
 public:
-    /**
-     * Construct the main application window.
-     *
-     * @param audio          Reference to the fully-initialised AudioEngine (device
-     *                       must already be open so UITimer can start immediately).
-     * @param ci             Reference to the ControlInterface for dispatching commands.
-     * @param agentExePath   Absolute path to the ACP agent executable (empty = no agent).
-     * @param hathorMcpPath  Absolute path to the hathor-mcp sidecar (empty = no MCP).
-     *
-     * Requirements: 32.1
-     */
-    MainWindow(AudioEngine& audio,
-               hathor::control::ControlInterface& ci,
-               std::string agentExePath  = {},
-               std::string hathorMcpPath = {});
+     /**
+      * Construct the main application window.
+      *
+      * @param audio          Reference to the fully-initialised AudioEngine (device
+      *                       must already be open so UITimer can start immediately).
+      * @param ci             Reference to the ControlInterface for dispatching commands.
+      * @param agentExePath   Absolute path to the ACP agent executable (empty = no agent).
+      * @param hathorMcpPath  Absolute path to the hathor-mcp sidecar (empty = no MCP).
+      *
+      * Requirements: 32.1
+      */
+     MainWindow(AudioEngine& audio,
+                hathor::control::ControlInterface& ci,
+                std::string agentExePath  = {},
+                std::string hathorMcpPath = {});
 
-    ~MainWindow() override;
+     ~MainWindow() override;
 
     // -----------------------------------------------------------------------
     // juce::DocumentWindow overrides
@@ -122,6 +139,58 @@ public:
 
     /// Handle global keyboard shortcuts (L-1 §5).
     bool keyPressed(const juce::KeyPress& key) override;
+
+    // -----------------------------------------------------------------------
+    // 2.3 — Menu bar callbacks (invoked by HathorMenuBarModel)
+    // -----------------------------------------------------------------------
+
+    /// Open a native file chooser to create a new file (File ▸ New File…).
+    void onNewFile();
+
+    /// Open a native file chooser to open an existing file (File ▸ Open File…).
+    void onOpenFile();
+
+    /// Toggle the Explorer panel (View ▸ Show Explorer).
+    void onToggleExplorer();
+
+    /// Toggle the Chat sidebar (View ▸ Show Chat).
+    void onToggleChat();
+
+    /// Toggle the Visualizer strip (View ▸ Show Visualizer).
+    void onToggleVisualizer();
+
+    /// Toggle the Terminal panel (View ▸ Show Terminal).
+    void onToggleTerminal();
+
+    /// Toggle the Problems panel (View ▸ Show Problems).
+    void onToggleProblems();
+
+    /// Toggle the Source Control panel (View ▸ Show Source Control).
+    void onToggleSourceControl();
+
+    /// Toggle the Debug & Runtime Inspector (View ▸ Show Debug & Inspector).
+    void onToggleDebug();
+
+    /// Play transport.
+    void onTransportPlay();
+
+    /// Stop transport.
+    void onTransportStop();
+
+    /// Record toggle.
+    void onTransportRecord();
+
+    /// Open Settings tab.
+    void onOpenSettings();
+
+    /// Show keyboard shortcuts help.
+    void onOpenShortcuts();
+
+    /// Open Hathor documentation URL.
+    void onOpenDocs();
+
+    /// Show the About dialog.
+    void onAbout();
 
 private:
 
@@ -193,11 +262,71 @@ private:
     /// Re-register "Open Recent: <path>" palette actions from the MRU.
     void refreshRecentActions();
 
-    // =========================================================================
-    // Layout constants
-    // =========================================================================
-    /// Width of the ExplorerPanel when open (H1).
-    static constexpr int kExplorerWidth = 240;
+    // -----------------------------------------------------------------------
+    // 2.3 — Layout state and resizability
+    // -----------------------------------------------------------------------
+
+    /// Layout parameters persisted in PropertiesFile.
+    struct LayoutParams
+    {
+        static constexpr int kMinPanelWidth  = 80;
+        static constexpr int kMaxPanelWidth  = 800;
+        static constexpr int kMinVizHeight   = 0;
+        static constexpr int kMaxVizHeight   = 400;
+        static constexpr int kDefaultExplorerWidth = 240;
+        static constexpr int kDefaultChatWidth     = 320;
+        static constexpr int kDefaultVizHeight     = 140;
+
+        int explorerWidth  = kDefaultExplorerWidth;
+        int chatWidth      = kDefaultChatWidth;
+        int vizHeight      = kDefaultVizHeight;
+        bool visualizerCollapsed = false;
+    };
+
+    /// Load persisted layout params from PropertiesFile (or defaults).
+    LayoutParams loadLayoutParams();
+
+    /// Persist layout params to PropertiesFile.
+    void saveLayoutParams(const LayoutParams& p);
+
+    /// Perform the four-zone layout using current LayoutParams.
+    void performLayout(const LayoutParams& p);
+
+    /// Handle a splitter drag that adjusts explorer width.
+    void onExplorerSplitterDrag(int deltaX);
+
+    /// Handle a splitter drag that adjusts chat width.
+    void onChatSplitterDrag(int deltaX);
+
+    /// Handle a splitter drag that adjusts visualizer height.
+    void onVisualizerSplitterDrag(int deltaY);
+
+    /// Toggle the visualizer strip collapsed/expanded.
+    void toggleVisualizerCollapse();
+
+    // -----------------------------------------------------------------------
+    // 2.3 — File drag and drop (S2)
+    // -----------------------------------------------------------------------
+
+    // juce::FileDragAndDropTarget
+    bool isInterestedInFileDrag(const juce::StringArray& files) override;
+    void fileDragEnter(const juce::StringArray& files,
+                       int x, int y) override;
+    void fileDragMove(const juce::StringArray& /*files*/,
+                      int /*x*/, int /*y*/) override {}
+    void fileDragExit(const juce::StringArray& /*files*/) override {}
+    void filesDropped(const juce::StringArray& files,
+                      int x, int y) override;
+
+    // -----------------------------------------------------------------------
+    // 2.3 — Native menu bar
+    // -----------------------------------------------------------------------
+
+    /// Menu bar model wired to ActionRegistry + MainWindow callbacks.
+    std::unique_ptr<hathor::ui::HathorMenuBarModel> menuBarModel_;
+
+    /// Install the native menu bar on this window.
+    void setupMenuBar();
 
     // -----------------------------------------------------------------------
     // Dark theme
@@ -221,6 +350,13 @@ private:
     std::unique_ptr<hathor::ui::ChatSidebar>       chatSidebar_;
     std::unique_ptr<hathor::ui::VisualizerPanel>   visualizerPanel_;
     std::unique_ptr<hathor::ui::UITimer>            uiTimer_;
+
+    // 2.3: Resizable splitter bars between panels.
+    std::unique_ptr<hathor::ui::SplitterBar>         explorerSplitter_;
+    std::unique_ptr<hathor::ui::SplitterBar>         chatSplitter_;
+    std::unique_ptr<hathor::ui::SplitterBar>         visualizerSplitter_;
+
+    LayoutParams layoutParams_;
 
     // L-3: Unified Problems / Diagnostics status ribbon (bottom of window)
     std::unique_ptr<hathor::ui::StatusRibbon>        statusRibbon_;

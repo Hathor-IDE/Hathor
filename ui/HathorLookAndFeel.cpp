@@ -609,7 +609,7 @@ const Palette* HathorLookAndFeel::globalPalette_ = nullptr;
 // ===========================================================================
 
 // ===========================================================================
-// getTextButtonFont — JetBrains Mono Bold for text buttons
+// getTextButtonFont — Inter Medium for text buttons (proportional UI)
 // ===========================================================================
 
 juce::Font HathorLookAndFeel::getTextButtonFont(juce::TextButton& /*button*/,
