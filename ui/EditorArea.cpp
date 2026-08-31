@@ -1083,7 +1083,8 @@ SettingsComponent* EditorArea::openSettingsTab(juce::ApplicationProperties* prop
     // Create the Settings tab (A2). The app-lifetime Petdex service is passed
     // so the Petdex section can browse/select the catalog (Phase G / D1).
     settingsTab_ = std::make_unique<SettingsComponent>(props, &audio_,
-                                                       petdexService_.get());
+                                                        petdexService_.get(),
+                                                        agentRegistry_);
     addAndMakeVisible(*settingsTab_);
     settingsTab_->setVisible(false);  // will be shown by activateTab
 

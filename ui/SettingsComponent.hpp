@@ -73,9 +73,10 @@ public:
       *                 The service is not contacted until this component is built,
       *                 i.e. only when the user actually opens the Settings tab (opt-in).
       */
-    explicit SettingsComponent(juce::ApplicationProperties* props,
-                               AudioEngineFacade* audio = nullptr,
-                               PetdexManifestService* petdex = nullptr);
+     explicit SettingsComponent(juce::ApplicationProperties* props,
+                                AudioEngineFacade* audio = nullptr,
+                                PetdexManifestService* petdex = nullptr,
+                                AgentRegistry* registry = nullptr);
 
     ~SettingsComponent() override;
 
@@ -97,9 +98,18 @@ public:
     /**
        Callback invoked after Apply commits the edit buffer to live state.
        MainWindow can use this to restart the agent session with the new
-       agent executable path.
-     */
+        agent executable path.
+      */
     std::function<void()> onSettingsApplied;
+
+    /**
+        Callback invoked after Apply commits the agent selection (A2).
+        Argument is the resolved agent command string (executable path + args)
+        that should be used for new chat sessions. An empty string means no
+        agent configured (or "Custom" with no path). MainWindow uses this to
+        restart chat threads via restartAllThreads().
+    */
+    std::function<void(const std::string& agentCommand)> onAgentSelectionApplied;
 
     /**
        Callback invoked after Apply commits the EQ preset to live state.

@@ -307,6 +307,14 @@ public:
         return petdexService_.get();
     }
 
+    /// Install the known-agent registry (A2) so the Settings tab's agent
+    /// section shows a preset dropdown. Called by MainWindow before the
+    /// user can open Settings. Non-owning.
+    void setAgentRegistry(hathor::ui::AgentRegistry* reg) noexcept
+    {
+        agentRegistry_ = reg;
+    }
+
     /// The currently active tab, or nullptr if no tabs are open.
     HathorTab* activeTab() noexcept;
 
@@ -828,6 +836,10 @@ private:
     // -----------------------------------------------------------------------
     AudioEngine&                       audio_;
     hathor::control::ControlInterface& ci_;
+
+    /// A2: Known-agent registry (non-owning; installed by MainWindow). Powers
+    /// the Settings tab's preset dropdown + Detect + Browse agent picker.
+    hathor::ui::AgentRegistry*         agentRegistry_ = nullptr;
 
     // -----------------------------------------------------------------------
     // B8-K6: Bake-to-Song orchestrator

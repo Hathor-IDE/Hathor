@@ -343,9 +343,30 @@ MainWindow::MainWindow(AudioEngine& audio,
                                   chatSidebar_->restartAllThreads(
                                       agentExePath_, threadWorkingDir, hathorMcpPath_);
                               }
-                          };
+                           };
 
-                          // Phase G (D2–D4): react to an applied Petdex
+                           // A2: React to the agent preset selection from the
+                           // Settings tab — restart all chat threads with the
+                           // resolved command string (preset exe + args, or
+                           // custom Browse path + args). This is the primary
+                           // entry point for switching agents from Settings.
+                           settings->onAgentSelectionApplied = [this](const std::string& agentCommand)
+                           {
+                               if (agentCommand != agentExePath_)
+                               {
+                                   agentExePath_ = agentCommand;
+                                   const std::string threadWorkingDir =
+                                       !workspaceDir_.empty()
+                                           ? workspaceDir_
+                                           : juce::File::getSpecialLocation(
+                                                 juce::File::userHomeDirectory)
+                                                 .getFullPathName().toStdString();
+                                   chatSidebar_->restartAllThreads(
+                                       agentExePath_, threadWorkingDir, hathorMcpPath_);
+                               }
+                           };
+
+                           // Phase G (D2–D4): react to an applied Petdex
                           // selection. Fires on Apply with the committed slug
                           // (empty string = explicit "no mascot").
                           settings->onPetSelectionApplied = [this](const std::string& slug)

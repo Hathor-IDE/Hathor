@@ -466,13 +466,57 @@ void SettingsComponent::buildAgentSection(const std::string& hathorMcpPath)
 
     y += kControlHeight + 8;
 
-    // --- Agent executable path ---
+    // --- Preset dropdown (A2) ---
+    auto* presetLabel = new juce::Label();
+    presetLabel->setText("Agent preset:", juce::dontSendNotification);
+    presetLabel->setBounds(0, y, labelW, kControlHeight);
+    presetLabel->setFont(HathorLookAndFeel::fontMedium(HathorLookAndFeel::Typography::bodySm));
+    presetLabel->setColour(juce::Label::textColourId, palette.textSecondary);
+    presetLabel->setJustificationType(juce::Justification::centredRight);
+    contentPanel_->addAndMakeVisible(presetLabel);
+
+    agentPresetCombo_.setBounds(controlX, y, controlW, kControlHeight);
+    agentPresetCombo_.setEditableText(false);
+    agentPresetCombo_.addListener(this);
+    agentPresetCombo_.setTooltip("Select an ACP agent preset");
+    contentPanel_->addAndMakeVisible(agentPresetCombo_);
+
+    populateAgentPresetCombo();
+    refreshAgentPresetCombo();
+
+    y += kControlHeight + 6;
+
+    // --- Detect button (scan $PATH) + Browse button ---
+    agentDetectBtn_.setButtonText("Detect");
+    agentDetectBtn_.setBounds(controlX, y, 80, kButtonHeight);
+    agentDetectBtn_.addListener(this);
+    agentDetectBtn_.setTooltip("Scan $PATH for installed agents");
+    contentPanel_->addAndMakeVisible(agentDetectBtn_);
+
+    agentBrowseBtn_.setButtonText("Browse…");
+    agentBrowseBtn_.setBounds(controlX + 88, y, 80, kButtonHeight);
+    agentBrowseBtn_.addListener(this);
+    agentBrowseBtn_.setTooltip("Browse for an agent executable");
+    contentPanel_->addAndMakeVisible(agentBrowseBtn_);
+
+    // --- Status label (detected / custom path / not found) ---
+    agentStatusLabel_.setBounds(controlX + 176, y, controlW - 176, kControlHeight);
+    agentStatusLabel_.setFont(HathorLookAndFeel::fontRegular(HathorLookAndFeel::Typography::bodySm));
+    agentStatusLabel_.setColour(juce::Label::textColourId, palette.textMuted);
+    agentStatusLabel_.setJustificationType(juce::Justification::centredLeft);
+    agentStatusLabel_.setInterceptsMouseClicks(false, false);
+    contentPanel_->addAndMakeVisible(agentStatusLabel_);
+
+    y += kControlHeight + 8;
+
+    // --- Custom agent path (visible only when "__custom__" selected) ---
     agentPathLabel_ = new juce::Label();
     agentPathLabel_->setText("Agent exe:", juce::dontSendNotification);
     agentPathLabel_->setBounds(0, y, labelW, kControlHeight);
     agentPathLabel_->setFont(HathorLookAndFeel::fontMedium(HathorLookAndFeel::Typography::bodySm));
     agentPathLabel_->setColour(juce::Label::textColourId, palette.textSecondary);
     agentPathLabel_->setJustificationType(juce::Justification::centredRight);
+    agentPathLabel_->setVisible(false);
     contentPanel_->addAndMakeVisible(*agentPathLabel_);
 
     agentPathEditor_.setBounds(controlX, y, controlW, kControlHeight);
@@ -482,6 +526,24 @@ void SettingsComponent::buildAgentSection(const std::string& hathorMcpPath)
     contentPanel_->addAndMakeVisible(agentPathEditor_);
 
     y += kControlHeight + 4;
+
+    // --- Args field ---
+    auto* argsLabel = new juce::Label();
+    argsLabel->setText("Args:", juce::dontSendNotification);
+    argsLabel->setBounds(0, y, labelW, kControlHeight);
+    argsLabel->setFont(HathorLookAndFeel::fontMedium(HathorLookAndFeel::Typography::bodySm));
+    argsLabel->setColour(juce::Label::textColourId, palette.textSecondary);
+    argsLabel->setJustificationType(juce::Justification::centredRight);
+    contentPanel_->addAndMakeVisible(argsLabel);
+
+    agentArgsEditor_.setBounds(controlX, y, controlW, kControlHeight);
+    agentArgsEditor_.setText(juce::String(pending_.agentArgs), juce::dontSendNotification);
+    agentArgsEditor_.addListener(this);
+    agentArgsEditor_.setTooltip("Extra arguments passed to the agent executable");
+    agentArgsEditor_.setVisible(false);
+    contentPanel_->addAndMakeVisible(agentArgsEditor_);
+
+    y += kControlHeight + 8;
 
     // --- hathor-mcp path (read-only, inferred) ---
     auto* mcpLabel = new juce::Label();
@@ -494,9 +556,9 @@ void SettingsComponent::buildAgentSection(const std::string& hathorMcpPath)
 
     mcpPathLabel_.setBounds(controlX, y, controlW, kControlHeight);
     mcpPathLabel_.setText(hathorMcpPath.empty()
-                              ? "(not found beside executable)"
-                              : juce::String(hathorMcpPath),
-                          juce::dontSendNotification);
+                               ? "(not found beside executable)"
+                               : juce::String(hathorMcpPath),
+                           juce::dontSendNotification);
     mcpPathLabel_.setFont(HathorLookAndFeel::fontRegular(HathorLookAndFeel::Typography::bodySm));
     mcpPathLabel_.setColour(juce::Label::textColourId, palette.textMuted);
     mcpPathLabel_.setJustificationType(juce::Justification::centredLeft);
