@@ -156,7 +156,8 @@ private:
     // -----------------------------------------------------------------------
     /// Compute magnitude spectrum from input samples.  @p n must be a power
     /// of two.  Output magnitudes written to @p outMag (size n/2 + 1).
-    static void computeFFTMagnitude(const std::vector<float>& input,
+    /// Reads from raw pointer input (no heap allocation in the FFT itself).
+    static void computeFFTMagnitude(const float* input,
                                     float* outMag, int n);
 
     // -----------------------------------------------------------------------
@@ -188,8 +189,19 @@ private:
     /// Per-cell brightness [0.0, 1.0]; 1.0 = just flashed, decays toward 0.
     std::array<float, kNumCells> cellBrightness_ {};
 
-    /// Rolling PCM samples (newest at back); decimated to panel width at paint.
-    std::vector<float> pcmHistory_;
+    /// Ring-buffer of recent PCm samples (writeCursor_ is the next-write slot).
+    /// Using a fixed array + cursor avoids the O(n) erase(begin()) that a
+    /// growing-and-shrunk std::vector caused on every 60 Hz tick — the old
+    /// code did up to kPcmHistoryMax element shifts per tick = O(n) per tick,
+    /// which dropped frames whenever the audio callback was producing samples.
+    std::array<float, kPcmHistoryMax> pcmHistory_ {};
+
+    /// Number of valid entries currently in pcmHistory_ (≤ kPcmHistoryMax).
+    int pcmCount_      { 0 };
+
+    /// Next write slot in pcmHistory_ (wraps modulo kPcmHistoryMax).
+    /// Oldest valid sample is at pcmHistory_[(writeCursor_ - pcmCount_ + kPcmHistoryMax) % kPcmHistoryMax].
+    int pcmWriteCursor_ { 0 };
 
     /// Timestamp (ms) of the last updateFrame() call that had eventCount > 0.
     int64_t lastActiveMs_ { 0 };

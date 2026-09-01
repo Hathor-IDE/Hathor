@@ -35,7 +35,8 @@ namespace hathor::ui {
 VisualizerPanel::VisualizerPanel(AudioEngine& /*audio*/)
 {
     cellBrightness_.fill(0.0f);
-    pcmHistory_.reserve(kPcmHistoryMax);
+    pcmCount_       = 0;
+    pcmWriteCursor_ = 0;
     lastActiveMs_ = 0;
     idle_         = true;
 }
@@ -125,11 +126,14 @@ void VisualizerPanel::updateSamples(const float* samples, std::size_t count, boo
     if (samples != nullptr && count > 0)
     {
         for (std::size_t i = 0; i < count; ++i)
-            pcmHistory_.push_back(samples[i]);
-
-        // Cap history size to prevent unbounded growth.
-        while (static_cast<int>(pcmHistory_.size()) > kPcmHistoryMax)
-            pcmHistory_.erase(pcmHistory_.begin());
+        {
+            pcmHistory_[pcmWriteCursor_] = samples[i];
+            pcmWriteCursor_ = (pcmWriteCursor_ + 1) % kPcmHistoryMax;
+            if (pcmCount_ < kPcmHistoryMax)
+                ++pcmCount_;
+            else
+                pcmCount_ = kPcmHistoryMax;  // full — cursor wrap handles eviction
+        }
 
         // PCM arrival means we're not idle.
         idle_ = false;
@@ -214,12 +218,16 @@ void VisualizerPanel::paintPulse(juce::Graphics& g,
 
     // Compute peak amplitude from recent PCM history.
     float peak = 0.0f;
-    if (!pcmHistory_.empty())
+    if (pcmCount_ > 0)
     {
-        const int windowSize = std::min(static_cast<int>(pcmHistory_.size()), 64);
-        const int offset = static_cast<int>(pcmHistory_.size()) - windowSize;
+        const int windowSize = std::min(pcmCount_, 64);
+        // Samples are stored oldest-first in the ring; read the newest
+        // 'windowSize' samples ending at index (pcmWriteCursor_ - 1).
         for (int i = 0; i < windowSize; ++i)
-            peak = std::max(peak, std::abs(pcmHistory_[offset + i]));
+        {
+            const int idx = (pcmWriteCursor_ - 1 - i + kPcmHistoryMax) % kPcmHistoryMax;
+            peak = std::max(peak, std::abs(pcmHistory_[idx]));
+        }
     }
 
     // Scale from 0.2x to 1.0x panel height based on audio energy.
@@ -292,17 +300,19 @@ void VisualizerPanel::paintWaveform(juce::Graphics& g,
         return;
     }
 
-    if (pcmHistory_.empty())
+    if (pcmCount_ == 0)
         return;
 
     const float w = bounds.getWidth();
     const float h = bounds.getHeight();
-    const int   n = static_cast<int>(pcmHistory_.size());
+    const int   n = pcmCount_;
 
     juce::Path path;
     bool       started = false;
 
     // Decimate PCM history to panel width and plot as a waveform.
+    // Samples are in arrival order (oldest→newest) wrapping the ring.
+    const int oldestIdx = (pcmWriteCursor_ - pcmCount_ + kPcmHistoryMax) % kPcmHistoryMax;
     const int panelW = static_cast<int>(w);
     for (int px = 0; px < panelW; ++px)
     {
@@ -313,7 +323,7 @@ void VisualizerPanel::paintWaveform(juce::Graphics& g,
         if (srcIdx < 0 || srcIdx >= n)
             continue;
 
-        const float sample = pcmHistory_[srcIdx];
+        const float sample = pcmHistory_[(oldestIdx + srcIdx) % kPcmHistoryMax];
         const float x = bounds.getX() + static_cast<float>(px);
 
         // Map amplitude [-1, 1] to panel height, centered at middle.
@@ -356,19 +366,20 @@ void VisualizerPanel::paintSpectrum(juce::Graphics& g,
         return;
     }
 
-    if (pcmHistory_.size() < 2)
+    if (pcmCount_ < 2)
         return;
 
-    // Build input: take the most recent kFftSize samples, zero-pad if fewer.
+    // Build input: take the most recent kFftSize samples (newest at the end),
+    // reading oldest-first from the ring buffer.
     float input[kFftSize];
     std::memset(input, 0, sizeof(input));
 
-    const int available = static_cast<int>(pcmHistory_.size());
-    const int toCopy = std::min(available, kFftSize);
-    const int srcOffset = available - toCopy;
+    const int toCopy = std::min(pcmCount_, kFftSize);
+    const int oldestIdx = (pcmWriteCursor_ - pcmCount_ + kPcmHistoryMax) % kPcmHistoryMax;
+    const int srcStart = oldestIdx;  // begin reading oldest valid sample
 
     for (int i = 0; i < toCopy; ++i)
-        input[i] = pcmHistory_[srcOffset + i];
+        input[i] = pcmHistory_[(srcStart + i) % kPcmHistoryMax];
 
     // Apply Hann window to reduce spectral leakage.
     for (int i = 0; i < kFftSize; ++i)
@@ -378,21 +389,32 @@ void VisualizerPanel::paintSpectrum(juce::Graphics& g,
         input[i] *= hann;
     }
 
-    // Compute FFT magnitude spectrum.
+    // Compute FFT magnitude spectrum (no heap allocation — input is a stack array).
     float mag[kFftSize / 2 + 1];
-    computeFFTMagnitude(
-        std::vector<float>(input, input + kFftSize),
-        mag, kFftSize);
+    computeFFTMagnitude(input, mag, kFftSize);
 
     // Draw the spectrum as a bar graph.
+    // Use dynamic normalization: find the peak magnitude this frame, then
+    // scale all bars relative to it (with a floor so near-silence still
+    // shows something).  This avoids the hard-coded maxMag=0.1f which
+    // saturated every bar to full height for any non-zero PCM.
+    float peakMag = 0.0f;
+    for (int i = 0; i < kFftSize / 2; ++i)
+        peakMag = std::max(peakMag, mag[i]);
+
+    // Floor: 1% of the DC bin for a 256-sample windowed signal ≈ 2.0.
+    // This ensures the spectrum is visible even at low volumes but
+    // never clips the scale so peaks reach ~full bar height.
+    peakMag = std::max(peakMag, 2.0f);
+
     const float barW = bounds.getWidth() / static_cast<float>(kFftSize / 2);
-    const float maxMag = 0.1f;
+    const float barMax = bounds.getHeight() * 0.85f;
 
     for (int i = 0; i < kFftSize / 2; ++i)
     {
-        const float magnitude = mag[i];
-        const float normalized = std::min(1.0f, magnitude / maxMag);
-        const float barH = normalized * bounds.getHeight() * 0.8f;
+        const float magnitude   = mag[i];
+        const float normalized  = std::min(1.0f, magnitude / peakMag);
+        const float barH        = normalized * barMax;
 
         const juce::Rectangle<float> bar(
             bounds.getX() + static_cast<float>(i) * barW,
@@ -439,11 +461,15 @@ void VisualizerPanel::paintIdleRing(juce::Graphics& g,
 // computeFFTMagnitude() — dependency-free radix-2 DIT FFT
 // ==========================================================================
 
-void VisualizerPanel::computeFFTMagnitude(const std::vector<float>& input,
+void VisualizerPanel::computeFFTMagnitude(const float* input,
                                             float* outMag, int n)
 {
-    // Bit-reverse reordering.
-    std::vector<std::complex<float>> data(static_cast<std::size_t>(n));
+    // Use a stack buffer for the complex working data — no heap allocation
+    // in this 60 Hz paint path.  kFftSize is always 256, so 256 complex
+    // floats = 2 KiB on the stack, which is safe.
+    constexpr int kMaxFft = 256;
+    jassert(n <= kMaxFft);  // paintSpectrum uses kFftSize = 256
+    std::complex<float> data[kMaxFft];
     for (int i = 0; i < n; ++i)
         data[i] = std::complex<float>(input[i], 0.0f);
 

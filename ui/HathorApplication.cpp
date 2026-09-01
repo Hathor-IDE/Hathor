@@ -16,7 +16,9 @@
  */
 
 #include <cstdlib>
+#include <filesystem>
 #include <iostream>
+#include <vector>
 
 #include <juce_audio_devices/juce_audio_devices.h>
 #include <juce_audio_formats/juce_audio_formats.h>
@@ -36,6 +38,45 @@
 // persisted by the previous session; fall back to the process CWD. Used so
 // `.hathor_assets` resolves under the opened project even when the binary is
 // launched from elsewhere (e.g. `/`).
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Resolve a default samples directory when the user launches hathor-ui without
+// an explicit --samples <path> (e.g. by double-clicking the .app bundle, which
+// passes no command-line arguments on macOS).
+//
+// Candidate locations, in priority order:
+//   1. ./samples            (process CWD — the layout documented in README)
+//   2. ../Resources/samples (bundled inside the .app package)
+//   3. <source_root>/samples (dev-tree fallback when launched from build/)
+//
+// Returns the first existing directory, or an empty path if none are found.
+// ---------------------------------------------------------------------------
+static std::filesystem::path resolveDefaultSamplesPath()
+{
+    const std::vector<std::filesystem::path> candidates = {
+        "samples",
+        juce::File::getSpecialLocation(juce::File::currentExecutableFile)
+            .getSiblingFile("..")
+            .getChildFile("Resources")
+            .getChildFile("samples")
+            .getFullPathName().toStdString(),
+        juce::File::getSpecialLocation(juce::File::currentExecutableFile)
+            .getSiblingFile("..")
+            .getSiblingFile("..")
+            .getChildFile("samples")
+            .getFullPathName().toStdString(),
+    };
+
+    std::error_code ec;
+    for (const auto& c : candidates)
+    {
+        if (!c.empty() && std::filesystem::is_directory(c, ec))
+            return std::filesystem::canonical(c, ec);
+    }
+    return {};
+}
+
 static std::filesystem::path resolveProjectRoot()
 {
     juce::PropertiesFile::Options opts;
@@ -114,12 +155,32 @@ public:
                 agentExePath = envAgent;
         }
 
+        // If --samples was not supplied, try a default samples directory so
+        // that double-clicking the .app bundle (which passes no argv on macOS)
+        // still opens the IDE instead of immediately erroring out.
         if (samplesPath.empty())
         {
+            const std::filesystem::path fallback = resolveDefaultSamplesPath();
+            if (!fallback.empty())
+            {
+                samplesPath = fallback.string();
+                std::cerr << "[HathorApplication] no --samples given; using default: "
+                          << samplesPath << std::endl;
+            }
+        }
+
+        if (samplesPath.empty())
+        {
+            const std::string usage =
+                "--samples <path> is required.\n\n"
+                "Usage: hathor-ui --samples <path> [--bpm <n>] [--agent <path>]\n\n"
+                "No default samples directory was found. Launch from a terminal "
+                "with --samples <path>, or open the app from within a project "
+                "directory that contains a `samples/` folder.";
             juce::AlertWindow::showMessageBoxAsync(
                 juce::AlertWindow::WarningIcon,
                 "Hathor",
-                "--samples <path> is required.\n\nUsage: hathor-ui --samples <path> [--bpm <n>] [--agent <path>]",
+                usage,
                 "OK",
                 nullptr,
                 juce::ModalCallbackFunction::create([](int) { juce::JUCEApplication::getInstance()->quit(); }));

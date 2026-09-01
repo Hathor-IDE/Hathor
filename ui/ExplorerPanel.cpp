@@ -48,10 +48,14 @@ ExplorerPanel::ExplorerPanel()
     // renames).  juce::DirectoryWatcher is unavailable in this JUCE version,
     // so we poll every 2 seconds, comparing file_write_times.
     fsPollTimer_ = std::make_unique<FsPollTimer>(*this);
-    fsPollTimer_->watch(directory_);
 
-    // Build the initial tree. If appProperties_ is set later, restoreLastDirectory
-    // will update the directory and rebuild.
+    // Do NOT start watching the user's home directory here — a recursive
+    // walk of ~ on macOS is slow and trips over permission-restricted /
+    // non-UTF-8 paths that can terminate the app (the FsPollTimer callbacks
+    // are noexcept).  MainWindow sets the real workspace directory (or shows
+    // the welcome screen) immediately after construction, which is when
+    // the watcher is (re)pointed at a sane directory.
+    // -----------------------------------------------------------------------
     refresh();
 }
 
@@ -104,6 +108,15 @@ void ExplorerPanel::handleFilesystemChange()
 
 void ExplorerPanel::refresh()
 {
+    // B8-K5 §9 / Agent 0.1: On a fresh launch no workspace has been chosen
+    // yet, so `directory_` is still the placeholder user-home path.  Building
+    // a tree from ~ would recursively walk the user's home folder (slow, and
+    // prone to permission/encoding errors that terminate the noexcept
+    // TreeBuilder callbacks).  Leave the tree empty until MainWindow calls
+    // setDirectory() or restoreLastDirectoryAndRefresh() with a real path.
+    if (directory_ == juce::File::getSpecialLocation(juce::File::userHomeDirectory))
+        return;
+
     // Build the tree data via the recursive walker.
     FolderNode root = treeBuilder_.buildTree(
         std::filesystem::path(directory_.getFullPathName().toStdString()));
@@ -224,20 +237,32 @@ void ExplorerPanel::FsPollTimer::timerCallback()
 
     std::filesystem::recursive_directory_iterator end;
 
-    while (it != end)
+    try
     {
-        std::error_code ec2;
-        const auto& p = it->path();
-        const auto ftime = std::filesystem::last_write_time(p, ec2);
-        if (!ec2)
+        while (it != end)
         {
-            const auto epoch = std::chrono::duration_cast<std::chrono::seconds>(
-                ftime.time_since_epoch()).count();
+            std::error_code ec2;
+            const auto& p = it->path();
+            const auto ftime = std::filesystem::last_write_time(p, ec2);
+            if (!ec2)
+            {
+                const auto epoch = std::chrono::duration_cast<std::chrono::seconds>(
+                    ftime.time_since_epoch()).count();
 
-            const std::string key = p.string();
-            current[key] = static_cast<std::uint64_t>(epoch);
+                const std::string key = p.string();
+                current[key] = static_cast<std::uint64_t>(epoch);
+            }
+            ++it;
         }
-        ++it;
+    }
+    catch (const std::exception& ex)
+    {
+        // A filesystem error (permission denied, symlink loop, non-UTF-8 path,
+        // etc.) must never terminate the app — these callbacks run under
+        // JUCE's timer thread.  Log and bail out of this poll cycle.
+        std::cerr << "[ExplorerPanel] FsPollTimer iteration error: "
+                  << ex.what() << std::endl;
+        return;
     }
 
     // Compare against the snapshot.
@@ -299,18 +324,30 @@ void ExplorerPanel::FsPollTimer::rebuildSnapshot() noexcept
 
     std::filesystem::recursive_directory_iterator end;
 
-    while (it != end)
+    try
     {
-        std::error_code ec2;
-        const auto& p = it->path();
-        const auto ftime = std::filesystem::last_write_time(p, ec2);
-        if (!ec2)
+        while (it != end)
         {
-            const auto epoch = std::chrono::duration_cast<std::chrono::seconds>(
-                ftime.time_since_epoch()).count();
-            snapshot_[p.string()] = static_cast<std::uint64_t>(epoch);
+            std::error_code ec2;
+            const auto& p = it->path();
+            const auto ftime = std::filesystem::last_write_time(p, ec2);
+            if (!ec2)
+            {
+                const auto epoch = std::chrono::duration_cast<std::chrono::seconds>(
+                    ftime.time_since_epoch()).count();
+                snapshot_[p.string()] = static_cast<std::uint64_t>(epoch);
+            }
+            ++it;
         }
-        ++it;
+    }
+    catch (const std::exception& ex)
+    {
+        // Guarded: rebuildSnapshot is noexcept (called from JUCE's timer
+        // thread), so an uncaught exception here would terminate the
+        // process.  A filesystem error on a restricted/odd path should
+        // only invalidate this poll cycle, not crash the IDE.
+        std::cerr << "[ExplorerPanel] FsPollTimer rebuildSnapshot error: "
+                  << ex.what() << std::endl;
     }
 }
 

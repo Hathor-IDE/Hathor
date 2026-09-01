@@ -135,6 +135,17 @@ if(APPLE)
             "$<TARGET_BUNDLE_DIR:hathor-ui>/Contents/Resources/language-metadata"
         COMMENT "Phase 6.3: Bundling strudel-lsp + language-metadata into HathorUI.app/Contents/Resources/"
         VERBATIM)
+    # ---------------------------------------------------------------------------
+    # Bundle the sample bank into Contents/Resources/samples so that
+    # double-clicking the .app (which passes no --samples argv on macOS) can
+    # fall back to the bundled samples instead of erroring out on launch.
+    # ---------------------------------------------------------------------------
+    add_custom_command(TARGET hathor-ui POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${CMAKE_SOURCE_DIR}/samples"
+            "$<TARGET_BUNDLE_DIR:hathor-ui>/Contents/Resources/samples"
+        COMMENT "Bundling samples/ into HathorUI.app/Contents/Resources/samples"
+        VERBATIM)
 endif()
 
 target_sources(hathor-ui
