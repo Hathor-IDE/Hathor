@@ -410,6 +410,11 @@ int AudioEngine::getBufferSize() const noexcept
     return bufferSize_.load(std::memory_order_relaxed);
 }
 
+int AudioEngine::getSampleRate() const noexcept
+{
+    return sampleRate_.load(std::memory_order_relaxed);
+}
+
 std::string AudioEngine::setSampleRate(int rate)
 {
     auto* device = deviceManager_.getCurrentAudioDevice();

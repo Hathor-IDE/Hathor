@@ -270,6 +270,10 @@ public:
     /// Returns the current hardware buffer size in samples (0 if no device).
     int getBufferSize() const noexcept override;
 
+    /// Returns the current audio device sample rate in Hz (0 if no device).
+    /// Relaxed ordering — read only on the UI timer thread.
+    int getSampleRate() const noexcept;
+
     /// Reconfigure the audio device sample rate.
     /// @param rate  Desired sample rate in Hz.
     /// @return Empty string on success, error description on failure.

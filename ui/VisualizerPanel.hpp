@@ -6,17 +6,21 @@
 /**
  * VisualizerPanel.hpp — real-time procedural visualizer (bottom panel).
  *
- * Receives VisualizerFrame data exclusively from UITimer::timerCallback()
- * via updateFrame().  It NEVER reads AudioEngine state directly (Req 29.2).
- * repaint() is called ONLY from updateFrame() — no self-owned timer (Req 29.5).
+ * Receives visualizer frame data exclusively from UITimer::timerCallback()
+ * via updateFrame() and updateSamples().  It NEVER reads AudioEngine state
+ * directly (Req 29.2).
+ * repaint() is called ONLY from updateSamples() — no self-owned timer (Req 29.5).
  *
- * Three rendering modes (Req 29.3), cycled by clicking the panel:
- *   Pulse     — filled ellipse scales 0.2×–1.0× panel height with cyclePos.
- *   StepGrid  — N×M cell grid; cells flash white on fired event, fade to dim.
- *   Waveform  — polyline of last 128 cyclePos samples.
+ * Four rendering modes (Req 29.3), cycled by clicking the panel:
+ *   Pulse     — filled ellipse that scales with PCM audio energy.
+ *   StepGrid  — 8x4 cell grid; cells flash on fired event, mapped to real
+ *               slot/step positions from VisualizerFrame events.
+ *   Waveform  — polyline of actual incoming PCM samples, decimated to panel width.
+ *   Spectrum  — magnitude spectrum from a small dependency-free FFT over PCM ring.
  *
- * Idle state (Req 29.4): when no frames with eventCount > 0 are received for
- * 500 ms, all three modes show a slowly-breathing dim placeholder ring.
+ * Idle state (Req 29.4): when transport is stopped or no frames with
+ * eventCount > 0 are received for 500 ms, all modes show a slowly-breathing
+ * dim placeholder ring.
  *
  * paint() budget: ≤ 8 ms on target hardware (Req 29.6).
  *
@@ -26,16 +30,16 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 
 #include <array>
-#include <deque>
-#include <vector>
+#include <complex>
 #include <cstdint>
-#include <functional>
+#include <vector>
 
 // Engine types
 #include "../app/VisualizerFrame.hpp"  // hathor::kMaxFrameEvents
-#include "../app/SpscSampleRing.hpp"    // hathor::SpscSampleRing
+#include "../app/SpscSampleRing.hpp"   // hathor::SpscSampleRing
 #include "../engine/include/hathor/Event.hpp"
 #include "../engine/include/hathor/ParamMap.hpp"
+#include "../engine/include/hathor/Arc.hpp"
 
 // Design system
 #include "HathorLookAndFeel.hpp"
@@ -64,10 +68,11 @@ public:
     /// Visual rendering modes, cycled on mouseUp.
     enum class Mode : uint8_t
     {
-        Pulse    = 0,  ///< pulsing filled ellipse driven by cyclePos
-        StepGrid = 1,  ///< N×M cell grid with flash-and-fade
-        Waveform = 2,  ///< polyline of last 128 cyclePos samples
-        kCount   = 3
+        Pulse    = 0,  ///< pulsing filled ellipse driven by PCM audio energy
+        StepGrid = 1,  ///< 8x4 cell grid with flash-and-fade from real event positions
+        Waveform = 2,  ///< polyline of actual incoming PCM samples
+        Spectrum = 3,  ///< magnitude spectrum from small FFT over PCM ring
+        kCount   = 4
     };
 
     // -----------------------------------------------------------------------
@@ -76,40 +81,44 @@ public:
 
     /// @param audio  Not stored — VisualizerPanel MUST NOT read AudioEngine
     ///               state.  Parameter exists so MainWindow::VisualizerPanel
-    ///               construction is uniform.  Pass audio_ for
-    ///               forward-compatibility.
+    ///               construction is uniform.
     explicit VisualizerPanel(AudioEngine& /*audio*/);
 
     ~VisualizerPanel() override = default;
 
     // -----------------------------------------------------------------------
     // Data push — called exclusively by UITimer on the JUCE message thread.
-    // Stores the latest frame data and calls repaint().
-    // repaint() is NEVER called from anywhere else (Req 29.5).
+    // repaint() is called from updateSamples() (V4: continuous repaint).
     // -----------------------------------------------------------------------
 
     /**
-     * Receive a new frame from UITimer.
+     * Receive a new frame from UITimer (musical event data).
      *
      * @param latestCyclePos  Cycle position from the most recent ring-buffer
-     *                        frame (0.0 ≤ value, fractional part is beat phase).
+     *                        frame (0.0 <= value, fractional part is beat phase).
      * @param events          All fired events accumulated across frames drained
      *                        this tick.
+     * @param sampleRate      Current audio device sample rate (Hz, 0 if no device).
+     * @param bpmValue    Current tempo in BPM.
+     * @param running         Whether the transport is currently running.
      */
     void updateFrame(double latestCyclePos,
-                     const std::vector<hathor::Event<hathor::ParamMap>>& events);
+                     const std::vector<hathor::Event<hathor::ParamMap>>& events,
+                     int sampleRate,
+                     double bpmValue,
+                     bool running);
 
     /**
      * Receive a batch of raw PCM samples drained from SpscSampleRing (V1).
      *
      * @param samples   Pointer to @p count float samples (mono, post-gain).
      * @param count     Number of valid samples (may be 0).
+     * @param running   Whether the transport is currently running.
      *
-     * Appends samples to the internal PCM ring buffer and triggers a repaint
-     * so the waveform mode can render actual audio content (Agent 3.2 will
-     * consume pcmHistory_ in paintWaveform).
+     * Appends samples to the internal PCM history and triggers a repaint
+     * so the waveform and spectrum modes can render actual audio content.
      */
-    void updateSamples(const float* samples, std::size_t count) noexcept;
+    void updateSamples(const float* samples, std::size_t count, bool running);
 
     // -----------------------------------------------------------------------
     // Mode query (mostly for tests / external observers)
@@ -135,20 +144,32 @@ private:
     void paintWaveform(juce::Graphics& g, const juce::Rectangle<float>& bounds,
                        bool idle, float idlePhase, const Palette& palette) const;
 
+    void paintSpectrum(juce::Graphics& g, const juce::Rectangle<float>& bounds,
+                       bool idle, float idlePhase, const Palette& palette) const;
+
     /// Draw the dim placeholder ring (shown in idle state over any mode).
     void paintIdleRing(juce::Graphics& g, const juce::Rectangle<float>& bounds,
                        float phase, const Palette& palette) const;
 
     // -----------------------------------------------------------------------
+    // FFT (dependency-free radix-2 DIT)
+    // -----------------------------------------------------------------------
+    /// Compute magnitude spectrum from input samples.  @p n must be a power
+    /// of two.  Output magnitudes written to @p outMag (size n/2 + 1).
+    static void computeFFTMagnitude(const std::vector<float>& input,
+                                    float* outMag, int n);
+
+    // -----------------------------------------------------------------------
     // Step grid dimensions
+    // -----------------------------------------------------------------------
     static constexpr int kGridCols = 8;
     static constexpr int kGridRows = 4;
     static constexpr int kNumCells = kGridCols * kGridRows;  // 32
 
     // -----------------------------------------------------------------------
-    // Waveform history
+    // PCM history
     // -----------------------------------------------------------------------
-    static constexpr int kWaveformSamples = 128;
+    static constexpr int kPcmHistoryMax = 512;
 
     // -----------------------------------------------------------------------
     // Idle timeout
@@ -161,25 +182,14 @@ private:
 
     Mode mode_       { Mode::Pulse };  ///< currently active visual mode
     double cyclePos_ { 0.0 };         ///< latest cycle position (fractional beat phase)
+    int    sampleRate_ { 44100 };     ///< current device sample rate (Hz)
+    double bpm_       { 120.0 };      ///< current tempo (BPM)
 
     /// Per-cell brightness [0.0, 1.0]; 1.0 = just flashed, decays toward 0.
     std::array<float, kNumCells> cellBrightness_ {};
 
-    /// Rolling history of the last 128 cyclePos values.
-    std::deque<double> waveHistory_;
-
-    // -----------------------------------------------------------------------
-    // PCM sample history (V1: raw float samples for waveform rendering)
-    // -----------------------------------------------------------------------
-    /// Maximum number of PCM samples retained for waveform display.
-    static constexpr std::size_t kPcmHistoryMax = 512;
-
     /// Rolling PCM samples (newest at back); decimated to panel width at paint.
-    std::array<float, kPcmHistoryMax> pcmHistory_ {};
-    /// Current write position in pcmHistory_ (ring wrap index).
-    std::size_t pcmWritePos_ { 0 };
-    /// Number of valid samples in pcmHistory_ (≤ kPcmHistoryMax).
-    std::size_t pcmCount_ { 0 };
+    std::vector<float> pcmHistory_;
 
     /// Timestamp (ms) of the last updateFrame() call that had eventCount > 0.
     int64_t lastActiveMs_ { 0 };

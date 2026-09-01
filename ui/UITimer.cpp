@@ -116,23 +116,28 @@ void UITimer::timerCallback()
     }
 
     // Only push to the visualizer if at least one frame was actually read.
+    // Always call updateSamples for continuous repaint (V4).
+    const int   sampleRate = audio_.getSampleRate();
+    const double bpm       = audio_.getBpm();
+    const bool   running   = audio_.isRunning();
+
     if (latestCyclePos >= 0.0)
-        vis_.updateFrame(latestCyclePos, firedEvents_);
+        vis_.updateFrame(latestCyclePos, firedEvents_, sampleRate, bpm, running);
 
     // -----------------------------------------------------------------------
     // (a-2) PCM drain (V1): drain raw float samples from SpscSampleRing into
     // a stack buffer and hand them to VisualizerPanel via updateSamples().
     //
     // popMany returns the count of samples actually available; the remainder
-    // of the buffer is left untouched (VisualizerPanel only reads @p count).
-    // Pre-allocated on the stack — no heap allocation in steady state.
+    // is left untouched (VisualizerPanel only reads @p count).  The stack
+    // buffer is reused every tick — no heap allocation in steady state.
+    // Always called for continuous repaint (V4).
     // -----------------------------------------------------------------------
     {
         constexpr std::size_t kMaxPcmDrain = 512;
         float pcmBuf[kMaxPcmDrain];
         const std::size_t pcmCount = sampleRing_.popMany(pcmBuf, kMaxPcmDrain);
-        if (pcmCount > 0)
-            vis_.updateSamples(pcmBuf, pcmCount);
+        vis_.updateSamples(pcmBuf, pcmCount, running);
     }
 
     // -----------------------------------------------------------------------
