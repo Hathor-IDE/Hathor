@@ -33,6 +33,7 @@
 
 // Engine types
 #include "../app/VisualizerFrame.hpp"  // hathor::kMaxFrameEvents
+#include "../app/SpscSampleRing.hpp"    // hathor::SpscSampleRing
 #include "../engine/include/hathor/Event.hpp"
 #include "../engine/include/hathor/ParamMap.hpp"
 
@@ -98,6 +99,18 @@ public:
     void updateFrame(double latestCyclePos,
                      const std::vector<hathor::Event<hathor::ParamMap>>& events);
 
+    /**
+     * Receive a batch of raw PCM samples drained from SpscSampleRing (V1).
+     *
+     * @param samples   Pointer to @p count float samples (mono, post-gain).
+     * @param count     Number of valid samples (may be 0).
+     *
+     * Appends samples to the internal PCM ring buffer and triggers a repaint
+     * so the waveform mode can render actual audio content (Agent 3.2 will
+     * consume pcmHistory_ in paintWaveform).
+     */
+    void updateSamples(const float* samples, std::size_t count) noexcept;
+
     // -----------------------------------------------------------------------
     // Mode query (mostly for tests / external observers)
     // -----------------------------------------------------------------------
@@ -154,6 +167,19 @@ private:
 
     /// Rolling history of the last 128 cyclePos values.
     std::deque<double> waveHistory_;
+
+    // -----------------------------------------------------------------------
+    // PCM sample history (V1: raw float samples for waveform rendering)
+    // -----------------------------------------------------------------------
+    /// Maximum number of PCM samples retained for waveform display.
+    static constexpr std::size_t kPcmHistoryMax = 512;
+
+    /// Rolling PCM samples (newest at back); decimated to panel width at paint.
+    std::array<float, kPcmHistoryMax> pcmHistory_ {};
+    /// Current write position in pcmHistory_ (ring wrap index).
+    std::size_t pcmWritePos_ { 0 };
+    /// Number of valid samples in pcmHistory_ (≤ kPcmHistoryMax).
+    std::size_t pcmCount_ { 0 };
 
     /// Timestamp (ms) of the last updateFrame() call that had eventCount > 0.
     int64_t lastActiveMs_ { 0 };

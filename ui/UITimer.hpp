@@ -25,6 +25,7 @@
 
 // Engine types
 #include "../app/VisualizerFrame.hpp"   // hathor::SpscRingBuffer<128>
+#include "../app/SpscSampleRing.hpp"    // hathor::SpscSampleRing<2048>
 #include "../app/AudioEngine.hpp"       // AudioEngine
 
 // Forward-declare panel types that MainWindow.cpp includes.  When
@@ -59,10 +60,11 @@ public:
       * @param sliders  SliderPanel whose display values are kept in sync.
       * @param audio    AudioEngine for BPM / gain / slot queries.
       */
-    UITimer(hathor::SpscRingBuffer<128>& buf,
-            hathor::ui::VisualizerPanel& vis,
-            hathor::ui::SliderPanel&     sliders,
-            AudioEngine&                 audio);
+    UITimer(hathor::SpscRingBuffer<128>&      buf,
+            hathor::SpscSampleRing<2048>&      sampleRing,
+            hathor::ui::VisualizerPanel&     vis,
+            hathor::ui::SliderPanel&         sliders,
+            AudioEngine&                     audio);
 
     ~UITimer() override = default;
 
@@ -107,6 +109,7 @@ public:
 
 private:
     hathor::SpscRingBuffer<128>&            buf_;
+    hathor::SpscSampleRing<2048>&           sampleRing_;
     hathor::ui::VisualizerPanel&            vis_;
     hathor::ui::SliderPanel&                sliders_;
     AudioEngine&                            audio_;

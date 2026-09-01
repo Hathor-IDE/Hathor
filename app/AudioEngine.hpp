@@ -27,6 +27,7 @@
 #include "SlotState.hpp"
 #include "VoicePool.hpp"
 #include "VisualizerFrame.hpp"
+#include "SpscSampleRing.hpp"
 #include "audio-worker/AudioWorkerManager.hpp"
 #include "audio-worker/ChuckCkJobService.hpp"
 #include "MasterEq.hpp"
@@ -445,9 +446,25 @@ private:
     /// Pre-allocated SPSC ring buffer; written by audio thread, read by UITimer.
     hathor::SpscRingBuffer<128>   vizRingBuffer_;
 
+    // ------------------------------------------------------------------
+    // PCM sample ring buffer (V1: raw float PCM for visualizer waveform)
+    //
+    // Producer — audio thread (push in audioDeviceIOCallbackWithContext).
+    // Consumer — UITimer::timerCallback() on the JUCE message thread.
+    //
+    // Capacity is 2048 floats (≈47 ms at 44.1 kHz stereo-mixed mono).  The
+    // audio thread pushes downmixed, post-gain mono samples decimated to
+    // at most 256 per callback.  No allocation, no shared_ptr, audio-thread
+    // safe.  Uses the same seqlock SPSC discipline as SpscSampleRing.
+    // ------------------------------------------------------------------
+    hathor::SpscSampleRing<2048> sampleRing_;
+
 public:
-    /// Accessor for the UI timer to drain visualizer frames (non-const ref).
+    /// Accessor for the UI timer to drain visualizer event frames (non-const ref).
     hathor::SpscRingBuffer<128>& visualizerBuffer() noexcept { return vizRingBuffer_; }
+
+    /// Accessor for the UI timer to drain PCM samples (non-const ref).
+    hathor::SpscSampleRing<2048>& sampleRing() noexcept { return sampleRing_; }
 
 private:
 

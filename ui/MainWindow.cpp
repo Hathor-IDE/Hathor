@@ -715,13 +715,14 @@ MainWindow::MainWindow(AudioEngine& audio,
     // Start UITimer at 60 Hz — audio device is open at this point (Req 28.5)
     // UITimer drains the visualizer ring buffer and syncs slider displays.
     //
-    // Signature: UITimer(SpscRingBuffer<128>&, VisualizerPanel&,
+     // Signature: UITimer(SpscRingBuffer<128>&, SpscSampleRing<2048>&,
     //                    SliderPanel&, AudioEngine&)
     //
     // sliderPanel comes from ChatSidebar (0.5/S4 — single BPM/gain surface).
     // -----------------------------------------------------------------------
     uiTimer_ = std::make_unique<hathor::ui::UITimer>(
         audio_.visualizerBuffer(),
+        audio_.sampleRing(),
         *visualizerPanel_,
         chatSidebar_->getSliderPanel(),
         audio_);

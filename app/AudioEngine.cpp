@@ -878,6 +878,32 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
     }
 
     // ------------------------------------------------------------------
+    // Step 4c-1: Push decimated mono post-gain PCM into the sample ring (V1).
+    //
+    // Downmix to mono: (left[s] + right[s]) * 0.5f.  Decimate to at most 256
+    // samples per callback so the 2048-slot ring never overflows within a
+    // single push.  The decimation step is computed as ceil(numSamples / 256).
+    //
+    // No allocation, no blocking, no shared_ptr — push() is a lock-free
+    // atomic store per sample.  Producer-only on the audio thread.
+    // ------------------------------------------------------------------
+    if (left && right) {
+        constexpr int kMaxPcmPerCb = 256;
+        const int step = (numSamples > kMaxPcmPerCb)
+                             ? (numSamples + kMaxPcmPerCb - 1) / kMaxPcmPerCb
+                             : 1;
+        int s = 0;
+        for (; s + step <= numSamples; s += step) {
+            const float mid = (left[s] + right[s]) * 0.5f;
+            sampleRing_.push(mid);
+        }
+        // Push the final sample if there's a remainder (ensures we always
+        // emit at least one sample per callback when running).
+        if (s < numSamples)
+            sampleRing_.push((left[s] + right[s]) * 0.5f);
+    }
+
+    // ------------------------------------------------------------------
     // Step 4d: Capture mixed output to WAV file if capture is open.
     // ------------------------------------------------------------------
     if (captureOpen_.load(std::memory_order_acquire) && captureWriter_ && left && right) {

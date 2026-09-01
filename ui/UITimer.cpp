@@ -66,10 +66,12 @@ private:
 namespace hathor::ui {
 
 UITimer::UITimer(hathor::SpscRingBuffer<128>& buf,
+                 hathor::SpscSampleRing<2048>& sampleRing,
                  hathor::ui::VisualizerPanel& vis,
                  hathor::ui::SliderPanel&     sliders,
                  AudioEngine&                 audio)
     : buf_(buf)
+    , sampleRing_(sampleRing)
     , vis_(vis)
     , sliders_(sliders)
     , audio_(audio)
@@ -116,6 +118,22 @@ void UITimer::timerCallback()
     // Only push to the visualizer if at least one frame was actually read.
     if (latestCyclePos >= 0.0)
         vis_.updateFrame(latestCyclePos, firedEvents_);
+
+    // -----------------------------------------------------------------------
+    // (a-2) PCM drain (V1): drain raw float samples from SpscSampleRing into
+    // a stack buffer and hand them to VisualizerPanel via updateSamples().
+    //
+    // popMany returns the count of samples actually available; the remainder
+    // of the buffer is left untouched (VisualizerPanel only reads @p count).
+    // Pre-allocated on the stack — no heap allocation in steady state.
+    // -----------------------------------------------------------------------
+    {
+        constexpr std::size_t kMaxPcmDrain = 512;
+        float pcmBuf[kMaxPcmDrain];
+        const std::size_t pcmCount = sampleRing_.popMany(pcmBuf, kMaxPcmDrain);
+        if (pcmCount > 0)
+            vis_.updateSamples(pcmBuf, pcmCount);
+    }
 
     // -----------------------------------------------------------------------
     // (b) Sync BPM slider display (Req 26.4)

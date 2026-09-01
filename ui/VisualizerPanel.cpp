@@ -113,9 +113,31 @@ void VisualizerPanel::updateFrame(
             idle_ = true;
     }
 
-    // --- 6. Trigger repaint (Req 29.5) ------------------------------------
+     // --- 6. Trigger repaint (Req 29.5) ------------------------------------
     //
     // repaint() is called ONLY here — never from a self-owned timer.
+    repaint();
+}
+
+// ==========================================================================
+// updateSamples() — receive raw PCM from SpscSampleRing drain (V1)
+// ==========================================================================
+
+void VisualizerPanel::updateSamples(const float* samples, std::size_t count) noexcept
+{
+    if (count == 0 || samples == nullptr)
+        return;
+
+    // Append incoming PCM samples into the ring buffer, wrapping as needed.
+    // No allocation — writes directly into the inline std::array.
+    for (std::size_t i = 0; i < count; ++i) {
+        pcmHistory_[pcmWritePos_] = samples[i];
+        pcmWritePos_ = (pcmWritePos_ + 1) % kPcmHistoryMax;
+        if (pcmCount_ < kPcmHistoryMax)
+            ++pcmCount_;
+    }
+
+    // Trigger repaint so the waveform mode can read the new PCM data.
     repaint();
 }
 
