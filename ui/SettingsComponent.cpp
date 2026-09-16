@@ -728,17 +728,16 @@ void SettingsComponent::buildChuckSection()
     for (int r : availableRates)
         sampleRateCombo_.addItem(std::to_string(r), r);
 
-    // Select the pending value.
-    sampleRateCombo_.setText(juce::String(pending_.sampleRate), juce::dontSendNotification);
+    // Select the pending value by ID (never by text: the combo is ID-driven
+    // and free text breaks getSelectedId lookups on Apply).
+    sampleRateCombo_.setSelectedId(pending_.sampleRate, juce::dontSendNotification);
 
-    // Show current device rate alongside pending.
+    // Show the live device rate in the tooltip when it differs from pending.
     if (audioEngine_) {
         int currentRate = audioEngine_->getAudioStatus().sampleRate;
-        if (currentRate != pending_.sampleRate) {
-            sampleRateCombo_.setText(juce::String(pending_.sampleRate)
-                                     + " (current: " + std::to_string(currentRate) + ")",
-                                     juce::dontSendNotification);
-        }
+        sampleRateCombo_.setTooltip(currentRate != pending_.sampleRate
+            ? "Device rate: " + std::to_string(currentRate) + " Hz"
+            : "Device sample rate");
     }
 
     y += kControlHeight + 8;
@@ -766,15 +765,13 @@ void SettingsComponent::buildChuckSection()
     for (int s : availableSizes)
         bufferSizeCombo_.addItem(std::to_string(s), s);
 
-    bufferSizeCombo_.setText(juce::String(pending_.bufferSize), juce::dontSendNotification);
+    bufferSizeCombo_.setSelectedId(pending_.bufferSize, juce::dontSendNotification);
 
     if (audioEngine_) {
         int currentSize = audioEngine_->getBufferSize();
-        if (currentSize != pending_.bufferSize && currentSize > 0) {
-            bufferSizeCombo_.setText(juce::String(pending_.bufferSize)
-                                     + " (current: " + std::to_string(currentSize) + ")",
-                                     juce::dontSendNotification);
-        }
+        bufferSizeCombo_.setTooltip(currentSize != pending_.bufferSize && currentSize > 0
+            ? "Device buffer: " + std::to_string(currentSize)
+            : "Audio buffer size");
     }
 
     y += kControlHeight + 8;
@@ -1139,6 +1136,15 @@ void SettingsComponent::buttonClicked(juce::Button* button)
             updatePetdexStatusLabel();
         }
     }
+    else if (button == &agentDetectBtn_)
+    {
+        detectAgentOnPath();
+        updateDirtyFlag();
+    }
+    else if (button == &agentBrowseBtn_)
+    {
+        browseForAgentExe();
+    }
     else if (button == &acrylicButton_)
     {
         // Toggle Acrylic state (B5)
@@ -1359,6 +1365,16 @@ void SettingsComponent::applyVmFlags(const std::string& flags)
     audioEngine_->setVmFlags(flags);
 }
 
+void SettingsComponent::refreshAppearanceCaps()
+{
+    if (appearanceController_ == nullptr)
+        return;
+    const auto caps = appearanceController_->detectCapabilities();
+    opacitySupported_ = caps.transparencySupported;
+    blurSupported_ = caps.blurSupported;
+    updateBlurControlState();
+}
+
 void SettingsComponent::updateBlurControlState()
 {
     // B5: When opacity is 100%, blur has no visible effect — disable blur controls
@@ -1413,8 +1429,8 @@ void SettingsComponent::resetToCommitted()
                                  juce::dontSendNotification);
 
     // Phase 4.4: Restore sample rate / buffer size / VM flags combos to committed.
-    sampleRateCombo_.setText(juce::String(pending_.sampleRate), juce::dontSendNotification);
-    bufferSizeCombo_.setText(juce::String(pending_.bufferSize), juce::dontSendNotification);
+    sampleRateCombo_.setSelectedId(pending_.sampleRate, juce::dontSendNotification);
+    bufferSizeCombo_.setSelectedId(pending_.bufferSize, juce::dontSendNotification);
     vmFlagsEditor_.setText(juce::String(pending_.vmFlags), juce::dontSendNotification);
 
     // Agent 1.3: Restore ghost endpoint editors to committed values.

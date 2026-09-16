@@ -158,9 +158,14 @@ void SymbolSearchPanel::textEditorTextChanged(juce::TextEditor& /*editor*/)
 {
     if (model_)
     {
-        model_->searchMetadata(searchField_->getText().toStdString());
+        const std::string query = searchField_->getText().toStdString();
+        model_->searchMetadata(query);
+        if (!workspaceRoot_.empty())
+            model_->searchWorkspaceFiles(workspaceRoot_, query);
         reloadResults();
     }
+    if (onQueryChanged)
+        onQueryChanged(searchField_->getText().toStdString());
 }
 
 void SymbolSearchPanel::textEditorEscapeKeyPressed(juce::TextEditor& /*editor*/)

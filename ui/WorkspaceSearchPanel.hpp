@@ -43,6 +43,12 @@ public:
     /** Start a new search with the given query and flags. */
     void startSearch(const juce::String& query, const WorkspaceSearchFlags& flags);
 
+    /** Re-root file searches after a runtime workspace switch. */
+    void setWorkspaceRoot(const std::filesystem::path& root)
+    {
+        workspaceRoot_ = root;
+    }
+
     /** Toggle panel visibility. */
     void setVisible(bool visible) override;
 

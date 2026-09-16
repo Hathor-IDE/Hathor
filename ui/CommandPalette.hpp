@@ -20,7 +20,8 @@
 
 namespace hathor::ui {
 
-class CommandPalette : public juce::Component
+class CommandPalette : public juce::Component,
+                       private juce::ListBoxModel
 {
 public:
     CommandPalette();
@@ -60,7 +61,15 @@ public:
     /** Move selection down in the filtered list. */
     void selectDown();
 
+    bool keyPressed(const juce::KeyPress& key) override;
+
 private:
+    // juce::ListBoxModel
+    int getNumRows() override;
+    void paintListBoxItem(int rowNumber, juce::Graphics& g, int width,
+                          int height, bool rowIsSelected) override;
+    void listBoxItemDoubleClicked(int row, const juce::MouseEvent&) override;
+
     ActionRegistry* registry_{ nullptr };
 
     std::unique_ptr<juce::TextEditor> filterField_;
@@ -69,6 +78,7 @@ private:
 
     std::unique_ptr<juce::ListBox> listBox_;
     std::unique_ptr<juce::Label> hintLabel_;
+    std::unique_ptr<juce::KeyListener> keyForwarder_;
 
     /** Refresh the filtered action list from the registry. */
     void refreshList(const juce::String& query = {});

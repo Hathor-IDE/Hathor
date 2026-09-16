@@ -499,26 +499,34 @@ void SourceControlPanel::createBranch()
     window->addButton("OK", 1);
     window->addButton("Cancel", 0);
 
-    // Use showAsync with a callback that reads the text editor.
+    // Use showAsync with a callback that reads the text editor, then
+    // creates the branch through the repository and refreshes the view.
     juce::AlertWindow::showAsync(
         juce::MessageBoxOptions()
             .withTitle("Create Branch")
             .withMessage("Enter branch name:")
             .withButton("OK")
             .withButton("Cancel"),
-        [window](int result)
+        [window, this](int result)
         {
+            juce::String branchName;
             if (result == 1 && window != nullptr)
-            {
                 if (auto* editor = window->getTextEditor("branchName"))
-                {
-                    juce::String branchName = editor->getText();
-                    // Branch creation will be handled by a follow-up
-                    // call — for now, we just close the window.
-                    // In a fuller implementation, we'd call repository_.
-                }
-            }
+                    branchName = editor->getText().trim();
             delete window;
+            if (branchName.isEmpty())
+                return;
+            repository_->createBranch(branchName.toStdString(), true,
+                                      [this](bool success) {
+                                          juce::MessageManager::callAsync([this, success]() {
+                                              if (!success)
+                                                  juce::AlertWindow::showMessageBoxAsync(
+                                                      juce::AlertWindow::WarningIcon,
+                                                      "Create Branch",
+                                                      "Could not create the branch.");
+                                              refreshStatusAsync();
+                                          });
+                                      });
         });
 }
 

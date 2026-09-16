@@ -15,6 +15,27 @@
 
 namespace hathor::ui {
 
+// Forwards navigation keys from the filter field (which holds keyboard
+// focus) to the palette: TextEditor would otherwise consume Up/Down/Return.
+class PaletteKeyForwarder : public juce::KeyListener
+{
+public:
+    explicit PaletteKeyForwarder(CommandPalette& owner) : owner_(owner) {}
+
+    bool keyPressed(const juce::KeyPress& key, juce::Component*) override
+    {
+        if (key == juce::KeyPress::upKey
+            || key == juce::KeyPress::downKey
+            || key == juce::KeyPress::returnKey
+            || key == juce::KeyPress::escapeKey)
+            return owner_.keyPressed(key);
+        return false;
+    }
+
+private:
+    CommandPalette& owner_;
+};
+
 // ===========================================================================
 // CommandPalette
 // ===========================================================================
@@ -31,9 +52,13 @@ CommandPalette::CommandPalette()
     filterField_->onTextChange = [this]() {
         setFilter(filterField_->getText());
     };
+    keyForwarder_ = std::make_unique<PaletteKeyForwarder>(*this);
+    filterField_->addKeyListener(keyForwarder_.get());
 
     listBox_ = std::make_unique<juce::ListBox>();
     listBox_->setOpaque(false);
+    listBox_->setModel(this);
+    listBox_->setRowHeight(26);
     addAndMakeVisible(listBox_.get());
 
     hintLabel_ = std::make_unique<juce::Label>();
@@ -53,17 +78,16 @@ void CommandPalette::show(juce::Component* parent)
     if (!parent || !registry_)
         return;
 
-    // Size: 480 wide, 320 tall, centered
-    const int w = 480;
-    const int h = 320;
+    // Size: 480 wide, 320 tall, centered and clamped into the parent.
+    const int w = std::min(480, std::max(280, parent->getWidth() - 40));
+    const int h = std::min(320, std::max(200, parent->getHeight() - 40));
     int x = (parent->getWidth() - w) / 2;
-    int y = (parent->getHeight() - h) / 2;
+    int y = (parent->getHeight() - h) / 3;
     setBounds(x, y, w, h);
 
     refreshList();
     filterField_->setText(juce::String());
     filterField_->grabKeyboardFocus();
-    filterField_->onTextChange();
 
     setVisible(true);
     toFront(true);
@@ -72,6 +96,74 @@ void CommandPalette::show(juce::Component* parent)
 void CommandPalette::hide()
 {
     setVisible(false);
+    filterField_->setText(juce::String(), juce::dontSendNotification);
+}
+
+bool CommandPalette::keyPressed(const juce::KeyPress& key)
+{
+    if (key == juce::KeyPress::escapeKey)
+    {
+        hide();
+        return true;
+    }
+    if (key == juce::KeyPress::returnKey)
+    {
+        if (executeSelected())
+            hide();
+        return true;
+    }
+    if (key == juce::KeyPress::upKey)
+    {
+        selectUp();
+        return true;
+    }
+    if (key == juce::KeyPress::downKey)
+    {
+        selectDown();
+        return true;
+    }
+    return false;
+}
+
+int CommandPalette::getNumRows()
+{
+    return static_cast<int>(filteredActions_.size());
+}
+
+void CommandPalette::paintListBoxItem(int rowNumber, juce::Graphics& g,
+                                      int width, int height,
+                                      bool rowIsSelected)
+{
+    if (rowNumber < 0 || rowNumber >= static_cast<int>(filteredActions_.size()))
+        return;
+    const EditorAction* action = filteredActions_[static_cast<size_t>(rowNumber)];
+    if (action == nullptr)
+        return;
+
+    const auto& palette = HathorLookAndFeel::fromComponent(*this).getPalette();
+    if (rowIsSelected)
+    {
+        g.setColour(palette.accent.withAlpha(0.3f));
+        g.fillAll();
+    }
+    g.setColour(palette.textPrimary);
+    g.setFont(HathorLookAndFeel::uiFontRegular(13.0f));
+    g.drawText(action->label, 8, 0, width - 16, height,
+               juce::Justification::centredLeft, true);
+    g.setColour(palette.textSecondary);
+    g.setFont(HathorLookAndFeel::uiFontRegular(11.0f));
+    g.drawText(action->category, 8, 0, width - 16, height,
+               juce::Justification::centredRight, true);
+}
+
+void CommandPalette::listBoxItemDoubleClicked(int row, const juce::MouseEvent&)
+{
+    if (row >= 0 && row < static_cast<int>(filteredActions_.size()))
+    {
+        selectedIndex_ = row;
+        if (executeSelected())
+            hide();
+    }
 }
 
 void CommandPalette::resized()
@@ -114,12 +206,22 @@ bool CommandPalette::executeSelected()
 void CommandPalette::selectUp()
 {
     selectedIndex_ = std::max(0, selectedIndex_ - 1);
+    if (listBox_)
+    {
+        listBox_->selectRow(selectedIndex_);
+        listBox_->scrollToEnsureRowIsOnscreen(selectedIndex_);
+    }
 }
 
 void CommandPalette::selectDown()
 {
     if (selectedIndex_ < static_cast<int>(filteredActions_.size()) - 1)
         ++selectedIndex_;
+    if (listBox_)
+    {
+        listBox_->selectRow(selectedIndex_);
+        listBox_->scrollToEnsureRowIsOnscreen(selectedIndex_);
+    }
 }
 
 void CommandPalette::refreshList(const juce::String& query)
@@ -145,14 +247,21 @@ void CommandPalette::refreshList(const juce::String& query)
         }
         else
         {
-            // Match against id, label, and category (case-insensitive)
+            // Match against id, label, and category (case-insensitive:
+            // lowercase both sides before comparing).
             std::string q = lowerQuery.toStdString();
+            auto lowerOf = [](const std::string& s) {
+                std::string out = s;
+                std::transform(out.begin(), out.end(), out.begin(),
+                               [](unsigned char c) { return (char) std::tolower(c); });
+                return out;
+            };
             bool match = false;
-            if (action->id.find(q) != std::string::npos)
+            if (lowerOf(action->id).find(q) != std::string::npos)
                 match = true;
-            else if (action->label.find(q) != std::string::npos)
+            else if (lowerOf(action->label).find(q) != std::string::npos)
                 match = true;
-            else if (action->category.find(q) != std::string::npos)
+            else if (lowerOf(action->category).find(q) != std::string::npos)
                 match = true;
 
             if (match)
@@ -160,9 +269,13 @@ void CommandPalette::refreshList(const juce::String& query)
         }
     }
 
-    // Update list box content
-    // For simplicity, we don't use a custom ListBoxModel here — the palette
-    // is a minimal overlay. A full implementation would use a ListBoxModel.
+    selectedIndex_ = 0;
+    if (listBox_)
+    {
+        listBox_->updateContent();
+        if (!filteredActions_.empty())
+            listBox_->selectRow(0);
+    }
 }
 
 } // namespace hathor::ui

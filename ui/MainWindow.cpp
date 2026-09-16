@@ -1293,10 +1293,18 @@ bool MainWindow::keyPressed(const juce::KeyPress& key)
             // silently failed. Preserve the literal digit.
             ke.key = std::string(1, static_cast<char>(key.getKeyCode()));
         }
-        else if (key.getKeyCode() >= 0xF700 && key.getKeyCode() <= 0xF70B)  // F1-F12
-        {
-            ke.key = "F" + std::to_string(key.getKeyCode() - 0xF700 + 1);
-        }
+        else if (key.getKeyCode() == juce::KeyPress::F1Key) ke.key = "F1";
+        else if (key.getKeyCode() == juce::KeyPress::F2Key) ke.key = "F2";
+        else if (key.getKeyCode() == juce::KeyPress::F3Key) ke.key = "F3";
+        else if (key.getKeyCode() == juce::KeyPress::F4Key) ke.key = "F4";
+        else if (key.getKeyCode() == juce::KeyPress::F5Key) ke.key = "F5";
+        else if (key.getKeyCode() == juce::KeyPress::F6Key) ke.key = "F6";
+        else if (key.getKeyCode() == juce::KeyPress::F7Key) ke.key = "F7";
+        else if (key.getKeyCode() == juce::KeyPress::F8Key) ke.key = "F8";
+        else if (key.getKeyCode() == juce::KeyPress::F9Key) ke.key = "F9";
+        else if (key.getKeyCode() == juce::KeyPress::F10Key) ke.key = "F10";
+        else if (key.getKeyCode() == juce::KeyPress::F11Key) ke.key = "F11";
+        else if (key.getKeyCode() == juce::KeyPress::F12Key) ke.key = "F12";
         else
         {
             int kc = key.getKeyCode();

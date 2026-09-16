@@ -238,10 +238,14 @@ private:
     }
 
     /// Send a standard text-editor command (undo/redo/cut/copy/paste) to
-    /// whatever component currently has keyboard focus.
+    /// whatever component currently has keyboard focus. Handles both plain
+    /// juce::TextEditor fields and juce::CodeEditorComponent (the actual
+    /// code editor), which is not a TextEditor subclass.
     void handleTextEditorCommand(int commandID)
     {
         auto* focus = juce::Component::getCurrentlyFocusedComponent();
+        if (focus == nullptr)
+            return;
         if (auto* editor = dynamic_cast<juce::TextEditor*>(focus))
         {
             switch (commandID)
@@ -251,6 +255,19 @@ private:
                 case juce::StandardApplicationCommandIDs::cut:   editor->cut();    break;
                 case juce::StandardApplicationCommandIDs::copy:  editor->copy();   break;
                 case juce::StandardApplicationCommandIDs::paste: editor->paste();  break;
+                default: break;
+            }
+            return;
+        }
+        if (auto* code = dynamic_cast<juce::CodeEditorComponent*>(focus))
+        {
+            switch (commandID)
+            {
+                case juce::StandardApplicationCommandIDs::undo:  code->undo();   break;
+                case juce::StandardApplicationCommandIDs::redo:  code->redo();   break;
+                case juce::StandardApplicationCommandIDs::cut:   code->cutToClipboard();  break;
+                case juce::StandardApplicationCommandIDs::copy:  code->copyToClipboard(); break;
+                case juce::StandardApplicationCommandIDs::paste: code->pasteFromClipboard(); break;
                 default: break;
             }
         }

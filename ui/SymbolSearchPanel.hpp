@@ -16,6 +16,7 @@
 
 #include <juce_gui_extra/juce_gui_extra.h>
 
+#include <filesystem>
 #include <functional>
 #include <memory>
 #include <vector>
@@ -43,6 +44,20 @@ public:
 
     /** Trigger a search with the given query. */
     void setQuery(const juce::String& query);
+
+    /** Workspace root for file-based symbol indexing. */
+    void setWorkspaceRoot(const std::filesystem::path& root)
+    {
+        workspaceRoot_ = root;
+    }
+
+    /** Fired on every query change so the owner can feed LSP results back
+        into the model (the panel always searches metadata + workspace
+        files itself). */
+    std::function<void(const std::string& query)> onQueryChanged;
+
+    /** Re-read the model after the owner updates it (e.g. LSP results). */
+    void refreshResults() { reloadResults(); }
 
     /** Toggle panel visibility. */
     void setVisible(bool visible) override;
@@ -78,6 +93,7 @@ private:
     friend class SymbolSearchDoubleClickHandler;
 
     SymbolSearchModel* model_{nullptr};
+    std::filesystem::path workspaceRoot_;
     std::vector<SymbolSearchResult> displayResults_;
     int selectedIndex_ = 0;
 

@@ -135,6 +135,7 @@ public:
     void setAppearanceController(WindowAppearanceController* controller) noexcept
     {
         appearanceController_ = controller;
+        refreshAppearanceCaps();
     }
 
     // -----------------------------------------------------------------------
@@ -376,6 +377,11 @@ private:
 
     /** Update the enabled/disabled state of blur controls based on opacity. */
     void updateBlurControlState();
+
+    /** Re-read platform transparency/blur capabilities from the controller
+        (safe to call before the controller is installed — keeps compile-time
+        platform defaults on Linux until then). */
+    void refreshAppearanceCaps();
 
     // -----------------------------------------------------------------------
     // A2: Agent / ACP section helpers

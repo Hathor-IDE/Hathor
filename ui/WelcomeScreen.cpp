@@ -107,22 +107,37 @@ void WelcomeScreen::newProject()
 
     chooser_->launchAsync(flags, [this](const juce::FileChooser& fc)
     {
-        const juce::File dir = fc.getResult();
+        juce::File dir = fc.getResult();
         chooser_.reset();
-        if (!dir.isDirectory())
-            return;
 
-        // Scaffold the project: directory, starter .hathor file, samples/.
-        if (!dir.isDirectory())
-            dir.createDirectory();
-        if (!dir.isDirectory())
+        // In save mode the chosen path may not exist yet (that's the new
+        // project name): create it, then scaffold inside.
+        if (dir.getFullPathName().isEmpty())
             return;
+        if (!dir.isDirectory())
+        {
+            if (!dir.createDirectory() || !dir.isDirectory())
+            {
+                juce::AlertWindow::showMessageBoxAsync(
+                    juce::AlertWindow::WarningIcon, "New Project",
+                    "Could not create \"" + dir.getFullPathName() + "\".");
+                return;
+            }
+        }
 
+        // Scaffold the project: starter .hathor file + samples/.
         dir.getChildFile("samples").createDirectory();
 
         juce::File songFile = dir.getChildFile("song.hathor");
         if (!songFile.existsAsFile())
-            songFile.replaceWithText(kStarterHathorFile);
+        {
+            if (!songFile.replaceWithText(kStarterHathorFile))
+            {
+                juce::AlertWindow::showMessageBoxAsync(
+                    juce::AlertWindow::WarningIcon, "New Project",
+                    "Project created but the starter file could not be written.");
+            }
+        }
 
         if (onWorkspaceChosen)
             onWorkspaceChosen(dir);

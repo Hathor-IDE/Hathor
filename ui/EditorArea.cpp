@@ -551,6 +551,44 @@ EditorArea::EditorArea(AudioEngine& audio,
             }
         }
     };
+    // Fan query changes out to metadata + workspace files (panel) and the
+    // LSP workspace/symbol endpoint; LSP results merge back into the model.
+    symbolSearchPanel_->onQueryChanged = [this](const std::string& query) {
+        if (lspClient_ != nullptr && lspClient_->isRunning())
+        {
+            juce::Component::SafePointer<EditorArea> safeSelf(this);
+            lspClient_->requestWorkspaceSymbols(
+                query, [safeSelf](const lsp::WorkspaceSymbolResult& result) {
+                    juce::MessageManager::callAsync([safeSelf, result]() {
+                        auto* self = safeSelf.getComponent();
+                        if (self == nullptr || self->symbolSearchModel_ == nullptr
+                            || self->symbolSearchPanel_ == nullptr)
+                            return;
+                        std::vector<SymbolSearchResult> lspResults;
+                        for (const auto& s : result.symbols)
+                        {
+                            SymbolSearchResult r;
+                            r.name = s.name;
+                            r.kind = "lsp";
+                            r.detail = s.detail.value_or("");
+                            r.containerName = s.containerName;
+                            r.line = s.location.range.start.line;
+                            r.column = s.location.range.start.character;
+                            r.isBuiltin = false;
+                            r.uri = s.location.uri;
+                            std::string path = s.location.uri;
+                            const std::string prefix = "file://";
+                            if (path.substr(0, prefix.size()) == prefix)
+                                path = path.substr(prefix.size());
+                            r.filePath = std::filesystem::path(path);
+                            lspResults.push_back(std::move(r));
+                        }
+                        self->symbolSearchModel_->setLspResults(lspResults);
+                        self->symbolSearchPanel_->refreshResults();
+                    });
+                });
+        }
+    };
     symbolSearchPanel_->onClosePanel = [this]() {
         symbolSearchPanel_->setVisible(false);
         this->toFront(true);
@@ -2504,6 +2542,10 @@ void EditorArea::setWorkspaceRoot(const std::filesystem::path& root)
     // re-roots workspace search even on the first call (previously an
     // inverted guard left stale state when the model did not yet exist).
     workspaceSearchModel_ = std::make_unique<WorkspaceSearchModel>(root);
+    if (symbolSearchPanel_)
+        symbolSearchPanel_->setWorkspaceRoot(root);
+    if (workspaceSearchPanel_)
+        workspaceSearchPanel_->setWorkspaceRoot(root);
     if (quickOpenDialog_)
     {
         // Rebuild the quick-open file list with the new root
