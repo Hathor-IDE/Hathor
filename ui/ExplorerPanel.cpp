@@ -145,7 +145,13 @@ void ExplorerPanel::buildRootItem()
             onFileClicked(file);
     };
 
-    rootItem_ = std::make_unique<FolderTreeItem>(*rootData_, callback, callback);
+    // Wave 4.1 (X1): right-click context menu for file management.
+    auto ctxMenu = [this](const juce::File& target, bool isDir)
+    {
+        showContextMenu(target, isDir);
+    };
+
+    rootItem_ = std::make_unique<FolderTreeItem>(*rootData_, callback, callback, ctxMenu);
 }
 
 // ---------------------------------------------------------------------------
@@ -227,6 +233,23 @@ void ExplorerPanel::FsPollTimer::timerCallback()
     if (!watchedDir_.isDirectory())
         return;
 
+    // Wave 4.1 (S7): ignore version-control, dependency and build trees so
+    // node_modules-scale directories don't peg the CPU on every 2 s poll.
+    static const char* kIgnored[] = {
+        ".git", "node_modules", "build", "DerivedData", ".hathor",
+        ".idea", ".vscode", "CMakeFiles", "_deps"
+    };
+    auto isIgnored = [](const std::filesystem::path& p) {
+        const std::string name = p.filename().string();
+        for (auto* ig : kIgnored)
+            if (name == ig)
+                return true;
+        // build* prefix (build-debug, build-release, ...)
+        if (name.rfind("build", 0) == 0)
+            return true;
+        return false;
+    };
+
     const auto rootPath = std::filesystem::path(watchedDir_.getFullPathName().toStdString());
     std::error_code ec;
 
@@ -243,6 +266,12 @@ void ExplorerPanel::FsPollTimer::timerCallback()
         {
             std::error_code ec2;
             const auto& p = it->path();
+            if (isIgnored(p))
+            {
+                it.disable_recursion_pending();
+                ++it;
+                continue;
+            }
             const auto ftime = std::filesystem::last_write_time(p, ec2);
             if (!ec2)
             {
@@ -349,6 +378,157 @@ void ExplorerPanel::FsPollTimer::rebuildSnapshot() noexcept
         std::cerr << "[ExplorerPanel] FsPollTimer rebuildSnapshot error: "
                   << ex.what() << std::endl;
     }
+}
+
+void ExplorerPanel::showContextMenu(const juce::File& target, bool isDirectory)
+{
+    juce::File dir = isDirectory ? target : target.getParentDirectory();
+    juce::File file = isDirectory ? juce::File() : target;
+
+    juce::PopupMenu menu;
+    menu.addItem(1, "New File…");
+    menu.addItem(2, "New Folder…");
+    if (file.existsAsFile() || (isDirectory && target.exists()))
+    {
+        menu.addSeparator();
+        menu.addItem(3, "Rename…");
+        if (!isDirectory)
+            menu.addItem(4, "Duplicate");
+        menu.addItem(5, "Delete…");
+        menu.addSeparator();
+        menu.addItem(6, "Reveal in Finder");
+        menu.addItem(7, "Copy Path");
+    }
+
+    menu.showMenuAsync(juce::PopupMenu::Options(), [this, dir, file, isDirectory](int result) {
+        switch (result)
+        {
+            case 1: createFileIn(dir); break;
+            case 2: createFolderIn(dir); break;
+            case 3: renameTarget(isDirectory ? dir : file); break;
+            case 4: if (!isDirectory) duplicateTarget(file); break;
+            case 5: deleteTarget(isDirectory ? dir : file); break;
+            case 6: (isDirectory ? dir : file).revealToUser(); break;
+            case 7:
+                juce::SystemClipboard::copyTextToClipboard(
+                    (isDirectory ? dir : file).getFullPathName());
+                break;
+            default: break;
+        }
+    });
+}
+
+void ExplorerPanel::createFileIn(const juce::File& dir)
+{
+    if (!dir.isDirectory())
+        return;
+    auto* alert = new juce::AlertWindow("New File", "File name (e.g. sketch.hathor):",
+                                        juce::AlertWindow::NoIcon);
+    alert->addTextEditor("name", "untitled.hathor");
+    alert->addButton("Create", 1, juce::KeyPress(juce::KeyPress::returnKey));
+    alert->addButton("Cancel", 0, juce::KeyPress(juce::KeyPress::escapeKey));
+    auto* raw = alert;
+    auto retain = std::shared_ptr<juce::AlertWindow>(alert);
+    raw->enterModalState(true, juce::ModalCallbackFunction::create(
+        [this, dir, retain](int result) {
+            if (result == 1)
+            {
+                const juce::String name = retain->getTextEditorContents("name").trim();
+                if (name.isNotEmpty())
+                {
+                    juce::File f = dir.getChildFile(name);
+                    if (!f.existsAsFile())
+                    {
+                        f.create();
+                        if (onFileClicked)
+                            onFileClicked(f);
+                    }
+                    refresh();
+                }
+            }
+        }));
+}
+
+void ExplorerPanel::createFolderIn(const juce::File& dir)
+{
+    if (!dir.isDirectory())
+        return;
+    auto* alert = new juce::AlertWindow("New Folder", "Folder name:",
+                                        juce::AlertWindow::NoIcon);
+    alert->addTextEditor("name", "untitled");
+    alert->addButton("Create", 1, juce::KeyPress(juce::KeyPress::returnKey));
+    alert->addButton("Cancel", 0, juce::KeyPress(juce::KeyPress::escapeKey));
+    auto* raw = alert;
+    auto retain = std::shared_ptr<juce::AlertWindow>(alert);
+    raw->enterModalState(true, juce::ModalCallbackFunction::create(
+        [this, dir, retain](int result) {
+            if (result == 1)
+            {
+                const juce::String name = retain->getTextEditorContents("name").trim();
+                if (name.isNotEmpty())
+                    dir.getChildFile(name).createDirectory();
+                refresh();
+            }
+        }));
+}
+
+void ExplorerPanel::renameTarget(const juce::File& target)
+{
+    if (!target.exists())
+        return;
+    auto* alert = new juce::AlertWindow("Rename", "New name:",
+                                        juce::AlertWindow::NoIcon);
+    alert->addTextEditor("name", target.getFileName());
+    alert->addButton("Rename", 1, juce::KeyPress(juce::KeyPress::returnKey));
+    alert->addButton("Cancel", 0, juce::KeyPress(juce::KeyPress::escapeKey));
+    auto* raw = alert;
+    auto retain = std::shared_ptr<juce::AlertWindow>(alert);
+    raw->enterModalState(true, juce::ModalCallbackFunction::create(
+        [this, target, retain](int result) {
+            if (result == 1)
+            {
+                const juce::String name = retain->getTextEditorContents("name").trim();
+                if (name.isNotEmpty() && name != target.getFileName())
+                    target.moveFileTo(target.getParentDirectory().getChildFile(name));
+                refresh();
+            }
+        }));
+}
+
+void ExplorerPanel::duplicateTarget(const juce::File& target)
+{
+    if (!target.existsAsFile())
+        return;
+    juce::File parent = target.getParentDirectory();
+    juce::String base = target.getFileNameWithoutExtension();
+    juce::String ext = target.getFileExtension();
+    juce::File copy = parent.getChildFile(base + " copy" + ext);
+    int n = 2;
+    while (copy.exists())
+        copy = parent.getChildFile(base + " copy " + juce::String(n++) + ext);
+    target.copyFileTo(copy);
+    refresh();
+}
+
+void ExplorerPanel::deleteTarget(const juce::File& target)
+{
+    if (!target.exists())
+        return;
+    const bool isDir = target.isDirectory();
+    juce::AlertWindow::showOkCancelBox(
+        juce::AlertWindow::WarningIcon, "Delete",
+        "Delete \"" + target.getFileName() + "\"?" + (isDir ? " This removes the folder and its contents." : ""),
+        "Delete", "Cancel", nullptr,
+        juce::ModalCallbackFunction::create([this, target](int result) {
+            if (result == 1)
+            {
+                if (target.isDirectory())
+                    target.deleteRecursively();
+                else
+                    target.deleteFile();
+                refresh();
+            }
+        }));
 }
 
 } // namespace hathor::ui

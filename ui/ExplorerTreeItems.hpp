@@ -41,6 +41,7 @@ namespace hathor::ui {
 // ---------------------------------------------------------------------------
 
 using SongClickedCallback = std::function<void(const juce::File&)>;
+using FileContextMenuCallback = std::function<void(const juce::File&, bool isDirectory)>;
 
 // ---------------------------------------------------------------------------
 // SongTreeItem — a leaf node for a song file
@@ -56,7 +57,8 @@ using SongClickedCallback = std::function<void(const juce::File&)>;
 class SongTreeItem : public juce::TreeViewItem
 {
 public:
-    SongTreeItem(SongNode node, SongClickedCallback onClicked);
+    SongTreeItem(SongNode node, SongClickedCallback onClicked,
+                 FileContextMenuCallback onContextMenu = nullptr);
     ~SongTreeItem() override = default;
 
     // juce::TreeViewItem overrides
@@ -68,10 +70,12 @@ public:
 
     /// The file represented by this tree item.
     juce::File file() const noexcept { return juce::File(juce::String(node_.path.string())); }
+    void setContextMenuCallback(FileContextMenuCallback cb) { onContextMenu_ = std::move(cb); }
 
 private:
     SongNode          node_;         ///< owned copy of the song data
     SongClickedCallback onSongClicked_;
+    FileContextMenuCallback onContextMenu_;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(SongTreeItem)
 };
@@ -146,7 +150,8 @@ class FolderTreeItem : public juce::TreeViewItem
 {
 public:
     FolderTreeItem(FolderNode node, SongClickedCallback onClicked,
-                   SongClickedCallback onSourceClicked = nullptr);
+                   SongClickedCallback onSourceClicked = nullptr,
+                   FileContextMenuCallback onContextMenu = nullptr);
     ~FolderTreeItem() override = default;
 
     // juce::TreeViewItem overrides
@@ -160,6 +165,7 @@ private:
     FolderNode        node_;          ///< owned copy of the folder data
     SongClickedCallback onSongClicked_;       ///< propagated to child SongTreeItem
     SongClickedCallback onSourceClicked_;      ///< propagated to child AssetTreeItem
+    FileContextMenuCallback onContextMenu_;    ///< right-click file ops menu
     bool              childrenBuilt_{ false }; ///< true once children are added
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(FolderTreeItem)

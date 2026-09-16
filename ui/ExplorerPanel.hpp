@@ -87,6 +87,15 @@ public:
     void handleFilesystemChange();
 
     //==========================================================================
+    // Wave 4.1 — file management (X1). Called from the tree context menu.
+    void showContextMenu(const juce::File& target, bool isDirectory);
+    void createFileIn(const juce::File& dir);
+    void createFolderIn(const juce::File& dir);
+    void renameTarget(const juce::File& target);
+    void duplicateTarget(const juce::File& target);
+    void deleteTarget(const juce::File& target);
+
+    //==========================================================================
     // juce::Component overrides
     void paint(juce::Graphics& g) override;
     void resized() override;

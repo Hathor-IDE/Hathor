@@ -34,9 +34,11 @@ static const Palette& paletteFor(const juce::TreeViewItem& item) noexcept
 // SongTreeItem
 // ===========================================================================
 
-SongTreeItem::SongTreeItem(SongNode node, SongClickedCallback onClicked)
+SongTreeItem::SongTreeItem(SongNode node, SongClickedCallback onClicked,
+                         FileContextMenuCallback onContextMenu)
     : node_(std::move(node)),
-      onSongClicked_(std::move(onClicked))
+      onSongClicked_(std::move(onClicked)),
+      onContextMenu_(std::move(onContextMenu))
 {
 }
 
@@ -78,10 +80,16 @@ void SongTreeItem::itemOpennessChanged(bool /*isOpen*/)
     // Songs are leaves — nothing to do.
 }
 
-void SongTreeItem::itemClicked(const juce::MouseEvent& /*e*/)
+void SongTreeItem::itemClicked(const juce::MouseEvent& e)
 {
-    if (onSongClicked_)
-        onSongClicked_(file());
+    // Wave 4.1 (X2): single-click selects; double-click opens. Right-click
+    // shows the file-ops context menu without opening the file.
+    setSelected(true, true);
+    if (e.mods.isRightButtonDown() || e.mods.isCtrlDown())
+    {
+        if (onContextMenu_)
+            onContextMenu_(file(), false);
+    }
 }
 
 void SongTreeItem::itemDoubleClicked(const juce::MouseEvent& /*e*/)
@@ -174,7 +182,8 @@ void AssetTreeItem::itemOpennessChanged(bool /*isOpen*/)
 
 void AssetTreeItem::itemClicked(const juce::MouseEvent& /*e*/)
 {
-    activate();
+    // Wave 4.1 (X2): single-click selects only; open happens on double-click.
+    setSelected(true, true);
 }
 
 void AssetTreeItem::itemDoubleClicked(const juce::MouseEvent& /*e*/)
@@ -233,10 +242,12 @@ juce::File AssetTreeItem::audioFile() const noexcept
 // ===========================================================================
 
 FolderTreeItem::FolderTreeItem(FolderNode node, SongClickedCallback onClicked,
-                               SongClickedCallback onSourceClicked)
+                               SongClickedCallback onSourceClicked,
+                               FileContextMenuCallback onContextMenu)
     : node_(std::move(node)),
       onSongClicked_(std::move(onClicked)),
-      onSourceClicked_(std::move(onSourceClicked))
+      onSourceClicked_(std::move(onSourceClicked)),
+      onContextMenu_(std::move(onContextMenu))
 {
     // Root is expanded by default; child folders inherit their node's
     // expanded flag (false for children).
@@ -300,7 +311,7 @@ void FolderTreeItem::itemOpennessChanged(bool isOpen)
         // Add child folders first.
         for (const auto& childFolder : node_.folders)
         {
-            auto childItem = std::make_unique<FolderTreeItem>(childFolder, onSongClicked_, onSourceClicked_);
+            auto childItem = std::make_unique<FolderTreeItem>(childFolder, onSongClicked_, onSourceClicked_, onContextMenu_);
             addSubItem(childItem.release());
         }
 
@@ -308,14 +319,14 @@ void FolderTreeItem::itemOpennessChanged(bool isOpen)
         // .hathor_assets and contain logical AssetTreeItem children.
         for (const auto& managedCat : node_.managedCategories)
         {
-            auto catItem = std::make_unique<FolderTreeItem>(managedCat, onSongClicked_, onSourceClicked_);
+            auto catItem = std::make_unique<FolderTreeItem>(managedCat, onSongClicked_, onSourceClicked_, onContextMenu_);
             addSubItem(catItem.release());
         }
 
         // Add song leaves.
         for (const auto& song : node_.songs)
         {
-            auto songItem = std::make_unique<SongTreeItem>(song, onSongClicked_);
+            auto songItem = std::make_unique<SongTreeItem>(song, onSongClicked_, onContextMenu_);
             addSubItem(songItem.release());
         }
 
@@ -339,9 +350,19 @@ bool FolderTreeItem::mightContainSubItems()
         || !node_.managedAssets.empty();
 }
 
-void FolderTreeItem::itemClicked(const juce::MouseEvent& /*e*/)
+void FolderTreeItem::itemClicked(const juce::MouseEvent& e)
 {
-    // Folders are not clickable for opening — only expandable.
+    // Wave 4.1: single-click selects the folder; right-click opens file-ops.
+    setSelected(true, true);
+    if (e.mods.isRightButtonDown() || e.mods.isCtrlDown())
+    {
+        if (onContextMenu_)
+        {
+            juce::File dir(juce::String(node_.path.string()));
+            if (dir.isDirectory() || !juce::String(node_.path.string()).isEmpty())
+                onContextMenu_(juce::File(juce::String(node_.path.string())), true);
+        }
+    }
 }
 
 void FolderTreeItem::itemDoubleClicked(const juce::MouseEvent& /*e*/)
