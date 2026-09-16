@@ -1065,10 +1065,15 @@ bool EditorArea::closeTab(int index)
 
     HathorTab* tab = tabs_[static_cast<std::size_t>(index)].get();
 
-    // Req 22.7: unsaved changes → Save / Discard / Cancel modal
+    // Req 22.7: unsaved changes → Save / Discard / Cancel modal.
+    // Async callbacks capture the tab pointer (not the vector index) and
+    // re-resolve it at fire time, so reordering or closing other tabs
+    // while the dialog is open can't close the wrong tab.
     if (tab->hasUnsavedDot())
     {
         const juce::String name = tab->tabLabel();
+        juce::Component::SafePointer<EditorArea> safeSelf(this);
+        juce::Component::SafePointer<HathorTab> safeTab(tab);
 
         juce::AlertWindow::showAsync(
             juce::MessageBoxOptions()
@@ -1079,77 +1084,57 @@ bool EditorArea::closeTab(int index)
                 .withButton("Save")
                 .withButton("Discard")
                 .withButton("Cancel"),
-            [this, index](int result)
+            [safeSelf, safeTab](int result)
             {
+                auto* self = safeSelf.getComponent();
+                HathorTab* t = safeTab.getComponent();
+                if (self == nullptr || t == nullptr)
+                    return;
                 // result: 1=Save, 2=Discard, 3=Cancel (or 0 if dismissed)
                 if (result == 1)
                  {
                      // Save — attempt to save the file, then close.
-                     HathorTab* t = tabs_[static_cast<std::size_t>(index)].get();
                      if (t->filePath().has_value())
                      {
-                         const juce::File& f = *t->filePath();
-                         if (ChuckTokeniser::isChuckFile(f))
-                         {
-                             // .ck files: write raw content (no front matter).
-                             f.replaceWithText(t->document().getAllContent());
-                         }
-                         else
-                         {
-                             // .hathor files: serialize via serialiseHathorFile().
-                             HathorFile hf;
-                             if (t->frontMatter().has_value())
-                                 hf.front = *t->frontMatter();
-                             hf.body = t->document().getAllContent().toStdString();
-                             const std::string serialized = serialiseHathorFile(hf);
-                             f.replaceWithText(juce::String(serialized));
-                         }
+                         if (self->saveTabToFile(t))
+                             self->removeTabAt(self->indexOfTab(t));
+                         return;
                      }
-                     else
-                     {
-                         // Save-As via native chooser — include both supported
-                         // file type filters (.hathor and .ck).
-                         auto chooser = std::make_shared<juce::FileChooser>(
-                             "Save Buffer As…",
-                             juce::File::getSpecialLocation(
-                                 juce::File::userDocumentsDirectory),
-                             "*.hathor;*.ck");
+                     // Save-As via native chooser — include both supported
+                     // file type filters (.hathor and .ck).
+                     auto chooser = std::make_shared<juce::FileChooser>(
+                         "Save Buffer As…",
+                         juce::File::getSpecialLocation(
+                             juce::File::userDocumentsDirectory),
+                         "*.hathor;*.ck");
 
-                         chooser->launchAsync(
-                             juce::FileBrowserComponent::saveMode |
-                             juce::FileBrowserComponent::canSelectFiles,
-                             [this, index, chooser](const juce::FileChooser& fc)
-                             {
-                                 const auto chosen = fc.getResult();
-                                 if (chosen.getFullPathName().isNotEmpty())
-                                 {
-                                     if (ChuckTokeniser::isChuckFile(chosen))
-                                     {
-                                         chosen.replaceWithText(
-                                             tabs_[static_cast<std::size_t>(index)]
-                                                 ->document().getAllContent());
-                                     }
-                                     else
-                                     {
-                                         HathorTab* t = tabs_[static_cast<std::size_t>(index)].get();
-                                         HathorFile hf;
-                                         if (t->frontMatter().has_value())
-                                             hf.front = *t->frontMatter();
-                                         hf.body = t->document().getAllContent().toStdString();
-                                         const std::string serialized = serialiseHathorFile(hf);
-                                         chosen.replaceWithText(juce::String(serialized));
-                                     }
-                                 }
-                                 removeTabAt(index);
-                             });
+                     chooser->launchAsync(
+                         juce::FileBrowserComponent::saveMode |
+                         juce::FileBrowserComponent::canSelectFiles,
+                         [safeSelf, safeTab, chooser](const juce::FileChooser& fc)
+                         {
+                             auto* self = safeSelf.getComponent();
+                             HathorTab* t = safeTab.getComponent();
+                             if (self == nullptr || t == nullptr)
+                                 return;
+                             const int idx = self->indexOfTab(t);
+                             if (idx < 0)
+                                 return;
+                             const auto chosen = fc.getResult();
+                             if (chosen.getFullPathName().isEmpty())
+                                 return; // chooser cancelled — leave tab open
+                             t->setFilePath(chosen);
+                             self->saveTabToFile(t);
+                             self->removeTabAt(self->indexOfTab(t));
+                         });
                          return; // async — removeTabAt called in chooser callback
-                     }
-                     removeTabAt(index);
                 }
                 else if (result == 2)
                 {
                     // Discard
-                    removeTabAt(index);
+                    const int idx = self->indexOfTab(t);
+                    if (idx >= 0)
+                        self->removeTabAt(idx);
                 }
                 // result == 3 or 0 → Cancel: leave tab open (Req 22.7)
             });

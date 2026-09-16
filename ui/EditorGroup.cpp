@@ -344,6 +344,12 @@ HathorTab* EditorGroup::openUntitledTab()
 
 HathorTab* EditorGroup::openFile(const juce::File& file)
 {
+    if (!file.existsAsFile())
+    {
+        showStatus("Error: file not found: " + file.getFileName());
+        return nullptr;
+    }
+
     // Check if already open
     for (size_t i = 0; i < tabs_.size(); ++i)
     {
@@ -360,6 +366,7 @@ HathorTab* EditorGroup::openFile(const juce::File& file)
         return nullptr;
 
     auto tab = std::make_unique<HathorTab>(slot, file);
+    tab->setFilePath(file);
     HathorTab* ptr = tab.get();
     tabs_.push_back(std::move(tab));
 
@@ -370,29 +377,26 @@ HathorTab* EditorGroup::openFile(const juce::File& file)
 
     wireTabCallbacks(ptr);
 
-    // Load file content
-    juce::String content;
-    {
-        std::unique_ptr<juce::FileInputStream> stream(file.createInputStream());
-        if (stream != nullptr && stream->openedOk())
-            content = stream->readEntireStreamAsString();
-    }
-
+    // Load file content (same front-matter handling as EditorArea::openFile).
+    const juce::String content = file.loadFileAsString();
     if (!content.isEmpty())
     {
         if (file.getFileExtension() == ".hathor")
         {
-            // Parse front matter
             auto result = hathor::ui::parseHathorFile(content.toStdString());
             if (auto* hf = std::get_if<hathor::ui::HathorFile>(&result))
             {
                 ptr->document().replaceAllContent(juce::String(hf->body));
                 if (hf->front.label)
                     ptr->setDisplayLabel(*hf->front.label);
+                ptr->setFrontMatter(hf->front);
             }
             else
             {
                 ptr->document().replaceAllContent(content);
+                if (auto* err = std::get_if<hathor::ui::ParseFileError>(&result))
+                    showStatus("Warning: malformed front matter in " + file.getFileName()
+                               + " at line " + juce::String(err->line) + ": " + err->message);
             }
         }
         else
@@ -400,6 +404,10 @@ HathorTab* EditorGroup::openFile(const juce::File& file)
             ptr->document().replaceAllContent(content);
         }
     }
+
+    // Freshly loaded — not dirty; sync the language server to the new doc.
+    ptr->clearUnsavedDot();
+    ptr->notifyLspDidOpen();
 
     activateTab(static_cast<int>(tabs_.size()) - 1);
 
@@ -1247,27 +1255,48 @@ void EditorGroup::wireTabCallbacks(HathorTab* tab)
         }
     };
 
-    // L-1 §5: Context menu eval callbacks (Req 23.1–23.7)
+    // L-1 §5: Context menu eval callbacks (Req 23.1–23.7).
+    // Semantics match EditorArea::wireContextMenuCallbacks exactly:
+    // onEvalLine evaluates the caret line (.ck: whole buffer),
+    // onEvalBlock evaluates the selection if present, else the enclosing
+    // eval block (.ck: whole buffer).
     tab->onEvalLine = [this, tab]()
     {
         if (tab->isChuckTab())
+        {
             evalCkOnWorkerThread(tab, tab->document().getAllContent());
-        else
-            evalOnWorkerThread(tab,
-                               resolveSlotName(*tab),
-                               tab->document().getAllContent());
+            return;
+        }
+        const int cursorLine = tab->editor().getCaretPos().getLineNumber();
+        const juce::String line = tab->document().getLine(cursorLine);
+        if (line.trim().isEmpty())
+        {
+            showStatus("Cursor is on a blank line — nothing to evaluate");
+            return;
+        }
+        evalOnWorkerThread(tab, resolveSlotName(*tab), line);
     };
 
     tab->onEvalBlock = [this, tab]()
     {
-        juce::String text = tab->editor().getTextInRange(tab->editor().getHighlightedRegion());
-        if (text.isEmpty())
-            text = tab->document().getLine(tab->editor().getCaretPos().getLineNumber());
-
         if (tab->isChuckTab())
-            evalCkOnWorkerThread(tab, text);
-        else
-            evalOnWorkerThread(tab, resolveSlotName(*tab), text);
+        {
+            evalCkOnWorkerThread(tab, tab->document().getAllContent());
+            return;
+        }
+        juce::String text = tab->editor().getTextInRange(tab->editor().getHighlightedRegion());
+        if (text.trim().isEmpty())
+        {
+            const int cursorLine = tab->editor().getCaretPos().getLineNumber();
+            auto block = extractEvalBlock(tab->document(), cursorLine);
+            if (!block.has_value())
+            {
+                showStatus("Cursor is on a blank line — nothing to evaluate");
+                return;
+            }
+            text = *block;
+        }
+        evalOnWorkerThread(tab, resolveSlotName(*tab), text);
     };
 }
 
