@@ -45,6 +45,58 @@
 namespace hathor::ui {
 
 /**
+ * SwitchingTokeniser
+ *
+ * A CodeTokeniser that delegates to one of two owned tokenisers. The editor
+ * is constructed once with this delegate, so Save-As across languages
+ * (.hathor <-> .ck) re-tokenises correctly: setActive() flips the delegate
+ * and the caller repaints the editor. Stateful per-line caches inside the
+ * delegates are reset on switch.
+ */
+class SwitchingTokeniser : public juce::CodeTokeniser
+{
+public:
+    SwitchingTokeniser(MiniNotationTokeniser* mini, ChuckTokeniser* chuck) noexcept
+        : mini_(mini), chuck_(chuck) {}
+
+    void setActive(bool chuck) noexcept
+    {
+        if (chuck_ != nullptr && chuck != useChuck_)
+        {
+            useChuck_ = chuck;
+            // Reset delegate line state so stale mini-notation front-matter
+            // flags don't leak into ChucK highlighting and vice versa.
+            if (mini_ != nullptr)
+                mini_->reset();
+            if (chuck_ != nullptr)
+                chuck_->reset();
+        }
+    }
+
+    int readNextToken(juce::CodeDocument::Iterator& iterator) override
+    {
+        if (useChuck_ && chuck_ != nullptr)
+            return chuck_->readNextToken(iterator);
+        if (mini_ != nullptr)
+            return mini_->readNextToken(iterator);
+        iterator.skip();
+        return 0;
+    }
+
+    juce::CodeEditorComponent::ColourScheme getDefaultColourScheme() override
+    {
+        if (useChuck_ && chuck_ != nullptr)
+            return chuck_->getDefaultColourScheme();
+        return mini_->getDefaultColourScheme();
+    }
+
+private:
+    MiniNotationTokeniser* mini_{ nullptr };
+    ChuckTokeniser* chuck_{ nullptr };
+    bool useChuck_{ false };
+};
+
+/**
  * GhostAwareEditor
  *
  * A thin CodeEditorComponent subclass that fires a callback whenever the
@@ -576,11 +628,13 @@ private:
     juce::Rectangle<int>      highlightBounds_;        ///< current glyph box (editor-local)
     juce::Rectangle<int>      highlightBoundsPrev_;    ///< previous box (for repaint)
 
-     // Tokenisers for both file types.  Exactly one is active at a time;
-     // the editor_ holds a non-owning pointer to whichever is active.
+     // Tokenisers for both file types. The editor_ is constructed once with
+     // switchingTokeniser_, which delegates to whichever is active — so
+     // Save-As across languages re-tokenises without rebuilding the editor.
      // (juce::CodeEditorComponent does not own its tokeniser.)
      MiniNotationTokeniser       miniTokeniser_;
      ChuckTokeniser            chuckTokeniser_;
+     SwitchingTokeniser        switchingTokeniser_{ &miniTokeniser_, &chuckTokeniser_ };
      bool                      useChuckTokeniser_{ false };
 
      // AI-4: LSP client (not owned — set by EditorArea)

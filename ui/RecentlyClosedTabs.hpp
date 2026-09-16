@@ -24,6 +24,12 @@ struct TabSnapshot
     std::string fileName;
     std::string content;
     size_t      cursorOffset = 0;
+    int         slotIndex = -1;      ///< pattern slot the tab lived on
+    bool        chuck = false;       ///< tokeniser kind at close time
+    bool        pinned = false;
+    // Content cap: snapshots stay small; oversized buffers reopen from disk
+    // (content left empty) instead of ballooning memory 20× file size.
+    static constexpr size_t kMaxSnapshotBytes = 1 << 20;
 };
 
 class RecentlyClosedTabs

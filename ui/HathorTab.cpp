@@ -31,10 +31,9 @@ HathorTab::HathorTab(int slotIndex, const juce::File& file)
 HathorTab::HathorTab(int slotIndex, bool chuck)
     : slotIndex_(slotIndex)
     , useChuckTokeniser_(chuck)
-    , editor_(document_, chuck
-                                  ? static_cast<juce::CodeTokeniser*>(&chuckTokeniser_)
-                                  : static_cast<juce::CodeTokeniser*>(&miniTokeniser_))
+    , editor_(document_, &switchingTokeniser_)
 {
+    switchingTokeniser_.setActive(chuck);
     // -----------------------------------------------------------------------
     // Editor font: JetBrains Mono, 13 pt (code-default from mockup, Req 22.1)
     // -----------------------------------------------------------------------
@@ -175,14 +174,15 @@ void HathorTab::setFileTypeFromPath(const juce::File& file)
     if (isChuck != useChuckTokeniser_)
     {
         useChuckTokeniser_ = isChuck;
-        // Note: CodeEditorComponent does not allow swapping the tokeniser
-        // after construction in JUCE 8. The constructor picks the tokeniser
-        // based on file type at tab-creation time. Here we only update the
-        // colour scheme to match the active tokeniser's scheme.
+        // Flip the delegating tokeniser and re-highlight: the editor keeps
+        // its document, caret, scroll, undo and listeners — only the
+        // classification + colour scheme change.
+        switchingTokeniser_.setActive(isChuck);
         if (isChuck)
             editor_.setColourScheme(chuckTokeniser_.getDefaultColourScheme());
         else
             editor_.setColourScheme(miniTokeniser_.getDefaultColourScheme());
+        editor_.repaint();
     }
 }
 

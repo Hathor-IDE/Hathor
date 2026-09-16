@@ -58,6 +58,11 @@ public:
 
     juce::CodeEditorComponent::ColourScheme getDefaultColourScheme() override;
 
+    /// Reset any cached scan state (symmetric with MiniNotationTokeniser;
+    /// currently stateless, kept so language switches stay correct if
+    /// state is ever added).
+    void reset() noexcept {}
+
     /** Return true if @p file looks like a ChucK source file (.ck). */
     static bool isChuckFile(const juce::File& file) noexcept;
 };

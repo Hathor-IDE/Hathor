@@ -1406,9 +1406,13 @@ void EditorArea::removeTabAt(int index)
           TabSnapshot snap;
           snap.label      = closingTab->tabLabel().toStdString();
           if (closingTab->filePath().has_value())
-              snap.fileName = (*closingTab->filePath()).getFileName().toStdString();
-          snap.content    = closingTab->document().getAllContent().toStdString();
+              snap.fileName = (*closingTab->filePath()).getFullPathName().toStdString();
+          const std::string body = closingTab->document().getAllContent().toStdString();
+          // Cap in-memory snapshots; oversized buffers reopen from disk.
+          if (body.size() <= TabSnapshot::kMaxSnapshotBytes)
+              snap.content = body;
           snap.cursorOffset = static_cast<size_t>(closingTab->editor().getCaretPos().getPosition());
+          snap.chuck = closingTab->isChuckTab();
           recentlyClosedTabs_.push(std::move(snap));
       }
 
@@ -1562,15 +1566,24 @@ void EditorArea::reopenLastClosedTab()
         return;
     }
 
-    auto tab = std::make_unique<HathorTab>(slot);
-    tab->document().replaceAllContent(juce::String(s.content));
+    auto tab = std::make_unique<HathorTab>(slot, s.chuck);
+    if (!s.content.empty())
+    {
+        tab->document().replaceAllContent(juce::String(s.content));
+    }
+    else if (!s.fileName.empty() && juce::File(s.fileName).existsAsFile())
+    {
+        // Oversized buffers snapshot empty: reload from disk.
+        tab->document().replaceAllContent(juce::File(s.fileName).loadFileAsString());
+    }
 
     if (!s.fileName.empty())
     {
         juce::File file(s.fileName);
         tab->setFilePath(file);
-        tab->setFileTypeFromPath(file);
     }
+    if (!s.label.empty())
+        tab->setDisplayLabel(s.label);
 
     juce::CodeDocument::Position caretPos(tab->document(),
         static_cast<int>(s.cursorOffset));

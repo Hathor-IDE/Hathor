@@ -55,6 +55,18 @@ public:
 
     juce::CodeEditorComponent::ColourScheme getDefaultColourScheme() override;
 
+    /// Reset cached line + front-matter state (called when the owning tab
+    /// switches language so stale flags don't leak across tokenisers).
+    void reset() noexcept
+    {
+        lastLine_.clear();
+        lastTokens_.clear();
+        lastLineNum_ = -1;
+        inFrontMatter_ = true;
+        frontMatterDone_ = false;
+        sawHathorHeader_ = false;
+    }
+
 private:
     // -----------------------------------------------------------------------
     // Per-line cache (Req 27.5)

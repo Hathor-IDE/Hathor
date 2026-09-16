@@ -538,8 +538,11 @@ void EditorGroup::removeTabInternal(int index)
     snap.fileName = closureTab->filePath().has_value()
                         ? closureTab->filePath()->getFullPathName().toStdString()
                         : "";
-    snap.content = closureTab->document().getAllContent().toStdString();
+    const std::string body = closureTab->document().getAllContent().toStdString();
+    if (body.size() <= TabSnapshot::kMaxSnapshotBytes)
+        snap.content = body;
     snap.cursorOffset = static_cast<size_t>(closureTab->editor().getCaretPosition());
+    snap.chuck = closureTab->isChuckTab();
     closedTabsHistory_.push(std::move(snap));
 
     // If this tab is active, deactivate first
@@ -580,14 +583,17 @@ void EditorGroup::reopenLastClosedTab()
     if (slot < 0)
         return;
 
-    auto tab = std::make_unique<HathorTab>(slot);
+    auto tab = std::make_unique<HathorTab>(slot, snap->chuck);
 
     if (!snap->fileName.empty())
         tab->setFilePath(juce::File(snap->fileName));
     if (!snap->label.empty())
         tab->setDisplayLabel(snap->label);
 
-    tab->document().replaceAllContent(juce::String(snap->content));
+    if (!snap->content.empty())
+        tab->document().replaceAllContent(juce::String(snap->content));
+    else if (!snap->fileName.empty() && juce::File(snap->fileName).existsAsFile())
+        tab->document().replaceAllContent(juce::File(snap->fileName).loadFileAsString());
 
     HathorTab* ptr = tab.get();
     tabs_.push_back(std::move(tab));
