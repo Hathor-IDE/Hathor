@@ -467,8 +467,9 @@ void HathorTab::lookAndFeelChanged()
 
 void GhostAwareEditor::handleReturnKey()
 {
-    // L-1 §3: Auto-indentation — when pressing Enter, copy the leading
-    // whitespace from the current line to the new line.
+    // Auto-indentation — when pressing Enter, copy the leading whitespace
+    // from the current line to the new line. The newline + indent go in as
+    // ONE document insertion so a single Undo removes both together.
     juce::CodeDocument& doc = getDocument();
     juce::CodeDocument::Position caret = getCaretPos();
     juce::String currentLine = doc.getLine(caret.getLineNumber());
@@ -484,23 +485,22 @@ void GhostAwareEditor::handleReturnKey()
             break;
     }
 
-    // Let JUCE handle the Enter key first (inserts newline)
-    juce::CodeEditorComponent::handleReturnKey();
-
-    // Then insert the indentation on the new line
-    if (!indent.isEmpty())
-    {
-        juce::CodeDocument::Position newCaret = getCaretPos();
-        doc.insertText(newCaret.getPosition(), indent);
-    }
+    const int caretAbs = caret.getPosition();
+    doc.insertText(caretAbs, "\n" + indent);
+    moveCaretTo(juce::CodeDocument::Position(doc, caretAbs + 1 + indent.length()), false);
 }
 
-void GhostAwareEditor::paintOverChildren(juce::Graphics& /*g*/)
+void GhostAwareEditor::paintOverChildren(juce::Graphics& g)
 {
-    // L-1 §3: Bracket matching highlight
-    updateBracketHighlight();
+    juce::CodeEditorComponent::paintOverChildren(g);
+}
 
-    // Let the base class do its standard painting
+void GhostAwareEditor::refreshBracketHighlight()
+{
+    if (!suppressBracketHighlight_)
+        updateBracketHighlight();
+    else
+        setTemporaryUnderlining({});
 }
 
 bool GhostAwareEditor::keyPressed(const juce::KeyPress& key)
@@ -541,6 +541,26 @@ bool GhostAwareEditor::keyPressed(const juce::KeyPress& key)
     if (sel.isEmpty() && closes.containsChar(c))
     {
         juce::CodeDocument::Position caret = getCaretPos();
+        // Electric dedent: typing } on a whitespace-only line removes one
+        // indent level (tab, else two spaces, else the run) first.
+        if (c == '}')
+        {
+            juce::CodeDocument::Position lineStart(doc, caret.getLineNumber(), 0);
+            const juce::String prefix = doc.getTextBetween(lineStart, caret);
+            if (!prefix.isEmpty()
+                && prefix.trim().isEmpty())
+            {
+                int drop = 0;
+                if (prefix.endsWithChar('\t'))
+                    drop = 1;
+                else if (prefix.endsWith("  "))
+                    drop = 2;
+                else
+                    drop = prefix.length();
+                doc.deleteSection(caret.getPosition() - drop, caret.getPosition());
+                caret = getCaretPos();
+            }
+        }
         const juce::String after = doc.getTextBetween(caret, caret.movedBy(1));
         if (after.length() > 0 && after[0] == c)
         {
@@ -607,6 +627,42 @@ void GhostAwareEditor::updateBracketHighlight()
 
     if (bracketPos >= 0 && matchingChar != 0)
     {
+        // Skip brackets inside // comments, /* */ blocks, or string/char
+        // literals on the same line: scan the line tracking quote state
+        // (backslash escapes) and comment starts.
+        juce::CodeDocument::Position lineStart(doc, caret.getLineNumber(), 0);
+        const juce::String lineHead = doc.getTextBetween(lineStart, caret);
+        const int col = bracketPos - lineStart.getPosition();
+        bool inString = false;
+        juce::juce_wchar quote = 0;
+        bool inLineComment = false;
+        for (int i = 0; i < col && i < lineHead.length() && !inLineComment; ++i)
+        {
+            const juce::juce_wchar c = lineHead[i];
+            if (inString)
+            {
+                if (c == '\\')
+                    ++i; // skip escaped char
+                else if (c == quote)
+                    inString = false;
+            }
+            else if (c == '"' || c == '\'')
+            {
+                inString = true;
+                quote = c;
+            }
+            else if (c == '/' && i + 1 < lineHead.length()
+                     && (lineHead[i + 1] == '/' || lineHead[i + 1] == '*'))
+            {
+                inLineComment = true;
+            }
+        }
+        if (inString || inLineComment)
+        {
+            setTemporaryUnderlining({});
+            return;
+        }
+
         // Find the matching bracket by scanning
         int depth = 1;
         int matchPos = -1;
@@ -875,6 +931,8 @@ void HathorTab::codeDocumentTextInserted(const juce::String& /*newText*/,
       ghostAccepted_ = false;
       acceptedGhostText_.clear();
       acceptedAtMs_ = 0;
+
+      editor_.refreshBracketHighlight();
 
       if (useChuckTokeniser_)
           triggerChuckDiagnostics();
@@ -1263,28 +1321,22 @@ void HathorTab::requestChuckHover(int cursorLine, int cursorCol)
 
     juce::String docText = document_.getAllContent();
 
-    // Extract the word at the cursor position.
+    // Extract the word at the cursor position (UTF-8 safe: bytes >= 0x80
+    // count as word characters so hover works on non-ASCII identifiers).
     int charIdx = editor_.getCaretPosition();
     int wordStart = charIdx;
     int wordEnd = charIdx;
 
-    while (wordStart > 0)
-    {
-        char c = docText[wordStart - 1];
-        if (std::isalnum(static_cast<unsigned char>(c)) || c == '_')
-            --wordStart;
-        else
-            break;
-    }
+    auto isWordByte = [](char c) {
+        const auto u = static_cast<unsigned char>(c);
+        return u >= 0x80 || std::isalnum(u) || c == '_';
+    };
 
-    while (wordEnd < static_cast<int>(docText.length()))
-    {
-        char c = docText[wordEnd];
-        if (std::isalnum(static_cast<unsigned char>(c)) || c == '_')
-            ++wordEnd;
-        else
-            break;
-    }
+    while (wordStart > 0 && isWordByte(docText[wordStart - 1]))
+        --wordStart;
+
+    while (wordEnd < static_cast<int>(docText.length()) && isWordByte(docText[wordEnd]))
+        ++wordEnd;
 
     juce::String word = docText.substring(wordStart, wordEnd - wordStart);
     if (word.isEmpty())
@@ -1367,33 +1419,25 @@ void HathorTab::onCompletionSelected(const lsp::CompletionCandidate& candidate)
                                 ? candidate.label
                                 : candidate.insertText);
 
-    // Get the word boundaries for the current word
+    // Get the word boundaries for the current word. Byte-based scan with
+    // UTF-8 safety: continuation bytes (>= 0x80) count as word characters
+    // so non-ASCII identifiers aren't split mid-codepoint.
     int caretAbs = editor_.getCaretPosition();
     juce::String docText = document_.getAllContent();
+    auto isWordByte = [](char c) {
+        const auto u = static_cast<unsigned char>(c);
+        return u >= 0x80 || std::isalnum(u) || c == '_';
+    };
 
     int wordStart = caretAbs;
-    int wordEnd = caretAbs;
 
-    while (wordStart > 0)
-    {
-        char c = docText[wordStart - 1];
-        if (std::isalnum(static_cast<unsigned char>(c)) || c == '_')
-            --wordStart;
-        else
-            break;
-    }
+    while (wordStart > 0 && isWordByte(docText[wordStart - 1]))
+        --wordStart;
 
-    while (wordEnd < static_cast<int>(docText.length()))
-    {
-        char c = docText[wordEnd];
-        if (std::isalnum(static_cast<unsigned char>(c)) || c == '_')
-            ++wordEnd;
-        else
-            break;
-    }
-
-    if (wordEnd > wordStart)
-        document_.deleteSection(wordStart, wordEnd);
+    // Prefix-only replace: remove the typed prefix before the caret, keep
+    // any identifier suffix after it (VSCode completion semantics).
+    if (caretAbs > wordStart)
+        document_.deleteSection(wordStart, caretAbs);
     document_.insertText(wordStart, insertText);
 
     if (lspCompletionPopup_)
@@ -1532,6 +1576,8 @@ bool HathorTab::handleLspKeyPress(const juce::KeyPress& key)
 
 void HathorTab::handleCursorMove()
 {
+    editor_.refreshBracketHighlight();
+
      // J-3: During partial-accept insertion, suppress ghost re-triggering.
     // The cursor moves as the accepted prefix is inserted, but the ghost
     // overlay is manually re-displayed with the remaining suffix after
@@ -1607,8 +1653,13 @@ void HathorTab::notifyLspDiagnostics(const std::string& uri,
         int endLine = diag.range.end.line;
         int endChar = diag.range.end.character;
 
-        if (startLine != endLine)
-            continue;
+        // Multi-line diagnostics underline the first-line portion instead
+        // of being silently discarded.
+        if (endLine > startLine)
+        {
+            endLine = startLine;
+            endChar = std::numeric_limits<int>::max();
+        }
 
         juce::CodeDocument::Position startPos(document_, startLine, startChar);
         juce::CodeDocument::Position endPos(document_, endLine, endChar);
@@ -1734,7 +1785,29 @@ void HathorTab::triggerChuckDiagnostics()
             std::chrono::steady_clock::now().time_since_epoch()).count());
 
     if (nowMs - chuckLastDiagTimeMs_ < kDebounceMs)
+    {
+        // Trailing edge: reschedule one run after the window instead of
+        // dropping rapid edits entirely (otherwise fast typing never
+        // produces diagnostics until an edit lands outside the window).
+        if (!diagTrailingPending_)
+        {
+            diagTrailingPending_ = true;
+            const int delayMs = static_cast<int>(
+                kDebounceMs - (nowMs - chuckLastDiagTimeMs_));
+            juce::Component::SafePointer<HathorTab> safeSelf(this);
+            juce::Timer::callAfterDelay(
+                std::max(delayMs, 50),
+                [safeSelf]() {
+                    if (auto* tab = safeSelf.getComponent())
+                    {
+                        tab->diagTrailingPending_ = false;
+                        tab->chuckLastDiagTimeMs_ = 0;
+                        tab->triggerChuckDiagnostics();
+                    }
+                });
+        }
         return;
+    }
 
     chuckLastDiagTimeMs_ = nowMs;
 

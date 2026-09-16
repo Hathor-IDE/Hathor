@@ -140,9 +140,27 @@ public:
     // L-1 §3: Bracket matching — highlight the matching bracket.
     void paintOverChildren(juce::Graphics& g) override;
 
+    /// Recompute bracket-match underlining on demand (caret/document
+    /// changes). Paint never triggers a scan itself.
+    void refreshBracketHighlight();
+
+    /// While true (e.g. find panel showing matches), bracket underlining is
+    /// suppressed so two features don't fight over the single temporary-
+    /// underline layer.
+    void setSuppressBracketHighlight(bool suppress) noexcept
+    {
+        suppressBracketHighlight_ = suppress;
+        if (suppress)
+            setTemporaryUnderlining({});
+        else
+            refreshBracketHighlight();
+    }
+
 private:
     // L-1 §3: Highlight the matching bracket for the one at/near the caret.
     void updateBracketHighlight();
+
+    bool suppressBracketHighlight_{ false };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(GhostAwareEditor)
 };
@@ -700,6 +718,8 @@ private:
 
       // AI-G7: ChucK diagnostics debounce timestamp.
       int64_t chuckLastDiagTimeMs_{ 0 };
+      // True while a trailing-edge diagnostic run is already scheduled.
+      bool diagTrailingPending_{ false };
       // Generation counter for async diagnostic delivery: bumped per
       // trigger, checked on the message thread so late results from a
       // previous run (or a closed tab) are discarded.

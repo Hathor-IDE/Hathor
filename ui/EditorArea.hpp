@@ -393,6 +393,10 @@ public:
     /// Find previous match in the active tab.
     void findPrevInActiveTab();
 
+    /// Select the next (forward=true) or previous match from the caret,
+    /// wrapping when the model allows it. Drives the find panel buttons.
+    void selectFindMatch(bool forward);
+
     /// Replace current match in the active tab.
     void replaceInActiveTab();
 

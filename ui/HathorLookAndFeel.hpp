@@ -138,7 +138,7 @@ class HathorLookAndFeel : public juce::LookAndFeel_V4
 {
 public:
     HathorLookAndFeel();
-    ~HathorLookAndFeel() override = default;
+    ~HathorLookAndFeel() override;
 
     // ========================================================================
     // Custom JUCE drawing overrides
@@ -295,29 +295,53 @@ public:
 
     /// Helper: obtain the current palette when you don't have a Component
     /// reference (e.g. inside a TreeViewItem which is not a Component).
+    /// Null-safe: falls back to a static default palette once the owning
+    /// LookAndFeel has been destroyed.
     static const Palette& globalPalette() noexcept
     {
-        return *globalPalette_;
+        if (globalPalette_ != nullptr)
+            return *globalPalette_;
+        static const Palette fallback = Palette::defaultPalette();
+        return fallback;
     }
 
     /// Helper: obtain the LookAndFeel as HathorLookAndFeel from any Component.
+    /// Uses dynamic_cast; falls back to a static instance mirroring the
+    /// global palette when the component uses a different LookAndFeel.
     static HathorLookAndFeel& fromComponent(juce::Component& c) noexcept
     {
-        juce::LookAndFeel& lf = c.getLookAndFeel();
-        return *static_cast<HathorLookAndFeel*>(&lf);
+        if (auto* h = dynamic_cast<HathorLookAndFeel*>(&c.getLookAndFeel()))
+            return *h;
+        jassertfalse;
+        static HathorLookAndFeel fallback;
+        fallback.currentPalette_ = globalPalette();
+        fallback.applyPaletteToColours();
+        return fallback;
     }
 
     /// Const overload — for use in const Component methods.
     static const HathorLookAndFeel& fromComponent(const juce::Component& c) noexcept
     {
-        const juce::LookAndFeel& lf = c.getLookAndFeel();
-        return *static_cast<const HathorLookAndFeel*>(&lf);
+        if (auto* h = dynamic_cast<const HathorLookAndFeel*>(&c.getLookAndFeel()))
+            return *h;
+        jassertfalse;
+        static HathorLookAndFeel fallback;
+        fallback.currentPalette_ = globalPalette();
+        fallback.applyPaletteToColours();
+        return fallback;
     }
 
     /// Install the global palette pointer (used by globalPalette()).
+    /// Keeps the first installation; later attempts to overwrite with a
+    /// different pointer are ignored so the pointer never dangles silently.
     static void setGlobalPalette(const Palette* p) noexcept
     {
-        globalPalette_ = p;
+        if (globalPalette_ == nullptr || globalPalette_ == p)
+        {
+            globalPalette_ = p;
+            return;
+        }
+        jassertfalse;
     }
 
 private:

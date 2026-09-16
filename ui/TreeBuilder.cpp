@@ -19,10 +19,12 @@
 namespace hathor::ui {
 
 // ---------------------------------------------------------------------------
-// Constants for managed asset directory layout (see PROGRAM.md §V2 Architecture)
+// Constants for managed asset directory layout
 // ---------------------------------------------------------------------------
 
 static constexpr const char* kChuckInstrumentsSubdir = "chuck_instruments";
+
+static constexpr unsigned kMaxRecursionDepth = 32;
 
 // ---------------------------------------------------------------------------
 // TreeBuilder implementation
@@ -61,26 +63,58 @@ FolderNode TreeBuilder::buildTree(const std::filesystem::path& rootDir) noexcept
     return root;
 }
 
-void TreeBuilder::buildChildren(const std::filesystem::path& dir, FolderNode& out) noexcept
+void TreeBuilder::buildChildren(const std::filesystem::path& dir, FolderNode& out,
+                                  unsigned depth) noexcept
 {
+    if (depth >= kMaxRecursionDepth)
+    {
+        std::fprintf(stderr,
+            "[hathor:Explorer] Max recursion depth reached: %s\n",
+            dir.string().c_str());
+        return;
+    }
+
     std::error_code ec;
 
     // Collect child entries in a single directory iteration.
-    // We gather folders and songs separately so we can sort each group
-    // and present folders first, then songs — matching conventional
+    // Folders and songs are gathered separately so each group can be
+    // sorted and folders presented first, matching conventional
     // file-browser ordering.
 
     std::vector<std::filesystem::directory_entry> folderEntries;
     std::vector<std::filesystem::directory_entry> songEntries;
 
-    for (const auto& entry : std::filesystem::directory_iterator(dir, ec))
+    std::filesystem::directory_iterator it(
+        dir, std::filesystem::directory_options::skip_permission_denied, ec);
+    if (ec)
     {
-        if (ec)
+        std::fprintf(stderr,
+            "[hathor:Explorer] Cannot read directory: %s (%s)\n",
+            dir.string().c_str(), ec.message().c_str());
+        return;
+    }
+
+    const std::filesystem::directory_iterator end;
+    while (it != end)
+    {
+        std::filesystem::directory_entry entry = *it;
+        std::error_code iterEc;
+        it.increment(iterEc);
+        if (iterEc)
         {
             std::fprintf(stderr,
-                "[hathor:Explorer] Cannot read directory: %s (%s)\n",
-                dir.string().c_str(), ec.message().c_str());
-            break;
+                "[hathor:Explorer] Skipping unreadable entry in: %s (%s)\n",
+                dir.string().c_str(), iterEc.message().c_str());
+            continue;
+        }
+
+        std::error_code entryEc;
+        bool isSymlink = entry.is_symlink(entryEc);
+        if (!entryEc && isSymlink)
+        {
+            std::error_code dirEc;
+            if (entry.is_directory(dirEc) && !dirEc)
+                continue; // never follow directory symlinks
         }
 
         const auto& p = entry.path();
@@ -88,12 +122,12 @@ void TreeBuilder::buildChildren(const std::filesystem::path& dir, FolderNode& ou
 
         if (ft == FileType::Folder)
         {
-            folderEntries.push_back(entry);
+            folderEntries.push_back(std::move(entry));
         }
         else if (ft == FileType::ManagedDir)
         {
-            // B8-K5: .hathor_assets is a managed directory — its internal
-            // structure is collapsed into logical asset nodes.  The folder
+            // .hathor_assets is a managed directory: its internal
+            // structure is collapsed into logical asset nodes. The folder
             // itself does NOT appear as an ordinary child; instead its
             // logical assets are synthesized into the parent FolderNode's
             // managedCategories / managedAssets collections.
@@ -101,7 +135,7 @@ void TreeBuilder::buildChildren(const std::filesystem::path& dir, FolderNode& ou
         }
         else if (ft == FileType::SongHathor || ft == FileType::SongChuck)
         {
-            songEntries.push_back(entry);
+            songEntries.push_back(std::move(entry));
         }
         // FileType::Other and inaccessible entries are silently excluded.
     }
@@ -123,7 +157,7 @@ void TreeBuilder::buildChildren(const std::filesystem::path& dir, FolderNode& ou
             childPath);
         child.expanded = false;
 
-        buildChildren(childPath, child);
+        buildChildren(childPath, child, depth + 1);
         out.folders.push_back(std::move(child));
     }
 
@@ -149,7 +183,7 @@ void TreeBuilder::buildChildren(const std::filesystem::path& dir, FolderNode& ou
 }
 
 // ---------------------------------------------------------------------------
-// B8-K5: Managed .hathor_assets directory — synthesize logical asset nodes
+// Managed .hathor_assets directory — synthesize logical asset nodes
 // ---------------------------------------------------------------------------
 
 void TreeBuilder::buildManagedAssets(
@@ -181,17 +215,50 @@ void TreeBuilder::buildManagedAssets(
         std::unordered_map<std::string, InstrumentFile> byStem;
         std::unordered_set<std::string> stemSeen;
 
-        for (const auto& entry : std::filesystem::directory_iterator(instrumentsDir, ec))
+        std::vector<std::filesystem::directory_entry> instrEntries;
         {
+            std::filesystem::directory_iterator instrIt(
+                instrumentsDir,
+                std::filesystem::directory_options::skip_permission_denied, ec);
             if (ec)
             {
                 std::fprintf(stderr,
                     "[hathor:Explorer] Cannot read instruments dir: %s (%s)\n",
                     instrumentsDir.string().c_str(), ec.message().c_str());
-                break;
             }
+            else
+            {
+                const std::filesystem::directory_iterator instrEnd;
+                while (instrIt != instrEnd)
+                {
+                    std::filesystem::directory_entry e = *instrIt;
+                    std::error_code incrEc;
+                    instrIt.increment(incrEc);
+                    if (incrEc)
+                    {
+                        std::fprintf(stderr,
+                            "[hathor:Explorer] Skipping unreadable entry in: %s (%s)\n",
+                            instrumentsDir.string().c_str(), incrEc.message().c_str());
+                        continue;
+                    }
+                    instrEntries.push_back(std::move(e));
+                }
+            }
+        }
 
-            if (!entry.is_regular_file(ec))
+        // Sort for deterministic iteration so first-audio-wins per stem
+        // resolves in a defined order.
+        std::sort(instrEntries.begin(), instrEntries.end(),
+            [](const std::filesystem::directory_entry& a,
+               const std::filesystem::directory_entry& b)
+            {
+                return a.path().filename().string() < b.path().filename().string();
+            });
+
+        for (const auto& entry : instrEntries)
+        {
+            std::error_code fileEc;
+            if (!entry.is_regular_file(fileEc) || fileEc)
                 continue;
 
             const auto& p      = entry.path();
@@ -214,9 +281,8 @@ void TreeBuilder::buildManagedAssets(
                 auto [it, inserted] = byStem.emplace(stem, InstrumentFile{});
                 if (inserted)
                     stemSeen.insert(stem);
-                // Only record the first audio file per stem (matches .wav
-                // convention; if both .wav and .aiff exist, .wav wins since
-                // it's encountered first in typical layouts).
+                // Only record the first audio file per stem. Iteration is
+                // sorted by filename, so the winner is deterministic.
                 if (!it->second.hasWav)
                 {
                     it->second.wavPath = p;
@@ -251,10 +317,8 @@ void TreeBuilder::buildManagedAssets(
                 if (instr.hasWav)
                     wavPath = instr.wavPath;
 
-                // Path safety (B8-K5 §12): the stem is already a filename
-                // stem extracted from a real directory entry — it cannot
-                // contain path separators.  No additional sanitisation
-                // needed beyond what std::filesystem guarantees.
+                // Path safety: the stem is a filename stem extracted from a
+                // real directory entry — it cannot contain path separators.
 
                 instrumentsCat.managedAssets.emplace_back(
                     "Instruments",
@@ -267,10 +331,9 @@ void TreeBuilder::buildManagedAssets(
         }
     }
     // Other subdirectories of .hathor_assets (e.g. external_imports/) are
-    // not yet managed asset categories.  They are intentionally not surfaced
+    // not yet managed asset categories. They are intentionally not surfaced
     // in the tree at all — only recognised categories (currently ChucK
-    // instruments) are exposed.  This leaves room for future categories
-    // (B8-K5 §11) without exposing implementation directories.
+    // instruments) are exposed.
 }
 
 // ---------------------------------------------------------------------------

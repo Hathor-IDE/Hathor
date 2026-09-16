@@ -8,11 +8,31 @@
  */
 
 #include "FindReplacePanel.hpp"
+#include "HathorLookAndFeel.hpp"
 
 #include <algorithm>
 #include <cctype>
 
 namespace hathor::ui {
+
+// Forwards navigation keys from the find/replace fields (which hold focus)
+// to the panel: Enter/Shift+Enter step through matches, Escape closes.
+class FindKeyForwarder : public juce::KeyListener
+{
+public:
+    explicit FindKeyForwarder(FindReplacePanel& owner) : owner_(owner) {}
+
+    bool keyPressed(const juce::KeyPress& key, juce::Component*) override
+    {
+        if (key == juce::KeyPress::escapeKey
+            || key == juce::KeyPress::returnKey)
+            return owner_.keyPressed(key);
+        return false;
+    }
+
+private:
+    FindReplacePanel& owner_;
+};
 
 FindReplacePanel::FindReplacePanel()
 {
@@ -53,10 +73,20 @@ FindReplacePanel::FindReplacePanel()
     };
 
     closeBtn_ = std::make_unique<juce::TextButton>("x");
+    closeBtn_->setTooltip("Close (Escape)");
     addAndMakeVisible(closeBtn_.get());
     closeBtn_->onClick = [this]() {
         if (onClosePanel) onClosePanel();
     };
+
+    matchCountLabel_ = std::make_unique<juce::Label>();
+    matchCountLabel_->setJustificationType(juce::Justification::centredRight);
+    matchCountLabel_->setFont(HathorLookAndFeel::uiFontRegular(11.0f));
+    addAndMakeVisible(matchCountLabel_.get());
+
+    keyForwarder_ = std::make_unique<FindKeyForwarder>(*this);
+    findField_->addKeyListener(keyForwarder_.get());
+    replaceField_->addKeyListener(keyForwarder_.get());
 
     regexCheckbox_ = std::make_unique<juce::ToggleButton>("Regex");
     addAndMakeVisible(regexCheckbox_.get());
@@ -82,7 +112,88 @@ FindReplacePanel::~FindReplacePanel() = default;
 void FindReplacePanel::setVisible(bool visible)
 {
     juce::Component::setVisible(visible);
+    if (visible)
+        updateMatchCount();
     // Parent component should resize when we show/hide
+}
+
+void FindReplacePanel::focusFindField()
+{
+    if (findField_)
+    {
+        findField_->grabKeyboardFocus();
+        findField_->selectAll();
+    }
+}
+
+void FindReplacePanel::clearHighlights()
+{
+    currentMatch_.reset();
+    if (editor_)
+        editor_->setTemporaryUnderlining({});
+    updateMatchCount();
+}
+
+void FindReplacePanel::setCurrentMatch(FindMatch m)
+{
+    currentMatch_ = m;
+    updateMatchCount();
+}
+
+bool FindReplacePanel::keyPressed(const juce::KeyPress& key)
+{
+    if (key == juce::KeyPress::escapeKey)
+    {
+        if (onClosePanel)
+            onClosePanel();
+        return true;
+    }
+    if (key == juce::KeyPress::returnKey)
+    {
+        // Enter → next, Shift+Enter → previous.
+        if (key.getModifiers().isShiftDown())
+        {
+            if (onFindPrev)
+                onFindPrev();
+        }
+        else if (onFindNext)
+            onFindNext();
+        return true;
+    }
+    return false;
+}
+
+void FindReplacePanel::updateMatchCount()
+{
+    if (matchCountLabel_ == nullptr)
+        return;
+    if (document_ == nullptr || model_.searchText().empty())
+    {
+        matchCountLabel_->setText({}, juce::dontSendNotification);
+        return;
+    }
+    const std::string docStr = document_->getAllContent().toStdString();
+    const auto matches = model_.findAll(docStr);
+    if (matches.empty())
+    {
+        matchCountLabel_->setText("No matches", juce::dontSendNotification);
+        return;
+    }
+    size_t index = 0;
+    if (currentMatch_.has_value())
+    {
+        for (size_t i = 0; i < matches.size(); ++i)
+        {
+            if (matches[i].start == currentMatch_->start)
+            {
+                index = i;
+                break;
+            }
+        }
+    }
+    matchCountLabel_->setText(juce::String(index + 1) + " of "
+                                  + juce::String(matches.size()),
+                              juce::dontSendNotification);
 }
 
 void FindReplacePanel::setTargetEditor(juce::CodeEditorComponent* editor,
@@ -102,6 +213,7 @@ void FindReplacePanel::setTargetEditor(juce::CodeEditorComponent* editor,
             ranges.add({static_cast<int>(m.start), static_cast<int>(m.end)});
         editor_->setTemporaryUnderlining(ranges);
     }
+    updateMatchCount();
 }
 
 void FindReplacePanel::resized()
@@ -112,10 +224,11 @@ void FindReplacePanel::resized()
     const int checkBoxW = 90;
     const int spacing = 6;
 
-    // Top row: find field + checkboxes
+    // Top row: find field + match count + checkboxes
     auto topRow = area.removeFromTop(20);
     findField_->setBounds(topRow.removeFromLeft(fieldW));
     topRow.removeFromLeft(spacing);
+    matchCountLabel_->setBounds(topRow.removeFromLeft(90));
 
     regexCheckbox_->setBounds(topRow.removeFromLeft(checkBoxW));
     caseSensitiveCheckbox_->setBounds(topRow.removeFromLeft(checkBoxW));
@@ -174,6 +287,7 @@ void FindReplacePanel::syncUIFromSearch(const juce::String& text)
             ranges.add({static_cast<int>(m.start), static_cast<int>(m.end)});
         editor_->setTemporaryUnderlining(ranges);
     }
+    updateMatchCount();
 }
 
 void FindReplacePanel::syncUIFromReplace(const juce::String& text)

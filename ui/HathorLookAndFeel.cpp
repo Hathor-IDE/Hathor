@@ -358,6 +358,12 @@ HathorLookAndFeel::HathorLookAndFeel()
     applyPaletteToColours();
 }
 
+HathorLookAndFeel::~HathorLookAndFeel()
+{
+    if (globalPalette_ == &currentPalette_)
+        globalPalette_ = nullptr;
+}
+
 // ===========================================================================
 // Palette management — runtime switching (A1 design-token engine)
 // ===========================================================================

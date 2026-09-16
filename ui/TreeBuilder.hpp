@@ -53,7 +53,7 @@ struct SongNode
 /// A managed logical asset — e.g. a ChucK instrument represented as a single
 /// entry that may have a .ck source and/or a baked .wav audio component.
 ///
-/// B8-K5: `.hathor_assets/chuck_instruments/acid_bass.ck` + `acid_bass.wav`
+/// `.hathor_assets/chuck_instruments/acid_bass.ck` + `acid_bass.wav`
 /// is presented as a single `acid_bass` instrument node under an
 /// `Instruments` category, rather than two unrelated files.
 ///
@@ -161,9 +161,11 @@ public:
 
 private:
     /// Recursively build children of @p dir into @p out.
-    void buildChildren(const std::filesystem::path& dir, FolderNode& out) noexcept;
+    /// @p depth tracks recursion depth and is capped internally.
+    void buildChildren(const std::filesystem::path& dir, FolderNode& out,
+                       unsigned depth = 0) noexcept;
 
-    /// B8-K5: Walk a managed `.hathor_assets` directory and synthesize
+    /// Walk a managed `.hathor_assets` directory and synthesize
     /// logical asset nodes (Instrument category + instrument entries)
     /// into @p parentOut's managedCategories / managedAssets collections.
     /// The physical filesystem structure is never modified.

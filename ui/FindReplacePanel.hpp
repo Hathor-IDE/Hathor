@@ -40,6 +40,17 @@ public:
     /** Toggle panel visibility. */
     void setVisible(bool visible) override;
 
+    /** Focus the find field (called when the panel opens). */
+    void focusFindField();
+
+    /** Clear match underlining from the target editor. */
+    void clearHighlights();
+
+    /** Mark a match current for the "i of N" indicator. */
+    void setCurrentMatch(FindMatch m);
+
+    bool keyPressed(const juce::KeyPress& key) override;
+
     /// Access the underlying search engine (for replace operations driven by EditorArea).
     FindReplaceModel& model() noexcept { return model_; }
     const FindReplaceModel& model() const noexcept { return model_; }
@@ -64,6 +75,8 @@ private:
     std::unique_ptr<juce::TextButton> replaceBtn_;
     std::unique_ptr<juce::TextButton> replaceAllBtn_;
     std::unique_ptr<juce::TextButton> closeBtn_;
+    std::unique_ptr<juce::Label> matchCountLabel_;
+    std::unique_ptr<juce::KeyListener> keyForwarder_;
     std::unique_ptr<juce::ToggleButton> regexCheckbox_;
     std::unique_ptr<juce::ToggleButton> caseSensitiveCheckbox_;
     std::unique_ptr<juce::ToggleButton> wholeWordCheckbox_;
@@ -79,6 +92,9 @@ private:
     void updateModelFlags();
     void syncUIFromSearch(const juce::String& text);
     void syncUIFromReplace(const juce::String& text);
+    void updateMatchCount();
+
+    std::optional<FindMatch> currentMatch_;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(FindReplacePanel)
 };

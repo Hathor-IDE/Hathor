@@ -2467,18 +2467,65 @@ void EditorArea::showFindReplace()
 {
     if (!findReplacePanel_)
         findReplacePanel_ = std::make_unique<FindReplacePanel>();
+    findReplacePanel_->onFindNext = [this]() { selectFindMatch(true); };
+    findReplacePanel_->onFindPrev = [this]() { selectFindMatch(false); };
+    findReplacePanel_->onReplace = [this]() { replaceInActiveTab(); };
+    findReplacePanel_->onReplaceAll = [this]() { replaceAllInActiveTab(); };
+    findReplacePanel_->onClosePanel = [this]() { hideFindReplace(); };
     findReplacePanel_->setVisible(true);
     findReplacePanel_->toFront(true);
     HathorTab* tab = activeTab();
     if (tab)
+    {
+        tab->editor().setSuppressBracketHighlight(true);
         findReplacePanel_->setTargetEditor(&tab->editor(), &tab->document());
+        findReplacePanel_->focusFindField();
+    }
     resized();
 }
 
 void EditorArea::hideFindReplace()
 {
     if (findReplacePanel_)
+    {
         findReplacePanel_->setVisible(false);
+        findReplacePanel_->clearHighlights();
+    }
+    if (HathorTab* tab = activeTab())
+    {
+        tab->editor().setSuppressBracketHighlight(false);
+        tab->editor().grabKeyboardFocus();
+    }
+}
+
+void EditorArea::selectFindMatch(bool forward)
+{
+    HathorTab* tab = activeTab();
+    if (tab == nullptr || !findReplacePanel_)
+        return;
+    FindReplaceModel& model = findReplacePanel_->model();
+    if (model.searchText().empty())
+        return;
+    juce::CodeDocument& doc = tab->document();
+    juce::CodeEditorComponent& ed = tab->editor();
+    const std::string content = doc.getAllContent().toStdString();
+    const size_t caret = static_cast<size_t>(ed.getCaretPos().getPosition());
+    auto match = forward ? model.findNext(content, caret)
+                         : model.findPrev(content, caret);
+    if (!match.has_value() && hasFlag(model.flags(), FindFlags::WrapAround))
+        match = forward ? model.findNext(content, 0)
+                        : model.findPrev(content, content.size());
+    if (!match.has_value())
+    {
+        showStatus("No matches");
+        return;
+    }
+    juce::CodeDocument::Position startPos(doc, static_cast<int>(match->start));
+    juce::CodeDocument::Position endPos(doc, static_cast<int>(match->end));
+    ed.moveCaretTo(endPos, false);
+    ed.moveCaretTo(startPos, true);
+    ed.scrollToKeepCaretOnScreen();
+    findReplacePanel_->setCurrentMatch(*match);
 }
 
 void EditorArea::findNextInActiveTab()
