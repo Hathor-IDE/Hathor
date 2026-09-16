@@ -1287,6 +1287,12 @@ bool MainWindow::keyPressed(const juce::KeyPress& key)
         {
             ke.key = std::string(1, static_cast<char>(key.getKeyCode()));
         }
+        else if (key.getKeyCode() >= '0' && key.getKeyCode() <= '9')
+        {
+            // Wave 4.3 (S5): digits were unmapped so digit-bound actions
+            // silently failed. Preserve the literal digit.
+            ke.key = std::string(1, static_cast<char>(key.getKeyCode()));
+        }
         else if (key.getKeyCode() >= 0xF700 && key.getKeyCode() <= 0xF70B)  // F1-F12
         {
             ke.key = "F" + std::to_string(key.getKeyCode() - 0xF700 + 1);
@@ -1304,7 +1310,21 @@ bool MainWindow::keyPressed(const juce::KeyPress& key)
             else if (kc == juce::KeyPress::leftKey) ke.key = "Left";
             else if (kc == juce::KeyPress::rightKey) ke.key = "Right";
             else if (kc == juce::KeyPress::spaceKey) ke.key = "Space";
-            else return false;
+            else if (kc == juce::KeyPress::homeKey) ke.key = "Home";
+            else if (kc == juce::KeyPress::endKey) ke.key = "End";
+            else if (kc == juce::KeyPress::pageUpKey) ke.key = "PageUp";
+            else if (kc == juce::KeyPress::pageDownKey) ke.key = "PageDown";
+            else
+            {
+                // Wave 4.3 (S5): punctuation / Ctrl+Shift chords fell through
+                // here and were dropped. Fall back to the typed character so
+                // any single-char binding (/, [, ], -, =, etc.) dispatches.
+                const juce::juce_wchar tc = key.getTextCharacter();
+                if (tc >= 32 && tc < 127)
+                    ke.key = std::string(1, static_cast<char>(tc));
+                else
+                    return false;
+            }
         }
 
         if (reg->dispatchKey(ke))
