@@ -115,13 +115,13 @@ private:
     void buildRootItem();
 
     //==========================================================================
-    // B8-K5 §9: Filesystem refresh
+    // Filesystem refresh (B8-K5 §9, Wave 4.1 S7)
     // ---------------------------------------------------------------------------
-    /// Polling timer for filesystem changes.  Since juce::DirectoryWatcher
-    /// is unavailable in this JUCE version, a lightweight juce::Timer walks
-    /// the tree directory recursively and compares file_write_times to
-    /// detect additions / deletions / modifications.  When a change is
-    /// detected, the tree is rebuilt.
+    /// Polling timer for filesystem changes. A lightweight juce::Timer walks
+    /// the tree and compares file_write_times to detect additions /
+    /// deletions / modifications, skipping ignored trees (.git,
+    /// node_modules, build*, DerivedData). When a change is detected the
+    /// tree is rebuilt.
     class FsPollTimer : public juce::Timer
     {
     public:

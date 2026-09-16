@@ -43,10 +43,10 @@ ExplorerPanel::ExplorerPanel()
     treeView_.setIndentSize(16);
     addAndMakeVisible(treeView_);
 
-    // B8-K5 §9: Set up a polling timer so the managed view stays in sync
-    // with filesystem changes (new instruments, re-bakes, deletions,
-    // renames).  juce::DirectoryWatcher is unavailable in this JUCE version,
-    // so we poll every 2 seconds, comparing file_write_times.
+    // Wave 4.1 (S7): poll every 2 s with an ignore list (version-control,
+    // dependency and build trees are skipped) so node_modules-scale
+    // workspaces don't peg the CPU. Change detection compares
+    // file_write_times; see FsPollTimer below.
     fsPollTimer_ = std::make_unique<FsPollTimer>(*this);
 
     // Do NOT start watching the user's home directory here — a recursive
