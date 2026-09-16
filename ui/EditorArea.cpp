@@ -1223,6 +1223,14 @@ void EditorArea::resized()
         debugPanel_->setBounds(debugArea);
     }
 
+    // Split surface (if visible) takes the whole content area; the
+    // borrowed tabs live in its groups, not in tabs_.
+    if (editorSplitSurface_ && editorSplitSurface_->isVisible())
+    {
+        editorSplitSurface_->setBounds(b);
+        return;
+    }
+
     // Active tab fills the middle
     for (int i = 0; i < static_cast<int>(tabs_.size()); ++i)
     {
@@ -2520,15 +2528,48 @@ void EditorArea::replaceAllInActiveTab()
 void EditorArea::toggleSplit()
 {
     if (!editorSplitSurface_)
+        return;
+
+    if (!editorSplitSurface_->isVisible())
     {
-    editorSplitSurface_ = std::make_unique<EditorSplitSurface>(audio_, ci_);
+        // Enter split: borrow the active tab into the surface's active leaf.
+        HathorTab* active = activeTab();
+        if (active == nullptr)
+        {
+            showStatus("Nothing to split — open a tab first.");
+            return;
+        }
+        const int activeIdx = activeIndex_;
+        bool wasPinned = false;
+        auto borrowed = detachTab(activeIdx, &wasPinned);
+        if (borrowed == nullptr)
+            return;
         addChildComponent(editorSplitSurface_.get());
-        // Hide the original EditorArea content area when split is active
+        editorSplitSurface_->setVisible(true);
+        editorSplitSurface_->setLspClient(lspClient_.get());
+        editorSplitSurface_->setGhostClient(ghostClient_.get());
+        if (EditorGroup* group = editorSplitSurface_->activeGroup())
+            group->insertTab(std::move(borrowed), -1);
+        else
+            adoptTab(std::move(borrowed), wasPinned); // no leaf: give it back
+        resized();
+        return;
     }
-    else
+
+    // Exit split: adopt every borrowed tab back into tabs_.
+    std::vector<EditorGroup*> leaves;
+    if (auto* root = editorSplitSurface_->root())
+        root->collectLeaves(leaves);
+    for (auto* group : leaves)
     {
-        editorSplitSurface_->setVisible(!editorSplitSurface_->isVisible());
+        if (group == nullptr)
+            continue;
+        while (group->tabCount() > 0)
+            if (auto borrowed = group->takeTab(0))
+                adoptTab(std::move(borrowed));
     }
+    editorSplitSurface_->setVisible(false);
+    resized();
 }
 
 // ---------------------------------------------------------------------------
@@ -2649,6 +2690,60 @@ int EditorArea::indexOfTab(const HathorTab* tab) const noexcept
         if (tabs_[static_cast<std::size_t>(i)].get() == tab)
             return i;
     return -1;
+}
+
+std::unique_ptr<HathorTab> EditorArea::detachTab(int index, bool* wasPinned)
+{
+    if (index < 0 || index >= static_cast<int>(tabs_.size()))
+        return nullptr;
+    if (wasPinned != nullptr)
+        *wasPinned = index < static_cast<int>(pinnedTabs_.size())
+                     && pinnedTabs_[static_cast<std::size_t>(index)];
+    if (index < static_cast<int>(keyListeners_.size()))
+    {
+        tabs_[static_cast<std::size_t>(index)]->editor()
+            .removeKeyListener(keyListeners_[static_cast<std::size_t>(index)].get());
+        keyListeners_.erase(keyListeners_.begin() + index);
+    }
+    if (index < static_cast<int>(pinnedTabs_.size()))
+        pinnedTabs_.erase(pinnedTabs_.begin() + index);
+    removeChildComponent(tabs_[static_cast<std::size_t>(index)].get());
+    auto detached = std::move(tabs_[static_cast<std::size_t>(index)]);
+    tabs_.erase(tabs_.begin() + index);
+    activeIndex_ = std::clamp(activeIndex_, -1,
+                              static_cast<int>(tabs_.size()) - 1);
+    refreshTabBar();
+    return detached;
+}
+
+void EditorArea::adoptTab(std::unique_ptr<HathorTab> tab, bool pinned)
+{
+    if (!tab)
+        return;
+    HathorTab* tabPtr = tab.get();
+    wireUnsavedCallback(*tab);
+    wirePlayStopCallback(*tab);
+    wireContextMenuCallbacks(*tab);
+    installKeyListenerForTab(*tab);
+    tab->installLspClient(lspClient_.get());
+    tab->notifyLspDidOpen();
+    tab->installGhostClient(ghostClient_.get());
+    tab->getAuthoringContext = [this, tabPtr]() -> nlohmann::json {
+        auto caretPos = tabPtr->editor().getCaretPos();
+        hathor::control::CompletionRequest req;
+        req.file = tabPtr->lspDocumentUri().toStdString();
+        req.uri = tabPtr->lspDocumentUri().toStdString();
+        req.line = caretPos.getLineNumber();
+        req.character = caretPos.getIndexInLine();
+        req.language = tabPtr->isChuckTab() ? "chuck" : "mininotation";
+        req.documentText = tabPtr->document().getAllContent().toStdString();
+        return ci_.assembleCompletionContext(req);
+    };
+    addAndMakeVisible(*tab);
+    tabs_.push_back(std::move(tab));
+    pinnedTabs_.resize(tabs_.size(), false);
+    pinnedTabs_.back() = pinned;
+    activateTab(static_cast<int>(tabs_.size()) - 1);
 }
 
 bool EditorArea::saveTabToFile(HathorTab* tab)

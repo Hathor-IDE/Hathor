@@ -731,6 +731,17 @@ private:
     /// Index of a tab pointer in tabs_, or -1 if already removed.
     int indexOfTab(const HathorTab* tab) const noexcept;
 
+    /// Detach a tab from tabs_ without closing it (no LSP-close, no
+    /// recently-closed push): ownership transfers to the caller for split
+    /// view borrowing. Parallel listener/pin entries are removed and the
+    /// pinned state is returned via wasPinned.
+    std::unique_ptr<HathorTab> detachTab(int index, bool* wasPinned = nullptr);
+
+    /// Adopt a borrowed tab back into tabs_ with full wiring (unsaved,
+    /// play/stop, context menu, key listener, LSP/ghost, authoring
+    /// context) and activate it.
+    void adoptTab(std::unique_ptr<HathorTab> tab, bool pinned = false);
+
     /// Write a file-backed tab to disk synchronously. Returns false for
     /// untitled tabs (no path to write to) — callers route those through
     /// the save-as chooser instead.
@@ -894,6 +905,11 @@ private:
     // -----------------------------------------------------------------------
     // Tab data
     // -----------------------------------------------------------------------
+    /// Tab ownership (single source of truth): EditorArea::tabs_ owns every
+    /// open HathorTab. The split surface (EditorSplitSurface/EditorGroup)
+    /// never owns tabs long-term — toggleSplit() *borrows* tabs via
+    /// detachTab()/adoptTab() and returns them when the split closes.
+    /// Parallel vectors below stay aligned with tabs_ by index.
     std::vector<std::unique_ptr<HathorTab>>  tabs_;
     int                                      activeIndex_{ -1 };
 
