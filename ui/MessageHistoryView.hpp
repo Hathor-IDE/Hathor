@@ -32,6 +32,8 @@ public:
 
     void appendText(const juce::String& extra);
     void setText(const juce::String& t);
+    const juce::String text() const;
+    Role role() const noexcept { return role_; }
     int preferredHeight(int width) const;
 
     void resized() override;
@@ -55,6 +57,12 @@ public:
 
     MessageBubble* addBubble(const juce::String& text, MessageBubble::Role role);
     void reflowToWidth(int w);
+
+    /// Wave 5.1 (C1): export/restore the visible transcript so chat history
+    /// survives restart. Roles serialise as ints (see ChatSessionState).
+    struct Entry { juce::String text; MessageBubble::Role role; };
+    std::vector<Entry> exportEntries() const;
+    void restoreEntries(const std::vector<Entry>& entries);
 
 private:
     juce::OwnedArray<MessageBubble> bubbles_;

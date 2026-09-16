@@ -89,6 +89,15 @@ public:
     const juce::String& tabTitle() const noexcept { return tabTitle_; }
 
     // -----------------------------------------------------------------------
+    // Transcript persistence (Wave 5.1 / C1)
+    // -----------------------------------------------------------------------
+
+    /// Export visible bubbles as (role, text) pairs for persistence.
+    std::vector<MessageHistoryContainer::Entry> exportTranscript() const;
+    /// Restore bubbles from persisted pairs (read-only history).
+    void restoreTranscript(const std::vector<MessageHistoryContainer::Entry>& entries);
+
+    // -----------------------------------------------------------------------
     // Connection state (thread-scoped — C2 §7)
     // -----------------------------------------------------------------------
 

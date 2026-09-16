@@ -32,6 +32,11 @@ namespace hathor::ui {
  */
 struct ChatThreadState {
     std::string title;
+    struct Message {
+        int role = 0; // 0=User 1=Agent 2=ToolCall 3=StatusLine
+        std::string text;
+    };
+    std::vector<Message> messages; // capped ~200 per thread
 };
 
 /**
@@ -41,7 +46,10 @@ struct ChatThreadState {
  */
 struct ChatSessionState {
     /// Current schema version (bump on incompatible change).
-    static constexpr int kSchemaVersion = 1;
+    /// v2 adds per-thread message transcripts (Wave 5.1). v1 (titles-only)
+    /// still parses: fromJson falls back to accepting version 1 and
+    /// restores titles with empty transcripts.
+    static constexpr int kSchemaVersion = 2;
 
     int                       schemaVersion = kSchemaVersion;
     int                       activeIndex   = -1;  ///< -1 = no thread active

@@ -19,6 +19,14 @@ static nlohmann::json threadStateToJson(const ChatThreadState& ts)
 {
     nlohmann::json j = nlohmann::json::object();
     j["title"] = ts.title;
+    j["messages"] = nlohmann::json::array();
+    for (const auto& m : ts.messages)
+    {
+        nlohmann::json jm = nlohmann::json::object();
+        jm["role"] = m.role;
+        jm["text"] = m.text;
+        j["messages"].push_back(std::move(jm));
+    }
     return j;
 }
 
@@ -32,6 +40,29 @@ static std::optional<ChatThreadState> threadStateFromJson(const nlohmann::json& 
     if (!j.contains("title") || !j["title"].is_string())
         return std::nullopt;
     ts.title = j["title"].get<std::string>();
+
+    // messages optional (v1 files have none) — corrupt entries degrade to empty.
+    if (j.contains("messages") && j["messages"].is_array())
+    {
+        for (const auto& jm : j["messages"])
+        {
+            if (!jm.is_object())
+                continue;
+            ChatThreadState::Message m;
+            if (jm.contains("role") && jm["role"].is_number_integer())
+                m.role = jm["role"].get<int>();
+            if (jm.contains("text") && jm["text"].is_string())
+                m.text = jm["text"].get<std::string>();
+            if (m.role < 0 || m.role > 3)
+                continue;
+            if (m.text.size() > 65536)
+                m.text.resize(65536);
+            ts.messages.push_back(std::move(m));
+        }
+        if (ts.messages.size() > 200)
+            ts.messages.erase(ts.messages.begin(),
+                              ts.messages.begin() + (ts.messages.size() - 200));
+    }
 
     return ts;
 }
@@ -73,7 +104,8 @@ ChatSessionState::fromJson(const std::string& jsonStr, int acceptedVersion)
         return std::nullopt;
 
     const int version = j["schemaVersion"].get<int>();
-    if (version != acceptedVersion)
+    // Accept current (v2) plus legacy v1 titles-only files.
+    if (version != acceptedVersion && version != 1)
         return std::nullopt;
 
     ChatSessionState state;

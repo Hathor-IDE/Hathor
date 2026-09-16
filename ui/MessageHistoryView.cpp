@@ -56,6 +56,11 @@ void MessageBubble::setText(const juce::String& t)
         parent->resized();
 }
 
+const juce::String MessageBubble::text() const
+{
+    return label_.getText();
+}
+
 int MessageBubble::preferredHeight(int width) const
 {
     if (width <= 0)
@@ -144,6 +149,25 @@ void MessageHistoryContainer::reflowToWidth(int w)
     }
 
     setSize(w, y + 4);
+}
+
+std::vector<MessageHistoryContainer::Entry> MessageHistoryContainer::exportEntries() const
+{
+    std::vector<Entry> out;
+    // Cap at ~200 messages per thread (audit 5.1); oldest first.
+    const int start = std::max(0, bubbles_.size() - 200);
+    for (int i = start; i < bubbles_.size(); ++i)
+        if (auto* b = bubbles_[i])
+            out.push_back({ b->text(), b->role() });
+    return out;
+}
+
+void MessageHistoryContainer::restoreEntries(const std::vector<Entry>& entries)
+{
+    bubbles_.clear();
+    for (const auto& e : entries)
+        addBubble(e.text, e.role);
+    reflowToWidth(getWidth());
 }
 
 } // namespace hathor::ui

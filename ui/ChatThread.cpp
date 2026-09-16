@@ -596,4 +596,21 @@ void ChatThread::setInputEnabled(bool enabled)
     inputField_.repaint();
 }
 
+std::vector<MessageHistoryContainer::Entry> ChatThread::exportTranscript() const
+{
+    if (historyContainer_)
+        return historyContainer_->exportEntries();
+    return {};
+}
+
+void ChatThread::restoreTranscript(const std::vector<MessageHistoryContainer::Entry>& entries)
+{
+    if (historyContainer_)
+    {
+        historyContainer_->restoreEntries(entries);
+        lastAgentBubble_ = nullptr;
+        scrollToBottom();
+    }
+}
+
 } // namespace hathor::ui

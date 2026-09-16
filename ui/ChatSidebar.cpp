@@ -569,6 +569,13 @@ void ChatSidebar::saveChatState() const
 
         ChatThreadState ts;
         ts.title = thread->tabTitle().toStdString();
+        for (const auto& e : thread->exportTranscript())
+        {
+            ChatThreadState::Message m;
+            m.role = static_cast<int>(e.role);
+            m.text = e.text.toStdString();
+            ts.messages.push_back(std::move(m));
+        }
         state.threads.push_back(std::move(ts));
     }
 
@@ -600,7 +607,9 @@ void ChatSidebar::restoreChatThreads(const std::string& agentExePath,
         return;
 
     // Guard against version mismatch — fail safe (no restore).
-    if (state->schemaVersion != ChatSessionState::kSchemaVersion)
+    // Accepts v2 and legacy v1 (titles-only, empty transcripts).
+    if (state->schemaVersion != ChatSessionState::kSchemaVersion
+        && state->schemaVersion != 1)
         return;
 
     if (state->threads.empty())
@@ -614,7 +623,17 @@ void ChatSidebar::restoreChatThreads(const std::string& agentExePath,
         if (idx >= 0 && idx < static_cast<int>(threads_.size()))
         {
             if (auto* t = threads_[idx])
+            {
                 t->setTabTitle(juce::String(ts.title));
+                // Wave 5.1: restore full transcript verbatim (read-only
+                // history until the next prompt starts a live continuation).
+                std::vector<MessageHistoryContainer::Entry> entries;
+                entries.reserve(ts.messages.size());
+                for (const auto& m : ts.messages)
+                    entries.push_back({ juce::String(m.text),
+                        static_cast<MessageBubble::Role>(m.role) });
+                t->restoreTranscript(entries);
+            }
         }
     }
 
