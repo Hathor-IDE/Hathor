@@ -100,6 +100,39 @@ static std::filesystem::path resolveProjectRoot()
     return std::filesystem::current_path();
 }
 
+// Wave 5.2 (C5, C6): centralised defaults + robust helper-binary lookup.
+// Search order: exact sibling of exe → common CMake build-layout subdirs
+// near exe → HATHOR_<NAME>_PATH env override. Returns empty if missing.
+namespace {
+constexpr double kDefaultBpm = 120.0;
+constexpr double kDefaultSampleRate = 44100.0;
+
+juce::File resolveHelperBinary(const char* name, const char* envVar)
+{
+    if (const char* env = std::getenv(envVar); env != nullptr && *env != '\0')
+    {
+        juce::File f(env);
+        if (f.existsAsFile())
+            return f;
+    }
+    const juce::File exe =
+        juce::File::getSpecialLocation(juce::File::currentExecutableFile);
+    const juce::File sibling = exe.getSiblingFile(name);
+    if (sibling.existsAsFile())
+        return sibling;
+    // Dev-build layouts: exe may live in build/app/Debug etc.
+    const juce::File parent = exe.getParentDirectory();
+    const char* subdirs[] = { ".", "..", "../..", "MacOS", "../MacOS" };
+    for (auto* s : subdirs)
+    {
+        juce::File c = parent.getChildFile(s).getChildFile(name);
+        if (c.existsAsFile())
+            return c;
+    }
+    return sibling; // missing — caller reports with searched locations
+}
+} // namespace
+
 class HathorApplication : public juce::JUCEApplication
 {
 public:
@@ -134,7 +167,7 @@ public:
         }
 
         std::string samplesPath;
-        double      initialBpm   = 120.0;
+        double      initialBpm   = kDefaultBpm;
         std::string agentExePath;
 
         for (int i = 0; i < args.size(); ++i)
@@ -192,7 +225,7 @@ public:
          bank_ = std::make_unique<SampleBank>();
          try
          {
-             bank_->load(samplesPath, formatManager_, 44100.0);
+             bank_->load(samplesPath, formatManager_, kDefaultSampleRate);
          }
           catch (const std::exception& ex)
           {
@@ -213,9 +246,9 @@ public:
          {
              const std::filesystem::path studioDir =
                  resolveProjectRoot() / ".hathor_assets" / "chuck_instruments";
-             if (std::filesystem::is_directory(studioDir)) {
-                 bank_->reloadStudioAssets(studioDir, formatManager_, 44100.0);
-             }
+              if (std::filesystem::is_directory(studioDir)) {
+                  bank_->reloadStudioAssets(studioDir, formatManager_, kDefaultSampleRate);
+              }
          }
 
         // Construct AudioEngine and open the audio device.
@@ -241,12 +274,33 @@ public:
             return;
         }
 
+        // Wave 5.2 (C6): device-rate-aware sample loading. If the device
+        // runs at e.g. 48000 Hz, reload at the real rate so playback pitch
+        // is correct; otherwise warn loudly on stdout.
+        {
+            const double deviceRate = static_cast<double>(audio_->getSampleRate());
+            if (deviceRate > 0.0 && std::abs(deviceRate - kDefaultSampleRate) > 1.0)
+            {
+                std::cerr << "[HathorApplication] device rate " << deviceRate
+                          << " Hz differs from default " << kDefaultSampleRate
+                          << " Hz — reloading samples at device rate." << std::endl;
+                try
+                {
+                    bank_->load(samplesPath, formatManager_, deviceRate);
+                }
+                catch (const std::exception& ex)
+                {
+                    std::cerr << "[HathorApplication] device-rate reload failed: "
+                              << ex.what() << std::endl;
+                }
+            }
+        }
+
          // Start the audio worker process (B4-K7: needed for .ck tab eval).
-         // Resolve path as a sibling of the executable — same layout the
-         // macOS .app bundle uses (Contents/MacOS/).
-         const juce::File workerFile =
-             juce::File::getSpecialLocation(juce::File::currentExecutableFile)
-                 .getSiblingFile("hathor-audio-worker");
+         // Wave 5.2 (C5): resolve via sibling → build-layout dirs → env
+         // override, with searched locations named on failure.
+         const juce::File workerFile = resolveHelperBinary("hathor-audio-worker",
+                                                           "HATHOR_WORKER_PATH");
          const std::string workerPath = workerFile.getFullPathName().toStdString();
 
          // Phase 6.3: Explicit existence check — fail loudly if the worker
@@ -299,10 +353,8 @@ public:
          // called directly from UI components on the worker thread pool).
          ci_ = std::make_unique<hathor::control::ControlInterface>(*audio_, *bank_);
 
-         // Resolve hathor-mcp path: look for it as a sibling of the executable.
-         const juce::File mcpFile =
-             juce::File::getSpecialLocation(juce::File::currentExecutableFile)
-                 .getSiblingFile("hathor-mcp");
+         // Resolve hathor-mcp path (Wave 5.2 / C5: same search order).
+         const juce::File mcpFile = resolveHelperBinary("hathor-mcp", "HATHOR_MCP_PATH");
          std::string hathorMcpPath = mcpFile.getFullPathName().toStdString();
 
          // Phase 6.3: Explicit existence check — fail loudly if the MCP binary
