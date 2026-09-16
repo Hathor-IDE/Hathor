@@ -148,9 +148,15 @@ public:
     void rebuild(const std::vector<TabInfo>& tabs,
                  int activeIndex);
 
+    /// Rebuild from the last tab list (scroll/resize refresh).
+    void refresh();
+
     // juce::Component
     void paint(juce::Graphics& g) override;
     void mouseDown(const juce::MouseEvent& e) override;
+    void mouseWheelMove(const juce::MouseEvent& e,
+                        const juce::MouseWheelDetails& wheel) override;
+    void resized() override;
 
 private:
     struct TabGeometry
@@ -163,7 +169,11 @@ private:
     };
 
     std::vector<TabGeometry> geom_;
+    std::vector<TabInfo> lastTabs_;
     int activeIndex_{ -1 };
+    // Horizontal scroll offset (px) when tabs overflow the bar width.
+    // Rebuild keeps the active tab visible; wheel scrolls the strip.
+    int scrollOffset_{ 0 };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(TabBarComponent)
 };

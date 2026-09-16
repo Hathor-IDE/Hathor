@@ -78,7 +78,8 @@ void EnhancedTabBar::rebuild(const std::vector<TabDisplayInfo>& tabs,
 
 void EnhancedTabBar::paint(juce::Graphics& g)
 {
-    g.fillAll(juce::Colours::darkgrey.darker(0.7f));
+    const auto& palette = HathorLookAndFeel::fromComponent(*this).getPalette();
+    g.fillAll(palette.background);
 
     for (size_t i = 0; i < geom_.size(); ++i)
     {
@@ -86,19 +87,27 @@ void EnhancedTabBar::paint(juce::Graphics& g)
         bool isActive = (static_cast<int>(i) == activeIndex_);
 
         // Tab background
-        g.setColour(isActive
-                    ? juce::Colours::darkgrey.darker(0.5f)
-                    : juce::Colours::darkgrey.darker(0.7f));
+        g.setColour(isActive ? palette.surface : palette.background);
         g.fillRect(tg.bounds);
 
-        // Tab border
-        g.setColour(juce::Colours::grey.darker(0.5f));
-        g.drawRect(tg.bounds, 1);
+        // Bottom border for inactive, top accent line for active
+        if (isActive)
+        {
+            g.setColour(palette.accent);
+            g.fillRect(tg.bounds.getX(), tg.bounds.getY(),
+                       tg.bounds.getWidth(), 2);
+        }
+        else
+        {
+            g.setColour(palette.surfaceHighest);
+            g.fillRect(tg.bounds.getRight() - 1, tg.bounds.getY(),
+                       1, tg.bounds.getHeight());
+        }
 
         // Pin icon (if pinned)
         if (tg.pinned)
         {
-            g.setColour(juce::Colours::yellow.darker(0.3f));
+            g.setColour(palette.warning);
             juce::Path pinPath;
             pinPath.startNewSubPath(static_cast<float>(tg.pinBtnBounds.getCentreX() - 4),
                                     static_cast<float>(tg.pinBtnBounds.getCentreY() + 3));
@@ -115,7 +124,7 @@ void EnhancedTabBar::paint(juce::Graphics& g)
         }
 
         // Label — Inter UI font (proportional), not JetBrains Mono.
-        g.setColour(juce::Colours::white);
+        g.setColour(isActive ? palette.textPrimary : palette.textSecondary);
         g.setFont(HathorLookAndFeel::uiFontRegular(13.0f));
         g.drawFittedText(tg.label,
                          juce::Rectangle<int>(tg.bounds.getX() + 4, tg.bounds.getY(),
@@ -125,7 +134,7 @@ void EnhancedTabBar::paint(juce::Graphics& g)
         // Unsaved dot
         if (tg.unsavedDot)
         {
-            g.setColour(juce::Colours::orange);
+            g.setColour(palette.warning);
             g.fillEllipse(
                 static_cast<float>(tg.bounds.getX() + tg.bounds.getWidth() - kCloseBoxSize - 3 - kUnsavedDotRadius),
                 static_cast<float>(tg.bounds.getY() + (kTabHeight - kUnsavedDotRadius * 2) / 2),
@@ -134,7 +143,7 @@ void EnhancedTabBar::paint(juce::Graphics& g)
         }
 
         // Close button (X)
-        g.setColour(juce::Colours::lightgrey);
+        g.setColour(palette.textSecondary);
         g.drawLine(static_cast<float>(tg.closeBtnBounds.getX()), static_cast<float>(tg.closeBtnBounds.getY()),
                    static_cast<float>(tg.closeBtnBounds.getRight()), static_cast<float>(tg.closeBtnBounds.getBottom()), 1.5f);
         g.drawLine(static_cast<float>(tg.closeBtnBounds.getX()), static_cast<float>(tg.closeBtnBounds.getBottom()),
@@ -142,7 +151,7 @@ void EnhancedTabBar::paint(juce::Graphics& g)
     }
 
     // Separator line at bottom
-    g.setColour(juce::Colours::grey.darker(0.3f));
+    g.setColour(palette.surfaceHighest);
     g.drawHorizontalLine(kTabHeight - 1, 0.0f, static_cast<float>(getWidth()));
 }
 
@@ -405,6 +414,9 @@ bool EditorGroup::closeTab(int index)
     if (index < 0 || index >= static_cast<int>(tabs_.size()))
         return false;
 
+    if (isTabPinned(index))
+        return false; // pinned tabs must be unpinned before closing
+
     HathorTab* tab = tabs_[index].get();
 
     // Check for unsaved changes
@@ -643,7 +655,7 @@ void EditorGroup::activateTab(int index)
     // Show new active tab
     HathorTab* tab = tabs_[activeIndex_].get();
     tab->setVisible(true);
-    tab->toBack();  // bring to front within this group
+    tab->toFront(true);  // bring to front within this group
     tab->editor().grabKeyboardFocus();
 
     refreshTabBar();
@@ -652,9 +664,15 @@ void EditorGroup::activateTab(int index)
         onActiveTabChanged(tab);
 }
 
-void EditorGroup::setTabPinned(int /*index*/, bool /*pinned*/)
+void EditorGroup::setTabPinned(int index, bool pinned)
 {
-    // Pinning is handled directly in the tab bar callback via reorderModel_.togglePin()
+    if (index < 0 || index >= static_cast<int>(tabs_.size()))
+        return;
+    reorderModel_.resize(tabs_.size());
+    const bool currently = reorderModel_.isPinned(static_cast<size_t>(index));
+    if (currently != pinned)
+        reorderModel_.togglePin(static_cast<size_t>(index));
+    refreshTabBar();
 }
 
 bool EditorGroup::isTabPinned(int index) const noexcept

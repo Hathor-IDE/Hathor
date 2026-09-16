@@ -164,6 +164,14 @@ TabBarComponent::TabBarComponent()
 void TabBarComponent::rebuild(const std::vector<TabInfo>& tabs,
                               int activeIndex)
 {
+    lastTabs_ = tabs;
+    activeIndex_ = activeIndex;
+    refresh();
+}
+
+void TabBarComponent::refresh()
+{
+    const std::vector<TabInfo>& tabs = lastTabs_;
     geom_.clear();
 
     if (tabs.empty())
@@ -172,11 +180,9 @@ void TabBarComponent::rebuild(const std::vector<TabInfo>& tabs,
         return;
     }
 
-    activeIndex_ = activeIndex;
-
     const int totalW  = getWidth();
     const int n       = static_cast<int>(tabs.size());
-    const int tabW    = std::clamp(totalW / n, kMinTabWidth, kMaxTabWidth);
+    const int tabW    = std::clamp(totalW / std::max(n, 1), kMinTabWidth, kMaxTabWidth);
 
     int x = 0;
     for (int i = 0; i < n; ++i)
@@ -192,6 +198,29 @@ void TabBarComponent::rebuild(const std::vector<TabInfo>& tabs,
          g.pinned      = tabs[static_cast<std::size_t>(i)].pinned;
         geom_.push_back(std::move(g));
         x += tabW;
+    }
+
+    // Overflow: keep the full strip scrollable and ensure the active tab
+    // is visible instead of letting tabs run off-screen unreachable.
+    const int overflow = x - totalW;
+    if (overflow > 0)
+    {
+        const int activeRight = (activeIndex_ + 1) * tabW;
+        const int activeLeft = activeIndex_ * tabW;
+        if (activeRight - scrollOffset_ > totalW)
+            scrollOffset_ = activeRight - totalW;
+        if (activeLeft - scrollOffset_ < 0)
+            scrollOffset_ = activeLeft;
+        scrollOffset_ = std::clamp(scrollOffset_, 0, overflow);
+        for (auto& g : geom_)
+        {
+            g.bounds.translate(-scrollOffset_, 0);
+            g.closeBtnBounds.translate(-scrollOffset_, 0);
+        }
+    }
+    else
+    {
+        scrollOffset_ = 0;
     }
 
     repaint();
@@ -273,6 +302,22 @@ void TabBarComponent::paint(juce::Graphics& g)
                    tg.closeBtnBounds,
                    juce::Justification::centred, false);
     }
+}
+
+void TabBarComponent::mouseWheelMove(const juce::MouseEvent&,
+                                     const juce::MouseWheelDetails& wheel)
+{
+    // Horizontal tab-strip scroll (vertical wheel scrolls the strip too).
+    const float delta = wheel.deltaX != 0.0f ? wheel.deltaX : wheel.deltaY;
+    if (delta == 0.0f)
+        return;
+    scrollOffset_ = std::max(0, scrollOffset_ - static_cast<int>(delta * 120.0f));
+    refresh();
+}
+
+void TabBarComponent::resized()
+{
+    refresh();
 }
 
 void TabBarComponent::mouseDown(const juce::MouseEvent& e)
