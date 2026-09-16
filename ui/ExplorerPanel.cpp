@@ -65,10 +65,8 @@ ExplorerPanel::ExplorerPanel()
 
 void ExplorerPanel::setDirectory(const juce::File& dir)
 {
-    if (dir == directory_)
-        return;
-
     directory_ = dir;
+    hasWorkspace_ = dir.isDirectory();
 
     // B8-K5 §9: Update the polling watcher so the managed view stays
     // in sync with filesystem changes.
@@ -87,6 +85,7 @@ void ExplorerPanel::restoreLastDirectoryAndRefresh()
     if (restored.isDirectory())
     {
         directory_ = restored;
+        hasWorkspace_ = true;
         // B8-K5 §9: point the polling timer at the restored directory.
         if (fsPollTimer_)
             fsPollTimer_->watch(directory_);
@@ -113,13 +112,11 @@ void ExplorerPanel::handleFilesystemChange()
 
 void ExplorerPanel::refresh()
 {
-    // B8-K5 §9 / Agent 0.1: On a fresh launch no workspace has been chosen
-    // yet, so `directory_` is still the placeholder user-home path.  Building
-    // a tree from ~ would recursively walk the user's home folder (slow, and
-    // prone to permission/encoding errors that terminate the noexcept
-    // TreeBuilder callbacks).  Leave the tree empty until MainWindow calls
-    // setDirectory() or restoreLastDirectoryAndRefresh() with a real path.
-    if (directory_ == juce::File::getSpecialLocation(juce::File::userHomeDirectory))
+    // On a fresh launch no workspace has been chosen yet. Leave the tree
+    // empty until MainWindow calls setDirectory() or
+    // restoreLastDirectoryAndRefresh() with a real path: walking an
+    // unchosen root would scan an arbitrary directory on the message thread.
+    if (!hasWorkspace_)
         return;
 
     // Build the tree data via the recursive walker.

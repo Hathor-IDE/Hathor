@@ -139,6 +139,9 @@ private:
     //==========================================================================
     // Data
     juce::File                    directory_;
+    // True once a real workspace root has been set. Replaces the old
+    // home-directory sentinel so a workspace rooted at ~ works normally.
+    bool                          hasWorkspace_{ false };
     TreeBuilder                   treeBuilder_;
     std::unique_ptr<FolderTreeItem> rootItem_;
     juce::TreeView                treeView_;
