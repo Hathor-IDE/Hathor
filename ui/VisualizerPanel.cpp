@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 /**
- * VisualizerPanel.cpp — procedural visualizer (four modes + idle state).
+ * VisualizerPanel.cpp — procedural visualizer (spectrum equalizer only).
  *
  * Requirements: 29.1, 29.2, 29.3, 29.4, 29.5, 29.6
  *
@@ -12,7 +12,7 @@
  *                           -> repaint()
  *                           -> paint()
  *
- * No other code path writes cyclePos_ / cellBrightness_ / pcmHistory_.
+ * No other code path writes cyclePos_ / pcmHistory_.
  * repaint() is called ONLY from updateSamples() — no self-owned timer (Req 29.5).
  */
 
@@ -34,7 +34,6 @@ namespace hathor::ui {
 
 VisualizerPanel::VisualizerPanel(AudioEngine& /*audio*/)
 {
-    cellBrightness_.fill(0.0f);
     pcmCount_       = 0;
     pcmWriteCursor_ = 0;
     lastActiveMs_ = 0;
@@ -63,46 +62,15 @@ void VisualizerPanel::updateFrame(
         return;
     }
 
-    // --- 1. Decay all cell brightnesses (step grid fade) ------------------
-    // At 60 Hz, multiplying by 0.80 per tick gives a ~250 ms fade-out.
-    for (auto& b : cellBrightness_)
-    {
-        b *= 0.80f;
-        if (b < 0.01f)
-            b = 0.0f;
-    }
-
-    // --- 2. Flash cells for fired events (mapped to real positions) ------
+    // Check for musical activity from events (used for idle detection).
     const bool hasEvents = !events.empty();
     if (hasEvents)
     {
-        for (const auto& ev : events)
-        {
-            // Map the event's active arc to a cell based on its time position
-            // within the current cycle.
-            //
-            // Event::active.start is a Rational representing cycle-relative
-            // position [0, 1).  We map it to a column:
-            //   column = floor(active.start.toDouble() * kGridCols)
-            // And the slotId determines the row:
-            //   row = slotId % kGridRows
-            //
-            // This gives musical-order lighting: events that fire earlier
-            // in the beat light up earlier columns, and slots are stacked
-            // by row.
-
-            const double activeStart = ev.active.start.toDouble();
-            const int col = static_cast<int>(std::floor(activeStart * kGridCols)) % kGridCols;
-            const int row = (ev.slotId >= 0) ? (ev.slotId % kGridRows) : 0;
-            const int idx = row * kGridCols + col;
-
-            if (idx >= 0 && idx < kNumCells)
-                cellBrightness_[idx] = 1.0f;
-        }
-
         lastActiveMs_ = juce::Time::currentTimeMillis();
         idle_ = false;
     }
+
+    // PCM arrival in updateSamples() is what drives the spectrum animation.
 
     // --- 3. Check idle threshold (Req 29.4) --------------------------------
     if (!idle_)
@@ -152,18 +120,7 @@ void VisualizerPanel::updateSamples(const float* samples, std::size_t count, boo
 }
 
 // ==========================================================================
-// mouseUp() — cycle through visual modes
-// ==========================================================================
-
-void VisualizerPanel::mouseUp(const juce::MouseEvent& /*e*/)
-{
-    const auto next = static_cast<uint8_t>(mode_) + 1u;
-    mode_ = static_cast<Mode>(next % static_cast<uint8_t>(Mode::kCount));
-    repaint();
-}
-
-// ==========================================================================
-// paint() — dispatch to active mode renderer
+// paint() — render the spectrum equalizer
 // ==========================================================================
 
 void VisualizerPanel::paint(juce::Graphics& g)
@@ -181,172 +138,10 @@ void VisualizerPanel::paint(juce::Graphics& g)
     const float   idlePhase =
         static_cast<float>((nowMs % 3000) / 3000.0);
 
-    switch (mode_)
-    {
-        case Mode::Pulse:
-            paintPulse(g, bounds, idle_, idlePhase, palette);
-            break;
-        case Mode::StepGrid:
-            paintStepGrid(g, bounds, idle_, idlePhase, palette);
-            break;
-        case Mode::Waveform:
-            paintWaveform(g, bounds, idle_, idlePhase, palette);
-            break;
-        case Mode::Spectrum:
-            paintSpectrum(g, bounds, idle_, idlePhase, palette);
-            break;
-        default:
-            paintPulse(g, bounds, idle_, idlePhase, palette);
-            break;
-    }
-}
-
-// ==========================================================================
-// paintPulse() — filled ellipse driven by PCM audio energy
-// ==========================================================================
-
-void VisualizerPanel::paintPulse(juce::Graphics& g,
-                                   const juce::Rectangle<float>& bounds,
-                                   bool idle, float idlePhase,
-                                   const Palette& palette) const
-{
-    if (idle)
-    {
-        paintIdleRing(g, bounds, idlePhase, palette);
-        return;
-    }
-
-    // Compute peak amplitude from recent PCM history.
-    float peak = 0.0f;
-    if (pcmCount_ > 0)
-    {
-        const int windowSize = std::min(pcmCount_, 64);
-        // Samples are stored oldest-first in the ring; read the newest
-        // 'windowSize' samples ending at index (pcmWriteCursor_ - 1).
-        for (int i = 0; i < windowSize; ++i)
-        {
-            const int idx = (pcmWriteCursor_ - 1 - i + kPcmHistoryMax) % kPcmHistoryMax;
-            peak = std::max(peak, std::abs(pcmHistory_[idx]));
-        }
-    }
-
-    // Scale from 0.2x to 1.0x panel height based on audio energy.
-    const float panelH  = bounds.getHeight();
-    const float scale   = 0.2f + 0.8f * peak;
-    const float diameter = scale * panelH;
-    const float cx = bounds.getCentreX();
-    const float cy = bounds.getCentreY();
-
-    const juce::Colour pulseColour = palette.accent.withAlpha(0.8f);
-
-    g.setColour(pulseColour);
-    g.fillEllipse(cx - diameter * 0.5f,
-                   cy - diameter * 0.5f,
-                   diameter,
-                   diameter);
-}
-
-// ==========================================================================
-// paintStepGrid() — 8x4 grid with flash-and-fade mapped to real positions
-// ==========================================================================
-
-void VisualizerPanel::paintStepGrid(juce::Graphics& g,
-                                      const juce::Rectangle<float>& bounds,
-                                      bool idle, float idlePhase,
-                                      const Palette& palette) const
-{
-    const float cellW = bounds.getWidth()  / static_cast<float>(kGridCols);
-    const float cellH = bounds.getHeight() / static_cast<float>(kGridRows);
-    const float pad   = 2.0f;
-
-    for (int row = 0; row < kGridRows; ++row)
-    {
-        for (int col = 0; col < kGridCols; ++col)
-        {
-            const int idx = row * kGridCols + col;
-            const float brightness = cellBrightness_[idx];
-
-            const juce::Colour dimC  = palette.surfaceHigh;
-            const juce::Colour flashC = palette.accent;
-            const juce::Colour cellC  = dimC.interpolatedWith(flashC, brightness);
-
-            const juce::Rectangle<float> cell(
-                bounds.getX() + col * cellW + pad,
-                bounds.getY() + row * cellH + pad,
-                cellW - pad * 2.0f,
-                cellH - pad * 2.0f);
-
-            g.setColour(cellC);
-            g.fillRect(cell);
-        }
-    }
-
-    if (idle)
-        paintIdleRing(g, bounds, idlePhase, palette);
-}
-
-// ==========================================================================
-// paintWaveform() — polyline of actual incoming PCM samples
-// ==========================================================================
-
-void VisualizerPanel::paintWaveform(juce::Graphics& g,
-                                      const juce::Rectangle<float>& bounds,
-                                      bool idle, float idlePhase,
-                                      const Palette& palette) const
-{
-    if (idle)
-    {
-        paintIdleRing(g, bounds, idlePhase, palette);
-        return;
-    }
-
-    if (pcmCount_ == 0)
-        return;
-
-    const float w = bounds.getWidth();
-    const float h = bounds.getHeight();
-    const int   n = pcmCount_;
-
-    juce::Path path;
-    bool       started = false;
-
-    // Decimate PCM history to panel width and plot as a waveform.
-    // Samples are in arrival order (oldest→newest) wrapping the ring.
-    const int oldestIdx = (pcmWriteCursor_ - pcmCount_ + kPcmHistoryMax) % kPcmHistoryMax;
-    const int panelW = static_cast<int>(w);
-    for (int px = 0; px < panelW; ++px)
-    {
-        const int srcIdx = (n > 1)
-            ? static_cast<int>(static_cast<double>(px) / static_cast<double>(panelW) * static_cast<double>(n - 1))
-            : 0;
-
-        if (srcIdx < 0 || srcIdx >= n)
-            continue;
-
-        const float sample = pcmHistory_[(oldestIdx + srcIdx) % kPcmHistoryMax];
-        const float x = bounds.getX() + static_cast<float>(px);
-
-        // Map amplitude [-1, 1] to panel height, centered at middle.
-        const float y = bounds.getCentreY() - sample * (h * 0.5f);
-
-        if (!started)
-        {
-            path.startNewSubPath(x, y);
-            started = true;
-        }
-        else
-        {
-            path.lineTo(x, y);
-        }
-    }
-
-    // Draw center line.
-    g.setColour(palette.surfaceHighest.withAlpha(0.3f));
-    g.drawLine(bounds.getX(), bounds.getCentreY(),
-               bounds.getRight(), bounds.getCentreY(), 1.0f);
-
-    g.setColour(palette.accent.withAlpha(0.9f));
-    g.strokePath(path, juce::PathStrokeType(1.5f));
+    // Spectrum is the only rendering mode (linear FFT bar graph,
+    // bass-left → treble-right). All other modes (Pulse, StepGrid,
+    // Waveform) were removed to simplify the visualizer.
+    paintSpectrum(g, bounds, idle_, idlePhase, palette);
 }
 
 // ==========================================================================

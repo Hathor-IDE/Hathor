@@ -11,16 +11,12 @@
  * directly (Req 29.2).
  * repaint() is called ONLY from updateSamples() — no self-owned timer (Req 29.5).
  *
- * Four rendering modes (Req 29.3), cycled by clicking the panel:
- *   Pulse     — filled ellipse that scales with PCM audio energy.
- *   StepGrid  — 8x4 cell grid; cells flash on fired event, mapped to real
- *               slot/step positions from VisualizerFrame events.
- *   Waveform  — polyline of actual incoming PCM samples, decimated to panel width.
- *   Spectrum  — magnitude spectrum from a small dependency-free FFT over PCM ring.
+ * Three rendering modes (Req 29.3), with Spectrum as the only active mode:
+ *   Spectrum  — magnitude spectrum from small FFT over PCM ring (vertical
+ *               bars, bass left → treble right). This is the sole mode.
  *
- * Idle state (Req 29.4): when transport is stopped or no frames with
- * eventCount > 0 are received for 500 ms, all modes show a slowly-breathing
- * dim placeholder ring.
+ * Idle state (Req 29.4): when transport is stopped or no PCM samples are
+ * received for 500 ms, a slowly-breathing dim placeholder ring is shown.
  *
  * paint() budget: ≤ 8 ms on target hardware (Req 29.6).
  *
@@ -65,14 +61,12 @@ namespace hathor::ui {
 class VisualizerPanel : public juce::Component
 {
 public:
-    /// Visual rendering modes, cycled on mouseUp.
+    /// Visual rendering mode. Only Spectrum is retained; Pulse, StepGrid,
+    /// and Waveform were removed to simplify the visualizer to a single
+    /// linear spectrum equalizer (vertical bars, bass-left → treble-right).
     enum class Mode : uint8_t
     {
-        Pulse    = 0,  ///< pulsing filled ellipse driven by PCM audio energy
-        StepGrid = 1,  ///< 8x4 cell grid with flash-and-fade from real event positions
-        Waveform = 2,  ///< polyline of actual incoming PCM samples
         Spectrum = 3,  ///< magnitude spectrum from small FFT over PCM ring
-        kCount   = 4
     };
 
     // -----------------------------------------------------------------------
@@ -121,29 +115,14 @@ public:
     void updateSamples(const float* samples, std::size_t count, bool running);
 
     // -----------------------------------------------------------------------
-    // Mode query (mostly for tests / external observers)
-    // -----------------------------------------------------------------------
-    Mode currentMode() const noexcept { return mode_; }
-
-    // -----------------------------------------------------------------------
     // juce::Component overrides
     // -----------------------------------------------------------------------
     void paint(juce::Graphics& g) override;
-    void mouseUp(const juce::MouseEvent& e) override;
 
 private:
     // -----------------------------------------------------------------------
-    // Rendering helpers — one per mode
+    // Rendering helpers
     // -----------------------------------------------------------------------
-    void paintPulse(juce::Graphics& g, const juce::Rectangle<float>& bounds,
-                    bool idle, float idlePhase, const Palette& palette) const;
-
-    void paintStepGrid(juce::Graphics& g, const juce::Rectangle<float>& bounds,
-                       bool idle, float idlePhase, const Palette& palette) const;
-
-    void paintWaveform(juce::Graphics& g, const juce::Rectangle<float>& bounds,
-                       bool idle, float idlePhase, const Palette& palette) const;
-
     void paintSpectrum(juce::Graphics& g, const juce::Rectangle<float>& bounds,
                        bool idle, float idlePhase, const Palette& palette) const;
 
@@ -161,13 +140,6 @@ private:
                                     float* outMag, int n);
 
     // -----------------------------------------------------------------------
-    // Step grid dimensions
-    // -----------------------------------------------------------------------
-    static constexpr int kGridCols = 8;
-    static constexpr int kGridRows = 4;
-    static constexpr int kNumCells = kGridCols * kGridRows;  // 32
-
-    // -----------------------------------------------------------------------
     // PCM history
     // -----------------------------------------------------------------------
     static constexpr int kPcmHistoryMax = 512;
@@ -181,13 +153,9 @@ private:
     // State
     // -----------------------------------------------------------------------
 
-    Mode mode_       { Mode::Pulse };  ///< currently active visual mode
     double cyclePos_ { 0.0 };         ///< latest cycle position (fractional beat phase)
     int    sampleRate_ { 44100 };     ///< current device sample rate (Hz)
     double bpm_       { 120.0 };      ///< current tempo (BPM)
-
-    /// Per-cell brightness [0.0, 1.0]; 1.0 = just flashed, decays toward 0.
-    std::array<float, kNumCells> cellBrightness_ {};
 
     /// Ring-buffer of recent PCm samples (writeCursor_ is the next-write slot).
     /// Using a fixed array + cursor avoids the O(n) erase(begin()) that a

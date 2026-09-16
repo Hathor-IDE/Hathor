@@ -123,6 +123,7 @@ MainWindow::MainWindow(AudioEngine& audio,
         {
             editorArea_->showProblemsPanel();
             activityRibbon_->setActivePanel(hathor::ui::Panel::Problems);
+            editorArea_->toFront(true);
             resized();
         }
     };
@@ -143,6 +144,7 @@ MainWindow::MainWindow(AudioEngine& audio,
             if (auto* panel = editorArea_->debugPanel())
                 panel->showRuntimeTab();
             activityRibbon_->setActivePanel(hathor::ui::Panel::Debug);
+            editorArea_->toFront(true);
             resized();
         }
     };
@@ -169,6 +171,7 @@ MainWindow::MainWindow(AudioEngine& audio,
             }
             activityRibbon_->setActivePanel(
                 wantsOpen ? hathor::ui::Panel::VersionControl : hathor::ui::Panel::None);
+            editorArea_->toFront(true);
             editorArea_->resized();
         }
     };
@@ -311,6 +314,8 @@ MainWindow::MainWindow(AudioEngine& audio,
                 const bool wantsOpen = (activityRibbon_->activePanel() != hathor::ui::Panel::Explorer);
                 explorerPanel_->setVisible(wantsOpen);
                 activityRibbon_->setActivePanel(wantsOpen ? hathor::ui::Panel::Explorer : hathor::ui::Panel::None);
+                if (editorArea_)
+                    editorArea_->toFront(true);
                 resized(); // re-lay-out editor area
             }
             else if (panel == hathor::ui::Panel::None)
@@ -388,6 +393,8 @@ MainWindow::MainWindow(AudioEngine& audio,
                 else
                     editorArea_->hideSearchPanel();
                 activityRibbon_->setActivePanel(wantsOpen ? hathor::ui::Panel::Search : hathor::ui::Panel::None);
+                if (editorArea_)
+                    editorArea_->toFront(true);
                 editorArea_->resized(); // re-lay-out editor area
             }
 
@@ -402,6 +409,8 @@ MainWindow::MainWindow(AudioEngine& audio,
                 if (chatSidebar_)
                     chatSidebar_->setVisible(wantsOpen);
                 activityRibbon_->setActivePanel(wantsOpen ? hathor::ui::Panel::AIAgent : hathor::ui::Panel::None);
+                if (editorArea_)
+                    editorArea_->toFront(true);
                 resized(); // re-lay-out content areas (editor fills freed space)
             }
 
@@ -417,6 +426,8 @@ MainWindow::MainWindow(AudioEngine& audio,
                 else
                     editorArea_->hideTerminalPanel();
                 activityRibbon_->setActivePanel(wantsOpen ? hathor::ui::Panel::Terminal : hathor::ui::Panel::None);
+                if (editorArea_)
+                    editorArea_->toFront(true);
                 editorArea_->resized(); // re-lay-out editor area
             }
 
@@ -429,6 +440,8 @@ MainWindow::MainWindow(AudioEngine& audio,
                 else
                     editorArea_->hideProblemsPanel();
                 activityRibbon_->setActivePanel(wantsOpen ? hathor::ui::Panel::Problems : hathor::ui::Panel::None);
+                if (editorArea_)
+                    editorArea_->toFront(true);
                 editorArea_->resized(); // re-lay-out editor area
             }
 
@@ -445,6 +458,8 @@ MainWindow::MainWindow(AudioEngine& audio,
                 else
                     editorArea_->hideSourceControlPanel();
                 activityRibbon_->setActivePanel(wantsOpen ? hathor::ui::Panel::VersionControl : hathor::ui::Panel::None);
+                if (editorArea_)
+                    editorArea_->toFront(true);
                 editorArea_->resized(); // re-lay-out editor area
             }
 
@@ -458,6 +473,8 @@ MainWindow::MainWindow(AudioEngine& audio,
                 else
                     editorArea_->hideDebugPanel();
                 activityRibbon_->setActivePanel(wantsOpen ? hathor::ui::Panel::Debug : hathor::ui::Panel::None);
+                if (editorArea_)
+                    editorArea_->toFront(true);
                 editorArea_->resized(); // re-lay-out editor area
             }
         };
@@ -492,9 +509,11 @@ MainWindow::MainWindow(AudioEngine& audio,
     editorArea_->breadcrumbsBar()->onCommandPaletteClicked = [this]() {
         refreshRecentActions();  // 0.2: keep MRU entries current in the palette
         editorArea_->commandPalette()->show(getContentComponent());
+        editorArea_->toFront(true);
     };
     editorArea_->breadcrumbsBar()->onFindClicked = [this]() {
         editorArea_->showFindReplace();
+        editorArea_->toFront(true);
     };
     editorArea_->breadcrumbsBar()->onSplitClicked = [this]() {
         editorArea_->toggleSplit();
@@ -518,6 +537,7 @@ MainWindow::MainWindow(AudioEngine& audio,
     };
     editorArea_->findReplacePanel()->onClosePanel = [this]() {
         editorArea_->hideFindReplace();
+        editorArea_->toFront(true);
     };
 
     // ApplicationProperties storage was configured above; hand the properties
@@ -903,11 +923,20 @@ void MainWindow::performLayout(const LayoutParams& p)
         statusRibbon_->setBounds(b.removeFromBottom(hathor::ui::StatusRibbon::kRibbonHeight));
 
     // 5. Editor area — fills the remaining centre region.
+    // CRITICAL FIX: toFront(true) ensures the editor area is z-order above
+    // splitters, petWidget, and all other components added after it in the
+    // constructor — so it always receives mouse/keyboard input. Without
+    // this, invisible splitters and the (hidden) welcome screen shadow the
+    // editor and make the UI unresponsive.
     if (editorArea_)
+    {
         editorArea_->setBounds(b);
+        editorArea_->toFront(true);
+    }
 
     // Phase G (D2–D4): mascot overlay — bottom-right corner of the editor
-    // region.
+    // region. Hidden by default until a pet is selected; when visible it
+    // must sit above the editor (it's a non-interactive visual garnish).
     if (petWidget_)
     {
         const int w = hathor::ui::PetWidget::kPetWidth;
@@ -916,8 +945,14 @@ void MainWindow::performLayout(const LayoutParams& p)
     }
 
     // Agent 0.1: welcome overlay covers the entire content area while shown.
+    // When visible it MUST be above the editor (it's a modal overlay that
+    // intercepts all input). toFront(true) restores that z-order here so
+    // the editor's toFront() above doesn't permanently shadow it.
     if (welcomeScreen_ != nullptr && welcomeScreen_->isVisible())
+    {
         welcomeScreen_->setBounds(content->getLocalBounds());
+        welcomeScreen_->toFront(true);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1342,6 +1377,8 @@ void MainWindow::switchWorkspace(const juce::File& dir)
     if (welcomeScreen_ != nullptr && welcomeScreen_->isVisible())
     {
         welcomeScreen_->setVisible(false);
+        if (editorArea_)
+            editorArea_->toFront(true);
         resized();
     }
 }

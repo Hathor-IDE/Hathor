@@ -535,6 +535,8 @@ EditorArea::EditorArea(AudioEngine& audio,
     };
     workspaceSearchPanel_->onClosePanel = [this]() {
         workspaceSearchPanel_->setVisible(false);
+        this->toFront(true);
+        resized();
     };
 
     symbolSearchPanel_ = std::make_unique<SymbolSearchPanel>(symbolSearchModel_.get());
@@ -551,6 +553,8 @@ EditorArea::EditorArea(AudioEngine& audio,
     };
     symbolSearchPanel_->onClosePanel = [this]() {
         symbolSearchPanel_->setVisible(false);
+        this->toFront(true);
+        resized();
     };
 
     // =======================================================================
@@ -583,6 +587,8 @@ EditorArea::EditorArea(AudioEngine& audio,
     };
     problemsPanel_->onClosePanel = [this]() {
         problemsPanel_->setVisible(false);
+        this->toFront(true);
+        resized();
     };
 
     addChildComponent(quickOpenDialog_.get());
@@ -618,6 +624,8 @@ EditorArea::EditorArea(AudioEngine& audio,
     debugPanel_ = std::make_unique<DebugPanel>(audio_, diagnosticRegistry_.get());
     debugPanel_->onClosePanel = [this]() {
         debugPanel_->setVisible(false);
+        this->toFront(true);
+        resized();
     };
     // L-6 ↔ L-3: opening Problems from the runtime inspector reuses the
     // existing L-3 Problems surface (single diagnostics authority).
