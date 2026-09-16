@@ -36,6 +36,7 @@
 #include "GhostCompletionTelemetry.hpp"
 #endif
 
+#include <atomic>
 #include <chrono>
 #include <optional>
 #include <functional>
@@ -627,6 +628,10 @@ private:
 
       // AI-G7: ChucK diagnostics debounce timestamp.
       int64_t chuckLastDiagTimeMs_{ 0 };
+      // Generation counter for async diagnostic delivery: bumped per
+      // trigger, checked on the message thread so late results from a
+      // previous run (or a closed tab) are discarded.
+      std::atomic<uint64_t> diagGeneration_{ 0 };
 
       // Wave 4.2 (C3): per-tab LSP bookkeeping — replaces the old static
       // Component*-keyed map + global version counter (leak + cross-tab

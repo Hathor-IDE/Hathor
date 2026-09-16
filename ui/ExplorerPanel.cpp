@@ -98,10 +98,15 @@ void ExplorerPanel::restoreLastDirectoryAndRefresh()
 
 void ExplorerPanel::handleFilesystemChange()
 {
-    // Called by the DirectoryWatcher callback on a background thread.
-    // Marshal to the message thread to rebuild the tree safely.
+    // Called when the polling timer observes a change. Marshal to the
+    // message thread to rebuild the tree safely; guard against the panel
+    // being destroyed before the callback runs.
+    juce::Component::SafePointer<ExplorerPanel> safeSelf(this);
     if (juce::MessageManager::getInstanceWithoutCreating() != nullptr)
-        juce::MessageManager::callAsync([this]() { refresh(); });
+        juce::MessageManager::callAsync([safeSelf]() {
+            if (safeSelf.getComponent() != nullptr)
+                safeSelf->refresh();
+        });
     else
         refresh(); // no message manager (e.g. in tests) — refresh directly
 }
@@ -315,8 +320,12 @@ void ExplorerPanel::FsPollTimer::timerCallback()
     if (changed)
     {
         rebuildSnapshot();
+        juce::Component::SafePointer<ExplorerPanel> safeSelf(&owner_);
         if (juce::MessageManager::getInstanceWithoutCreating() != nullptr)
-            juce::MessageManager::callAsync([this]() { owner_.refresh(); });
+            juce::MessageManager::callAsync([safeSelf]() {
+                if (safeSelf.getComponent() != nullptr)
+                    safeSelf->refresh();
+            });
     }
 }
 

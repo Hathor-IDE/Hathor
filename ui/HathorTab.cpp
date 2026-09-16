@@ -233,11 +233,10 @@ void HathorTab::clearUnsavedDot()
 
 void HathorTab::setSlotRunningVisual(bool running) noexcept
 {
-    if (slotRunning_ == running)
-        return;
-
     slotRunning_ = running;
 
+    // Always re-apply button colours so theme switches refresh the tint
+    // even when the running state itself is unchanged.
     const auto& palette = HathorLookAndFeel::fromComponent(*this).getPalette();
 
     if (running)
@@ -1563,14 +1562,19 @@ void HathorTab::handleCursorMove()
     // AI-G7: For .ck tabs, use deterministic metadata hover (no LSP server).
     const int line = cursorLine;
     const int col = cursorCol;
-    juce::MessageManager::callAsync([this, line, col]() {
-        if (hoverPendingLine_ == line && hoverPendingCol_ == col && hoverPending_)
+    juce::Component::SafePointer<HathorTab> safeSelf(this);
+    juce::MessageManager::callAsync([safeSelf, line, col]() {
+        if (auto* tab = safeSelf.getComponent())
         {
-            hoverPending_ = false;
-            if (useChuckTokeniser_)
-                requestChuckHover(line, col);
-            else
-                requestLspHover(line, col);
+            if (tab->hoverPendingLine_ == line && tab->hoverPendingCol_ == col
+                && tab->hoverPending_)
+            {
+                tab->hoverPending_ = false;
+                if (tab->useChuckTokeniser_)
+                    tab->requestChuckHover(line, col);
+                else
+                    tab->requestLspHover(line, col);
+            }
         }
     });
 }
@@ -1730,20 +1734,20 @@ void HathorTab::triggerChuckDiagnostics()
     std::string sourceCopy = docText.toStdString();
     std::string uriCopy = lspDocumentUri().toStdString();
 
-    // Capture raw pointer to self for the async callback.
-    // HathorTab is owned by EditorArea's tabs_ vector; it will not be
-    // destroyed while a diagnostic callback is in flight because the
-    // callback is processed on the message thread and the tab is only
-    // destroyed when the user closes it (which cancels async callbacks).
-    HathorTab* self = this;
+    // Generation-guarded delivery: the tab may be closed while validation
+    // runs, so the callback no-ops unless the generation still matches.
+    const uint64_t generation = ++diagGeneration_;
+    juce::Component::SafePointer<HathorTab> safeSelf(this);
 
     // Run the (potentially slow) validation on a detached thread.
-    std::thread([self, sourceCopy, uriCopy]() {
+    std::thread([safeSelf, generation, sourceCopy, uriCopy]() {
         auto diag = hathor::audio_worker::validateChuckSource(sourceCopy);
 
         // Post back to the message thread for display.
-        juce::MessageManager::callAsync([self, uriCopy, diag]() {
-            self->notifyChuckDiagnostics(uriCopy, diag);
+        juce::MessageManager::callAsync([safeSelf, generation, uriCopy, diag]() {
+            if (auto* tab = safeSelf.getComponent())
+                if (tab->diagGeneration_ == generation)
+                    tab->notifyChuckDiagnostics(uriCopy, diag);
         });
     }).detach();
 }

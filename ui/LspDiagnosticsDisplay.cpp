@@ -18,7 +18,9 @@ void LspDiagnosticsDisplay::setDiagnostics(const std::string& uri,
     doc.all = diagnostics;
     doc.byLine.clear();
 
-    for (const auto& d : diagnostics)
+    // Index into the stored copy, not the parameter: pointers must remain
+    // valid until the next setDiagnostics/clear for this URI.
+    for (const auto& d : doc.all)
     {
         int line = d.range.start.line;
         doc.byLine[line].push_back(&d);
