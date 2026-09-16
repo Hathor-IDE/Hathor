@@ -68,6 +68,9 @@ public:
     // L-1 §3: Auto-indentation — preserve indentation when pressing Enter.
     void handleReturnKey() override;
 
+    // Wave 4.2 (E6): bracket auto-close + skip-over + wrap-selection.
+    bool keyPressed(const juce::KeyPress& key) override;
+
     // L-1 §3: Bracket matching — highlight the matching bracket.
     void paintOverChildren(juce::Graphics& g) override;
 
@@ -624,6 +627,13 @@ private:
 
       // AI-G7: ChucK diagnostics debounce timestamp.
       int64_t chuckLastDiagTimeMs_{ 0 };
+
+      // Wave 4.2 (C3): per-tab LSP bookkeeping — replaces the old static
+      // Component*-keyed map + global version counter (leak + cross-tab
+      // version interleave). Monotonic per tab; cleared on destruction
+      // with the tab itself.
+      std::string lastLspText_;
+      int         lspVersion_{ 0 };
 
       juce::CodeDocument          document_;
       GhostAwareEditor           editor_;

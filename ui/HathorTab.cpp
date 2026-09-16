@@ -503,6 +503,69 @@ void GhostAwareEditor::paintOverChildren(juce::Graphics& /*g*/)
     // Let the base class do its standard painting
 }
 
+bool GhostAwareEditor::keyPressed(const juce::KeyPress& key)
+{
+    // Wave 4.2 (E6): bracket auto-close. Only for plain character keys
+    // (no modifiers) so shortcuts are unaffected.
+    if (key.getModifiers().isCommandDown() || key.getModifiers().isCtrlDown()
+        || key.getModifiers().isAltDown())
+        return juce::CodeEditorComponent::keyPressed(key);
+
+    const juce::juce_wchar c = key.getTextCharacter();
+    static const juce::String opens = "([{";
+    static const juce::String closes = ")]}";
+    auto matchingClose = [](juce::juce_wchar o) -> juce::juce_wchar {
+        if (o == '(') return ')';
+        if (o == '[') return ']';
+        if (o == '{') return '}';
+        return 0;
+    };
+
+    juce::CodeDocument& doc = getDocument();
+    juce::Range<int> sel = getHighlightedRegion();
+
+    // Wrap selection with opener.
+    if (!sel.isEmpty() && opens.containsChar(c))
+    {
+        const juce::juce_wchar closer = matchingClose(c);
+        const juce::String selected = getTextInRange(sel);
+        doc.deleteSection(sel.getStart(), sel.getEnd());
+        doc.insertText(sel.getStart(), juce::String::charToString(c) + selected
+                                       + juce::String::charToString(closer));
+        setHighlightedRegion(juce::Range<int>(sel.getStart() + 1,
+                                              sel.getStart() + 1 + selected.length()));
+        return true;
+    }
+
+    // Skip over a typed closer when it already sits at the caret.
+    if (sel.isEmpty() && closes.containsChar(c))
+    {
+        juce::CodeDocument::Position caret = getCaretPos();
+        const juce::String after = doc.getTextBetween(caret, caret.movedBy(1));
+        if (after.length() > 0 && after[0] == c)
+        {
+            moveCaretTo(caret.movedBy(1), false);
+            return true;
+        }
+        return juce::CodeEditorComponent::keyPressed(key);
+    }
+
+    // Auto-insert matching closer after an opener.
+    if (sel.isEmpty() && opens.containsChar(c))
+    {
+        // Let the base class insert the opener first (keeps undo coalescing).
+        if (!juce::CodeEditorComponent::keyPressed(key))
+            return false;
+        juce::CodeDocument::Position caret = getCaretPos();
+        doc.insertText(caret.getPosition(),
+                       juce::String::charToString(matchingClose(c)));
+        moveCaretTo(caret, false);
+        return true;
+    }
+
+    return juce::CodeEditorComponent::keyPressed(key);
+}
+
 void GhostAwareEditor::updateBracketHighlight()
 {
     // L-1 §3: Find the bracket character before or at the caret and highlight it
@@ -520,8 +583,8 @@ void GhostAwareEditor::updateBracketHighlight()
     juce::juce_wchar charBefore = (caretPos > 0) ? fullText[caretPos - 1] : 0;
     juce::juce_wchar charAt = (caretPos < fullText.length()) ? fullText[caretPos] : 0;
 
-    juce::String opens = "({[<";
-    juce::String closes = ")}>]";
+    juce::String opens = "([{";
+    juce::String closes = ")]}";
 
     int bracketPos = -1;
     juce::juce_wchar matchingChar = 0;
@@ -950,19 +1013,20 @@ void HathorTab::notifyLspDidOpen()
 
 void HathorTab::notifyLspDidChange()
 {
-    // Debounce: only send if text actually changed since last send.
-    static std::unordered_map<juce::Component*, std::string> lastText;
+    // Wave 4.2 (C3): per-tab debounce + version. No statics: the old
+    // Component*-keyed map leaked entries on tab close and the global
+    // counter interleaved versions across tabs.
     juce::String currentText = document_.getAllContent();
     std::string currentStr = currentText.toStdString();
 
-    if (lastText[this] == currentStr)
+    if (lastLspText_ == currentStr)
         return;
 
-    lastText[this] = currentStr;
+    lastLspText_ = currentStr;
 
     juce::String uri = lspDocumentUri();
-    static int changeVersion = 1;
-    ++changeVersion;
+    ++lspVersion_;
+    const int changeVersion = lspVersion_;
 
     if (!useChuckTokeniser_)
     {
