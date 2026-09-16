@@ -2562,33 +2562,181 @@ void EditorArea::setWorkspaceRoot(const std::filesystem::path& root)
     }
 }
 
-void EditorArea::closeTabsUnderRoot(const std::filesystem::path& root)
+void EditorArea::closeTabsUnderRoot(const std::filesystem::path& root,
+                                     std::function<void(bool)> onDone)
 {
+    auto done = [onDone](bool proceeded) {
+        if (onDone)
+            onDone(proceeded);
+    };
     if (root.empty())
+    {
+        done(true);
         return;
+    }
 
     std::error_code ec;
     const std::filesystem::path canonical = std::filesystem::weakly_canonical(root, ec);
     const std::filesystem::path base = ec ? root : canonical;
 
-    // Iterate descending so removal indices stay valid. closeTab() routes
-    // dirty buffers through the Save/Discard/Cancel prompt (Req 22.7) —
-    // a "Cancel" simply leaves that tab open, which is acceptable.
-    for (int i = static_cast<int>(tabs_.size()) - 1; i >= 0; --i)
-    {
-        const auto& tab = tabs_[static_cast<std::size_t>(i)];
-        if (!tab->filePath().has_value())
-            continue;
-
+    auto underRoot = [&](HathorTab* tab) {
+        if (tab == nullptr || !tab->filePath().has_value())
+            return false;
         std::filesystem::path p = tab->filePath()->getFullPathName().toStdString();
         std::error_code ec2;
         auto canonicalTab = std::filesystem::weakly_canonical(p, ec2);
         if (!ec2)
             p = canonicalTab;
+        return p == base || p.native().rfind(base.native(), 0) == 0;
+    };
 
-        if (p == base || p.native().rfind(base.native(), 0) == 0)
-            closeTab(i);
+    // Partition tabs under the root into clean (close now) and dirty.
+    std::vector<HathorTab*> dirty;
+    for (auto& tab : tabs_)
+        if (underRoot(tab.get()) && tab->hasUnsavedDot())
+            dirty.push_back(tab.get());
+    for (int i = static_cast<int>(tabs_.size()) - 1; i >= 0; --i)
+    {
+        HathorTab* tab = tabs_[static_cast<std::size_t>(i)].get();
+        if (underRoot(tab) && !tab->hasUnsavedDot())
+            removeTabAt(i);
     }
+    if (dirty.empty())
+    {
+        done(true);
+        return;
+    }
+
+    // One consolidated dialog for all dirty tabs (Req 22.7, single veto).
+    juce::String names;
+    for (auto* tab : dirty)
+        names += "\n• " + tab->tabLabel();
+    juce::AlertWindow::showAsync(
+        juce::MessageBoxOptions()
+            .withIconType(juce::MessageBoxIconType::QuestionIcon)
+            .withTitle("Unsaved Changes")
+            .withMessage("The following buffers have unsaved changes:" + names
+                         + "\n\nSave them before switching workspace?")
+            .withButton("Save")
+            .withButton("Discard")
+            .withButton("Cancel"),
+        [this, dirty, done](int result) {
+            if (result == 2) // Discard
+            {
+                for (int i = static_cast<int>(tabs_.size()) - 1; i >= 0; --i)
+                {
+                    HathorTab* tab = tabs_[static_cast<std::size_t>(i)].get();
+                    if (std::find(dirty.begin(), dirty.end(), tab) != dirty.end())
+                        removeTabAt(i);
+                }
+                done(true);
+                return;
+            }
+            if (result != 1) // Cancel or dismiss → veto, nothing touched
+            {
+                done(false);
+                return;
+            }
+            // Save: file-backed tabs write synchronously; untitled tabs go
+            // through a sequential save-as chain, then everything closes.
+            saveAndCloseTabs(dirty, done);
+        });
+}
+
+int EditorArea::indexOfTab(const HathorTab* tab) const noexcept
+{
+    for (int i = 0; i < static_cast<int>(tabs_.size()); ++i)
+        if (tabs_[static_cast<std::size_t>(i)].get() == tab)
+            return i;
+    return -1;
+}
+
+bool EditorArea::saveTabToFile(HathorTab* tab)
+{
+    if (tab == nullptr || !tab->filePath().has_value())
+        return false;
+    const juce::File& f = *tab->filePath();
+    if (ChuckTokeniser::isChuckFile(f))
+    {
+        f.replaceWithText(tab->document().getAllContent());
+    }
+    else
+    {
+        HathorFile hf;
+        if (tab->frontMatter().has_value())
+            hf.front = *tab->frontMatter();
+        hf.body = tab->document().getAllContent().toStdString();
+        f.replaceWithText(juce::String(serialiseHathorFile(hf)));
+    }
+    tab->clearUnsavedDot();
+    return true;
+}
+
+void EditorArea::saveAndCloseTabs(const std::vector<HathorTab*>& tabs,
+                                  std::function<void(bool)> onDone)
+{
+    auto remaining = std::make_shared<std::vector<HathorTab*>>(tabs);
+    auto step = std::make_shared<std::function<void()>>();
+    juce::Component::SafePointer<EditorArea> safeSelf(this);
+    *step = [safeSelf, remaining, step, onDone]() {
+        auto* self = safeSelf.getComponent();
+        if (self == nullptr)
+            return;
+        // Drop tabs that are already gone, find the next untitled one.
+        remaining->erase(std::remove_if(remaining->begin(), remaining->end(),
+                                        [self](HathorTab* t) {
+                                            return self->indexOfTab(t) < 0;
+                                        }),
+                         remaining->end());
+        auto it = std::find_if(remaining->begin(), remaining->end(),
+                               [](HathorTab* t) {
+                                   return t != nullptr && !t->filePath().has_value();
+                               });
+        if (it == remaining->end())
+        {
+            // All remaining are file-backed: save and close them all.
+            for (int i = static_cast<int>(self->tabs_.size()) - 1; i >= 0; --i)
+            {
+                HathorTab* tab = self->tabs_[static_cast<std::size_t>(i)].get();
+                if (std::find(remaining->begin(), remaining->end(), tab) != remaining->end())
+                {
+                    self->saveTabToFile(tab);
+                    self->removeTabAt(i);
+                }
+            }
+            if (onDone)
+                onDone(true);
+            return;
+        }
+        // Untitled tab: save-as chooser; cancel vetoes the whole operation.
+        HathorTab* untitled = *it;
+        auto chooser = std::make_shared<juce::FileChooser>(
+            "Save Buffer As…",
+            juce::File::getSpecialLocation(juce::File::userDocumentsDirectory),
+            "*.hathor;*.ck");
+        chooser->launchAsync(juce::FileBrowserComponent::saveMode
+                                 | juce::FileBrowserComponent::canSelectFiles,
+                             [safeSelf, remaining, step, onDone, untitled,
+                              chooser](const juce::FileChooser& fc) {
+                                 auto* self = safeSelf.getComponent();
+                                 if (self == nullptr)
+                                     return;
+                                 const auto chosen = fc.getResult();
+                                 if (chosen.getFullPathName().isEmpty())
+                                 {
+                                     if (onDone)
+                                         onDone(false);
+                                     return;
+                                 }
+                                 if (self->indexOfTab(untitled) >= 0)
+                                 {
+                                     untitled->setFilePath(chosen);
+                                     self->saveTabToFile(untitled);
+                                 }
+                                 (*step)();
+                             });
+    };
+    (*step)();
 }
 
 void EditorArea::showQuickOpen()

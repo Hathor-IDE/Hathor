@@ -67,6 +67,7 @@ HathorTab::HathorTab(int slotIndex, bool chuck)
      // when the cursor moves (arrow keys, mouse clicks, etc.) without
      // the document changing — a core AI-G6 requirement.
      editor_.onCaretMoved = [this]() { handleCursorMove(); };
+     editor_.onEditorRightClick = [this]() { showEditorContextMenu(); };
 
      addAndMakeVisible(highlightOverlay_);
      highlightOverlay_.setInterceptsMouseClicks(false, false);
@@ -684,17 +685,20 @@ juce::PopupMenu HathorTab::prepareEditorContextMenu()
 
     juce::PopupMenu menu;
 
+    auto& undoManager = editor_.getDocument().getUndoManager();
+    const bool hasSelection = !editor_.getHighlightedRegion().isEmpty();
+
     // Undo / Redo
-    menu.addItem(cmdUndo, "Undo", true);
-    menu.addItem(cmdRedo, "Redo", true);
+    menu.addItem(cmdUndo, "Undo", undoManager.canUndo());
+    menu.addItem(cmdRedo, "Redo", undoManager.canRedo());
 
     menu.addSeparator();
 
     // Cut / Copy / Paste / Delete
-    menu.addItem(cmdCut,   "Cut",       true);
-    menu.addItem(cmdCopy,  "Copy",      true);
+    menu.addItem(cmdCut,   "Cut",       hasSelection);
+    menu.addItem(cmdCopy,  "Copy",      hasSelection);
     menu.addItem(cmdPaste, "Paste",     true);
-    menu.addItem(cmdDelete,"Delete",    true);
+    menu.addItem(cmdDelete,"Delete",    hasSelection);
 
     menu.addSeparator();
 
@@ -704,27 +708,41 @@ juce::PopupMenu HathorTab::prepareEditorContextMenu()
     menu.addSeparator();
 
     // Navigation
-    menu.addItem(cmdGoToLine, "Go to Line…", true);
+    menu.addItem(cmdGoToLine, "Go to Line…", onGoToLine != nullptr);
 
     menu.addSeparator();
 
     // Editing
-    menu.addItem(cmdCommentSelection, "Toggle Comment", true);
-    menu.addItem(cmdDuplicateLine,    "Duplicate Line", true);
+    menu.addItem(cmdCommentSelection, "Toggle Comment", onToggleComment != nullptr);
+    menu.addItem(cmdDuplicateLine,    "Duplicate Line", onDuplicateLine != nullptr);
 
     menu.addSeparator();
 
     // Language-specific eval
-    menu.addItem(cmdEvalLine,  "Eval Line (Ctrl+Enter)");
-    menu.addItem(cmdEvalBlock, "Eval Block (Ctrl+Alt+Enter)");
+    menu.addItem(cmdEvalLine,  "Eval Line (Ctrl+Enter)", onEvalLine != nullptr);
+    menu.addItem(cmdEvalBlock, "Eval Block (Ctrl+Alt+Enter)", onEvalBlock != nullptr);
 
     menu.addSeparator();
 
     // Find / Replace
-    menu.addItem(cmdFind,    "Find…", true);
-    menu.addItem(cmdReplace, "Replace…", true);
+    menu.addItem(cmdFind,    "Find…", onShowFindPanel != nullptr);
+    menu.addItem(cmdReplace, "Replace…", onShowReplacePanel != nullptr);
 
     return menu;
+}
+
+void HathorTab::showEditorContextMenu()
+{
+    juce::PopupMenu menu = prepareEditorContextMenu();
+    auto mousePos = juce::Desktop::getInstance().getMousePosition().roundToInt();
+    juce::Component::SafePointer<HathorTab> safeSelf(this);
+    menu.showMenuAsync(
+        juce::PopupMenu::Options().withTargetScreenArea(
+            juce::Rectangle<int>(mousePos.x, mousePos.y, 1, 1)),
+        [safeSelf](int itemID) {
+            if (auto* tab = safeSelf.getComponent())
+                tab->editorContextMenuSelected(itemID);
+        });
 }
 
 void HathorTab::editorContextMenuSelected(int menuItemID)
@@ -742,13 +760,13 @@ void HathorTab::editorContextMenuSelected(int menuItemID)
                 break;
 
         case 7:  editor_.selectAll(); break;
-        case 8:  onShowFindPanel(); break;
-        case 9:  onShowReplacePanel(); break;
-        case 10: onGoToLine(); break;
-        case 11: onToggleComment(); break;
-        case 12: onDuplicateLine(); break;
-        case 13: onEvalLine(); break;
-        case 14: onEvalBlock(); break;
+        case 8:  if (onShowFindPanel) onShowFindPanel(); break;
+        case 9:  if (onShowReplacePanel) onShowReplacePanel(); break;
+        case 10: if (onGoToLine) onGoToLine(); break;
+        case 11: if (onToggleComment) onToggleComment(); break;
+        case 12: if (onDuplicateLine) onDuplicateLine(); break;
+        case 13: if (onEvalLine) onEvalLine(); break;
+        case 14: if (onEvalBlock) onEvalBlock(); break;
     }
 }
 
@@ -759,16 +777,7 @@ void HathorTab::editorContextMenuSelected(int menuItemID)
 void HathorTab::mouseUp(const juce::MouseEvent& e)
 {
     if (e.mods.isRightButtonDown())
-    {
-        juce::PopupMenu menu = prepareEditorContextMenu();
-        auto mousePos = juce::Desktop::getInstance().getMousePosition().roundToInt();
-        menu.showMenuAsync(
-            juce::PopupMenu::Options().withTargetScreenArea(
-                juce::Rectangle<int>(mousePos.x + 10, mousePos.y + 10, 1, 1)),
-            [this](int itemID) {
-                editorContextMenuSelected(itemID);
-            });
-    }
+        showEditorContextMenu();
 }
 
 // ---------------------------------------------------------------------------

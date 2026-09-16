@@ -523,15 +523,19 @@ void ExplorerPanel::deleteTarget(const juce::File& target)
     const bool isDir = target.isDirectory();
     juce::AlertWindow::showOkCancelBox(
         juce::AlertWindow::WarningIcon, "Delete",
-        "Delete \"" + target.getFileName() + "\"?" + (isDir ? " This removes the folder and its contents." : ""),
-        "Delete", "Cancel", nullptr,
+        "Move \"" + target.getFileName() + "\" to the Trash?" + (isDir ? " The folder and its contents will be moved." : ""),
+        "Move to Trash", "Cancel", nullptr,
         juce::ModalCallbackFunction::create([this, target](int result) {
             if (result == 1)
             {
-                if (target.isDirectory())
-                    target.deleteRecursively();
-                else
-                    target.deleteFile();
+                if (!target.moveToTrash())
+                {
+                    juce::AlertWindow::showMessageBoxAsync(
+                        juce::AlertWindow::WarningIcon, "Delete",
+                        "Could not move \"" + target.getFileName()
+                            + "\" to the Trash.");
+                    return;
+                }
                 refresh();
             }
         }));

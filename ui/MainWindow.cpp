@@ -1374,41 +1374,53 @@ void MainWindow::switchWorkspace(const juce::File& dir)
 
     const std::string newDir = dir.getFullPathName().toStdString();
 
-    pushRecentProject(newDir);
-
     if (newDir == workspaceDir_)
         return;
 
+    pushRecentProject(newDir);
+
     // Close tabs that belong to the old workspace first — dirty buffers go
-    // through the existing Save/Discard/Cancel prompt (Req 22.7).
+    // through one consolidated Save/Discard/Cancel dialog (Req 22.7).
+    // Cancel vetoes the switch: nothing is re-rooted.
     const std::string oldDir = workspaceDir_;
-    if (editorArea_ && !oldDir.empty())
-        editorArea_->closeTabsUnderRoot(std::filesystem::path(oldDir));
-
-    // Re-root the explorer (persists explorerLastDirectory) and the editor
-    // area (workspace search + quick open).
-    if (explorerPanel_)
-        explorerPanel_->setDirectory(dir);
-    if (editorArea_)
-        editorArea_->setWorkspaceRoot(std::filesystem::path(newDir));
-
-    workspaceDir_ = newDir;
-
-    // Agent 0.1: persist the chosen root so relaunch restores it directly.
-    if (auto* props = appProperties_.getUserSettings())
-    {
-        props->setValue("lastWorkspacePath", juce::String(newDir));
-        props->saveIfNeeded();
-    }
-
-    // A workspace now exists — dismiss the welcome overlay if it was up.
-    if (welcomeScreen_ != nullptr && welcomeScreen_->isVisible())
-    {
-        welcomeScreen_->setVisible(false);
+    auto finishSwitch = [this, dir, newDir]() {
+        // Re-root the explorer (persists explorerLastDirectory) and the editor
+        // area (workspace search + quick open).
+        if (explorerPanel_)
+            explorerPanel_->setDirectory(dir);
         if (editorArea_)
-            editorArea_->toFront(true);
-        resized();
+            editorArea_->setWorkspaceRoot(std::filesystem::path(newDir));
+
+        workspaceDir_ = newDir;
+
+        if (auto* props = appProperties_.getUserSettings())
+        {
+            props->setValue("lastWorkspacePath", juce::String(newDir));
+            props->saveIfNeeded();
+        }
+
+        // A workspace now exists — dismiss the welcome overlay if it was up.
+        if (welcomeScreen_ != nullptr && welcomeScreen_->isVisible())
+        {
+            welcomeScreen_->setVisible(false);
+            if (editorArea_)
+                editorArea_->toFront(true);
+            resized();
+        }
+    };
+    if (editorArea_ && !oldDir.empty())
+    {
+        juce::Component::SafePointer<MainWindow> safeSelf(this);
+        editorArea_->closeTabsUnderRoot(std::filesystem::path(oldDir),
+                                        [safeSelf, finishSwitch](bool proceeded) {
+                                            if (!proceeded)
+                                                return;
+                                            if (safeSelf.getComponent() != nullptr)
+                                                finishSwitch();
+                                        });
+        return;
     }
+    finishSwitch();
 }
 
 std::vector<std::string> MainWindow::loadRecentProjects()

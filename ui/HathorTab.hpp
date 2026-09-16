@@ -60,10 +60,23 @@ public:
 
     std::function<void()> onCaretMoved;
 
+    // Right-click inside the editor surface: the tab shows its context menu.
+    // Installed by HathorTab (CodeEditorComponent consumes the click, so the
+    // tab's own mouseUp never fires for in-editor clicks).
+    std::function<void()> onEditorRightClick;
+
     void caretPositionMoved() override
     {
         if (onCaretMoved)
             onCaretMoved();
+    }
+
+    void mouseUp(const juce::MouseEvent& e) override
+    {
+        if (e.mods.isRightButtonDown() && onEditorRightClick)
+            onEditorRightClick();
+        else
+            juce::CodeEditorComponent::mouseUp(e);
     }
 
     // L-1 §3: Auto-indentation — preserve indentation when pressing Enter.
@@ -441,6 +454,11 @@ public:
     ///   Find, Replace, Go to Line, Comment Selection, Duplicate Line,
     ///   and language-specific actions (Eval Line, Eval Block).
     juce::PopupMenu prepareEditorContextMenu();
+
+    /// Show the context menu at the mouse position (state-aware items).
+    /// Called on right-click both inside the editor surface (forwarded by
+    /// GhostAwareEditor) and on the tab chrome itself.
+    void showEditorContextMenu();
 
     /// L-1 §5: Handle a context menu selection.
     /// Called by the enhanced tab bar's context menu handler.

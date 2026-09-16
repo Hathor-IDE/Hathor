@@ -595,9 +595,12 @@ public:
      */
     void setWorkspaceRoot(const std::filesystem::path& root);
 
-    /** Close every tab whose file lives under the given root, using the
-     *  existing per-tab save prompts for dirty buffers. */
-    void closeTabsUnderRoot(const std::filesystem::path& root);
+    /** Close every tab whose file lives under the given root.
+     *  Clean tabs close immediately. Dirty tabs share one consolidated
+     *  Save / Discard / Cancel dialog; Cancel (or dismiss) vetoes the
+     *  whole operation and onDone receives false with nothing touched. */
+    void closeTabsUnderRoot(const std::filesystem::path& root,
+                            std::function<void(bool proceeded)> onDone);
 
     /// Get the action registry (non-owning).
     hathor::ui::ActionRegistry* actionRegistry() noexcept
@@ -724,6 +727,20 @@ private:
 
     /// Remove tab at index from the vectors and update the tab bar.
     void removeTabAt(int index);
+
+    /// Index of a tab pointer in tabs_, or -1 if already removed.
+    int indexOfTab(const HathorTab* tab) const noexcept;
+
+    /// Write a file-backed tab to disk synchronously. Returns false for
+    /// untitled tabs (no path to write to) — callers route those through
+    /// the save-as chooser instead.
+    bool saveTabToFile(HathorTab* tab);
+
+    /// Save every tab in the list (save-as chain for untitled ones), close
+    /// them all, then invoke onDone(true). A cancelled save-as invokes
+    /// onDone(false) with remaining tabs left open.
+    void saveAndCloseTabs(const std::vector<HathorTab*>& tabs,
+                          std::function<void(bool)> onDone);
 
     /// Show a status-bar message for a few seconds, then clear it.
     void showStatus(const juce::String& msg);

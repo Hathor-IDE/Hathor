@@ -118,11 +118,13 @@ ChatSessionState::fromJson(const std::string& jsonStr, int acceptedVersion)
 
     if (j.contains("threads") && j["threads"].is_array())
     {
+        // Fail-open: skip malformed threads instead of dropping the whole
+        // session — one corrupt entry must not lose every other thread.
         for (const auto& threadJson : j["threads"])
         {
             auto ts = threadStateFromJson(threadJson);
             if (!ts.has_value())
-                return std::nullopt;
+                continue;
             state.threads.push_back(std::move(*ts));
         }
     }
