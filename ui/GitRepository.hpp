@@ -427,7 +427,10 @@ private:
     mutable std::mutex dataMutex_;
 
     std::string repoPath_;
-    bool hasRepository_ = false;
+    /// Written by the async validation in setRepoPath, read on any thread.
+    std::atomic<bool> hasRepository_{ false };
+    /// Generation counter: stale async validations discard themselves.
+    std::atomic<uint64_t> repoValidationSeq_{ 0 };
 
     std::vector<GitStatusEntry> statusEntries_;
     std::string currentBranch_;

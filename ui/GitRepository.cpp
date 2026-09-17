@@ -41,23 +41,36 @@ GitRepository::~GitRepository()
 
 void GitRepository::setRepoPath(const std::string& path)
 {
-    std::lock_guard lock(dataMutex_);
-    repoPath_ = path;
-    hasRepository_ = false;
-
-    if (!path.empty())
     {
-        // Check if this is inside a git repository.
-        auto result = runGit({"rev-parse", "--is-inside-work-tree"}, 5000);
-        if (!result.output.empty() && result.exitCode == 0)
+        std::lock_guard lock(dataMutex_);
+        repoPath_ = path;
+    }
+    hasRepository_.store(false, std::memory_order_release);
+
+    if (path.empty())
+        return;
+
+    // Validate off the caller's thread: rev-parse can block for seconds on
+    // network filesystems, and must never stall the message thread.
+    // A generation counter discards stale validations after rapid switches.
+    const uint64_t generation = ++repoValidationSeq_;
+    std::string pathCopy = path;
+    std::thread([this, pathCopy, generation]() {
+        auto result = process_.runSync({"rev-parse", "--is-inside-work-tree"},
+                                       pathCopy, 5000);
+        if (generation != repoValidationSeq_.load(std::memory_order_acquire))
+            return; // superseded by a newer setRepoPath
+        bool inside = result.exitCode == 0;
+        if (inside)
         {
-            // Parse "true\n" or "false\n"
             std::string trimmed = result.output;
             trimmed.erase(std::remove_if(trimmed.begin(), trimmed.end(),
-                                         ::isspace), trimmed.end());
-            hasRepository_ = (trimmed == "true");
+                                         ::isspace),
+                          trimmed.end());
+            inside = (trimmed == "true");
         }
-    }
+        hasRepository_.store(inside, std::memory_order_release);
+    }).detach();
 }
 
 std::string GitRepository::repoPath() const noexcept
@@ -68,7 +81,7 @@ std::string GitRepository::repoPath() const noexcept
 
 bool GitRepository::hasRepository() const noexcept
 {
-    return hasRepository_;
+    return hasRepository_.load(std::memory_order_acquire);
 }
 
 void GitRepository::initRepository(const std::string& path,
@@ -122,8 +135,7 @@ void GitRepository::refreshStatus(std::function<void()> onDone)
     std::thread([this, path, onDone = std::move(onDone)]() mutable {
         // 1. Get status (porcelain v1 with untracked files)
         auto statusResult = process_.runSync(
-            {"status", "--porcelain", "--untracked-files=all",
-             "--branch", "--untracked-files=all"},
+            {"status", "--porcelain", "--untracked-files=all", "--branch"},
             path, 10000);
 
         if (statusResult.exitCode == 0)
@@ -178,6 +190,10 @@ void GitRepository::refreshStatus(std::function<void()> onDone)
             std::lock_guard lock(dataMutex_);
             currentBranch_ = branch;
             headSha_ = headResult.output;
+            // Strip trailing newlines so SHA comparisons match.
+            while (!headSha_.empty()
+                   && (headSha_.back() == '\n' || headSha_.back() == '\r'))
+                headSha_.pop_back();
             refs_ = parseRefs(refsResult.output, branch);
             remotes_ = parseRemotes(remotesResult.output);
             mergeStatus_ = computeMergeStatus(branch, upstreamResult.output,
@@ -226,6 +242,7 @@ std::string GitRepository::getStatusSummary() const
 
 GitMergeStatus GitRepository::getMergeStatus() const noexcept
 {
+    std::lock_guard lock(dataMutex_);
     return mergeStatus_;
 }
 
@@ -312,9 +329,11 @@ void GitRepository::unstageFile(const std::string& path,
     }
 
     std::thread([this, repoPath, path, onDone = std::move(onDone)]() mutable {
-        // `git rm --cached` removes from index but keeps working tree file.
+        // `git reset` unstages without touching the working tree.
+        // (`git rm --cached` would additionally delete added files from
+        // the index in a way that loses intent.)
         auto result = process_.runSync(
-            {"rm", "--cached", "--", path},
+            {"reset", "HEAD", "--", path},
             repoPath, 10000);
         bool success = (result.exitCode == 0);
         if (success)
@@ -672,24 +691,39 @@ void GitRepository::getWorkingTreeDiff(
     }
 
     std::thread([this, repoPath, onDone = std::move(onDone)]() mutable {
+        // Single `git diff` for all files (plus --stat-style name list is
+        // unnecessary): one spawn instead of N+1, then split per file.
         auto result = process_.runSync(
-            {"diff", "--name-only"},
-            repoPath, 10000);
+            {"diff", "--no-color", "--no-ext-diff", "--"},
+            repoPath, 30000);
 
         std::vector<GitFileDiff> diffs;
         if (result.exitCode == 0 && !result.output.empty())
         {
-            std::istringstream iss(result.output);
-            std::string file;
-            while (std::getline(iss, file))
+            // Split on "diff --git " headers; each chunk parses separately.
+            const std::string marker = "diff --git ";
+            std::string::size_type pos = 0;
+            while (pos < result.output.size())
             {
-                if (!file.empty())
+                auto next = result.output.find(marker, pos + marker.size());
+                const std::string chunk = result.output.substr(
+                    pos, next == std::string::npos ? next : next - pos);
+                // File path from the "+++ b/<path>" line for the label.
+                std::string file;
+                auto plus = chunk.find("\n+++ b/");
+                if (plus != std::string::npos)
                 {
-                    auto fileDiffResult = process_.runSync(
-                        {"diff", "--", file},
-                        repoPath, 10000);
-                    diffs.push_back(parseLineDiff(fileDiffResult.output, file));
+                    auto eol = chunk.find('\n', plus + 7);
+                    file = chunk.substr(plus + 7, eol == std::string::npos
+                                                     ? eol
+                                                     : eol - plus - 7);
+                    if (!file.empty() && file.back() == '\r')
+                        file.pop_back();
                 }
+                diffs.push_back(parseLineDiff(chunk, file));
+                if (next == std::string::npos)
+                    break;
+                pos = next;
             }
         }
 
@@ -967,12 +1001,40 @@ GitRepository::parsePorcelain(const std::string& output) const
         // We need to handle the "->" for renames.
         std::string rest = line.substr(3); // skip "XY "
 
+        auto unquote = [](std::string s) {
+            // Porcelain C-quotes paths with special chars ("my file.txt").
+            // Strip one surrounding quote pair and unescape, never strip
+            // interior whitespace — spaces are legal in filenames.
+            auto trimEnds = [](std::string& v) {
+                while (!v.empty()
+                       && (v.front() == ' ' || v.front() == '\t'))
+                    v.erase(v.begin());
+                while (!v.empty()
+                       && (v.back() == ' ' || v.back() == '\t'
+                           || v.back() == '\r'))
+                    v.pop_back();
+            };
+            trimEnds(s);
+            if (s.size() >= 2 && s.front() == '"' && s.back() == '"')
+            {
+                std::string out;
+                for (size_t i = 1; i + 1 < s.size(); ++i)
+                {
+                    if (s[i] == '\\' && i + 2 < s.size() + 1)
+                        ++i; // C-escape: take the escaped char literally
+                    out += s[i];
+                }
+                return out;
+            }
+            return s;
+        };
+
         // Handle renames: "old_path -> new_path"
         auto arrowPos = rest.find(" -> ");
         if (arrowPos != std::string::npos)
         {
-            entry.stagedPath = rest.substr(0, arrowPos);
-            entry.unstagedPath = rest.substr(arrowPos + 4);
+            entry.stagedPath = unquote(rest.substr(0, arrowPos));
+            entry.unstagedPath = unquote(rest.substr(arrowPos + 4));
             // Use the new path as the primary path
             entry.path = entry.staged == GitStaged::Yes
                 ? entry.unstagedPath
@@ -980,12 +1042,8 @@ GitRepository::parsePorcelain(const std::string& output) const
         }
         else
         {
-            entry.path = rest;
+            entry.path = unquote(rest);
         }
-
-        // Trim whitespace
-        entry.path.erase(std::remove_if(entry.path.begin(), entry.path.end(),
-                                        ::isspace), entry.path.end());
 
         if (!entry.path.empty())
             entries.push_back(entry);
