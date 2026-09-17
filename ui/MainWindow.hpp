@@ -88,6 +88,10 @@
 // 2.3: Resizable splitter bar component
 #include "SplitterBar.hpp"
 
+#include <atomic>
+#include <mutex>
+#include <string>
+
 // ---------------------------------------------------------------------------
 // Forward declarations — concrete types defined in their own headers,
 // included only in MainWindow.cpp.  Forward-declared here because MainWindow's
@@ -360,6 +364,20 @@ private:
 
     // L-3: Unified Problems / Diagnostics status ribbon (bottom of window)
     std::unique_ptr<hathor::ui::StatusRibbon>        statusRibbon_;
+
+    // Git status cache: refreshed on a worker thread at ~0.5 Hz so the
+    // 60 Hz ribbon sync never walks the repository on the message thread.
+    struct GitStatusCache
+    {
+        std::string branch;
+        int staged{ 0 };
+        int unstaged{ 0 };
+        bool hasRepo{ false };
+    };
+    mutable std::mutex gitCacheMutex_;
+    GitStatusCache gitCache_;
+    std::atomic<bool> gitRefreshInFlight_{ false };
+    uint64_t statusTickCount_{ 0 };
 
     // 0.5/S4: orphan SliderPanel removed — ChatSidebar's instance is the
     // single BPM/gain surface (synced via chatSidebar_->getSliderPanel()).

@@ -90,29 +90,28 @@ void UITimer::timerCallback()
     // -----------------------------------------------------------------------
     // (a) Drain the SPSC ring buffer (Req 28.5, 28.6)
     //
-    // Loop until read() returns false. Accumulate:
+    // Bounded loop with copy-construction into firedEvents_ (readAppend).
     //   - latestCyclePos: the cyclePos from the most recently read frame
     //   - firedEvents_  : all events from every drained frame (appended)
-    //
-    // readStorage is aligned raw storage for kMaxFrameEvents Event<ParamMap>
-    // objects. We avoid a plain array because Event<ParamMap> has no default
-    // constructor (Arc::Rational has none). The buf_.read() call assigns into
-    // this storage via copy assignment on previously placement-new'd objects
-    // inside the ring buffer — so the memory just needs to be properly aligned.
     // -----------------------------------------------------------------------
-    alignas(hathor::Event<hathor::ParamMap>)
-        std::byte readStorage[hathor::kMaxFrameEvents * sizeof(hathor::Event<hathor::ParamMap>)];
-    auto* readBuf = reinterpret_cast<hathor::Event<hathor::ParamMap>*>(readStorage);
-
     double   latestCyclePos = -1.0;
-    uint32_t eventCount     = 0;
 
     firedEvents_.clear();
 
-    while (buf_.read(latestCyclePos, eventCount, readBuf))
+    // Bounded drain: cap frames per tick so a producer burst can't starve
+    // the message thread; the ring itself discards oldest on overflow.
+    // Events append via copy-construction (readAppend), which is always
+    // lifetime-valid — no raw scratch storage.
+    constexpr uint32_t kMaxFramesPerTick = 64;
+    constexpr uint32_t kMaxEventsPerTick = 2048;
+    for (uint32_t f = 0;
+         f < kMaxFramesPerTick
+         && firedEvents_.size() < kMaxEventsPerTick
+         && buf_.readAppend(latestCyclePos, firedEvents_,
+                            kMaxEventsPerTick
+                                - static_cast<uint32_t>(firedEvents_.size()));
+         ++f)
     {
-        for (uint32_t i = 0; i < eventCount; ++i)
-            firedEvents_.push_back(readBuf[i]);
     }
 
     // Only push to the visualizer if at least one frame was actually read.
@@ -137,7 +136,13 @@ void UITimer::timerCallback()
         constexpr std::size_t kMaxPcmDrain = 512;
         float pcmBuf[kMaxPcmDrain];
         const std::size_t pcmCount = sampleRing_.popMany(pcmBuf, kMaxPcmDrain);
-        vis_.updateSamples(pcmBuf, pcmCount, running);
+        // Idle throttle: with no samples and transport stopped, repaint at
+        // ~15 fps instead of 60 to save battery; the idle animation stays
+        // smooth enough at that rate.
+        ++tickCount_;
+        const bool idle = (pcmCount == 0 && !running);
+        if (!idle || (tickCount_ % 4 == 0))
+            vis_.updateSamples(pcmBuf, pcmCount, running);
     }
 
     // -----------------------------------------------------------------------

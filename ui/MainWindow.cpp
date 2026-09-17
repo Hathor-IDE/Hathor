@@ -783,26 +783,55 @@ MainWindow::MainWindow(AudioEngine& audio,
               statusRibbon_->setWorkerAlive(audio_.hasWorker());
               statusRibbon_->setLspConnected(editorArea_->isLspConnected());
 
-              // L-5: Git status from the SourceControlPanel's repository model.
-              if (editorArea_->sourceControlPanel())
+              // L-5: Git status comes from the worker-refreshed cache
+              // (~0.5 Hz); the repository walk never runs here.
               {
-                  auto* repo = editorArea_->sourceControlPanel()->repository();
-                  if (repo && repo->hasRepository())
-                  {
-                      auto entries = repo->getStatusEntries();
-                      int staged = 0, unstaged = 0;
-                      for (const auto& e : entries)
-                      {
-                          if (e.staged == hathor::ui::GitStaged::Yes) ++staged;
-                          else ++unstaged;
-                      }
-                      statusRibbon_->setGitStatus(
-                          repo->getCurrentBranch(), staged, unstaged);
-                  }
+                  std::lock_guard<std::mutex> lock(gitCacheMutex_);
+                  if (gitCache_.hasRepo)
+                      statusRibbon_->setGitStatus(gitCache_.branch,
+                                                  gitCache_.staged,
+                                                  gitCache_.unstaged);
                   else
-                  {
                       statusRibbon_->setGitStatus("", 0, 0);
-                  }
+              }
+
+              // Refresh the cache at ~0.5 Hz on a worker thread.
+              if (++statusTickCount_ % 120 == 0
+                  && !gitRefreshInFlight_.exchange(true))
+              {
+                  juce::Component::SafePointer<MainWindow> safeSelf(this);
+                  std::thread([safeSelf]() {
+                      GitStatusCache fresh;
+                      if (auto* self = safeSelf.getComponent())
+                      {
+                          if (self->editorArea_ != nullptr
+                              && self->editorArea_->sourceControlPanel() != nullptr)
+                          {
+                              auto* repo = self->editorArea_->sourceControlPanel()->repository();
+                              if (repo != nullptr && repo->hasRepository())
+                              {
+                                  fresh.hasRepo = true;
+                                  fresh.branch = repo->getCurrentBranch();
+                                  auto entries = repo->getStatusEntries();
+                                  for (const auto& e : entries)
+                                  {
+                                      if (e.staged == hathor::ui::GitStaged::Yes)
+                                          ++fresh.staged;
+                                      else
+                                          ++fresh.unstaged;
+                                  }
+                              }
+                          }
+                      }
+                      if (auto* self = safeSelf.getComponent())
+                      {
+                          {
+                              std::lock_guard<std::mutex> lock(self->gitCacheMutex_);
+                              self->gitCache_ = fresh;
+                          }
+                          self->gitRefreshInFlight_.store(false);
+                      }
+                  }).detach();
               }
           }
       };

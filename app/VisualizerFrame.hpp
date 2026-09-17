@@ -23,6 +23,7 @@
 #include <atomic>
 #include <cstdint>
 #include <cstring>
+#include <vector>
 
 namespace hathor {
 
@@ -230,6 +231,60 @@ public:
         readIdx_.store(rIdx + 1u, std::memory_order_release);
         cyclePos   = cp;
         eventCount = safeEc;
+        return true;
+    }
+
+    // -----------------------------------------------------------------------
+    // readAppend() — UI timer thread only.
+    //
+    // Same seqlock discipline as read(), but copy-constructs the frame's
+    // events into the caller's vector instead of copy-assigning into raw
+    // storage. Copy-construction is always lifetime-valid, unlike assignment
+    // into never-constructed scratch memory. Prefer this over read().
+    // -----------------------------------------------------------------------
+    template <typename Alloc>
+    bool readAppend(double& cyclePos,
+                    std::vector<Event<ParamMap>, Alloc>& out,
+                    uint32_t maxNew) noexcept
+    {
+        const uint32_t rIdx = readIdx_.load(std::memory_order_relaxed);
+        const uint32_t wIdx = writeIdx_.load(std::memory_order_acquire);
+
+        // Empty check: read index has caught up with write index.
+        if (rIdx == wIdx)
+            return false;
+
+        const uint32_t slot = rIdx & kMask;
+        const VisualizerFrame& frame = buf_[slot];
+
+        // Seqlock: read sequence before copying.
+        const uint32_t s0 = frame.sequence.load(std::memory_order_acquire);
+        if (s0 & 1u)
+            return false; // Write in progress — discard this tick.
+
+        // Copy payload.
+        const double   cp = frame.cyclePos;
+        const uint32_t ec = frame.eventCount;
+        const uint32_t safeEc = (ec <= static_cast<uint32_t>(kMaxFrameEvents))
+                                    ? ec : static_cast<uint32_t>(kMaxFrameEvents);
+        const Event<ParamMap>* src = frame.events();
+        const uint32_t n = std::min(safeEc, maxNew);
+        for (uint32_t i = 0; i < n; ++i)
+            out.push_back(src[i]);
+
+        // Seqlock: read sequence after copying.
+        const uint32_t s1 = frame.sequence.load(std::memory_order_acquire);
+        if (s1 != s0)
+        {
+            // Torn read — drop what we appended this call.
+            for (uint32_t i = 0; i < n && !out.empty(); ++i)
+                out.pop_back();
+            return false; // Torn read — discard.
+        }
+
+        // Valid frame — advance read index and return data.
+        readIdx_.store(rIdx + 1u, std::memory_order_release);
+        cyclePos   = cp;
         return true;
     }
 

@@ -116,6 +116,9 @@ private:
 
     /// Reused per tick — no heap allocation in steady state (Req 28.6).
     std::vector<hathor::Event<hathor::ParamMap>> firedEvents_;
+
+    /// Monotonic tick counter for idle repaint throttling.
+    uint64_t tickCount_{ 0 };
 };
 
 } // namespace hathor::ui
