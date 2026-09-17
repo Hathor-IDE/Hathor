@@ -235,6 +235,43 @@ std::pair<int, std::string> LspJsonRpc::serializePrepareRename(std::string_view 
     return {nextId_, serializeRequest("textDocument/prepareRename", params)};
 }
 
+std::string LspJsonRpc::serializeCancelRequest(int id)
+{
+    return serializeNotification("$/cancelRequest", {{"id", id}});
+}
+
+std::string LspJsonRpc::serializeShutdown()
+{
+    return serializeRequest("shutdown", json::object());
+}
+
+std::string LspJsonRpc::serializeExit()
+{
+    return serializeNotification("exit", json::object());
+}
+
+std::string LspJsonRpc::serializeResponse(const nlohmann::json& id,
+                                          const nlohmann::json& result)
+{
+    json msg = {
+        {"jsonrpc", "2.0"},
+        {"id", id},
+        {"result", result}
+    };
+    return LspMessageFramer::frameWrite(msg.dump());
+}
+
+std::string LspJsonRpc::serializeError(const nlohmann::json& id, int code,
+                                       std::string_view message)
+{
+    json msg = {
+        {"jsonrpc", "2.0"},
+        {"id", id},
+        {"error", {{"code", code}, {"message", std::string(message)}}}
+    };
+    return LspMessageFramer::frameWrite(msg.dump());
+}
+
 // ---------------------------------------------------------------------------
 // Navigation response parsing
 // ---------------------------------------------------------------------------
@@ -411,13 +448,16 @@ std::optional<IncomingMessage> LspJsonRpc::parseIncoming(std::string_view jsonSt
     if (j.contains("method"))
     {
         // Could be a request or notification
-        if (j.contains("id"))
+        if (j.contains("id") && !j["id"].is_null())
         {
-            // Request
+            // Request — preserve the id verbatim (integer or string) so
+            // the response echoes a form the server accepts.
             msg.type = IncomingMessage::Type::Request;
+            msg.request.rawId = j["id"];
             if (j["id"].is_number_integer())
                 msg.request.id = j["id"].get<int>();
-            msg.request.method = j["method"].get<std::string>();
+            if (j["method"].is_string())
+                msg.request.method = j["method"].get<std::string>();
             msg.request.params = j.value("params", json::object());
         }
         else

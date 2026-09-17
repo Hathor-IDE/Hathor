@@ -41,9 +41,13 @@ namespace hathor::lsp {
 
 /**
  * A JSON-RPC 2.0 request message ready to send.
+ * The id may be an integer (our requests) or a string (server requests
+ * use either); rawId preserves whichever form arrived so responses echo
+ * it back verbatim.
  */
 struct JsonRpcRequest {
-    int                 id;
+    int                 id = 0;
+    nlohmann::json      rawId = nullptr;
     std::string         method;
     nlohmann::json      params;
 };
@@ -208,6 +212,31 @@ public:
      * @return Pair of (requestId, framedMessage).
      */
     std::pair<int, std::string> serializePrepareRename(std::string_view uri, int line, int character);
+
+    /**
+     * Serialize a $/cancelRequest notification for a superseded request id.
+     */
+    std::string serializeCancelRequest(int id);
+
+    /** Serialize the shutdown request (client must follow with exit). */
+    std::string serializeShutdown();
+
+    /** Serialize the exit notification (ends the server process). */
+    std::string serializeExit();
+
+    /**
+     * Serialize a JSON-RPC response to a server-initiated request,
+     * echoing the request's id verbatim (integer or string).
+     */
+    std::string serializeResponse(const nlohmann::json& id,
+                                  const nlohmann::json& result);
+
+    /**
+     * Serialize a JSON-RPC error response (e.g. MethodNotFound for
+     * server→client methods we don't implement).
+     */
+    std::string serializeError(const nlohmann::json& id, int code,
+                               std::string_view message);
 
     // -----------------------------------------------------------------------
     // Navigation response parsing

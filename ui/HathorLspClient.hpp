@@ -125,6 +125,10 @@ public:
     // Diagnostics callback registration
     void setDiagnosticsCallback(DiagnosticsCallback callback) { diagnosticsCb_ = std::move(callback); }
 
+    /// Cancel a pending request: drops the local callback and asks the
+    /// server to abort via $/cancelRequest. No-op if unknown/completed.
+    void cancelRequest(int id);
+
     // Accessors for HathorTab / AI-8 context
     const hathor::language::LanguageMetadata* metadata() const noexcept { return metadata_; }
     const hathor::language::MetadataCompatibility* compatibility() const noexcept { return compatibility_; }
@@ -192,6 +196,11 @@ private:
         } type;
     };
     std::unordered_map<int, PendingRequest> pendingRequests_;
+
+    /// Most recent in-flight completion id (per client, shared across tabs).
+    /// A newer completion supersedes it: the old one is cancelled first so
+    /// rapid typing can't pile up stale server work.
+    int lastCompletionId_{ -1 };
 
     DiagnosticsCallback diagnosticsCb_;
     std::unordered_map<std::string, int> docVersions_;

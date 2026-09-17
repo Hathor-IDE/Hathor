@@ -19,6 +19,8 @@
  * Requirement references: AI-4
  */
 
+#include <algorithm>
+#include <cctype>
 #include <cstddef>
 #include <optional>
 #include <string>
@@ -94,64 +96,54 @@ public:
 
     /**
      * Attempt to extract the next complete message from the buffer.
+     * Spec-strict: headers terminate with "\r\n\r\n" only (a bare "\n\n"
+     * inside a JSON body must never split a message).
      * @return FramedMessage if a complete message is available, std::nullopt
      *         if more data is needed.
      */
     std::optional<FramedMessage> tryNextMessage()
     {
+        // Defensive cap: a peer claiming absurd lengths can't OOM us, and
+        // garbage without any terminator can't grow the buffer forever.
+        if (buffer_.size() > kMaxBufferedBytes)
+        {
+            buffer_.clear();
+            state_ = ParseState::AwaitingHeader;
+            contentLength_ = 0;
+            return std::nullopt;
+        }
         while (true)
         {
             if (state_ == ParseState::AwaitingHeader)
             {
-                // Look for Content-Length header terminator
-                auto headerEnd = buffer_.find("\r\n\r\n");
+                const auto headerEnd = buffer_.find("\r\n\r\n");
                 if (headerEnd == std::string::npos)
-                {
-                    // Might have a bare \n without \r\n — also try \n\n
-                    headerEnd = buffer_.find("\n\n");
-                    if (headerEnd == std::string::npos)
-                        return std::nullopt;
-                    // Adjust for \n\n (2 bytes instead of 4)
-                    // Check for Content-Length before this
-                    auto header = buffer_.substr(0, headerEnd);
-                    auto match = header.find("Content-Length");
-                    if (match == std::string::npos)
-                    {
-                        // Skip this unknown header block
-                        buffer_.erase(0, headerEnd + 2);
-                        continue;
-                    }
-                    contentLength_ = parseContentLength(header);
-                    if (contentLength_ <= 0)
-                    {
-                        buffer_.clear();
-                        return std::nullopt;
-                    }
-                    state_ = ParseState::AwaitingBody;
-                    buffer_.erase(0, headerEnd + 2);
-                    continue;
-                }
+                    return std::nullopt; // need more data
 
-                auto header = buffer_.substr(0, headerEnd);
+                const auto header = buffer_.substr(0, headerEnd);
                 contentLength_ = parseContentLength(header);
-                if (contentLength_ <= 0)
+                buffer_.erase(0, headerEnd + 4);
+                if (contentLength_ <= 0
+                    || contentLength_ > kMaxMessageBytes)
                 {
-                    // Malformed header — skip to next potential header
-                    buffer_.erase(0, headerEnd + 4);
+                    // Malformed or absurd header: skip exactly this header
+                    // block and keep any pipelined bytes after it.
+                    state_ = ParseState::AwaitingHeader;
+                    contentLength_ = 0;
                     continue;
                 }
                 state_ = ParseState::AwaitingBody;
-                buffer_.erase(0, headerEnd + 4);
             }
             else // AwaitingBody
             {
-                if (static_cast<int>(buffer_.size()) < contentLength_)
+                if (static_cast<std::size_t>(contentLength_) > buffer_.size())
                     return std::nullopt; // Need more data
 
                 FramedMessage msg;
-                msg.body = buffer_.substr(0, contentLength_);
+                msg.body = buffer_.substr(0,
+                                          static_cast<size_t>(contentLength_));
                 msg.contentLength = contentLength_;
-                buffer_.erase(0, contentLength_);
+                buffer_.erase(0, static_cast<size_t>(contentLength_));
                 state_ = ParseState::AwaitingHeader;
                 contentLength_ = 0;
                 return msg;
@@ -171,27 +163,48 @@ private:
         AwaitingBody,
     };
 
+    /// Largest single message accepted (64 MB — far above any real LSP
+    /// payload, far below OOM territory).
+    static constexpr int kMaxMessageBytes = 64 * 1024 * 1024;
+    /// Largest total buffered bytes before the buffer is dropped.
+    static constexpr std::size_t kMaxBufferedBytes =
+        static_cast<std::size_t>(kMaxMessageBytes) * 2;
+
     static int parseContentLength(std::string_view header)
     {
-        auto pos = header.rfind("Content-Length");
+        // Case-insensitive "Content-Length", first occurrence wins (takes
+        // the header block's value, not a smuggled duplicate's).
+        std::string lower(header);
+        std::transform(lower.begin(), lower.end(), lower.begin(),
+                       [](unsigned char c) {
+                           return static_cast<char>(std::tolower(c));
+                       });
+        const std::string key = "content-length";
+        auto pos = lower.find(key);
         if (pos == std::string::npos)
             return -1;
-
-        auto valueStart = header.find_first_of("0123456789", pos);
-        if (valueStart == std::string::npos)
+        pos += key.size();
+        // Skip optional whitespace and the colon separator.
+        while (pos < lower.size()
+               && (lower[pos] == ' ' || lower[pos] == '\t'
+                   || lower[pos] == ':'))
+            ++pos;
+        if (pos >= lower.size() || !std::isdigit(
+                static_cast<unsigned char>(lower[pos])))
             return -1;
 
-        auto valueEnd = header.find_first_not_of("0123456789", valueStart);
-        auto numStr = header.substr(valueStart, valueEnd - valueStart);
-
-        try
+        // Accumulate with overflow + cap checks (stoi would throw/overflow
+        // on "99999999999").
+        long long value = 0;
+        while (pos < lower.size()
+               && std::isdigit(static_cast<unsigned char>(lower[pos])))
         {
-            return std::stoi(std::string(numStr));
+            value = value * 10 + (lower[pos] - '0');
+            if (value > kMaxMessageBytes)
+                return -1;
+            ++pos;
         }
-        catch (...)
-        {
-            return -1;
-        }
+        return static_cast<int>(value);
     }
 
     ParseState  state_         = ParseState::AwaitingHeader;

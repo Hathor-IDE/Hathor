@@ -110,13 +110,9 @@ void HathorLspClient::stop()
     if (!isProcessAlive())
         return;
 
-    // Send shutdown request
-    std::string msg = rpc_.serializeRequest("shutdown", nlohmann::json::object());
-    writeToStdin(msg);
-
-    // Send exit notification
-    std::string exitMsg = rpc_.serializeNotification("exit", nlohmann::json::object());
-    writeToStdin(exitMsg);
+    // Send shutdown request, then exit notification (clean server stop).
+    writeToStdin(rpc_.serializeShutdown());
+    writeToStdin(rpc_.serializeExit());
 
     // Wait briefly for graceful shutdown
     std::this_thread::sleep_for(std::chrono::milliseconds(500));
@@ -307,10 +303,27 @@ void HathorLspClient::requestCompletion(const std::string& uri,
     auto [id, msg] = rpc_.serializeCompletion(uri, line, character);
     writeToStdin(msg);
 
+    // A newer completion supersedes the previous one: cancel it first.
+    if (lastCompletionId_ >= 0 && lastCompletionId_ != id)
+        cancelRequest(lastCompletionId_);
+    lastCompletionId_ = id;
+
     PendingRequest req;
     req.type = PendingRequest::Completion;
     req.completionCb = std::move(callback);
     pendingRequests_[id] = std::move(req);
+}
+
+void HathorLspClient::cancelRequest(int id)
+{
+    auto it = pendingRequests_.find(id);
+    if (it == pendingRequests_.end())
+        return;
+    pendingRequests_.erase(it);
+    if (id == lastCompletionId_)
+        lastCompletionId_ = -1;
+    if (isRunning())
+        writeToStdin(rpc_.serializeCancelRequest(id));
 }
 
 void HathorLspClient::requestHover(const std::string& uri,
@@ -616,7 +629,14 @@ void HathorLspClient::handleMessage(const lsp::IncomingMessage& msg)
         }
         case lsp::IncomingMessage::Type::Request:
         {
-            // Server requesting something from us — send empty response
+            // Server requesting something from us. We implement no
+            // server→client methods, so reply MethodNotFound (-32601) with
+            // the id echoed verbatim (integer or string) — never silence,
+            // or the server may stall waiting.
+            if (isRunning())
+                writeToStdin(rpc_.serializeError(msg.request.rawId, -32601,
+                                                 "Method not found: "
+                                                     + msg.request.method));
             break;
         }
     }
@@ -634,6 +654,8 @@ void HathorLspClient::handleResponse(int id,
 
     PendingRequest req = std::move(it->second);
     pendingRequests_.erase(it);
+    if (id == lastCompletionId_)
+        lastCompletionId_ = -1;
 
     if (isError)
     {
