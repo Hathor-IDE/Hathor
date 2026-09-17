@@ -45,7 +45,8 @@ enum class Panel
  *   1. Call setActivePanel() to reflect external panel state changes.
  *   2. Install onPanelToggled to react to button clicks.
  */
-class ActivityRibbon : public juce::Component
+class ActivityRibbon : public juce::Component,
+                       public juce::TooltipClient
 {
 public:
     ActivityRibbon();
@@ -109,6 +110,27 @@ private:
 
     Panel activePanel_ { Panel::None };
 
+    // Keyboard focus: index into navButtons_ (0..6), 7 = settings, -1 = none.
+    int focusedIndex_{ -1 };
+    // Hovered button for tooltips (does not disturb keyboard focus).
+    int hoverIndex_{ -1 };
+
+    static const char* labelFor(Panel p) noexcept
+    {
+        switch (p)
+        {
+            case Panel::Explorer:       return "Explorer";
+            case Panel::Search:         return "Search";
+            case Panel::VersionControl: return "Source Control";
+            case Panel::Debug:          return "Debug";
+            case Panel::Terminal:       return "Terminal";
+            case Panel::Problems:       return "Problems";
+            case Panel::AIAgent:        return "AI Agent";
+            case Panel::None:           return "Settings";
+        }
+        return "";
+    }
+
     //==========================================================================
     // Layout helpers
     juce::Rectangle<int> separatorBounds_;
@@ -116,6 +138,35 @@ private:
     //==========================================================================
     // Input
     void mouseDown(const juce::MouseEvent& e) override;
+    void mouseMove(const juce::MouseEvent& e) override;
+    void mouseExit(const juce::MouseEvent&) override { hoverIndex_ = -1; }
+    bool keyPressed(const juce::KeyPress& key) override;
+    void focusLost(FocusChangeType) override { focusedIndex_ = -1; repaint(); }
+
+    // juce::TooltipClient — per-button tooltip for the hovered button.
+    juce::String getTooltip() override
+    {
+        if (hoverIndex_ >= 0 && hoverIndex_ <= 7)
+        {
+            const Panel p = (hoverIndex_ == 7)
+                ? Panel::None
+                : navButtons_[static_cast<size_t>(hoverIndex_)].panel;
+            return labelFor(p);
+        }
+        return {};
+    }
+
+private:
+    int indexAt(juce::Point<int> pos) const noexcept;
+    void activateIndex(int index);
+    const RibbonButton* buttonAt(int index) const noexcept
+    {
+        if (index >= 0 && index < 7)
+            return &navButtons_[static_cast<size_t>(index)];
+        if (index == 7)
+            return &settingsButton_;
+        return nullptr;
+    }
 
     //==========================================================================
     // Drawing helpers

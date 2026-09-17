@@ -90,6 +90,14 @@ bool ActionRegistry::bindKey(const KeyEquivalent& key, std::string actionId)
         return false;
 
     auto& entry = actions_[it->second];
+    // Drop the action's previous binding so the stale key stops resolving.
+    if (entry.keyEquivalent.has_value())
+        keyToId_.erase(*entry.keyEquivalent);
+    // A key bound to a different action is a conflict: last writer wins,
+    // and the previous owner loses its binding (no silent double-dispatch).
+    if (auto kt = keyToId_.find(key); kt != keyToId_.end() && kt->second != actionId)
+        if (auto ot = idToIndex_.find(kt->second); ot != idToIndex_.end())
+            actions_[ot->second].keyEquivalent.reset();
     entry.keyEquivalent = key;
     keyToId_[key] = actionId;
     return true;
@@ -150,8 +158,11 @@ bool ActionRegistry::dispatchKey(const KeyEquivalent& key)
     if (it == idToIndex_.end())
         return false;
     auto& entry = actions_[it->second];
-    if (entry.callback)
-        entry.callback();
+    // No callback installed: report unhandled so focus traversal and
+    // typing continue instead of swallowing the key.
+    if (!entry.callback)
+        return false;
+    entry.callback();
     return true;
 }
 

@@ -19,6 +19,9 @@ namespace hathor::ui {
 ActivityRibbon::ActivityRibbon()
 {
     setSize(kRibbonWidth, 400); // default height; resized() will correct it
+    setWantsKeyboardFocus(true);
+    setTitle("Activity Bar");
+    setDescription("Switch side panels. Arrow keys move, Enter activates.");
 }
 
 // ---------------------------------------------------------------------------
@@ -79,6 +82,16 @@ void ActivityRibbon::paint(juce::Graphics& g)
 
     // Settings button
     paintButton(g, settingsButton_);
+
+    // Keyboard focus ring around the focused button.
+    if (hasKeyboardFocus(true) && focusedIndex_ >= 0 && focusedIndex_ <= 7)
+    {
+        const RibbonButton* btn = (focusedIndex_ == 7)
+            ? &settingsButton_
+            : &navButtons_[static_cast<size_t>(focusedIndex_)];
+        g.setColour(palette.accent);
+        g.drawRect(btn->bounds.expanded(1), 1);
+    }
 }
 
 void ActivityRibbon::paintButton(juce::Graphics& g, const RibbonButton& btn) const
@@ -109,6 +122,26 @@ void ActivityRibbon::paintButton(juce::Graphics& g, const RibbonButton& btn) con
                           iconCol);
 }
 
+int ActivityRibbon::indexAt(juce::Point<int> pos) const noexcept
+{
+    for (int i = 0; i < 7; ++i)
+        if (navButtons_[static_cast<size_t>(i)].bounds.contains(pos))
+            return i;
+    if (settingsButton_.bounds.contains(pos))
+        return 7;
+    return -1;
+}
+
+void ActivityRibbon::activateIndex(int index)
+{
+    if (index < 0 || index > 7)
+        return;
+    const Panel p = (index == 7) ? Panel::None
+                                 : navButtons_[static_cast<size_t>(index)].panel;
+    if (onPanelToggled)
+        onPanelToggled(p);
+}
+
 // ---------------------------------------------------------------------------
 // juce::Component — mouse input
 // ---------------------------------------------------------------------------
@@ -131,6 +164,7 @@ void ActivityRibbon::mouseDown(const juce::MouseEvent& e)
     {
         if (btn.bounds.contains(pos))
         {
+            focusedIndex_ = indexAt(pos);
             if (onPanelToggled)
                 onPanelToggled(btn.panel);
             return;
@@ -140,9 +174,37 @@ void ActivityRibbon::mouseDown(const juce::MouseEvent& e)
     // Settings button — treated as Panel::None toggle (no panel opens)
     if (settingsButton_.bounds.contains(pos))
     {
+        focusedIndex_ = 7;
         if (onPanelToggled)
             onPanelToggled(Panel::None);
     }
+}
+
+void ActivityRibbon::mouseMove(const juce::MouseEvent& e)
+{
+    hoverIndex_ = indexAt(e.getPosition());
+}
+
+bool ActivityRibbon::keyPressed(const juce::KeyPress& key)
+{
+    if (key == juce::KeyPress::downKey || key == juce::KeyPress::rightKey)
+    {
+        focusedIndex_ = (focusedIndex_ < 0) ? 0 : (focusedIndex_ + 1) % 8;
+        repaint();
+        return true;
+    }
+    if (key == juce::KeyPress::upKey || key == juce::KeyPress::leftKey)
+    {
+        focusedIndex_ = (focusedIndex_ < 0) ? 7 : (focusedIndex_ + 7) % 8;
+        repaint();
+        return true;
+    }
+    if (key == juce::KeyPress::returnKey || key == juce::KeyPress::spaceKey)
+    {
+        activateIndex(focusedIndex_);
+        return true;
+    }
+    return false;
 }
 
 } // namespace hathor::ui
