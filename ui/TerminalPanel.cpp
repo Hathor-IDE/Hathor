@@ -17,6 +17,24 @@
 
 namespace hathor::ui {
 
+// Forwards Up/Down from the single-line input field (which holds focus)
+// to the panel's history recall: the TextEditor would otherwise ignore them.
+class TerminalHistoryForwarder : public juce::KeyListener
+{
+public:
+    explicit TerminalHistoryForwarder(TerminalPanel& owner) : owner_(owner) {}
+
+    bool keyPressed(const juce::KeyPress& key, juce::Component*) override
+    {
+        if (key == juce::KeyPress::upKey || key == juce::KeyPress::downKey)
+            return owner_.keyPressed(key);
+        return false;
+    }
+
+private:
+    TerminalPanel& owner_;
+};
+
 // ---------------------------------------------------------------------------
 // Construction / destruction
 // ---------------------------------------------------------------------------
@@ -58,6 +76,8 @@ TerminalPanel::TerminalPanel(const std::string& projectDir)
     inputField_->setColour(juce::TextEditor::textColourId, palette.textPrimary);
     inputField_->setColour(juce::TextEditor::outlineColourId, palette.accent.withAlpha(0.3f));
     inputField_->addListener(this);
+    historyForwarder_ = std::make_unique<TerminalHistoryForwarder>(*this);
+    inputField_->addKeyListener(historyForwarder_.get());
     addAndMakeVisible(*inputField_);
 
     // -----------------------------------------------------------------------
@@ -82,7 +102,8 @@ TerminalPanel::TerminalPanel(const std::string& projectDir)
     int idx = 1;
     for (const auto& [id, label] : taskRunner_.taskList())
     {
-        taskCombo_->addItem(juce::String(label) + " (" + juce::String(id) + ")", idx++);
+        taskCombo_->addItem(juce::String(label), idx++);
+        taskIds_.push_back(id);
     }
     taskCombo_->setSelectedItemIndex(0);
     taskCombo_->setTooltip("Select a task to run (build, test, check, ...)");
@@ -92,18 +113,11 @@ TerminalPanel::TerminalPanel(const std::string& projectDir)
     runTaskBtn_->setTooltip("Run the selected task");
     runTaskBtn_->onClick = [this]() {
         int selectedIdx = taskCombo_->getSelectedItemIndex();
-        if (selectedIdx < 0)
+        if (selectedIdx < 0 || selectedIdx >= static_cast<int>(taskIds_.size()))
             return;
-
-        // Extract task id from the item text (we stored "Label (id)")
-        juce::String itemText = taskCombo_->getItemText(selectedIdx);
-        int openParen = itemText.lastIndexOfChar('(');
-        int closeParen = itemText.lastIndexOfChar(')');
-        if (openParen > 0 && closeParen > openParen)
-        {
-            juce::String taskId = itemText.substring(openParen + 1, closeParen);
-            runTask(taskId.toStdString());
-        }
+        // Task ids tracked alongside combo items — no string surgery, so
+        // labels containing parentheses can't misroute.
+        runTask(taskIds_[static_cast<size_t>(selectedIdx)]);
     };
     addAndMakeVisible(*runTaskBtn_);
 
@@ -199,9 +213,46 @@ void TerminalPanel::resized()
 
 void TerminalPanel::setVisible(bool visible)
 {
+    const bool wasVisible = isVisible();
     juce::Component::setVisible(visible);
-    if (visible)
+    // Focus the input only on a fresh show while it can take typing —
+    // redundant setVisible calls must not steal focus back.
+    if (visible && !wasVisible && inputField_->isEnabled())
         inputField_->grabKeyboardFocus();
+}
+
+bool TerminalPanel::keyPressed(const juce::KeyPress& key)
+{
+    if (inputHistory_.empty())
+        return false;
+    if (key == juce::KeyPress::upKey)
+    {
+        if (historyIndex_ < 0)
+            historyIndex_ = static_cast<int>(inputHistory_.size()) - 1;
+        else if (historyIndex_ > 0)
+            --historyIndex_;
+        inputField_->setText(inputHistory_[static_cast<size_t>(historyIndex_)]);
+        inputField_->setCaretPosition(INT_MAX);
+        return true;
+    }
+    if (key == juce::KeyPress::downKey)
+    {
+        if (historyIndex_ < 0)
+            return true;
+        ++historyIndex_;
+        if (historyIndex_ >= static_cast<int>(inputHistory_.size()))
+        {
+            historyIndex_ = -1;
+            inputField_->clear();
+        }
+        else
+        {
+            inputField_->setText(inputHistory_[static_cast<size_t>(historyIndex_)]);
+            inputField_->setCaretPosition(INT_MAX);
+        }
+        return true;
+    }
+    return false;
 }
 
 // ---------------------------------------------------------------------------
@@ -239,6 +290,7 @@ void TerminalPanel::openShell()
     if (process_.launch(argv, taskRunner_.projectDir()))
     {
         running_ = true;
+        currentTaskId_ = "shell";
         updateStateLabel();
         updateCancelButton();
         appendStatus(std::string("Starting shell: ") + shellPath);
@@ -271,6 +323,7 @@ void TerminalPanel::runCommand(const std::string& commandLine)
     if (process_.launch(shellArgv, taskRunner_.projectDir()))
     {
         running_ = true;
+        currentTaskId_ = "command";
         appendStatus(std::string("$ ") + commandLine);
         updateStateLabel();
         updateCancelButton();
@@ -306,6 +359,7 @@ bool TerminalPanel::runTask(const std::string& taskId)
     if (process_.launch(shellArgv, task->cwd.empty() ? taskRunner_.projectDir() : task->cwd))
     {
         running_ = true;
+        currentTaskId_ = taskId;
         appendStatus(std::string("Task: ") + task->label);
         appendStatus(std::string("$ ") + expanded);
         updateStateLabel();
@@ -347,11 +401,16 @@ void TerminalPanel::timerCallback()
 {
     if (running_)
     {
-        // Drain output from the process's SPSC ring buffer.
-        char buf[4096];
-        std::size_t n = process_.drainOutput(buf, sizeof(buf));
-        if (n > 0)
+        // Drain output from the process's SPSC ring buffer. Up to 4 chunks
+        // per tick so fast output can't fall behind one 4K read per 33 ms.
+        for (int i = 0; i < 4; ++i)
+        {
+            char buf[4096];
+            std::size_t n = process_.drainOutput(buf, sizeof(buf));
+            if (n == 0)
+                break;
             appendOutput(std::string(buf, n));
+        }
 
         // Check if the process has exited (state transitioned to Done).
         if (process_.state() == TerminalProcess::State::Done)
@@ -387,17 +446,8 @@ void TerminalPanel::onProcessExited()
     inputField_->setEnabled(true);
 
     if (onTaskCompleted)
-    {
-        // Try to infer the task id from the combo box selection.
-        juce::String itemText = taskCombo_->getItemText(taskCombo_->getSelectedItemIndex());
-        int openParen = itemText.lastIndexOfChar('(');
-        int closeParen = itemText.lastIndexOfChar(')');
-        std::string taskId = "";
-        if (openParen > 0 && closeParen > openParen)
-            taskId = itemText.substring(openParen + 1, closeParen).toStdString();
-
-        onTaskCompleted(taskId, status.exitCode);
-    }
+        onTaskCompleted(currentTaskId_, status.exitCode);
+    currentTaskId_.clear();
 }
 
 // ---------------------------------------------------------------------------
@@ -457,6 +507,24 @@ void TerminalPanel::appendOutput(const std::string& text)
     // Insert text at the end of the document.
     outputEditor_->setCaretPosition(static_cast<int>(outputEditor_->getText().length()));
     outputEditor_->insertTextAtCaret(juce::String(text));
+
+    // Bound the view to the tail: drop the head past the cap so long runs
+    // stay O(cap) instead of growing (and laying out) without limit.
+    const int len = outputEditor_->getText().length();
+    if (static_cast<size_t>(len) > kMaxOutputChars)
+    {
+        const int excess = len - static_cast<int>(kMaxOutputChars);
+        // Cut at a line boundary when one is near the cut point.
+        int cut = excess;
+        const juce::String current = outputEditor_->getText();
+        const int nl = current.indexOfChar(excess, '\n');
+        if (nl >= 0 && nl - excess < 4096)
+            cut = nl + 1;
+        outputEditor_->setText(current.substring(cut),
+                               juce::dontSendNotification);
+        outputEditor_->setCaretPosition(
+            static_cast<int>(outputEditor_->getText().length()));
+    }
 }
 
 void TerminalPanel::appendStatus(const std::string& text)
@@ -485,7 +553,7 @@ void TerminalPanel::updateStateLabel()
     }
     else
     {
-        std::string status = "○ Idle";
+        std::string status = "○ Idle (pipe runner — interactive TUIs like vim/ssh need a real terminal)";
         if (lastExitCode_ == 0)
             status = "✓ Done";
         else if (lastExitCode_ != 0)

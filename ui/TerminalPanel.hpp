@@ -65,6 +65,8 @@ public:
     // -----------------------------------------------------------------------
     void setVisible(bool visible) override;
 
+    bool keyPressed(const juce::KeyPress& key) override;
+
     // -----------------------------------------------------------------------
     // Panel operations
     // -----------------------------------------------------------------------
@@ -184,6 +186,15 @@ private:
     // Input history (for Up/Down arrow recall).
     std::vector<std::string> inputHistory_;
     int historyIndex_ = -1;
+    std::unique_ptr<juce::KeyListener> historyForwarder_;
+
+    // Task ids parallel to taskCombo_ items (index-aligned).
+    std::vector<std::string> taskIds_;
+    // Task id of the currently/last running process (for onTaskCompleted).
+    std::string currentTaskId_;
+
+    // Output cap: the view keeps the tail only (bounded memory + layout).
+    static constexpr size_t kMaxOutputChars = 512 * 1024;
 
     // Layout constants
     static constexpr int kInputHeight    = 26;
