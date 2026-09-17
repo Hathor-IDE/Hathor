@@ -253,7 +253,10 @@ private:
     std::vector<StackFrame> pendingFrames_;
     bool pendingLocals_ = false;
     std::vector<WatchValue> pendingLocalValues_;
-    std::string pendingWatchLabel_;
+    /// FIFO of pending watch labels: the CLI answers serially, so the
+    /// front label always owns the next watch result. A queue (not one
+    /// string) keeps concurrent watches from clobbering each other.
+    std::deque<std::string> pendingWatchLabels_;
 
     /// The last command sent to the debugger.  Debugger CLIs echo our own
     /// command back when stdin is not a tty; we skip that echo so it is not

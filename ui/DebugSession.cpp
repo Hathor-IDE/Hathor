@@ -124,7 +124,7 @@ std::string DebugSession::launch(const Config& config)
     pendingLocals_ = false;
     pendingFrames_.clear();
     pendingLocalValues_.clear();
-    pendingWatchLabel_.clear();
+    pendingWatchLabels_.clear();
     lastCommand_.clear();
     pendingLocalsCmd_.clear();
     quietPolls_ = 0;
@@ -149,7 +149,7 @@ void DebugSession::shutdown()
 
     pendingStop_ = false;
     pendingLocals_ = false;
-    pendingWatchLabel_.clear();
+    pendingWatchLabels_.clear();
 }
 
 // ---------------------------------------------------------------------------
@@ -333,7 +333,7 @@ void DebugSession::evaluateWatch(const std::string& expression, const std::strin
         return;
     if (expression.empty())
         return;
-    pendingWatchLabel_ = label.empty() ? expression : label;
+    pendingWatchLabels_.push_back(label.empty() ? expression : label);
     if (debuggerType_ == DebuggerType::Lldb)
         sendCommand("expression -- " + expression);
     else
@@ -500,7 +500,15 @@ void DebugSession::handleOutputLine(const std::string& rawLine)
                     pendingBpConfirms_.pop_front();
                     auto it = breakpoints_.find(ourId);
                     if (it != breakpoints_.end())
-                        it->second.id = bpNum;   // authoritative debugger number
+                    {
+                        // Re-key under the debugger's authoritative number
+                        // so the map key, entry id, and delete path agree.
+                        Breakpoint bp = std::move(it->second);
+                        breakpoints_.erase(it);
+                        if (bpNum > 0)
+                            bp.id = bpNum;
+                        breakpoints_[bp.id] = std::move(bp);
+                    }
                 } else if (bpNum > 0) {
                     // A confirmation without a pending request — adopt the
                     // debugger's number into the optimistic entry with that id.
@@ -563,23 +571,23 @@ void DebugSession::handleOutputLine(const std::string& rawLine)
     }
 
     // --- Watch/expression evaluation ---
-    if (!pendingWatchLabel_.empty()) {
+    if (!pendingWatchLabels_.empty()) {
         DebugWatchValue v;
         const bool ok = lldb ? parseLldbWatchLine(line, v)
                              : parseGdbWatchLine(line, v);
         if (ok) {
-            v.name = pendingWatchLabel_;
-            pendingWatchLabel_.clear();
+            v.name = pendingWatchLabels_.front();
+            pendingWatchLabels_.pop_front();
             if (onWatchValue)
                 onWatchValue(v);
             return;
         }
         if (line.rfind("error:", 0) == 0) {
             WatchValue v;
-            v.name = pendingWatchLabel_;
+            v.name = pendingWatchLabels_.front();
             v.type = "error";
             v.value = line;
-            pendingWatchLabel_.clear();
+            pendingWatchLabels_.pop_front();
             if (onWatchValue)
                 onWatchValue(v);
             return;
