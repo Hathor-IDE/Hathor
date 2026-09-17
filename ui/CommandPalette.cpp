@@ -43,6 +43,8 @@ private:
 CommandPalette::CommandPalette()
 {
     setOpaque(true);
+    setTitle("Command Palette");
+    setDescription("Type to filter actions. Arrow keys move, Enter runs, Escape closes.");
 
     filterField_ = std::make_unique<juce::TextEditor>();
     filterField_->setMultiLine(false);

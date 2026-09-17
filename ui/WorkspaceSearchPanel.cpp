@@ -40,6 +40,8 @@ WorkspaceSearchPanel::WorkspaceSearchPanel(std::filesystem::path workspaceRoot,
     : workspaceRoot_(std::move(workspaceRoot))
     , model_(model)
 {
+    setTitle("Search in Files");
+    setDescription("Search and replace across the workspace.");
     searchField_ = std::make_unique<juce::TextEditor>();
     searchField_->addListener(this);
     searchField_->setFont(HathorLookAndFeel::getUiFont(15.0f));

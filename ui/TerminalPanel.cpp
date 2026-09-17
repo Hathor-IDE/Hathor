@@ -42,6 +42,8 @@ private:
 TerminalPanel::TerminalPanel(const std::string& projectDir)
     : taskRunner_(projectDir)
 {
+    setTitle("Terminal");
+    setDescription("Run shell commands and tasks. Output is shown above the input field.");
     const auto& palette = HathorLookAndFeel::fromComponent(*this).getPalette();
 
     // -----------------------------------------------------------------------

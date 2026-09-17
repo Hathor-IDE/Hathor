@@ -34,6 +34,8 @@ namespace hathor::ui {
 
 VisualizerPanel::VisualizerPanel(AudioEngine& /*audio*/)
 {
+    setTitle("Visualizer");
+    setDescription("Live audio spectrum of the playing session.");
     pcmCount_       = 0;
     pcmWriteCursor_ = 0;
     lastActiveMs_ = 0;

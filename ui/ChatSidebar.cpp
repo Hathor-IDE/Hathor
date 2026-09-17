@@ -61,6 +61,8 @@ private:
 ChatSidebar::ChatSidebar(AudioEngine& /*audio*/,
                          hathor::control::ControlInterface& ci)
 {
+    setTitle("Chat");
+    setDescription("Agent chat threads. Type a prompt and press Enter to send.");
     const auto& palette = HathorLookAndFeel::fromComponent(*this).getPalette();
 
     // -----------------------------------------------------------------------

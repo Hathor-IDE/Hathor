@@ -32,6 +32,8 @@ private:
 QuickOpenDialog::QuickOpenDialog(const std::filesystem::path& workspaceRoot)
     : workspaceRoot_(workspaceRoot)
 {
+    setTitle("Quick Open");
+    setDescription("Type to filter files. Arrow keys move, Enter opens, Escape closes.");
     filterField_ = std::make_unique<juce::TextEditor>();
     filterField_->addListener(this);
     filterField_->setFont(HathorLookAndFeel::getUiFont(16.0f));

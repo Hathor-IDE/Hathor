@@ -26,6 +26,8 @@ ExplorerPanel::ExplorerPanel()
     // owner (MainWindow) always sets/restores the real root before display.
     : directory_(juce::File::getSpecialLocation(juce::File::userHomeDirectory))
 {
+    setTitle("Explorer");
+    setDescription("Workspace file tree. Double-click opens a file; right-click shows file actions.");
     const auto& palette = HathorLookAndFeel::fromComponent(*this).getPalette();
 
     // Header label — label-md: 11px, Medium 500, letter-spacing 0.05em (mockup)

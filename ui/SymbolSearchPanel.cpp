@@ -67,6 +67,8 @@ private:
 SymbolSearchPanel::SymbolSearchPanel(SymbolSearchModel* model)
     : model_(model)
 {
+    setTitle("Go to Symbol");
+    setDescription("Type to filter symbols. Arrow keys move, Enter jumps, Escape closes.");
     searchField_ = std::make_unique<juce::TextEditor>();
     searchField_->addListener(this);
     searchField_->setFont(HathorLookAndFeel::getUiFont(16.0f));

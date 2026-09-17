@@ -102,6 +102,8 @@ ChatThread::ChatThread()
                            inputPalette.accent);
     inputField_.setTextToShowWhenEmpty("Message agent...",
                                        inputPalette.textDisabled);
+    inputField_.setTitle("Chat input");
+    inputField_.setDescription("Type a prompt and press Enter to send it to the agent.");
     inputField_.addListener(this);
 }
 

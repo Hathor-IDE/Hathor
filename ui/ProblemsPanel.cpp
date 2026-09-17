@@ -65,6 +65,8 @@ private:
 ProblemsPanel::ProblemsPanel(hathor::control::DiagnosticRegistry* registry)
     : registry_(registry)
 {
+    setTitle("Problems");
+    setDescription("Diagnostics across the workspace. Selecting a row jumps to it.");
     const auto& palette = HathorLookAndFeel::fromComponent(*this).getPalette();
 
     hintLabel_ = std::make_unique<juce::Label>();

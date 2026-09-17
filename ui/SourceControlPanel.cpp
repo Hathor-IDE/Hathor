@@ -73,6 +73,8 @@ struct TabButton
 
 SourceControlPanel::SourceControlPanel(const std::string& projectDir)
 {
+    setTitle("Source Control");
+    setDescription("Stage, commit, push, pull, and browse history.");
     // Create the Git repository model.
     repository_ = std::make_unique<GitRepository>();
     repository_->setRepoPath(projectDir.empty()

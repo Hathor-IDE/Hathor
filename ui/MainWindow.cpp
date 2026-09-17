@@ -1776,9 +1776,11 @@ void MainWindow::onOpenShortcuts()
         "Hathor Keyboard Shortcuts\n\n"
         "Cmd+N    New Tab\n"
         "Cmd+S    Save\n"
+        "Cmd+Shift+S  Save As\n"
         "Cmd+W    Close Tab\n"
         "Cmd+Enter  Evaluate Block\n"
         "Cmd+P    Quick Open\n"
+        "Cmd+T    Go to Symbol\n"
         "Cmd+F    Find\n"
         "F12      Go to Definition\n"
         "See docs/SHORTCUTS.md for the full reference.");
@@ -1795,7 +1797,7 @@ void MainWindow::onAbout()
         juce::MessageBoxIconType::InfoIcon,
         "About Hathor",
         "Hathor — Live-coding IDE\n"
-        "Version 2.3\n"
+        "Version " HATHOR_UI_VERSION "\n"
         "Built with JUCE\n\n"
         "Copyright (C) 2024 Hathor Contributors");
 }
