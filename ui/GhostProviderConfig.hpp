@@ -36,6 +36,8 @@ struct GhostProviderConfig : BackendConfig {
     std::string apiToken;        ///< bearer token (never persisted)
     std::string tokenizerConfig; ///< tokenizer config path
     int         contextWindow  = 2048;
+    /// Skip TLS verification (GHOST_TLS_SKIP_VERIFY=1/true/yes/on).
+    /// Dev-only and insecure: any UI exposing this must show a warning.
     bool        tlsSkipVerify  = false;
 
     /** True if all required fields are populated for the selected backend. */
@@ -59,8 +61,10 @@ struct GhostProviderConfig : BackendConfig {
  *   - HF_API_TOKEN:  HuggingFace API token (for HuggingFace backend)
  *   - OPENAI_API_KEY: OpenAI API key (for OpenAi backend)
  *   - GHOST_URL:     custom URL for Tgi/LlamaCpp/Ollama backends
- *   - GHOST_CONTEXT_WINDOW: max context window (default: 2048)
- *   - GHOST_TLS_SKIP_VERIFY: "1" or "true" to skip TLS verification (dev only)
+ *   - GHOST_CONTEXT_WINDOW: max context window (default 2048, clamped
+ *     256…131072)
+ *   - GHOST_TLS_SKIP_VERIFY: "1"/"true"/"yes"/"on" to skip TLS verification.
+ *     Dev-only and insecure: any UI surface for this flag must warn.
  *
  * All methods are JUCE-free and safe to call from any thread (they read
  * environment variables which are process-global read-only at runtime).

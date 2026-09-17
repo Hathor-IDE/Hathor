@@ -15,6 +15,7 @@
 
 #include <cstdlib>
 #include <cstring>
+#include <cstdio>
 
 #include <cctype>
 #include <filesystem>
@@ -40,9 +41,12 @@ std::string GhostProviderResolver::getenv_(const char* name)
 
 bool GhostProviderResolver::parseBool(std::string_view val) noexcept
 {
-    if (val == "1" || val == "true" || val == "TRUE" || val == "True")
-        return true;
-    return false;
+    std::string lower(val);
+    std::transform(lower.begin(), lower.end(), lower.begin(),
+                   [](unsigned char c) {
+                       return static_cast<char>(std::tolower(c));
+                   });
+    return lower == "1" || lower == "true" || lower == "yes" || lower == "on";
 }
 
 // ---------------------------------------------------------------------------
@@ -120,10 +124,10 @@ std::optional<GhostProviderConfig> GhostProviderResolver::resolveForBackend(
             case LlmBackend::Tgi:
             case LlmBackend::LlamaCpp:
             case LlmBackend::Ollama:
-                // These backends may not need a token
+                // Local servers: only an explicit GHOST_API_TOKEN is sent.
+                // (Previously OPENAI_API_KEY was silently forwarded to
+                // localhost — surprising credential exfiltration.)
                 config.apiToken = getenv_("GHOST_API_TOKEN");
-                if (config.apiToken.empty())
-                    config.apiToken = getenv_("OPENAI_API_KEY");
                 break;
         }
     }
@@ -171,6 +175,8 @@ std::optional<GhostProviderConfig> GhostProviderResolver::resolveForBackend(
             config.contextWindow = std::stoi(cwStr);
             if (config.contextWindow < 256)
                 config.contextWindow = 256;
+            if (config.contextWindow > 131072)
+                config.contextWindow = 131072;
         }
         catch (...)
         {
@@ -178,7 +184,9 @@ std::optional<GhostProviderConfig> GhostProviderResolver::resolveForBackend(
         }
     }
 
-    // TLS skip verify (dev only, insecure)
+    // TLS skip verify (dev only, insecure). The flag is honored but the
+    // caller surface (Settings ghost section) must show a warning whenever
+    // it is set — see GhostProviderConfig.hpp.
     config.tlsSkipVerify = parseBool(getenv_("GHOST_TLS_SKIP_VERIFY"));
 
     // Tokenizer config
@@ -232,10 +240,19 @@ OverrideStore& overrideStore() noexcept
 
 std::string defaultOverridesFilePath() noexcept
 {
+#if defined(__linux__)
+    if (const char* xdg = std::getenv("XDG_CONFIG_HOME");
+        xdg != nullptr && xdg[0] != '\0')
+        return std::string(xdg) + "/hathor/ghost-endpoints.json";
+#endif
     const char* home = std::getenv("HOME");
     if (home == nullptr || home[0] == '\0')
         return "";
+#if defined(__APPLE__)
     return std::string(home) + "/Library/Application Support/Hathor/ghost-endpoints.json";
+#else
+    return std::string(home) + "/.config/hathor/ghost-endpoints.json";
+#endif
 }
 } // namespace
 
@@ -351,14 +368,46 @@ void GhostProviderResolver::writeOverridesFile()
     }
     j["overrides"] = std::move(ov);
 
+    // Atomic write (temp + rename) so a crash mid-write can't corrupt the
+    // stored endpoints; failures are reported, not swallowed.
     const std::filesystem::path fp(path);
     std::error_code ec;
     std::filesystem::create_directories(fp.parent_path(), ec);
-
-    std::ofstream out(path);
-    if (!out)
+    if (ec)
+    {
+        std::fprintf(stderr, "[hathor:ghost] cannot create %s: %s\n",
+                     fp.parent_path().string().c_str(), ec.message().c_str());
         return;
-    out << j.dump(4);
+    }
+
+    const auto tmp = fp.string() + ".tmp";
+    {
+        std::ofstream out(tmp, std::ios::trunc);
+        if (!out)
+        {
+            std::fprintf(stderr, "[hathor:ghost] cannot write %s\n",
+                         tmp.c_str());
+            return;
+        }
+        out << j.dump(4);
+        out.flush();
+        if (!out)
+        {
+            std::fprintf(stderr, "[hathor:ghost] failed writing %s\n",
+                         tmp.c_str());
+            std::error_code rmEc;
+            std::filesystem::remove(tmp, rmEc);
+            return;
+        }
+    }
+    std::filesystem::rename(tmp, fp, ec);
+    if (ec)
+    {
+        std::fprintf(stderr, "[hathor:ghost] cannot replace %s: %s\n",
+                     path.c_str(), ec.message().c_str());
+        std::error_code rmEc;
+        std::filesystem::remove(tmp, rmEc);
+    }
 }
 
 void GhostProviderResolver::setUrlOverride(LlmBackend backend, std::string_view url)
@@ -386,9 +435,19 @@ std::string GhostProviderResolver::getUrlOverrideUnlocked(LlmBackend backend) no
 void GhostProviderResolver::clearUrlOverrides() noexcept
 {
     auto& s = overrideStore();
-    const std::lock_guard<std::mutex> lk(s.mutex);
-    s.overrides.clear();
-    s.loaded = false;
+    std::string path;
+    {
+        const std::lock_guard<std::mutex> lk(s.mutex);
+        s.overrides.clear();
+        s.loaded = true; // stay empty — don't resurrect from disk on next get
+        path = s.filePathSet ? s.filePath : defaultOverridesFilePath();
+    }
+    // Delete the file so clearing persists across restarts.
+    if (!path.empty())
+    {
+        std::error_code ec;
+        std::filesystem::remove(path, ec);
+    }
 }
 
 std::string GhostProviderResolver::getUrlOverride(LlmBackend backend)
