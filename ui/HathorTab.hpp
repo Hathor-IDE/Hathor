@@ -232,7 +232,8 @@ public:
     const juce::CodeDocument& document() const noexcept { return document_; }
 
     /// The editor widget (for focus / cursor queries).
-    juce::CodeEditorComponent& editor() noexcept { return editor_; }
+    GhostAwareEditor& editor() noexcept { return editor_; }
+    const GhostAwareEditor& editor() const noexcept { return editor_; }
 
     // -----------------------------------------------------------------------
     // Mutations
