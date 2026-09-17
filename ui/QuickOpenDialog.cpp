@@ -39,7 +39,8 @@ QuickOpenDialog::QuickOpenDialog(const std::filesystem::path& workspaceRoot)
                             juce::Colours::black.withAlpha(0.6f));
     filterField_->setColour(juce::TextEditor::textColourId, juce::Colours::white);
     filterField_->setColour(juce::CaretComponent::caretColourId, juce::Colours::white);
-    filterField_->setInputRestrictions(0, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-.:/\\");
+    // No charset restriction: queries may contain spaces, unicode, #/@ etc.
+    filterField_->setInputRestrictions(0, juce::String());
     addAndMakeVisible(filterField_.get());
 
     hintLabel_ = std::make_unique<juce::Label>();
@@ -70,32 +71,66 @@ QuickOpenDialog::~QuickOpenDialog()
 
 void QuickOpenDialog::collectFiles(const std::filesystem::path& root)
 {
-    if (!std::filesystem::exists(root))
-        return;
-
-    for (const auto& entry : std::filesystem::recursive_directory_iterator(root))
-    {
-        if (!entry.is_regular_file())
-            continue;
-
-        auto ext = entry.path().extension().string();
-        std::transform(ext.begin(), ext.end(), ext.begin(),
-                       [](unsigned char c) { return std::tolower(c); });
-
-        if (ext == ".hathor" || ext == ".ck" || ext == ".txt" || ext == ".md")
+    // Index on a worker thread so large workspaces never block the message
+    // thread at construction. The generation check discards stale runs
+    // (e.g. workspace re-rooted while indexing).
+    const uint64_t generation = ++indexGeneration_;
+    indexing_.store(true);
+    juce::Component::SafePointer<QuickOpenDialog> safeSelf(this);
+    std::thread([safeSelf, generation, root]() {
+        std::vector<std::filesystem::path> files;
+        auto ignoredDir = [](const std::filesystem::path& p) {
+            const std::string name = p.filename().string();
+            if (name == ".git" || name == "node_modules" || name == ".hathor"
+                || name == "DerivedData" || name == ".idea"
+                || name == ".vscode" || name == "CMakeFiles"
+                || name == "_deps")
+                return true;
+            if (!name.empty() && name[0] == '.')
+                return true;
+            return name.rfind("build", 0) == 0;
+        };
+        std::error_code ec;
+        std::filesystem::recursive_directory_iterator it(root, ec);
+        const std::filesystem::recursive_directory_iterator end;
+        for (; !ec && it != end;)
         {
-            // Skip nodes_modules and hidden directories
-            auto pathStr = entry.path().string();
-            if (pathStr.find("node_modules") != std::string::npos)
+            std::error_code e2;
+            bool isDir = it->is_directory(e2);
+            if (!e2 && isDir && ignoredDir(it->path()))
+            {
+                it.disable_recursion_pending();
+                it.increment(e2);
                 continue;
-            if (pathStr.find("/.") != std::string::npos)
-                continue;
-
-            allFiles_.push_back(entry.path());
+            }
+            if (!e2 && it->is_regular_file(e2) && !e2)
+            {
+                auto ext = it->path().extension().string();
+                std::transform(ext.begin(), ext.end(), ext.begin(),
+                               [](unsigned char c) { return std::tolower(c); });
+                if (ext == ".hathor" || ext == ".ck" || ext == ".txt"
+                    || ext == ".md" || ext == ".json")
+                    files.push_back(it->path());
+            }
+            it.increment(e2);
         }
-    }
+        std::sort(files.begin(), files.end());
+        juce::MessageManager::callAsync([safeSelf, generation,
+                                         files = std::move(files)]() mutable {
+            if (auto* self = safeSelf.getComponent())
+                self->publishIndex(std::move(files), generation);
+        });
+    }).detach();
+}
 
-    std::sort(allFiles_.begin(), allFiles_.end());
+void QuickOpenDialog::publishIndex(std::vector<std::filesystem::path> files,
+                                   uint64_t generation)
+{
+    if (generation != indexGeneration_.load())
+        return; // stale run
+    allFiles_ = std::move(files);
+    indexing_.store(false);
+    refreshFiltered();
 }
 
 void QuickOpenDialog::showOver(juce::Component* parent)
@@ -163,6 +198,56 @@ bool QuickOpenDialog::fuzzyMatch(std::string_view query, std::string_view path)
     return qi == lowerQuery.size();
 }
 
+int QuickOpenDialog::fuzzyScore(std::string_view query, std::string_view path)
+{
+    if (query.empty())
+        return 0;
+
+    std::string q(query), p(path);
+    std::transform(q.begin(), q.end(), q.begin(),
+                   [](unsigned char c) { return std::tolower(c); });
+    std::transform(p.begin(), p.end(), p.begin(),
+                   [](unsigned char c) { return std::tolower(c); });
+
+    // Subsequence scan with run tracking.
+    int score = 0;
+    size_t qi = 0;
+    int run = 0;
+    size_t firstAt = std::string::npos;
+    const size_t fileStart = p.find_last_of("/\\") == std::string::npos
+                                 ? 0
+                                 : p.find_last_of("/\\") + 1;
+    for (size_t pi = 0; pi < p.size() && qi < q.size(); ++pi)
+    {
+        if (p[pi] == q[qi])
+        {
+            if (firstAt == std::string::npos)
+                firstAt = pi;
+            ++run;
+            // Consecutive runs score progressively; filename hits weigh 2x;
+            // word starts (after /_-.) and path start earn bonuses.
+            int w = run * run;
+            if (pi >= fileStart)
+                w *= 2;
+            if (pi == 0 || p[pi - 1] == '/' || p[pi - 1] == '\\'
+                || p[pi - 1] == '_' || p[pi - 1] == '-' || p[pi - 1] == '.')
+                w += 4;
+            score += w;
+            ++qi;
+        }
+        else
+        {
+            run = 0;
+        }
+    }
+    if (qi != q.size())
+        return -1;
+    // Early first-hit bonus; shorter paths win ties.
+    score += static_cast<int>(std::max<size_t>(0, 40 - firstAt));
+    score -= static_cast<int>(p.size() / 16);
+    return score;
+}
+
 void QuickOpenDialog::refreshFiltered()
 {
     auto query = filterField_ ? filterField_->getText() : juce::String();
@@ -174,19 +259,38 @@ void QuickOpenDialog::refreshFiltered()
     }
     else
     {
-        std::string queryStr = query.toStdString();
+        const std::string queryStr = query.toStdString();
+        std::vector<std::pair<int, std::filesystem::path>> scored;
         for (const auto& f : allFiles_)
         {
-            if (fuzzyMatch(queryStr, f.filename().string()))
-                filteredFiles_.push_back(f);
+            // Match against the workspace-relative path so "ed/tab" can
+            // match editors/tabs/... not just bare filenames.
+            std::error_code ec;
+            const std::string rel =
+                std::filesystem::relative(f, workspaceRoot_, ec).string();
+            const std::string& hay = ec ? f.filename().string() : rel;
+            const int s = fuzzyScore(queryStr, hay);
+            if (s >= 0)
+                scored.emplace_back(s, f);
         }
+        std::sort(scored.begin(), scored.end(),
+                  [](const auto& a, const auto& b) { return a.first > b.first; });
+        for (auto& s : scored)
+            filteredFiles_.push_back(std::move(s.second));
     }
+
+    if (indexing_.load() && filteredFiles_.empty() && hintLabel_)
+        hintLabel_->setText("Indexing workspace…", juce::dontSendNotification);
+    else if (hintLabel_)
+        hintLabel_->setText("Type to filter files (Esc to close)",
+                            juce::dontSendNotification);
 
     selectedIndex_ = 0;
     if (listBox_)
     {
         listBox_->updateContent();
-        listBox_->selectRow(0);
+        if (!filteredFiles_.empty())
+            listBox_->selectRow(0);
     }
 }
 

@@ -32,6 +32,23 @@ bool NavigationHistory::canGoForward() const noexcept
 
 void NavigationHistory::navigateTo(const NavigationEntry& entry)
 {
+    // Dedup: navigating to the current spot (or repeating the last push)
+    // must not spam the back stack — Back would otherwise step through
+    // every caret stop instead of real navigations.
+    if (current_.has_value() && current_->uri == entry.uri
+        && current_->line == entry.line && current_->column == entry.column)
+        return;
+    if (!backStack_.empty())
+    {
+        const auto& last = backStack_.back();
+        if (last.uri == entry.uri && last.line == entry.line
+            && last.column == entry.column)
+        {
+            current_ = entry;
+            forwardStack_.clear();
+            return;
+        }
+    }
     if (current_.has_value())
     {
         backStack_.push_back(*current_);

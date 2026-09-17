@@ -101,6 +101,7 @@ private:
     std::unique_ptr<juce::Label> hintLabel_;
     std::unique_ptr<juce::ListBox> listBox_;
     std::unique_ptr<juce::TextButton> closeBtn_;
+    std::unique_ptr<juce::KeyListener> keyForwarder_;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(SymbolSearchPanel)
 };

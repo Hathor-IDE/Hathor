@@ -34,8 +34,9 @@ class GotoLineDialog : public juce::Component,
                        public juce::Button::Listener
 {
 public:
-    /// Invoked on a valid, confirmed line number (1-based).
-    using LineCallback = std::function<void(int lineNumber)>;
+    /// Invoked on valid confirm: 1-based line and 1-based column.
+    /// Plain "42" yields column 1; "42:7" jumps to column 7.
+    using LineCallback = std::function<void(int lineNumber, int columnNumber)>;
 
     /** Construct the dialog content.
         @param numLines     Total lines in the document (1-based max).

@@ -14,12 +14,45 @@
 
 namespace hathor::ui {
 
+// Forwards list-navigation keys from the search field (which holds focus)
+// to the panel: the TextEditor would otherwise move its own caret.
+class SymbolKeyForwarder : public juce::KeyListener
+{
+public:
+    explicit SymbolKeyForwarder(SymbolSearchPanel& owner) : owner_(owner) {}
+
+    bool keyPressed(const juce::KeyPress& key, juce::Component*) override
+    {
+        if (key == juce::KeyPress::upKey || key == juce::KeyPress::downKey
+            || key == juce::KeyPress::pageUpKey
+            || key == juce::KeyPress::pageDownKey
+            || key == juce::KeyPress::homeKey || key == juce::KeyPress::endKey)
+            return owner_.keyPressed(key);
+        return false;
+    }
+
+private:
+    SymbolSearchPanel& owner_;
+};
+
 class SymbolSearchDoubleClickHandler : public juce::MouseListener
 {
 public:
     explicit SymbolSearchDoubleClickHandler(SymbolSearchPanel* parent) : parent_(parent) {}
-    void mouseDoubleClick(const juce::MouseEvent&) override {
-        int idx = parent_->selectedIndex_;
+    void mouseDoubleClick(const juce::MouseEvent& e) override {
+        // Use the event row, not the stale selection: double-clicking a
+        // non-selected row must open that row's symbol.
+        int idx = -1;
+        if (parent_->listBox_ != nullptr)
+        {
+            const juce::Point<int> inList =
+                parent_->listBox_->getLocalPoint(e.originalComponent,
+                                                 e.getPosition());
+            idx = parent_->listBox_->getRowContainingPosition(inList.x,
+                                                              inList.y);
+        }
+        if (idx < 0)
+            idx = parent_->selectedIndex_;
         if (idx >= 0 && idx < static_cast<int>(parent_->displayResults_.size()))
         {
             if (parent_->onSymbolSelected)
@@ -41,8 +74,11 @@ SymbolSearchPanel::SymbolSearchPanel(SymbolSearchModel* model)
                             juce::Colours::black.withAlpha(0.7f));
     searchField_->setColour(juce::TextEditor::textColourId, juce::Colours::white);
     searchField_->setColour(juce::CaretComponent::caretColourId, juce::Colours::white);
-    searchField_->setInputRestrictions(0, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-.:/\\");
+    // No charset restriction: symbol queries may contain spaces, unicode, etc.
+    searchField_->setInputRestrictions(0, juce::String());
     addAndMakeVisible(searchField_.get());
+    keyForwarder_ = std::make_unique<SymbolKeyForwarder>(*this);
+    searchField_->addKeyListener(keyForwarder_.get());
 
     hintLabel_ = std::make_unique<juce::Label>();
     hintLabel_->setText("Search symbols (Esc to close)", juce::dontSendNotification);
@@ -187,24 +223,46 @@ void SymbolSearchPanel::textEditorReturnKeyPressed(juce::TextEditor& /*editor*/)
 
 bool SymbolSearchPanel::keyPressed(const juce::KeyPress& key)
 {
+    const int last = static_cast<int>(displayResults_.size()) - 1;
+    auto moveTo = [this](int row) {
+        selectedIndex_ = juce::jlimit(0, static_cast<int>(displayResults_.size()) - 1, row);
+        if (listBox_ && selectedIndex_ >= 0)
+        {
+            listBox_->selectRow(selectedIndex_);
+            listBox_->scrollToEnsureRowIsOnscreen(selectedIndex_);
+        }
+    };
     if (key == juce::KeyPress::upKey)
     {
-        if (selectedIndex_ > 0)
-        {
-            selectedIndex_--;
-            if (listBox_)
-                listBox_->selectRow(selectedIndex_);
-        }
+        moveTo(selectedIndex_ - 1);
+        return true;
     }
-    else if (key == juce::KeyPress::downKey)
+    if (key == juce::KeyPress::downKey)
     {
-        if (selectedIndex_ < static_cast<int>(displayResults_.size()) - 1)
-        {
-            selectedIndex_++;
-            if (listBox_)
-                listBox_->selectRow(selectedIndex_);
-        }
+        moveTo(selectedIndex_ + 1);
+        return true;
     }
+    if (key == juce::KeyPress::pageUpKey)
+    {
+        moveTo(selectedIndex_ - 10);
+        return true;
+    }
+    if (key == juce::KeyPress::pageDownKey)
+    {
+        moveTo(selectedIndex_ + 10);
+        return true;
+    }
+    if (key == juce::KeyPress::homeKey)
+    {
+        moveTo(0);
+        return true;
+    }
+    if (key == juce::KeyPress::endKey)
+    {
+        moveTo(last);
+        return true;
+    }
+    (void) last;
     return false;
 }
 

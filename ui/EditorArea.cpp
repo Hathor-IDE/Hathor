@@ -3148,7 +3148,7 @@ void EditorArea::showGoToLineDialog()
     juce::Component::SafePointer<HathorTab>  safeTab(tab);
 
     showGotoLineDialog(topParent, numLines, current1,
-        [this, self, safeTab] (int lineNumber)
+        [this, self, safeTab] (int lineNumber, int columnNumber)
         {
             if (!self)
                 return; // EditorArea closed while the dialog was open.
@@ -3166,12 +3166,13 @@ void EditorArea::showGoToLineDialog()
             const int maxLine = juce::jmax(1, doc.getNumLines());
             const int target0 = juce::jlimit(0, maxLine - 1, lineNumber - 1);
 
-            // Preserve the existing column, clamped to the target line length
-            // (the editor's existing cursor semantics). moveCaretTo() also
-            // scrolls the target line into view.
-            const int curCol    = t->editor().getCaretPos().getIndexInLine();
-            const int lineLen   = doc.getLine(target0).length();
-            const int col       = juce::jmin(curCol, lineLen);
+            // Explicit column wins; otherwise preserve the cursor column,
+            // clamped to the target line length.
+            const int lineLen = doc.getLine(target0).length();
+            const int col = columnNumber > 1
+                ? juce::jmin(columnNumber - 1, lineLen)
+                : juce::jmin(t->editor().getCaretPos().getIndexInLine(),
+                             lineLen);
 
             juce::CodeDocument::Position pos(doc, target0, col);
             t->editor().moveCaretTo(pos, false);

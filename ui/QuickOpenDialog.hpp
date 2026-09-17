@@ -14,6 +14,7 @@
 
 #include <juce_gui_extra/juce_gui_extra.h>
 
+#include <atomic>
 #include <filesystem>
 #include <string>
 #include <vector>
@@ -97,13 +98,23 @@ private:
     /** Fuzzy-match a query against a file path string. */
     static bool fuzzyMatch(std::string_view query, std::string_view path);
 
+    /** Scored fuzzy match (higher = better): consecutive runs, filename
+        weight, word-start and early-position bonuses. -1 when no match. */
+    static int fuzzyScore(std::string_view query, std::string_view path);
+
     /** Refresh the filtered list after a query change. */
     void refreshFiltered();
+
+    /** Publish a freshly indexed file list from the worker thread. */
+    void publishIndex(std::vector<std::filesystem::path> files,
+                      uint64_t generation);
 
     std::filesystem::path workspaceRoot_;
     std::vector<std::filesystem::path> allFiles_;
     std::vector<std::filesystem::path> filteredFiles_;
     int selectedIndex_ = 0;
+    std::atomic<uint64_t> indexGeneration_{ 0 };
+    std::atomic<bool> indexing_{ false };
 
     std::unique_ptr<juce::TextEditor> filterField_;
     std::unique_ptr<juce::ListBox> listBox_;

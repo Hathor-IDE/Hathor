@@ -164,23 +164,42 @@ void GotoLineDialog::attemptConfirm()
     // Empty input
     if (text.isEmpty())
     {
-        setError("Enter a line number.");
+        setError("Enter a line number (optionally line:column).");
         return;
     }
 
-    // Strict: every character must be a digit (defensive — input restriction
-    // already limits entry, but the field can be populated programmatically).
-    for (int i = 0; i < text.length(); ++i)
+    // Split optional ":column" suffix.
+    juce::String linePart = text;
+    juce::String colPart;
+    const int colon = text.indexOfChar(':');
+    if (colon >= 0)
     {
-        if (!juce::CharacterFunctions::isDigit(text[i]))
+        linePart = text.substring(0, colon).trim();
+        colPart = text.substring(colon + 1).trim();
+        if (linePart.isEmpty() || colPart.isEmpty())
         {
-            setError("Enter a valid line number.");
+            setError("Use line or line:column (e.g. 42 or 42:7).");
             return;
         }
     }
 
+    auto allDigits = [](const juce::String& s) {
+        if (s.isEmpty())
+            return false;
+        for (int i = 0; i < s.length(); ++i)
+            if (!juce::CharacterFunctions::isDigit(s[i]))
+                return false;
+        return true;
+    };
+    if (!allDigits(linePart)
+        || (!colPart.isEmpty() && !allDigits(colPart)))
+    {
+        setError("Enter a valid line number.");
+        return;
+    }
+
     // Parse as a 64-bit value to tolerate very large inputs without overflow.
-    const juce::int64 value = text.getLargeIntValue();
+    const juce::int64 value = linePart.getLargeIntValue();
 
     if (value < 1)
     {
@@ -202,11 +221,23 @@ void GotoLineDialog::attemptConfirm()
         return;
     }
 
+    int columnNumber = 1;
+    if (!colPart.isEmpty())
+    {
+        const juce::int64 colValue = colPart.getLargeIntValue();
+        if (colValue < 1 || colValue > std::numeric_limits<int>::max())
+        {
+            setError("Column must be at least 1.");
+            return;
+        }
+        columnNumber = static_cast<int>(colValue);
+    }
+
     clearError();
     fired_ = true;
 
     if (callback_)
-        callback_(lineNumber);
+        callback_(lineNumber, columnNumber);
 
     if (auto* dw = findParentComponentOfClass<juce::DialogWindow>())
         dw->exitModalState(1);
