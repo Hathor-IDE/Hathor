@@ -308,6 +308,20 @@ void ChatThread::onReady()
         lastAgentBubble_ = nullptr;
         scrollToBottom();
     }
+
+    // Flush prompts queued while disconnected, in order.
+    if (session_ != nullptr && session_->isReady()
+        && !pendingPrompts_.empty())
+    {
+        for (const auto& queued : pendingPrompts_)
+            session_->sendPrompt(queued);
+        historyContainer_->addBubble(
+            "Sent " + juce::String(pendingPrompts_.size())
+                + " queued prompt(s).",
+            MessageBubble::Role::StatusLine);
+        pendingPrompts_.clear();
+        scrollToBottom();
+    }
 }
 
 void ChatThread::onConnecting(const std::string& status)
@@ -517,10 +531,6 @@ void ChatThread::textEditorReturnKeyPressed(juce::TextEditor& editor)
     if (&editor != &inputField_)
         return;
 
-    // Only send if connected (C2 §4 — don't send while disconnected/reconnecting).
-    if (connState_.state != ThreadConnState::Connected)
-        return;
-
     const juce::String rawText = inputField_.getText();
 
     // Reject empty or whitespace-only content (Req 25.2).
@@ -537,11 +547,22 @@ void ChatThread::textEditorReturnKeyPressed(juce::TextEditor& editor)
     // Clear input.
     inputField_.setText(juce::String{}, juce::dontSendNotification);
 
-    // Forward to session (fire-and-forget, non-blocking — C2 §4.7).
-    if (session_ != nullptr && session_->isReady())
+    if (connState_.state == ThreadConnState::Connected && session_ != nullptr
+        && session_->isReady())
     {
+        // Forward to session (fire-and-forget, non-blocking — C2 §4.7).
         session_->sendPrompt(text);
+        return;
     }
+
+    // Not connected: queue visibly instead of silently dropping the prompt.
+    // It flushes in order on the next onReady().
+    pendingPrompts_.push_back(text);
+    juce::String note = "Queued — will send on reconnect ("
+                        + juce::String(pendingPrompts_.size()) + " pending).";
+    historyContainer_->addBubble(note, MessageBubble::Role::StatusLine);
+    scrollToBottom();
+    showStatus("Not connected — prompt queued.");
 }
 
 void ChatThread::textEditorTextChanged(juce::TextEditor& editor)

@@ -233,10 +233,13 @@ void AcpAgentSession::sendPrompt(const std::string& text)
 
 void AcpAgentSession::respondPermission(int requestId, std::string optionId)
 {
-    // Mark as answered to prevent the auto-cancel timer from firing.
+    // Single response per request: the session owns permission timeout
+    // (startPermissionTimer); the UI prompt's countdown is display-only.
+    // Whichever path fires first wins; the loser is a no-op.
     {
         std::lock_guard<std::mutex> lk(permissionMutex_);
-        answeredPermissions_.insert(requestId);
+        if (!answeredPermissions_.insert(requestId).second)
+            return; // already answered (user click vs timeout race)
     }
 
     // ACP v1 spec: RequestPermissionResponse.outcome is a discriminated union.

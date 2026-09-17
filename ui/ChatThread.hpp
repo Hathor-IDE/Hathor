@@ -23,6 +23,7 @@
 
 #include <memory>
 #include <string>
+#include <vector>
 
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <nlohmann/json.hpp>
@@ -245,6 +246,9 @@ private:
     juce::Viewport historyViewport_;
     std::unique_ptr<MessageHistoryContainer> historyContainer_;
     MessageBubble* lastAgentBubble_ = nullptr;
+
+    // Prompts typed while disconnected; flushed in order on reconnect.
+    std::vector<std::string> pendingPrompts_;
 
     // Chat input field.
     juce::TextEditor inputField_;

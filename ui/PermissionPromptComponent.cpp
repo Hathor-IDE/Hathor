@@ -128,11 +128,19 @@ void PermissionPromptComponent::timerCallback()
 {
     --secondsLeft_;
 
+    if (secondsLeft_ <= 0)
+    {
+        // Display-only expiry: the session owns the timeout response
+        // (AcpAgentSession::startPermissionTimer answers "cancelled").
+        // Never respond from here — that path double-responded.
+        stopTimer();
+        countdownLabel_.setText("Expired — auto-cancelled",
+                                juce::dontSendNotification);
+        return;
+    }
+
     countdownLabel_.setText(juce::String(secondsLeft_) + "s",
                             juce::dontSendNotification);
-
-    if (secondsLeft_ <= 0)
-        respond("cancelled");
 }
 
 // ---------------------------------------------------------------------------

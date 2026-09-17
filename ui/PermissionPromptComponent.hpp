@@ -39,7 +39,8 @@ namespace hathor::ui {
  *   - Renders one TextButton per option from the JSON options array
  *   - Shows a live countdown (30 → 0 seconds) updated via juce::Timer at 1 Hz
  *   - Calls onRespond_ with the chosen optionId when a button is clicked
- *   - Auto-responds with "cancelled" when the countdown reaches zero
+ *   - Shows "Expired" at zero; the session (single timeout owner) sends
+ *     the "cancelled" response, so this component never responds on expiry
  *   - Hides itself (setVisible(false)) after any response
  *
  * Requirements: 32.6
@@ -74,8 +75,7 @@ public:
     /**
      * Force-respond with "cancelled" and hide the component.
      * Safe to call if the user has already responded (no-op in that case).
-     * May be called by external timeout logic in AcpAgentSession as a belt-and-suspenders
-     * guard, though the component manages its own 30-second timer independently.
+     * Used when the prompt is torn down (e.g. a newer request replaces it).
      */
     void cancelIfPending();
 
