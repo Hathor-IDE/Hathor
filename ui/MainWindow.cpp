@@ -952,11 +952,10 @@ void MainWindow::performLayout(const LayoutParams& p)
         statusRibbon_->setBounds(b.removeFromBottom(hathor::ui::StatusRibbon::kRibbonHeight));
 
     // 5. Editor area — fills the remaining centre region.
-    // CRITICAL FIX: toFront(true) ensures the editor area is z-order above
-    // splitters, petWidget, and all other components added after it in the
-    // constructor — so it always receives mouse/keyboard input. Without
-    // this, invisible splitters and the (hidden) welcome screen shadow the
-    // editor and make the UI unresponsive.
+    // Explicit z-order, bottom to top: editor < pet garnish < welcome.
+    // editorArea_->toFront(true) keeps it above the splitters (which are
+    // laid out earlier and would otherwise shadow input); the welcome
+    // overlay goes last only while visible.
     if (editorArea_)
     {
         editorArea_->setBounds(b);

@@ -33,6 +33,7 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <juce_gui_extra/juce_gui_extra.h>
 
+#include <deque>
 #include <memory>
 #include <optional>
 #include <vector>
@@ -916,6 +917,18 @@ private:
     TabBarComponent                          tabBar_;
     juce::Label                              statusBar_;
 
+    // Status message queue: errors survive passing info messages.
+    struct StatusMessage
+    {
+        juce::String text;
+        int priority{ 0 }; // 2 = error, 1 = warning, 0 = info
+        int ticksLeft{ 0 }; // 500 ms ticks
+    };
+    std::deque<StatusMessage> statusQueue_;
+    std::unique_ptr<juce::Timer> statusTimer_;
+    void pumpStatusQueue();
+    void refreshStatusLabel();
+
     // -----------------------------------------------------------------------
     // Tab data
     // -----------------------------------------------------------------------
@@ -977,9 +990,6 @@ private:
     // are published.  May be null if AI-8 context is not wired up.
     class EditorContextBridge* editorContextBridge_{nullptr};
     class LspContextBridge*    lspContextBridge_{nullptr};
-
-    // Timer for clearing the status bar message
-    juce::Timer* statusClearTimer_{ nullptr };
 
     // -----------------------------------------------------------------------
     // L-1: Editor ergonomics components (non-owning access via accessors)

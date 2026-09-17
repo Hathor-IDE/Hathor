@@ -353,19 +353,15 @@ void TabBarComponent::mouseDown(const juce::MouseEvent& e)
 // ---------------------------------------------------------------------------
 namespace {
 
-class StatusClearTimer : public juce::Timer
+class StatusQueueTimer : public juce::Timer
 {
 public:
-    explicit StatusClearTimer(juce::Label& label) : label_(label) {}
-
+    std::function<void()> onTick;
     void timerCallback() override
     {
-        label_.setText("", juce::dontSendNotification);
-        stopTimer();
+        if (onTick)
+            onTick();
     }
-
-private:
-    juce::Label& label_;
 };
 
 } // anonymous namespace
@@ -536,7 +532,9 @@ EditorArea::EditorArea(AudioEngine& audio,
         [this](const juce::String& msg) { showStatus(msg); });
 
     // Status clear timer (heap, owned via raw ptr — stopped & deleted in destructor)
-    statusClearTimer_ = new StatusClearTimer(statusBar_);
+    auto statusTimer = std::make_unique<StatusQueueTimer>();
+    statusTimer->onTick = [this]() { pumpStatusQueue(); };
+    statusTimer_ = std::move(statusTimer);
 
     // -----------------------------------------------------------------------
     // L-1: Create editor ergonomics components
@@ -745,7 +743,8 @@ EditorArea::~EditorArea()
     for (auto& t : tabs_)
         t->setVisible(false);
 
-    delete statusClearTimer_;
+    if (auto* t = dynamic_cast<juce::Timer*>(statusTimer_.get()))
+        t->stopTimer();
 }
 
 // ---------------------------------------------------------------------------
@@ -1676,10 +1675,41 @@ void EditorArea::toggleTabPin()
 
 void EditorArea::showStatus(const juce::String& msg)
 {
-    statusBar_.setText(msg, juce::dontSendNotification);
+    // Priority queue: errors outrank warnings outrank info, so a passing
+    // info message never wipes an error the user hasn't seen yet.
+    const int pri = msg.startsWith("Error:") ? 2
+                  : msg.startsWith("Warning:") ? 1 : 0;
+    const int ttl = pri == 2 ? 20 : pri == 1 ? 16 : 12; // 500 ms ticks
+    statusQueue_.push_back({ msg, pri, ttl });
+    refreshStatusLabel();
+    if (auto* t = dynamic_cast<juce::Timer*>(statusTimer_.get()))
+        if (!t->isTimerRunning())
+            t->startTimer(500);
+}
 
-    // Auto-clear after 6 seconds.
-    static_cast<juce::Timer*>(statusClearTimer_)->startTimer(6000);
+void EditorArea::pumpStatusQueue()
+{
+    for (auto it = statusQueue_.begin(); it != statusQueue_.end();)
+    {
+        if (--(it->ticksLeft) <= 0)
+            it = statusQueue_.erase(it);
+        else
+            ++it;
+    }
+    refreshStatusLabel();
+    if (statusQueue_.empty())
+        if (auto* t = dynamic_cast<juce::Timer*>(statusTimer_.get()))
+            t->stopTimer();
+}
+
+void EditorArea::refreshStatusLabel()
+{
+    const StatusMessage* top = nullptr;
+    for (const auto& m : statusQueue_)
+        if (top == nullptr || m.priority > top->priority)
+            top = &m;
+    statusBar_.setText(top != nullptr ? top->text : juce::String(),
+                       juce::dontSendNotification);
 }
 
 void EditorArea::wireUnsavedCallback(HathorTab& tab)
