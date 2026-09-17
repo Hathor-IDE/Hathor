@@ -132,12 +132,13 @@ void AcpAgentSession::stop()
     }
 
     // Kill subprocess gracefully (SIGTERM, then wait briefly).
+    // Bounded to ~500 ms so stop() never stalls the message thread long.
     if (agentPid_ > 0)
     {
         ::kill(agentPid_, SIGTERM);
 
-        // Wait up to 2 seconds, then SIGKILL.
-        for (int i = 0; i < 20; ++i)
+        // Wait up to 0.5 seconds, then SIGKILL.
+        for (int i = 0; i < 5; ++i)
         {
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
             int status = 0;
@@ -1066,11 +1067,26 @@ void AcpAgentSession::onStartFailed(std::string reason)
         agentPid_ = 0;
     }
 
-    // Close pipe fds.
+    // Close pipe fds (unblocks the reader thread's read() so it exits).
     for (int& fd : stdinPipe_)
         if (fd != -1) { ::close(fd); fd = -1; }
     for (int& fd : stdoutPipe_)
         if (fd != -1) { ::close(fd); fd = -1; }
+
+    // Tear down the MCP accept loop now instead of leaving it running
+    // until the next stop(): closing the listener unblocks accept().
+    // This runs on the sender thread, so joining the MCP + reader threads
+    // here is safe (never self-join).
+    if (listenerFd_ != -1)
+    {
+        ::close(listenerFd_);
+        listenerFd_ = -1;
+    }
+    removeUnixSocket();
+    if (mcpServerThread_.joinable())
+        mcpServerThread_.join();
+    if (readerThread_.joinable())
+        readerThread_.join();
 
     // Remove the stderr capture temp file (issue A7).
     if (!stderrPath_.empty())

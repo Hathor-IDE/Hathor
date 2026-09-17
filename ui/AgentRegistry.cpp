@@ -123,10 +123,23 @@ void AgentRegistry::mergeFromJson(const nlohmann::json& j)
         }
         if (entry.contains("notes") && entry["notes"].is_string())
             p.notes = entry["notes"].get<std::string>();
-        if (entry.contains("isBundled"))
-            p.isBundled = entry["isBundled"].get<bool>();
+        // isBundled is NEVER trusted from disk: a user file must not mark
+        // itself bundled (that would make removePreset refuse to delete it).
+        p.isBundled = false;
 
-        if (p.id.empty())
+        // Validate: id + name required, argv must launch something, fields
+        // bounded so a hostile file can't bloat memory.
+        if (p.id.empty() || p.id.size() > 128)
+            continue;
+        if (p.name.empty() || p.name.size() > 128)
+            continue;
+        if (p.argv.empty() || p.argv.size() > 32)
+            continue;
+        bool argvOk = true;
+        for (const auto& a : p.argv)
+            if (a.size() > 1024)
+                argvOk = false;
+        if (!argvOk || p.notes.size() > 2048)
             continue;
 
         // Override matching id, else append.
@@ -194,6 +207,11 @@ bool AgentRegistry::save() const
     {
         // Don't persist the synthetic "__custom__" entry — it's a UI affordance.
         if (p.id == "__custom__")
+            continue;
+        // Don't persist bundled presets either: they ship in code, and
+        // round-tripping them would let disk copies shadow (and un-bundle)
+        // the built-ins on the next load.
+        if (p.isBundled)
             continue;
         nlohmann::json entry = nlohmann::json::object();
         entry["id"]          = p.id;
