@@ -58,15 +58,23 @@ private:
         juce::Rectangle<int> bounds;
         juce::String label;
         juce::File file;  // the file this crumb represents (or a directory)
+        bool isEllipsis{ false };
     };
 
     std::vector<Crumb> crumbs_;
+    // Visible "…" overflow crumb when the trail is collapsed (empty bounds
+    // when everything fits).
+    Crumb ellipsisCrumb_;
     juce::String editorName_;
     juce::Rectangle<int> commandPaletteBtn_;
     juce::Rectangle<int> findBtn_;
     juce::Rectangle<int> splitBtn_;
 
     void buildCrumbs(const juce::File& file);
+    /// Popup listing a directory's children; files open, folders drill in.
+    void showDirectoryPopup(const juce::File& dir);
+    /// Popup listing collapsed ancestors when the trail is truncated.
+    void showAncestorsPopup();
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(BreadcrumbsBar)
 };

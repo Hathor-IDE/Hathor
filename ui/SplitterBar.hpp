@@ -24,12 +24,19 @@ namespace hathor::ui {
 class SplitterBar : public juce::Component
 {
 public:
-    using DragCallback = std::function<void(int deltaX)>;
+    enum class Orientation { Horizontal, Vertical };
 
-    explicit SplitterBar(DragCallback onDrag_)
-        : juce::Component({"splitter"}), onDrag_(std::move(onDrag_))
+    using DragCallback = std::function<void(int delta)>;
+
+    explicit SplitterBar(DragCallback onDrag_,
+                         Orientation orient = Orientation::Horizontal)
+        : juce::Component({"splitter"}), orient_(orient), onDrag_(std::move(onDrag_))
     {
         setInterceptsMouseClicks(true, false);
+        setMouseCursor(orient == Orientation::Horizontal
+                           ? juce::MouseCursor::LeftRightResizeCursor
+                           : juce::MouseCursor::UpDownResizeCursor);
+        setTitle("Splitter");
     }
 
     ~SplitterBar() override = default;
@@ -37,7 +44,8 @@ public:
     void paint(juce::Graphics& g) override
     {
         const auto& palette = HathorLookAndFeel::fromComponent(*this).getPalette();
-        g.fillAll(palette.surfaceContainer.withAlpha(0.3f));
+        g.fillAll(isMouseOver() ? palette.accent.withAlpha(0.4f)
+                                : palette.surfaceContainer.withAlpha(0.3f));
     }
 
     void mouseEnter(const juce::MouseEvent&) override { repaint(); }
@@ -45,15 +53,24 @@ public:
 
     void mouseDown(const juce::MouseEvent& e) override
     {
-        mouseDownX_ = e.getScreenX();
+        mouseDownPos_ = (orient_ == Orientation::Horizontal) ? e.getScreenX()
+                                                            : e.getScreenY();
     }
 
     void mouseDrag(const juce::MouseEvent& e) override
     {
-        const int delta = e.getScreenX() - mouseDownX_;
-        mouseDownX_ = e.getScreenX();
-        if (onDrag_)
+        const int pos = (orient_ == Orientation::Horizontal) ? e.getScreenX()
+                                                            : e.getScreenY();
+        const int delta = pos - mouseDownPos_;
+        mouseDownPos_ = pos;
+        if (delta != 0 && onDrag_)
             onDrag_(delta);
+    }
+
+    void mouseUp(const juce::MouseEvent&) override
+    {
+        if (onDragFinished_)
+            onDragFinished_();
     }
 
     void mouseDoubleClick(const juce::MouseEvent&) override
@@ -63,9 +80,12 @@ public:
     }
 
     std::function<void()> onDoubleClick_;
+    /// Fired on mouse-up after a drag so the host can persist layout.
+    std::function<void()> onDragFinished_;
 
 private:
-    int mouseDownX_ = 0;
+    int mouseDownPos_ = 0;
+    Orientation orient_;
     DragCallback onDrag_;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(SplitterBar)

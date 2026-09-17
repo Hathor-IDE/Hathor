@@ -691,7 +691,22 @@ MainWindow::MainWindow(AudioEngine& audio,
      chatSplitter_ = std::make_unique<hathor::ui::SplitterBar>(
          [this](int d) { onChatSplitterDrag(d); });
      visualizerSplitter_ = std::make_unique<hathor::ui::SplitterBar>(
-         [this](int d) { onVisualizerSplitterDrag(d); });
+         [this](int d) { onVisualizerSplitterDrag(d); },
+         hathor::ui::SplitterBar::Orientation::Vertical);
+     auto persistLayout = [this]() { saveLayoutParams(layoutParams_); };
+     explorerSplitter_->onDragFinished_ = persistLayout;
+     chatSplitter_->onDragFinished_ = persistLayout;
+     visualizerSplitter_->onDragFinished_ = persistLayout;
+     explorerSplitter_->onDoubleClick_ = [this]() {
+         layoutParams_.explorerWidth = LayoutParams::kDefaultExplorerWidth;
+         performLayout(layoutParams_);
+         saveLayoutParams(layoutParams_);
+     };
+     chatSplitter_->onDoubleClick_ = [this]() {
+         layoutParams_.chatWidth = LayoutParams::kDefaultChatWidth;
+         performLayout(layoutParams_);
+         saveLayoutParams(layoutParams_);
+     };
      content->addAndMakeVisible(*explorerSplitter_);
      content->addAndMakeVisible(*chatSplitter_);
      content->addAndMakeVisible(*visualizerSplitter_);
@@ -1458,6 +1473,23 @@ std::vector<std::string> MainWindow::loadRecentProjects()
     if (props == nullptr)
         return out;
 
+    // Indexed keys (newline-proof); fall back to the legacy \n-joined value
+    // once so old installs migrate without losing their MRU.
+    if (props->containsKey("recent.project.0"))
+    {
+        for (int i = 0; i < 10; ++i)
+        {
+            const juce::String v =
+                props->getValue("recent.project." + juce::String(i));
+            if (v.isEmpty())
+                break;
+            // Keep missing folders listed (dimmed downstream) instead of
+            // silently dropping them — the user chose them.
+            out.push_back(v.toStdString());
+        }
+        return out;
+    }
+
     juce::StringArray entries;
     entries.addLines(props->getValue("recent.projects"));
     for (const auto& line : entries)
@@ -1475,7 +1507,8 @@ void MainWindow::pushRecentProject(const std::string& path)
 {
     if (auto* props = appProperties_.getUserSettings())
     {
-        // Dedup, most-recent-first, capped at 10.
+        // Dedup, most-recent-first, capped at 10. Indexed keys so paths
+        // containing newlines survive the round-trip.
         std::vector<std::string> mru;
         mru.push_back(path);
         for (const auto& p : loadRecentProjects())
@@ -1484,14 +1517,15 @@ void MainWindow::pushRecentProject(const std::string& path)
                 mru.push_back(p);
         }
 
-        juce::String joined;
-        for (const auto& p : mru)
+        for (int i = 0; i < 10; ++i)
         {
-            if (joined.isNotEmpty())
-                joined += "\n";
-            joined += juce::String(p);
+            const juce::String key = "recent.project." + juce::String(i);
+            if (i < static_cast<int>(mru.size()))
+                props->setValue(key, juce::String(mru[static_cast<size_t>(i)]));
+            else
+                props->removeValue(key);
         }
-        props->setValue("recent.projects", joined);
+        props->removeValue("recent.projects");
         props->saveIfNeeded();
     }
 }
@@ -1537,6 +1571,9 @@ void MainWindow::refreshRecentActions()
         return;
 
     const std::vector<std::string> recent = loadRecentProjects();
+    // Prune stale entries first (registry otherwise grows one ID per open).
+    for (int i = 0; i < 10; ++i)
+        reg->removeAction("workspace.openRecent." + std::to_string(i));
     for (std::size_t i = 0; i < recent.size(); ++i)
     {
         const std::string id = "workspace.openRecent." + std::to_string(i);
@@ -1769,50 +1806,100 @@ void MainWindow::onAbout()
 
 bool MainWindow::isInterestedInFileDrag(const juce::StringArray& files)
 {
-    // Accept both files (opening tabs) and folders (set as workspace).
+    // Accept folders (workspace switch) and text-like files (open as tabs).
+    // Anything else (binaries, huge media) is declined silently by Juce.
     for (const auto& f : files)
     {
         juce::File file(f);
-        if (file.isDirectory() || file.hasFileExtension(".ck") || file.hasFileExtension(".hathor"))
+        if (file.isDirectory() || isTextOpenable(file))
             return true;
     }
     return false;
 }
 
+bool MainWindow::isTextOpenable(const juce::File& file) noexcept
+{
+    if (!file.existsAsFile() || file.isDirectory())
+        return false;
+    // Small text-like files only: refuse >8 MB and known binaries.
+    static const char* kTextExts[] = {
+        "ck", "hathor", "md", "markdown", "txt", "json", "jsonc", "xml",
+        "yaml", "yml", "toml", "ini", "cfg", "js", "cjs", "mjs", "ts",
+        "c", "h", "hpp", "cpp", "cc", "rs", "py", "lua", "sh", "css",
+        "html", "lua"
+    };
+    const juce::String ext = file.getFileExtension().substring(1).toLowerCase();
+    for (auto* e : kTextExts)
+        if (ext == e)
+            return file.getSize() < 8 * 1024 * 1024;
+    return false;
+}
+
 void MainWindow::fileDragEnter(const juce::StringArray& /*files*/, int /*x*/, int /*y*/)
 {
-    // Visual feedback could be added here (e.g. highlight the window edge).
+    // Drop highlight: accent border on the editor while a drag hovers.
+    dragHoverActive_ = true;
+    if (editorArea_)
+        editorArea_->setDropHighlight(true);
+}
+
+void MainWindow::fileDragExit(const juce::StringArray& /*files*/)
+{
+    dragHoverActive_ = false;
+    if (editorArea_)
+        editorArea_->setDropHighlight(false);
 }
 
 void MainWindow::filesDropped(const juce::StringArray& files,
                               int /*x*/, int /*y*/)
 {
+    dragHoverActive_ = false;
+    if (editorArea_)
+        editorArea_->setDropHighlight(false);
+
+    // Coalesce multi-folder drops into a single prompt.
+    std::vector<juce::File> folders;
+    std::vector<juce::File> openables;
     for (const auto& f : files)
     {
         juce::File file(f);
         if (file.isDirectory())
+            folders.push_back(file);
+        else if (isTextOpenable(file))
+            openables.push_back(file);
+    }
+    for (auto& file : openables)
+    {
+        // File drop — open as a new tab, do NOT auto-evaluate (E2).
+        if (editorArea_)
+            editorArea_->openFile(file);
+    }
+    if (!folders.empty())
+    {
+        juce::String message;
+        if (folders.size() == 1)
         {
-            // Folder drop — prompt to set as workspace.
-            juce::AlertWindow::showOkCancelBox(
-                juce::AlertWindow::QuestionIcon,
-                "Set as Workspace?",
-                "Set \"" + file.getFileName() + "\" as the workspace root?",
-                "Set as Workspace",
-                "Cancel",
-                nullptr,
-                juce::ModalCallbackFunction::create(
-                    [this, file](int result)
-                    {
-                        if (result != 0)
-                            switchWorkspace(file);
-                    }));
+            message = "Set \"" + folders.front().getFileName() + "\" as the workspace root?";
         }
-        else if (file.hasFileExtension(".ck") || file.hasFileExtension(".hathor"))
+        else
         {
-            // File drop — open as a new tab, do NOT auto-evaluate (E2).
-            if (editorArea_)
-                editorArea_->openFile(file);
+            message = "Multiple folders dropped. Set \"" + folders.front().getFileName()
+                      + "\" as the workspace root?";
         }
+        juce::AlertWindow::showOkCancelBox(
+            juce::AlertWindow::QuestionIcon,
+            "Set as Workspace?",
+            message,
+            "Set as Workspace",
+            "Cancel",
+            nullptr,
+            juce::ModalCallbackFunction::create(
+                [this, folders](int result)
+                {
+                    if (result == 0)
+                        return;
+                    switchWorkspace(folders.front());
+                }));
     }
 }
 

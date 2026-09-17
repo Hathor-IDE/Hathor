@@ -1274,7 +1274,22 @@ void EditorArea::resized()
 
 void EditorArea::paint(juce::Graphics& g)
 {
-    g.fillAll(HathorLookAndFeel::fromComponent(*this).getPalette().surface);
+    const auto& palette = HathorLookAndFeel::fromComponent(*this).getPalette();
+    g.fillAll(palette.surface);
+    if (dropHighlight_)
+    {
+        g.setColour(palette.accent.withAlpha(0.7f));
+        g.drawRect(getLocalBounds(), 2);
+    }
+}
+
+void EditorArea::setDropHighlight(bool active)
+{
+    if (dropHighlight_ != active)
+    {
+        dropHighlight_ = active;
+        repaint();
+    }
 }
 
 // ---------------------------------------------------------------------------

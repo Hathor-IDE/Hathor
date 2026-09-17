@@ -116,6 +116,21 @@ void ActionRegistry::unbindKey(const std::string& actionId)
     }
 }
 
+void ActionRegistry::removeAction(const std::string& id)
+{
+    auto it = idToIndex_.find(id);
+    if (it == idToIndex_.end())
+        return;
+    const size_t idx = it->second;
+    if (actions_[idx].keyEquivalent.has_value())
+        keyToId_.erase(*actions_[idx].keyEquivalent);
+    actions_.erase(actions_.begin() + static_cast<ptrdiff_t>(idx));
+    idToIndex_.erase(it);
+    // Re-index entries after the erased one.
+    for (size_t i = idx; i < actions_.size(); ++i)
+        idToIndex_[actions_[i].info.id] = i;
+}
+
 std::string ActionRegistry::findActionForKey(const KeyEquivalent& key) const
 {
     auto it = keyToId_.find(key);

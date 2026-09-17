@@ -361,6 +361,9 @@ public:
     void resized() override;
     void paint(juce::Graphics& g) override;
 
+    /// Drop-target highlight cue (accent border while files hover).
+    void setDropHighlight(bool active);
+
     // -----------------------------------------------------------------------
     // Key handler — routes Ctrl+Enter and Ctrl+Alt+Enter (Req 23.1–23.7)
     // -----------------------------------------------------------------------
@@ -916,6 +919,8 @@ private:
     // -----------------------------------------------------------------------
     TabBarComponent                          tabBar_;
     juce::Label                              statusBar_;
+    /// File-drag hover cue (accent border in paint()).
+    bool dropHighlight_{ false };
 
     // Status message queue: errors survive passing info messages.
     struct StatusMessage

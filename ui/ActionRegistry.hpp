@@ -143,6 +143,13 @@ public:
     void unbindKey(const std::string& actionId);
 
     /**
+     * Remove an action (and its binding) by ID. No-op if unknown.
+     * Used for dynamically generated actions (e.g. Open Recent entries)
+     * so stale entries don't accumulate.
+     */
+    void removeAction(const std::string& id);
+
+    /**
      * Look up an action by its key equivalent.
      * Returns empty string if no binding matches.
      */

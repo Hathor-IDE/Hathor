@@ -318,9 +318,12 @@ private:
                        int x, int y) override;
     void fileDragMove(const juce::StringArray& /*files*/,
                       int /*x*/, int /*y*/) override {}
-    void fileDragExit(const juce::StringArray& /*files*/) override {}
+    void fileDragExit(const juce::StringArray& files) override;
     void filesDropped(const juce::StringArray& files,
                       int x, int y) override;
+
+    /// Text-like files safe to open as editor tabs (code, docs, configs).
+    static bool isTextOpenable(const juce::File& file) noexcept;
 
     // -----------------------------------------------------------------------
     // 2.3 — Native menu bar
@@ -378,6 +381,9 @@ private:
     GitStatusCache gitCache_;
     std::atomic<bool> gitRefreshInFlight_{ false };
     uint64_t statusTickCount_{ 0 };
+
+    /// True while a file drag hovers the window (drop highlight cue).
+    bool dragHoverActive_{ false };
 
     // 0.5/S4: orphan SliderPanel removed — ChatSidebar's instance is the
     // single BPM/gain surface (synced via chatSidebar_->getSliderPanel()).
