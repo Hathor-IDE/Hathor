@@ -66,7 +66,7 @@ TEST_CASE("GitRepository detects repository", "[GitRepository]")
     auto tmpDir = createTempRepo("hello world");
 
     GitRepository repo;
-    repo.setRepoPath(tmpDir.string());
+    repo.validateRepositorySync(tmpDir.string());
     REQUIRE(repo.hasRepository());
 
     std::filesystem::remove_all(tmpDir);
@@ -77,7 +77,7 @@ TEST_CASE("GitRepository detects missing repository", "[GitRepository]")
     auto tmpDir = createTempNonRepo();
 
     GitRepository repo;
-    repo.setRepoPath(tmpDir.string());
+    repo.validateRepositorySync(tmpDir.string());
     REQUIRE_FALSE(repo.hasRepository());
 
     std::filesystem::remove_all(tmpDir);
@@ -88,7 +88,7 @@ TEST_CASE("GitRepository parses status — modified file", "[GitRepository]")
     auto tmpDir = createTempRepo("initial");
 
     GitRepository repo;
-    repo.setRepoPath(tmpDir.string());
+    repo.validateRepositorySync(tmpDir.string());
 
     // Modify the file.
     {
@@ -127,7 +127,7 @@ TEST_CASE("GitRepository parses status — untracked file", "[GitRepository]")
     file.close();
 
     GitRepository repo;
-    repo.setRepoPath(tmpDir.string());
+    repo.validateRepositorySync(tmpDir.string());
 
     bool refreshDone = false;
     repo.refreshStatus([&refreshDone]() { refreshDone = true; });
@@ -160,7 +160,7 @@ TEST_CASE("GitRepository parses log — commit history", "[GitRepository]")
     std::system(cmd.c_str());
 
     GitRepository repo;
-    repo.setRepoPath(tmpDir.string());
+    repo.validateRepositorySync(tmpDir.string());
 
     bool refreshDone = false;
     repo.refreshHistory([&refreshDone]() { refreshDone = true; });
@@ -188,7 +188,7 @@ TEST_CASE("GitRepository parses refs — branch list", "[GitRepository]")
     std::system(cmd.c_str());
 
     GitRepository repo;
-    repo.setRepoPath(tmpDir.string());
+    repo.validateRepositorySync(tmpDir.string());
 
     bool refreshDone = false;
     repo.refreshStatus([&refreshDone]() { refreshDone = true; });

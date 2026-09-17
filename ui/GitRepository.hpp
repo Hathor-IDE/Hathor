@@ -219,6 +219,10 @@ public:
     /// Set the repository working-directory path. If empty, no repo is active.
     void setRepoPath(const std::string& path);
 
+    /// Synchronous validation for tests and scripts: blocks until the
+    /// rev-parse check completes. Never call on the message thread.
+    bool validateRepositorySync(const std::string& path, int timeoutMs = 5000);
+
     /// Get the current repository path.
     std::string repoPath() const noexcept;
 
@@ -431,6 +435,8 @@ private:
     std::atomic<bool> hasRepository_{ false };
     /// Generation counter: stale async validations discard themselves.
     std::atomic<uint64_t> repoValidationSeq_{ 0 };
+    /// Last validation generation that reported completion.
+    std::atomic<uint64_t> repoValidatedSeq_{ 0 };
 
     std::vector<GitStatusEntry> statusEntries_;
     std::string currentBranch_;

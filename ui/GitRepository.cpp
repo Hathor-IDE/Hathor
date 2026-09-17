@@ -48,7 +48,13 @@ void GitRepository::setRepoPath(const std::string& path)
     hasRepository_.store(false, std::memory_order_release);
 
     if (path.empty())
+    {
+        // Nothing to validate — mark this generation complete immediately
+        // so validateRepositorySync doesn't wait out its timeout.
+        repoValidatedSeq_.store(repoValidationSeq_.load(std::memory_order_acquire),
+                                std::memory_order_release);
         return;
+    }
 
     // Validate off the caller's thread: rev-parse can block for seconds on
     // network filesystems, and must never stall the message thread.
@@ -70,7 +76,22 @@ void GitRepository::setRepoPath(const std::string& path)
             inside = (trimmed == "true");
         }
         hasRepository_.store(inside, std::memory_order_release);
+        repoValidatedSeq_.store(generation, std::memory_order_release);
     }).detach();
+}
+
+bool GitRepository::validateRepositorySync(const std::string& path,
+                                            int timeoutMs)
+{
+    setRepoPath(path);
+    const uint64_t generation = repoValidationSeq_.load(std::memory_order_acquire);
+    const auto deadline = std::chrono::steady_clock::now()
+                          + std::chrono::milliseconds(timeoutMs);
+    // Wait until this generation's worker reports completion.
+    while (repoValidatedSeq_.load(std::memory_order_acquire) < generation
+           && std::chrono::steady_clock::now() < deadline)
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    return hasRepository_.load(std::memory_order_acquire);
 }
 
 std::string GitRepository::repoPath() const noexcept
