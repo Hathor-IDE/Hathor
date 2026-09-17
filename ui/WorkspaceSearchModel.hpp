@@ -18,6 +18,7 @@
 
 #include <atomic>
 #include <filesystem>
+#include <functional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -79,9 +80,14 @@ public:
      * @param query The search string or regex pattern.
      * @param flags Search options (case sensitivity, regex, whole word).
      * @param maxResults Maximum number of file-result entries to collect.
+     * @param cancel Optional atomic flag; checked per file, aborts early.
+     * @param onProgress Optional per-file progress callback (caller's
+     *        thread — the panel marshals it to the message thread).
      */
     int search(std::string_view query, const WorkspaceSearchFlags& flags,
-               int maxResults = 500);
+               int maxResults = 500,
+               std::atomic<bool>* cancel = nullptr,
+               std::function<void(int filesScanned)> onProgress = {});
 
     /**
      * Replace all occurrences of @p query with @p replacement in the given file.
@@ -94,6 +100,10 @@ public:
 
     /** Current search results. */
     const std::vector<WorkspaceFileResult>& results() const noexcept { return results_; }
+
+    /// Files larger than this are skipped by search and replace (binary
+    /// media would freeze the UI and blow up memory).
+    static constexpr std::uintmax_t kMaxFileBytes = 2 * 1024 * 1024;
 
     /** Total number of matches across all files. */
     int totalMatchCount() const noexcept { return totalMatches_; }

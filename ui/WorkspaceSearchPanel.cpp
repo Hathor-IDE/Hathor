@@ -60,7 +60,10 @@ WorkspaceSearchPanel::WorkspaceSearchPanel(std::filesystem::path workspaceRoot,
 
     searchBtn_ = std::make_unique<juce::TextButton>("Search");
     searchBtn_->onClick = [this]() {
-        startSearch(searchField_->getText(), currentFlags());
+        if (searchRunning_.load())
+            cancelSearch();
+        else
+            startSearch(searchField_->getText(), currentFlags());
     };
     addAndMakeVisible(searchBtn_.get());
 
@@ -68,16 +71,34 @@ WorkspaceSearchPanel::WorkspaceSearchPanel(std::filesystem::path workspaceRoot,
     replaceAllBtn_->onClick = [this]() {
         auto query = searchField_->getText();
         auto replacement = replaceField_->getText();
-        if (query.isNotEmpty() && model_)
-        {
-            for (const auto& fileResult : model_->results())
-            {
-                model_->replaceInFile(fileResult.filePath,
-                                      query.toStdString(),
-                                      replacement.toStdString(),
-                                      currentFlags());
-            }
-        }
+        if (query.isEmpty() || model_ == nullptr || model_->results().empty())
+            return;
+        size_t files = model_->results().size();
+        int matches = model_->totalMatchCount();
+        juce::AlertWindow::showOkCancelBox(
+            juce::AlertWindow::QuestionIcon, "Replace All",
+            "Replace " + juce::String(matches) + " match(es) in "
+                + juce::String(files) + " file(s) with \""
+                + replacement + "\"?",
+            "Replace All", "Cancel", nullptr,
+            juce::ModalCallbackFunction::create(
+                [this, query, replacement](int result) {
+                    if (result != 1 || model_ == nullptr)
+                        return;
+                    std::vector<std::filesystem::path> touched;
+                    for (const auto& fileResult : model_->results())
+                    {
+                        if (model_->replaceInFile(fileResult.filePath,
+                                                  query.toStdString(),
+                                                  replacement.toStdString(),
+                                                  currentFlags())
+                            > 0)
+                            touched.push_back(fileResult.filePath);
+                    }
+                    startSearch(query, currentFlags());
+                    if (!touched.empty() && onFilesChanged)
+                        onFilesChanged(touched);
+                }));
     };
     addAndMakeVisible(replaceAllBtn_.get());
 
@@ -130,13 +151,83 @@ WorkspaceSearchFlags WorkspaceSearchPanel::currentFlags() const
 }
 
 void WorkspaceSearchPanel::startSearch(const juce::String& query,
-                                        const WorkspaceSearchFlags& flags)
+                                       const WorkspaceSearchFlags& flags)
 {
     if (!model_ || query.isEmpty())
         return;
 
-    model_->search(query.toStdString(), flags);
+    // Cancel any in-flight run; the generation check discards its results.
+    cancelSearch();
+    const uint64_t generation = ++searchGeneration_;
+    auto cancel = std::make_shared<std::atomic<bool>>(false);
+    searchCancel_ = cancel;
+    searchRunning_.store(true);
+    if (searchBtn_)
+        searchBtn_->setButtonText("Stop");
+    setHint("Searching…");
 
+    const std::string queryStr = query.toStdString();
+    juce::Component::SafePointer<WorkspaceSearchPanel> safeSelf(this);
+    std::thread([safeSelf, generation, cancel, queryStr, flags]() {
+        // Model is panel-owned; the search runs here, results publish back
+        // on the message thread. Progress marshals the same way.
+        WorkspaceSearchPanel* raw = safeSelf.getComponent();
+        if (raw == nullptr || raw->model_ == nullptr)
+            return;
+        auto* model = raw->model_;
+        int total = 0;
+        {
+            // Serialized against result publication (see publishResults).
+            std::lock_guard<std::mutex> lock(raw->searchMutex_);
+            if (raw->searchGeneration_.load() != generation)
+                return;
+            total = model->search(
+                queryStr, flags, 500, cancel.get(),
+            [safeSelf, generation](int filesScanned) {
+                juce::MessageManager::callAsync([safeSelf, generation,
+                                                 filesScanned]() {
+                    if (auto* self = safeSelf.getComponent())
+                        if (self->searchGeneration_.load() == generation
+                            && self->searchRunning_.load())
+                            self->setHint("Searching… "
+                                          + juce::String(filesScanned)
+                                          + " files");
+                });
+            });
+        } // release searchMutex_ before publishing on the message thread
+        juce::MessageManager::callAsync([safeSelf, generation, total]() {
+            auto* self = safeSelf.getComponent();
+            if (self == nullptr
+                || self->searchGeneration_.load() != generation)
+                return;
+            self->searchRunning_.store(false);
+            if (self->searchBtn_)
+                self->searchBtn_->setButtonText("Search");
+            self->publishResults(total);
+        });
+    }).detach();
+}
+
+void WorkspaceSearchPanel::cancelSearch()
+{
+    if (searchCancel_ != nullptr)
+        searchCancel_->store(true);
+    searchRunning_.store(false);
+    if (searchBtn_)
+        searchBtn_->setButtonText("Search");
+}
+
+void WorkspaceSearchPanel::setHint(const juce::String& text)
+{
+    if (hintLabel_)
+        hintLabel_->setText(text, juce::dontSendNotification);
+}
+
+void WorkspaceSearchPanel::publishResults(int total)
+{
+    std::lock_guard<std::mutex> lock(searchMutex_);
+    if (model_ == nullptr)
+        return;
     displayItems_.clear();
     for (const auto& fileResult : model_->results())
     {
@@ -157,6 +248,8 @@ void WorkspaceSearchPanel::startSearch(const juce::String& query,
     selectedIndex_ = 0;
     listBox_->updateContent();
     listBox_->selectRow(0);
+    setHint(juce::String(total) + " match(es) in "
+            + juce::String(model_->results().size()) + " file(s)");
 }
 
 void WorkspaceSearchPanel::setVisible(bool visible)

@@ -67,7 +67,9 @@ static bool wholeWordMatch(const std::string& line, size_t start, size_t len)
 
 int WorkspaceSearchModel::search(std::string_view query,
                                   const WorkspaceSearchFlags& flags,
-                                  int maxResults)
+                                  int maxResults,
+                                  std::atomic<bool>* cancel,
+                                  std::function<void(int filesScanned)> onProgress)
 {
     clear();
 
@@ -92,30 +94,79 @@ int WorkspaceSearchModel::search(std::string_view query,
 
     std::string queryString(query);
 
-    for (const auto& entry : std::filesystem::recursive_directory_iterator(workspaceRoot_))
+    // Version-control, dependency and build trees are never searched.
+    auto ignoredDir = [](const std::filesystem::path& p) {
+        const std::string name = p.filename().string();
+        if (name == ".git" || name == "node_modules" || name == ".hathor"
+            || name == "DerivedData" || name == ".idea" || name == ".vscode"
+            || name == "CMakeFiles" || name == "_deps")
+            return true;
+        return name.rfind("build", 0) == 0;
+    };
+
+    std::error_code iterEc;
+    std::filesystem::recursive_directory_iterator it(workspaceRoot_, iterEc);
+    if (iterEc)
+        return 0;
+    const std::filesystem::recursive_directory_iterator end;
+    int filesScanned = 0;
+
+    for (; it != end;)
     {
-        if (!entry.is_regular_file())
+        if (cancel != nullptr && cancel->load())
+            break;
+
+        std::error_code ec;
+        const auto& entryPath = it->path();
+        bool isDir = it->is_directory(ec);
+        if (!ec && isDir && ignoredDir(entryPath))
+        {
+            it.disable_recursion_pending();
+            it.increment(ec);
+            continue;
+        }
+
+        bool eligible = false;
+        std::string content;
+        std::filesystem::path filePath;
+        if (!ec && it->is_regular_file(ec) && !ec
+            && extensionSupported(entryPath))
+        {
+            // Skip huge files before reading; skip binaries via NUL probe.
+            std::error_code sizeEc;
+            const auto fsize = std::filesystem::file_size(entryPath, sizeEc);
+            if (!sizeEc && fsize <= kMaxFileBytes)
+            {
+                content = readFileToString(entryPath);
+                const size_t probe = std::min(content.size(), size_t(8192));
+                if (!content.empty()
+                    && content.find('\0') == std::string::npos
+                    && probe > 0)
+                {
+                    eligible = true;
+                    filePath = entryPath;
+                }
+            }
+        }
+        it.increment(ec);
+        if (!eligible)
             continue;
 
-        if (!extensionSupported(entry.path()))
-            continue;
-
-        const auto& filePath = entry.path();
-        std::string content = readFileToString(filePath);
-        if (content.empty())
-            continue;
+        ++filesScanned;
+        if (onProgress)
+            onProgress(filesScanned);
 
         WorkspaceFileResult fileResult;
         fileResult.filePath = filePath;
 
         if (flags.useRegex)
         {
-            std::sregex_iterator it(content.begin(), content.end(), patternRegex);
-            std::sregex_iterator end;
+            std::sregex_iterator rit(content.begin(), content.end(), patternRegex);
+            std::sregex_iterator rend;
 
-            for (; it != end && static_cast<int>(fileResult.matches.size()) < 100; ++it)
+            for (; rit != rend && static_cast<int>(fileResult.matches.size()) < 100; ++rit)
             {
-                const auto& match = *it;
+                const auto& match = *rit;
                 size_t pos = match.position();
                 size_t matchLen = match.length();
 
@@ -254,8 +305,14 @@ int WorkspaceSearchModel::replaceInFile(const std::filesystem::path& filePath,
                                          std::string_view replacement,
                                          const WorkspaceSearchFlags& flags)
 {
+    // Same guards as search: skip huge/binary files rather than rewriting
+    // media or blowing up memory.
+    std::error_code sizeEc;
+    const auto fsize = std::filesystem::file_size(filePath, sizeEc);
+    if (!sizeEc && fsize > kMaxFileBytes)
+        return 0;
     std::string content = readFileToString(filePath);
-    if (content.empty())
+    if (content.empty() || content.find('\0') != std::string::npos)
         return 0;
 
     std::string queryString(query);

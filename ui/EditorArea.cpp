@@ -581,6 +581,42 @@ EditorArea::EditorArea(AudioEngine& audio,
         this->toFront(true);
         resized();
     };
+    // After Replace All rewrites files, reload clean open tabs so the
+    // editor never shows stale text; dirty tabs keep their buffers and
+    // get a status note instead.
+    workspaceSearchPanel_->onFilesChanged =
+        [this](const std::vector<std::filesystem::path>& touched) {
+            int reloaded = 0;
+            int skippedDirty = 0;
+            for (const auto& path : touched)
+            {
+                for (const auto& tab : tabs_)
+                {
+                    if (!tab->filePath().has_value())
+                        continue;
+                    std::error_code ec;
+                    auto tabPath = std::filesystem::weakly_canonical(
+                        tab->filePath()->getFullPathName().toStdString(), ec);
+                    auto changed = std::filesystem::weakly_canonical(path, ec);
+                    if (ec || tabPath != changed)
+                        continue;
+                    if (tab->hasUnsavedDot())
+                    {
+                        ++skippedDirty;
+                        continue;
+                    }
+                    tab->document().replaceAllContent(
+                        tab->filePath()->loadFileAsString());
+                    tab->clearUnsavedDot();
+                    ++reloaded;
+                }
+            }
+            showStatus("Reloaded " + juce::String(reloaded) + " open tab(s)"
+                       + (skippedDirty > 0
+                              ? " (" + juce::String(skippedDirty)
+                                + " dirty tab(s) kept)"
+                              : ""));
+        };
 
     symbolSearchPanel_ = std::make_unique<SymbolSearchPanel>(symbolSearchModel_.get());
     symbolSearchPanel_->onSymbolSelected = [this](const SymbolSearchResult& result) {

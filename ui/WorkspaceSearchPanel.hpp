@@ -16,8 +16,11 @@
 
 #include <juce_gui_extra/juce_gui_extra.h>
 
+#include <atomic>
 #include <filesystem>
+#include <mutex>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "WorkspaceSearchModel.hpp"
@@ -43,6 +46,9 @@ public:
     /** Start a new search with the given query and flags. */
     void startSearch(const juce::String& query, const WorkspaceSearchFlags& flags);
 
+    /** Cancel an in-flight background search. */
+    void cancelSearch();
+
     /** Re-root file searches after a runtime workspace switch. */
     void setWorkspaceRoot(const std::filesystem::path& root)
     {
@@ -59,6 +65,9 @@ public:
     // Callbacks — installed by EditorArea
     std::function<void(const std::filesystem::path& filePath, int line, int column)> onNavigateToMatch;
     std::function<void()> onClosePanel;
+    /// Fired after Replace All writes files so the owner can reload clean
+    /// open tabs that changed on disk.
+    std::function<void(const std::vector<std::filesystem::path>&)> onFilesChanged;
 
 private:
     // TextEditor::Listener
@@ -99,8 +108,19 @@ private:
     std::unique_ptr<juce::Label> hintLabel_;
     std::unique_ptr<juce::ListBox> listBox_;
 
+    // Background search state: generation discards stale runs, cancel flag
+    // stops the worker, running_ drives the Search/Stop button label.
+    // searchMutex_ serializes the worker against result publication so a
+    // newer run can't mutate results while an older publish reads them.
+    std::atomic<uint64_t> searchGeneration_{ 0 };
+    std::shared_ptr<std::atomic<bool>> searchCancel_;
+    std::atomic<bool> searchRunning_{ false };
+    std::mutex searchMutex_;
+
     void updateModelFlags();
     WorkspaceSearchFlags currentFlags() const;
+    void setHint(const juce::String& text);
+    void publishResults(int total);
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(WorkspaceSearchPanel)
 };
