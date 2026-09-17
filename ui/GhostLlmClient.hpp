@@ -113,6 +113,22 @@ public:
                                 GhostResponseCallback callback);
 
     /**
+     * Cancel one in-flight ghost request (client-side: llm-ls has no
+     * $/cancelRequest, so the late response is dropped on arrival).
+     * No-op if the id is unknown or already answered.
+     */
+    void cancelGhostRequest(const std::string& requestId);
+
+    /** Drop all in-flight ghost requests (tab close, shutdown). */
+    void cancelAllGhostRequests();
+
+    /** Number of in-flight ghost requests (UI spinner state). */
+    size_t pendingGhostRequestCount() const noexcept
+    {
+        return pendingGhostRequests_.size();
+    }
+
+    /**
      * Notification: user accepted a ghost completion.
      */
     void sendAccept(const lsp::AcceptCompletionParams& params);
@@ -132,6 +148,9 @@ public:
     // -----------------------------------------------------------------------
     // Accessors
     // -----------------------------------------------------------------------
+
+    /** Last version sent for a URI (0 = never opened). */
+    int documentVersion(const std::string& uri) const noexcept;
 
     /** True if ghost text is enabled (GHOST_ENABLED=1 in env). */
     bool isGhostEnabled() const noexcept { return ghostEnabled_; }
@@ -177,7 +196,12 @@ public:
     // JUCE-free protocol layer
     lsp::LspMessageFramer framer_;
 
-    int   docVersion_ = 1;
+    /// Per-document versions sent to llm-ls (one entry per open URI —
+    /// a single global counter skews versions across tabs).
+    std::unordered_map<std::string, int> docVersions_;
+
+    /// Ghost request timeout: late responses resolve as empty completions.
+    static constexpr int64_t kGhostRequestTimeoutMs = 5000;
 
     // Pending ghost completion requests (keyed by UUID string)
     struct PendingGhostRequest {

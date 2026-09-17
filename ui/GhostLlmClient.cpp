@@ -274,7 +274,7 @@ void GhostLlmClient::didOpenDocument(const std::string& uri,
         return;
 
     auto [version, msg] = lsp::GhostJsonRpc::serializeDidOpen(uri, languageId, 1, text);
-    docVersion_ = version;
+    docVersions_[uri] = version;
     writeToStdin(msg);
 }
 
@@ -285,7 +285,7 @@ void GhostLlmClient::didChangeDocument(const std::string& uri,
     if (!isRunning())
         return;
 
-    docVersion_ = version;
+    docVersions_[uri] = version;
     auto [ver, msg] = lsp::GhostJsonRpc::serializeDidChange(uri, version, text);
     writeToStdin(msg);
 }
@@ -295,8 +295,25 @@ void GhostLlmClient::didCloseDocument(const std::string& uri)
     if (!isRunning())
         return;
 
+    docVersions_.erase(uri);
     std::string msg = lsp::GhostJsonRpc::serializeDidClose(uri);
     writeToStdin(msg);
+}
+
+int GhostLlmClient::documentVersion(const std::string& uri) const noexcept
+{
+    auto it = docVersions_.find(uri);
+    return it != docVersions_.end() ? it->second : 0;
+}
+
+void GhostLlmClient::cancelGhostRequest(const std::string& requestId)
+{
+    pendingGhostRequests_.erase(requestId);
+}
+
+void GhostLlmClient::cancelAllGhostRequests()
+{
+    pendingGhostRequests_.clear();
 }
 
 // ---------------------------------------------------------------------------
@@ -495,7 +512,7 @@ void GhostLlmClient::checkTimeout(int64_t nowMs)
 
     for (const auto& [id, req] : pendingGhostRequests_)
     {
-        if (nowMs - req.sentAtMs > 5000) // 5s timeout
+        if (nowMs - req.sentAtMs > kGhostRequestTimeoutMs)
         {
             timedOut.push_back(id);
         }

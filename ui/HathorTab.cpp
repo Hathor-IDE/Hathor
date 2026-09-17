@@ -155,6 +155,10 @@ HathorTab::HathorTab(int slotIndex, bool chuck)
 HathorTab::~HathorTab()
 {
     document_.removeListener(this);
+    // Release the ghost document slot so llm-ls doesn't accumulate stale
+    // URIs (didCloseDocument is a no-op when the client is already gone).
+    if (ghostClient_ != nullptr)
+        ghostClient_->didCloseDocument(lspDocumentUri().toStdString());
 }
 
 // ---------------------------------------------------------------------------
@@ -1589,16 +1593,17 @@ void HathorTab::handleCursorMove()
     if (onCursorMoved)
         onCursorMoved();
 
-    if (!lspClient_ || !lspHoverHandler_)
-        return;
-
-    // AI-4 + AI-G3: Trigger ghost text on cursor movement.
-    // The coordinator ensures ghost is suppressed when the LSP popup is
-    // visible. The ghost logic handles debounce internally.
-    if (coordinator_ && coordinator_->isGhostEnabled() && !coordinator_->isLspPopupActive())
+    // AI-4 + AI-G3: Trigger ghost text on cursor movement. Ghost needs only
+    // the ghost client + coordinator — it must not depend on the Strudel
+    // LSP pieces (lspHoverHandler_ doesn't even exist for .ck tabs).
+    if (ghostClient_ && coordinator_ && coordinator_->isGhostEnabled()
+        && !coordinator_->isLspPopupActive())
     {
         triggerGhostCompletion();
     }
+
+    if (!lspClient_ || !lspHoverHandler_)
+        return;
 
     auto caretPos = editor_.getCaretPos();
     int cursorLine = caretPos.getLineNumber();
@@ -2192,14 +2197,17 @@ void HathorTab::ghostTick()
     // J-2: Preserve maxCandidates from the coordinator's ghost logic config.
     req.maxCandidates = coordinator_->ghostLogic().maxCandidates();
 
-    // Send the request via the llm-ls client
+    // Send the request via the llm-ls client. Guarded by SafePointer:
+    // the tab may close while the request is in flight.
+    juce::Component::SafePointer<HathorTab> safeSelf(this);
     ghostClient_->requestGhostCompletion(
         req,
         requestId,
-        [this, requestId](const std::string& id,
-                           const lsp::GhostCompletionResponse& resp)
+        [safeSelf, requestId](const std::string& id,
+                              const lsp::GhostCompletionResponse& resp)
         {
-            if (!coordinator_ || !ghostOverlay_)
+            auto* tab = safeSelf.getComponent();
+            if (tab == nullptr || !tab->coordinator_ || !tab->ghostOverlay_)
                 return;
 
             int64_t responseTime = static_cast<int64_t>(
@@ -2209,11 +2217,11 @@ void HathorTab::ghostTick()
 
             // AI-G3: The coordinator handles LSP coexistence — it
             // suppresses the ghost response if the LSP popup is visible.
-            auto result = coordinator_->onGhostResponse(id, resp, responseTime);
+            auto result = tab->coordinator_->onGhostResponse(id, resp, responseTime);
 
             if (!result.has_value() || result->isEmpty())
             {
-                ghostOverlay_->clearGhost();
+                tab->ghostOverlay_->clearGhost();
                 return;
             }
 
@@ -2226,13 +2234,13 @@ void HathorTab::ghostTick()
              if (result.has_value())
              {
                  const auto& gr = result.value();
-                 const auto caretPos = editor_.getCaretPos();
+                 const auto caretPos = tab->editor_.getCaretPos();
                  if (static_cast<int>(caretPos.getLineNumber()) != gr.cursorLine ||
                      static_cast<int>(caretPos.getIndexInLine()) != gr.character)
                  {
                      // Cursor moved — discard the stale ghost
-                     ghostOverlay_->clearGhost();
-                     activeGhostResult_.reset();
+                     tab->ghostOverlay_->clearGhost();
+                     tab->activeGhostResult_.reset();
                      return;
                  }
              }
@@ -2246,30 +2254,30 @@ void HathorTab::ghostTick()
              // coordinates map directly to overlay-local coordinates.
              // This follows the same pattern as HighlightOverlay — no
              // setTopLeftPosition() which would break alignment.
-             juce::Rectangle<int> caretRect = editor_.getCaretRectangleForCharIndex(
-                 editor_.getCaretPosition());
+             juce::Rectangle<int> caretRect = tab->editor_.getCaretRectangleForCharIndex(
+                 tab->editor_.getCaretPosition());
 
-              ghostOverlay_->setGhostText(ghostResult.text, caretRect, 0);
+              tab->ghostOverlay_->setGhostText(ghostResult.text, caretRect, 0);
 
               // J-2: Set the candidate indicator badge on the overlay
-              ghostOverlay_->setCandidateIndicator(
-                  coordinator_->ghostCandidateCount(),
-                  coordinator_->ghostSelectedCandidateIndex());
+              tab->ghostOverlay_->setCandidateIndicator(
+                  tab->coordinator_->ghostCandidateCount(),
+                  tab->coordinator_->ghostSelectedCandidateIndex());
 
               // Store the result for cursor verification on accept
-              activeGhostResult_ = ghostResult;
+              tab->activeGhostResult_ = ghostResult;
 
              // AI-G3: Only show the ghost overlay if the coordinator
              // hasn't entered LspPopupActive mode (no late ghost-behind-popup).
-             if (!coordinator_->isLspPopupActive())
+             if (!tab->coordinator_->isLspPopupActive())
              {
-                 ghostOverlay_->showGhost();
+                 tab->ghostOverlay_->showGhost();
              }
              else
              {
                  // LSP popup took over while the response was in flight —
                  // hide the ghost overlay.
-                 ghostOverlay_->hideGhost();
+                 tab->ghostOverlay_->hideGhost();
              }
          });
 }
