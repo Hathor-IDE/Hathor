@@ -98,16 +98,29 @@ const juce::Drawable* IconLibrary::cachedDrawable(Icon icon, juce::Colour colour
 void IconLibrary::drawIcon(juce::Graphics& g, Icon icon,
                            juce::Rectangle<float> bounds, juce::Colour colour)
 {
+    const float side = std::min(bounds.getWidth(), bounds.getHeight());
+    const juce::Rectangle<float> fitted(
+        bounds.getCentreX() - side / 2.0f,
+        bounds.getCentreY() - side / 2.0f,
+        side, side);
     if (const juce::Drawable* d = cachedDrawable(icon, colour))
     {
         // Lucide viewBox is 24×24; preserve aspect while fitting bounds.
-        const float side = std::min(bounds.getWidth(), bounds.getHeight());
-        const juce::Rectangle<float> fitted(
-            bounds.getCentreX() - side / 2.0f,
-            bounds.getCentreY() - side / 2.0f,
-            side, side);
         d->drawWithin(g, fitted, juce::RectanglePlacement::centred, 1.0f);
+        return;
     }
+    // Missing glyph: never blank — draw a theme-visible placeholder box.
+    g.setColour(colour.withAlpha(0.5f));
+    g.drawRect(fitted, 1.0f);
+    g.drawLine(fitted.getX(), fitted.getY(), fitted.getRight(),
+               fitted.getBottom(), 1.0f);
+    g.drawLine(fitted.getX(), fitted.getBottom(), fitted.getRight(),
+               fitted.getY(), 1.0f);
+}
+
+void IconLibrary::clearCache() noexcept
+{
+    cache().clear();
 }
 
 } // namespace hathor::ui

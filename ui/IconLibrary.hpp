@@ -55,9 +55,14 @@ public:
     };
 
     /// Draw @p icon tinted with @p colour inside @p bounds.
-    /// Must be called on the JUCE message thread.
+    /// Must be called on the JUCE message thread. A missing glyph draws a
+    /// visible placeholder instead of blank space.
     static void drawIcon(juce::Graphics& g, Icon icon,
                          juce::Rectangle<float> bounds, juce::Colour colour);
+
+    /// Drop all cached tinted drawables (called on theme switch so stale
+    /// per-colour entries don't accumulate across themes).
+    static void clearCache() noexcept;
 
 private:
     static const char* resourceName(Icon icon);

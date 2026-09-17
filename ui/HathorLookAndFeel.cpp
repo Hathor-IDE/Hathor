@@ -13,6 +13,7 @@
  */
 
 #include "HathorLookAndFeel.hpp"
+#include "IconLibrary.hpp"
 
 // juce_gui_extra is needed for juce::CodeEditorComponent colour IDs.
 #include <juce_gui_extra/juce_gui_extra.h>
@@ -373,6 +374,10 @@ void HathorLookAndFeel::setPalette(const Palette& newPalette)
     currentPalette_ = newPalette;
     applyPaletteToColours();
 
+    // Tinted icon drawables are cached per colour: drop them so the new
+    // theme's tints rebuild on demand instead of leaking per-theme entries.
+    hathor::ui::IconLibrary::clearCache();
+
     // Broadcast to every live component. JUCE's sendLookAndFeelChange() recurses
     // into child components, so HathorTab (and any other component that overrides
     // lookAndFeelChanged()) re-applies its palette-derived colours here.
@@ -412,7 +417,9 @@ void HathorLookAndFeel::applyPaletteToColours() noexcept
     setColour(juce::TextEditor::outlineColourId,       p.surfaceHighest);
     setColour(juce::TextEditor::focusedOutlineColourId, p.accent);
     setColour(juce::TextEditor::highlightColourId,     p.accent.withAlpha(0.4f));
-    setColour(juce::TextEditor::highlightedTextColourId, p.background);
+    // Highlight is translucent accent over the surface: keep primary text
+    // (near-black on a 40% tint is unreadable on dark themes).
+    setColour(juce::TextEditor::highlightedTextColourId, p.textPrimary);
     setColour(juce::CaretComponent::caretColourId,     p.accent);
 
     // -----------------------------------------------------------------------
@@ -478,7 +485,9 @@ void HathorLookAndFeel::applyPaletteToColours() noexcept
     setColour(juce::PopupMenu::backgroundColourId,             p.surfaceContainer);
     setColour(juce::PopupMenu::textColourId,                   p.textPrimary);
     setColour(juce::PopupMenu::highlightedBackgroundColourId,  p.accent.withAlpha(0.3f));
-    setColour(juce::PopupMenu::highlightedTextColourId,        p.background);
+    // Same translucent-accent reasoning as the editor selection: primary
+    // text stays legible, near-black does not.
+    setColour(juce::PopupMenu::highlightedTextColourId,        p.textPrimary);
     setColour(juce::PopupMenu::headerTextColourId,             p.textMuted);
 
     // -----------------------------------------------------------------------
@@ -497,7 +506,8 @@ void HathorLookAndFeel::applyPaletteToColours() noexcept
     setColour(juce::TextButton::buttonColourId,   p.surfaceHigh);
     setColour(juce::TextButton::buttonOnColourId, p.accent);
     setColour(juce::TextButton::textColourOffId,  p.textPrimary);
-    setColour(juce::TextButton::textColourOnId,   p.background);
+    // Toggled buttons sit on solid accent: use the designed on-accent token.
+    setColour(juce::TextButton::textColourOnId,   p.accentOn);
 
     // -----------------------------------------------------------------------
     // TooltipWindow
@@ -737,18 +747,44 @@ void HathorLookAndFeel::drawLinearSlider(juce::Graphics& g,
 // ===========================================================================
 
 void HathorLookAndFeel::drawScrollbar(juce::Graphics& g,
-                                       juce::ScrollBar& /*scrollbar*/,
+                                       juce::ScrollBar& scrollbar,
                                        int x, int y, int width, int height,
-                                       bool /*isScrollbarVertical*/,
-                                       int /*thumbStartPosition*/, int /*thumbSize*/,
-                                       bool /*isMouseOver*/, bool /*isMouseDown*/)
+                                       bool isScrollbarVertical,
+                                       int thumbStartPosition, int thumbSize,
+                                       bool isMouseOver, bool isMouseDown)
 {
     const Palette& p = currentPalette_;
+    (void) scrollbar;
 
     // Track is transparent — let the parent background show through.
-    // Thumb: dim, 8 px wide, 4 px corner radius (matches mockup).
-    g.setColour(p.surfaceHighest);
-
-    juce::Rectangle<float> thumb(x, y, width, height);
+    // Thumb: accent-tinted on hover/press, minimum 24 px so it stays
+    // grabbable in long lists.
+    constexpr int kMinThumb = 24;
+    constexpr int kThickness = 8;
+    g.setColour((isMouseOver || isMouseDown) ? p.accent.withAlpha(0.7f)
+                                            : p.surfaceHighest);
+    juce::Rectangle<float> thumb;
+    if (isScrollbarVertical)
+    {
+        const int t = std::max(thumbSize, kMinThumb);
+        const int ty = y + std::clamp(thumbStartPosition, 0,
+                                      std::max(0, height - t));
+        const int tx = x + (width - kThickness) / 2;
+        thumb = juce::Rectangle<float>(static_cast<float>(tx),
+                                       static_cast<float>(ty),
+                                       static_cast<float>(kThickness),
+                                       static_cast<float>(std::min(t, height)));
+    }
+    else
+    {
+        const int t = std::max(thumbSize, kMinThumb);
+        const int tx = x + std::clamp(thumbStartPosition, 0,
+                                      std::max(0, width - t));
+        const int ty = y + (height - kThickness) / 2;
+        thumb = juce::Rectangle<float>(static_cast<float>(tx),
+                                       static_cast<float>(ty),
+                                       static_cast<float>(std::min(t, width)),
+                                       static_cast<float>(kThickness));
+    }
     g.fillRoundedRectangle(thumb, HathorLookAndFeel::Radius::small);
 }
