@@ -179,7 +179,8 @@ private:
     struct ActionEntry
     {
         EditorAction                         info;
-        std::optional<KeyEquivalent>         keyEquivalent;
+        // An action may hold several bindings (e.g. Cmd+F and Ctrl+F).
+        std::vector<KeyEquivalent>           keyEquivalents;
         std::function<void()>                callback;
     };
 

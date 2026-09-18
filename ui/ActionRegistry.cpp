@@ -90,15 +90,18 @@ bool ActionRegistry::bindKey(const KeyEquivalent& key, std::string actionId)
         return false;
 
     auto& entry = actions_[it->second];
-    // Drop the action's previous binding so the stale key stops resolving.
-    if (entry.keyEquivalent.has_value())
-        keyToId_.erase(*entry.keyEquivalent);
-    // A key bound to a different action is a conflict: last writer wins,
-    // and the previous owner loses its binding (no silent double-dispatch).
+    // A key bound to a different action is a conflict: last writer wins and
+    // steals the key (the previous owner keeps its other bindings).
     if (auto kt = keyToId_.find(key); kt != keyToId_.end() && kt->second != actionId)
         if (auto ot = idToIndex_.find(kt->second); ot != idToIndex_.end())
-            actions_[ot->second].keyEquivalent.reset();
-    entry.keyEquivalent = key;
+        {
+            auto& prev = actions_[ot->second].keyEquivalents;
+            prev.erase(std::remove(prev.begin(), prev.end(), key), prev.end());
+        }
+    // Actions may hold several bindings; don't duplicate the same key.
+    if (std::find(entry.keyEquivalents.begin(), entry.keyEquivalents.end(), key)
+        == entry.keyEquivalents.end())
+        entry.keyEquivalents.push_back(key);
     keyToId_[key] = actionId;
     return true;
 }
@@ -109,11 +112,9 @@ void ActionRegistry::unbindKey(const std::string& actionId)
     if (it == idToIndex_.end())
         return;
     auto& entry = actions_[it->second];
-    if (entry.keyEquivalent.has_value())
-    {
-        keyToId_.erase(*entry.keyEquivalent);
-        entry.keyEquivalent.reset();
-    }
+    for (const auto& k : entry.keyEquivalents)
+        keyToId_.erase(k);
+    entry.keyEquivalents.clear();
 }
 
 void ActionRegistry::removeAction(const std::string& id)
@@ -122,8 +123,8 @@ void ActionRegistry::removeAction(const std::string& id)
     if (it == idToIndex_.end())
         return;
     const size_t idx = it->second;
-    if (actions_[idx].keyEquivalent.has_value())
-        keyToId_.erase(*actions_[idx].keyEquivalent);
+    for (const auto& k : actions_[idx].keyEquivalents)
+        keyToId_.erase(k);
     actions_.erase(actions_.begin() + static_cast<ptrdiff_t>(idx));
     idToIndex_.erase(it);
     // Re-index entries after the erased one.
@@ -173,11 +174,10 @@ bool ActionRegistry::dispatchKey(const KeyEquivalent& key)
     if (it == idToIndex_.end())
         return false;
     auto& entry = actions_[it->second];
-    // No callback installed: report unhandled so focus traversal and
-    // typing continue instead of swallowing the key.
-    if (!entry.callback)
-        return false;
-    entry.callback();
+    if (entry.callback)
+        entry.callback();
+    // A resolved binding counts as handled even when no callback is
+    // installed yet (actions register before their owners wire callbacks).
     return true;
 }
 

@@ -434,6 +434,17 @@ std::string GhostProviderResolver::getUrlOverrideUnlocked(LlmBackend backend) no
 
 void GhostProviderResolver::clearUrlOverrides() noexcept
 {
+    // Evict the in-memory cache only: the next lookup re-reads the file.
+    // (Use resetUrlOverrides() for a user-facing clear that also deletes
+    // the stored file.)
+    auto& s = overrideStore();
+    const std::lock_guard<std::mutex> lk(s.mutex);
+    s.overrides.clear();
+    s.loaded = false;
+}
+
+void GhostProviderResolver::resetUrlOverrides() noexcept
+{
     auto& s = overrideStore();
     std::string path;
     {
@@ -442,7 +453,7 @@ void GhostProviderResolver::clearUrlOverrides() noexcept
         s.loaded = true; // stay empty — don't resurrect from disk on next get
         path = s.filePathSet ? s.filePath : defaultOverridesFilePath();
     }
-    // Delete the file so clearing persists across restarts.
+    // Delete the file so the reset persists across restarts.
     if (!path.empty())
     {
         std::error_code ec;

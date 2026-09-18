@@ -115,6 +115,10 @@ public:
     /** Drop the in-memory override cache. The persistence file is untouched. */
     static void clearUrlOverrides() noexcept;
 
+    /** User-facing reset: clear memory AND delete the stored file so the
+        reset persists across restarts. */
+    static void resetUrlOverrides() noexcept;
+
     /** Return the current override for @p backend, or "" if none. Triggers the
         one-time lazy load from the persistence file on first call. */
     static std::string getUrlOverride(LlmBackend backend);
