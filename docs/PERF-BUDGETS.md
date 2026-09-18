@@ -1,4 +1,4 @@
-# Hathor Frontend Performance Budgets + Release Bar (P7.3)
+# Hathor Frontend Performance Budgets + Release Bar
 
 Measured 2026-09-17 on macOS (Debug build, `HATHOR_BUILD_APP=ON`).
 Re-measure on Release before shipping; budgets are targets, numbers below
@@ -16,7 +16,7 @@ are the current Debug reality.
 
 | Artifact | Size |
 |----------|------|
-| `HathorUI.app` | 303 MB (Debug; Release will be far smaller) |
+| `HathorUI.app` | 303 MB (Debug; Release size not yet recorded — see checklist) |
 | `HathorUI` binary | 180 MB |
 | `hathor-audio-worker` | 19 MB |
 | `hathor-mcp` | 5 MB |
