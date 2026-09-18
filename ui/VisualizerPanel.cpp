@@ -160,11 +160,25 @@ void VisualizerPanel::paintSpectrum(juce::Graphics& g,
     if (idle)
     {
         paintIdleRing(g, bounds, idlePhase, palette);
+        // Text second for the idle state (not color-only): the ring alone
+        // doesn't say why nothing is moving.
+        g.setColour(palette.textSecondary);
+        g.setFont(HathorLookAndFeel::uiFontRegular(11.0f));
+        g.drawText("Idle — press play",
+                   bounds.toNearestInt(),
+                   juce::Justification::centred, false);
         return;
     }
 
     if (pcmCount_ < 2)
+    {
+        g.setColour(palette.textSecondary);
+        g.setFont(HathorLookAndFeel::uiFontRegular(11.0f));
+        g.drawText("Waiting for audio…",
+                   bounds.toNearestInt(),
+                   juce::Justification::centred, false);
         return;
+    }
 
     // Build input: take the most recent kFftSize samples (newest at the end),
     // reading oldest-first from the ring buffer.

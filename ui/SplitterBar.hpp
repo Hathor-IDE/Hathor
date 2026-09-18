@@ -36,7 +36,9 @@ public:
         setMouseCursor(orient == Orientation::Horizontal
                            ? juce::MouseCursor::LeftRightResizeCursor
                            : juce::MouseCursor::UpDownResizeCursor);
+        setWantsKeyboardFocus(true);
         setTitle("Splitter");
+        setDescription("Arrow keys resize the adjacent panels. Double-click resets.");
     }
 
     ~SplitterBar() override = default;
@@ -46,6 +48,11 @@ public:
         const auto& palette = HathorLookAndFeel::fromComponent(*this).getPalette();
         g.fillAll(isMouseOver() ? palette.accent.withAlpha(0.4f)
                                 : palette.surfaceContainer.withAlpha(0.3f));
+        if (hasKeyboardFocus(true))
+        {
+            g.setColour(palette.accent);
+            g.drawRect(getLocalBounds(), 1);
+        }
     }
 
     void mouseEnter(const juce::MouseEvent&) override { repaint(); }
@@ -77,6 +84,31 @@ public:
     {
         if (onDoubleClick_)
             onDoubleClick_();
+    }
+
+    bool keyPressed(const juce::KeyPress& key) override
+    {
+        // Keyboard resize: arrows nudge the split in 8 px steps.
+        const bool horizontal = (orient_ == Orientation::Horizontal);
+        int delta = 0;
+        if (key == juce::KeyPress::leftKey)
+            delta = horizontal ? -8 : 0;
+        else if (key == juce::KeyPress::rightKey)
+            delta = horizontal ? 8 : 0;
+        else if (key == juce::KeyPress::upKey)
+            delta = horizontal ? 0 : -8;
+        else if (key == juce::KeyPress::downKey)
+            delta = horizontal ? 0 : 8;
+        else
+            return false;
+        if (delta != 0 && onDrag_)
+        {
+            onDrag_(delta);
+            if (onDragFinished_)
+                onDragFinished_();
+            return true;
+        }
+        return false;
     }
 
     std::function<void()> onDoubleClick_;
