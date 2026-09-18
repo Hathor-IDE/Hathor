@@ -41,38 +41,42 @@ std::uint64_t cacheKey(IconLibrary::Icon icon, juce::Colour colour)
 
 } // namespace
 
-const char* IconLibrary::resourceName(Icon icon)
+namespace {
+
+/// Raw SVG data + size for an icon, via typed BinaryData symbols.
+/// Compile-time checked: a missing/renamed resource breaks the build
+/// instead of silently blanking the icon at runtime (the old string
+/// lookup failed exactly that way).
+std::pair<const char*, int> iconData(IconLibrary::Icon icon) noexcept
 {
     switch (icon)
     {
-        // NOTE: JUCE BinaryData strips dashes from resource names
-        // (audio-waveform.svg -> audiowaveform_svg). These strings must
-        // match BinaryData.h exactly — getNamedResource() does exact match
-        // and silently returns null on mismatch (blank icon).
-        case Icon::Explorer:    return "folderopen_svg";
-        case Icon::Search:      return "search_svg";
-        case Icon::GitBranch:   return "gitbranch_svg";
-        case Icon::Bug:         return "bug_svg";
-        case Icon::Terminal:    return "terminal_svg";
-        case Icon::Warning:     return "trianglealert_svg";
-        case Icon::Bot:         return "bot_svg";
-        case Icon::Settings:    return "settings_svg";
-        case Icon::Close:       return "x_svg";
-        case Icon::Refresh:     return "refreshcw_svg";
-        case Icon::Zap:         return "zap_svg";
-        case Icon::Columns:     return "columns2_svg";
-        case Icon::Play:        return "play_svg";
-        case Icon::Stop:        return "square_svg";
-        case Icon::Music:       return "music2_svg";
-        case Icon::Activity:    return "activity_svg";
-        case Icon::Folder:      return "folder_svg";
-        case Icon::FileHathor:  return "music2_svg";
-        case Icon::FileChuck:   return "filecode2_svg";
-        case Icon::AudioWave:   return "audiowaveform_svg";
-        case Icon::FileGeneric: return "file_svg";
+        case IconLibrary::Icon::Explorer:    return {BinaryData::folderopen_svg, BinaryData::folderopen_svgSize};
+        case IconLibrary::Icon::Search:      return {BinaryData::search_svg, BinaryData::search_svgSize};
+        case IconLibrary::Icon::GitBranch:   return {BinaryData::gitbranch_svg, BinaryData::gitbranch_svgSize};
+        case IconLibrary::Icon::Bug:         return {BinaryData::bug_svg, BinaryData::bug_svgSize};
+        case IconLibrary::Icon::Terminal:    return {BinaryData::terminal_svg, BinaryData::terminal_svgSize};
+        case IconLibrary::Icon::Warning:     return {BinaryData::trianglealert_svg, BinaryData::trianglealert_svgSize};
+        case IconLibrary::Icon::Bot:         return {BinaryData::bot_svg, BinaryData::bot_svgSize};
+        case IconLibrary::Icon::Settings:    return {BinaryData::settings_svg, BinaryData::settings_svgSize};
+        case IconLibrary::Icon::Close:       return {BinaryData::x_svg, BinaryData::x_svgSize};
+        case IconLibrary::Icon::Refresh:     return {BinaryData::refreshcw_svg, BinaryData::refreshcw_svgSize};
+        case IconLibrary::Icon::Zap:         return {BinaryData::zap_svg, BinaryData::zap_svgSize};
+        case IconLibrary::Icon::Columns:     return {BinaryData::columns2_svg, BinaryData::columns2_svgSize};
+        case IconLibrary::Icon::Play:        return {BinaryData::play_svg, BinaryData::play_svgSize};
+        case IconLibrary::Icon::Stop:        return {BinaryData::square_svg, BinaryData::square_svgSize};
+        case IconLibrary::Icon::Music:       return {BinaryData::music2_svg, BinaryData::music2_svgSize};
+        case IconLibrary::Icon::Activity:    return {BinaryData::activity_svg, BinaryData::activity_svgSize};
+        case IconLibrary::Icon::Folder:      return {BinaryData::folder_svg, BinaryData::folder_svgSize};
+        case IconLibrary::Icon::FileHathor:  return {BinaryData::music2_svg, BinaryData::music2_svgSize};
+        case IconLibrary::Icon::FileChuck:   return {BinaryData::filecode2_svg, BinaryData::filecode2_svgSize};
+        case IconLibrary::Icon::AudioWave:   return {BinaryData::audiowaveform_svg, BinaryData::audiowaveform_svgSize};
+        case IconLibrary::Icon::FileGeneric: return {BinaryData::file_svg, BinaryData::file_svgSize};
     }
-    return "file_svg";
+    return {BinaryData::file_svg, BinaryData::file_svgSize};
 }
+
+} // namespace
 
 const juce::Drawable* IconLibrary::cachedDrawable(Icon icon, juce::Colour colour)
 {
@@ -81,30 +85,13 @@ const juce::Drawable* IconLibrary::cachedDrawable(Icon icon, juce::Colour colour
     if (auto it = c.find(key); it != c.end())
         return it->second.get();
 
-    // JUCE BinaryData strips dashes (audio-waveform.svg →
-    // audiowaveform_svg). Accept either form, but log a loud warning on
-    // fallback so mapping drift gets fixed instead of silently blanking.
-    const char* wanted = resourceName(icon);
-    int dataSize = 0;
-    const char* data = BinaryData::getNamedResource(wanted, dataSize);
-    if ((data == nullptr || dataSize <= 0) && std::strchr(wanted, '-') != nullptr)
-    {
-        std::string stripped = wanted;
-        stripped.erase(std::remove(stripped.begin(), stripped.end(), '-'),
-                       stripped.end());
-        data = BinaryData::getNamedResource(stripped.c_str(), dataSize);
-        if (data != nullptr && dataSize > 0)
-            std::fprintf(stderr,
-                         "[hathor:icons] resourceName \"%s\" mismatches "
-                         "BinaryData (want \"%s\") — fix the mapping\n",
-                         wanted, stripped.c_str());
-    }
+    const auto [data, dataSize] = iconData(icon);
     if (data == nullptr || dataSize <= 0)
     {
         std::fprintf(stderr,
-                     "[hathor:icons] missing BinaryData resource \"%s\" — "
-                     "icon will render as a placeholder\n",
-                     wanted);
+                     "[hathor:icons] empty BinaryData for icon %d — "
+                     "renders as a placeholder\n",
+                     static_cast<int>(icon));
         return nullptr;
     }
 

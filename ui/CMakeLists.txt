@@ -276,9 +276,13 @@ target_compile_features(hathor-ui PRIVATE cxx_std_20)
 target_compile_options(hathor-ui PRIVATE -Wall -Wextra -Werror)
 
 # ---------------------------------------------------------------------------
-# Embedded font resources (Req 5) — JetBrains Mono (code) + Inter (UI chrome, OFL)
+# Embedded app resources — JetBrains Mono (code) + Inter (UI chrome, OFL) +
+# Lucide icons (ISC). ONE binary-data target: two targets both emit
+# `namespace BinaryData`, and the linker keeps only one copy — previously
+# the font dataset won, so every icon lookup silently missed and no Lucide
+# icon ever rendered.
 # ---------------------------------------------------------------------------
-juce_add_binary_data(hathor_font_data
+juce_add_binary_data(hathor_app_data
     SOURCES
         ${CMAKE_CURRENT_SOURCE_DIR}/resources/JetBrainsMono-Regular.ttf
         ${CMAKE_CURRENT_SOURCE_DIR}/resources/JetBrainsMono-Medium.ttf
@@ -289,10 +293,6 @@ juce_add_binary_data(hathor_font_data
         ${CMAKE_CURRENT_SOURCE_DIR}/resources/Inter-SemiBold.ttf
         ${CMAKE_CURRENT_SOURCE_DIR}/resources/Inter-Bold.ttf
         ${CMAKE_CURRENT_SOURCE_DIR}/resources/Inter-OFL.txt
-)
-
-juce_add_binary_data(hathor_icon_data
-    SOURCES
         ${CMAKE_CURRENT_SOURCE_DIR}/resources/icons/activity.svg
         ${CMAKE_CURRENT_SOURCE_DIR}/resources/icons/audio-waveform.svg
         ${CMAKE_CURRENT_SOURCE_DIR}/resources/icons/bot.svg
@@ -320,8 +320,7 @@ target_link_libraries(hathor-ui
         hathor-engine
         hathor-control
         hathor-audio-worker-lib
-        hathor_font_data
-        hathor_icon_data
+        hathor_app_data
         juce::juce_gui_basics
         juce::juce_gui_extra
         juce::juce_audio_devices
