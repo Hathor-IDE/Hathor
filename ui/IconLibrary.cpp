@@ -14,6 +14,9 @@
 
 #include <BinaryData.h>
 
+#include <algorithm>
+#include <cstdio>
+#include <cstring>
 #include <map>
 #include <memory>
 
@@ -42,26 +45,30 @@ const char* IconLibrary::resourceName(Icon icon)
 {
     switch (icon)
     {
-        case Icon::Explorer:    return "folder-open_svg";
+        // NOTE: JUCE BinaryData strips dashes from resource names
+        // (audio-waveform.svg -> audiowaveform_svg). These strings must
+        // match BinaryData.h exactly — getNamedResource() does exact match
+        // and silently returns null on mismatch (blank icon).
+        case Icon::Explorer:    return "folderopen_svg";
         case Icon::Search:      return "search_svg";
-        case Icon::GitBranch:   return "git-branch_svg";
+        case Icon::GitBranch:   return "gitbranch_svg";
         case Icon::Bug:         return "bug_svg";
         case Icon::Terminal:    return "terminal_svg";
-        case Icon::Warning:     return "triangle-alert_svg";
+        case Icon::Warning:     return "trianglealert_svg";
         case Icon::Bot:         return "bot_svg";
         case Icon::Settings:    return "settings_svg";
         case Icon::Close:       return "x_svg";
-        case Icon::Refresh:     return "refresh-cw_svg";
+        case Icon::Refresh:     return "refreshcw_svg";
         case Icon::Zap:         return "zap_svg";
-        case Icon::Columns:     return "columns-2_svg";
+        case Icon::Columns:     return "columns2_svg";
         case Icon::Play:        return "play_svg";
         case Icon::Stop:        return "square_svg";
-        case Icon::Music:       return "music-2_svg";
+        case Icon::Music:       return "music2_svg";
         case Icon::Activity:    return "activity_svg";
         case Icon::Folder:      return "folder_svg";
-        case Icon::FileHathor:  return "music-2_svg";
-        case Icon::FileChuck:   return "file-code-2_svg";
-        case Icon::AudioWave:   return "audio-waveform_svg";
+        case Icon::FileHathor:  return "music2_svg";
+        case Icon::FileChuck:   return "filecode2_svg";
+        case Icon::AudioWave:   return "audiowaveform_svg";
         case Icon::FileGeneric: return "file_svg";
     }
     return "file_svg";
@@ -74,10 +81,32 @@ const juce::Drawable* IconLibrary::cachedDrawable(Icon icon, juce::Colour colour
     if (auto it = c.find(key); it != c.end())
         return it->second.get();
 
+    // JUCE BinaryData strips dashes (audio-waveform.svg →
+    // audiowaveform_svg). Accept either form, but log a loud warning on
+    // fallback so mapping drift gets fixed instead of silently blanking.
+    const char* wanted = resourceName(icon);
     int dataSize = 0;
-    const char* data = BinaryData::getNamedResource(resourceName(icon), dataSize);
+    const char* data = BinaryData::getNamedResource(wanted, dataSize);
+    if ((data == nullptr || dataSize <= 0) && std::strchr(wanted, '-') != nullptr)
+    {
+        std::string stripped = wanted;
+        stripped.erase(std::remove(stripped.begin(), stripped.end(), '-'),
+                       stripped.end());
+        data = BinaryData::getNamedResource(stripped.c_str(), dataSize);
+        if (data != nullptr && dataSize > 0)
+            std::fprintf(stderr,
+                         "[hathor:icons] resourceName \"%s\" mismatches "
+                         "BinaryData (want \"%s\") — fix the mapping\n",
+                         wanted, stripped.c_str());
+    }
     if (data == nullptr || dataSize <= 0)
+    {
+        std::fprintf(stderr,
+                     "[hathor:icons] missing BinaryData resource \"%s\" — "
+                     "icon will render as a placeholder\n",
+                     wanted);
         return nullptr;
+    }
 
     // Tint: swap Lucide's stroke="currentColor" for the requested colour and
     // drop any class attribute noise before parsing.

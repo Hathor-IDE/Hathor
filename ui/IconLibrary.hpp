@@ -65,6 +65,9 @@ public:
     static void clearCache() noexcept;
 
 private:
+    /// BinaryData resource name for @p icon. Must match the generated
+    /// BinaryData names exactly (JUCE strips dashes); cachedDrawable()
+    /// additionally tolerates dashed forms with a stderr warning.
     static const char* resourceName(Icon icon);
     static const juce::Drawable* cachedDrawable(Icon icon, juce::Colour colour);
 };
