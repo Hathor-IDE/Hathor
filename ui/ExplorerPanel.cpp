@@ -256,73 +256,14 @@ void ExplorerPanel::paint(juce::Graphics& g)
 void ExplorerPanel::FsPollTimer::timerCallback()
 {
     std::map<std::string, std::uint64_t> current;
-    bool changed = false;
+    if (!collectInto(current))
+        return; // capped or unreadable — keep the old snapshot, no churn
 
     if (!watchedDir_.isDirectory())
         return;
 
-    // Wave 4.1 (S7): ignore version-control, dependency and build trees so
-    // node_modules-scale directories don't peg the CPU on every 2 s poll.
-    static const char* kIgnored[] = {
-        ".git", "node_modules", "build", "DerivedData", ".hathor",
-        ".idea", ".vscode", "CMakeFiles", "_deps"
-    };
-    auto isIgnored = [](const std::filesystem::path& p) {
-        const std::string name = p.filename().string();
-        for (auto* ig : kIgnored)
-            if (name == ig)
-                return true;
-        // build* prefix (build-debug, build-release, ...)
-        if (name.rfind("build", 0) == 0)
-            return true;
-        return false;
-    };
-
-    const auto rootPath = std::filesystem::path(watchedDir_.getFullPathName().toStdString());
-    std::error_code ec;
-
-    // Walk the tree collecting (path, write_time) pairs.
-    std::filesystem::recursive_directory_iterator it(rootPath, ec);
-    if (ec)
-        return;
-
-    std::filesystem::recursive_directory_iterator end;
-
-    try
-    {
-        while (it != end)
-        {
-            std::error_code ec2;
-            const auto& p = it->path();
-            if (isIgnored(p))
-            {
-                it.disable_recursion_pending();
-                ++it;
-                continue;
-            }
-            const auto ftime = std::filesystem::last_write_time(p, ec2);
-            if (!ec2)
-            {
-                const auto epoch = std::chrono::duration_cast<std::chrono::seconds>(
-                    ftime.time_since_epoch()).count();
-
-                const std::string key = p.string();
-                current[key] = static_cast<std::uint64_t>(epoch);
-            }
-            ++it;
-        }
-    }
-    catch (const std::exception& ex)
-    {
-        // A filesystem error (permission denied, symlink loop, non-UTF-8 path,
-        // etc.) must never terminate the app — these callbacks run under
-        // JUCE's timer thread.  Log and bail out of this poll cycle.
-        std::cerr << "[ExplorerPanel] FsPollTimer iteration error: "
-                  << ex.what() << std::endl;
-        return;
-    }
-
     // Compare against the snapshot.
+    bool changed = false;
     if (current.size() != snapshot_.size())
     {
         changed = true;
@@ -342,7 +283,7 @@ void ExplorerPanel::FsPollTimer::timerCallback()
 
     if (changed)
     {
-        rebuildSnapshot();
+        snapshot_ = std::move(current);
         juce::Component::SafePointer<ExplorerPanel> safeSelf(&owner_);
         if (juce::MessageManager::getInstanceWithoutCreating() != nullptr)
             juce::MessageManager::callAsync([safeSelf]() {
@@ -371,17 +312,29 @@ void ExplorerPanel::FsPollTimer::reset() noexcept
 
 void ExplorerPanel::FsPollTimer::rebuildSnapshot() noexcept
 {
-    snapshot_.clear();
+    std::map<std::string, std::uint64_t> fresh;
+    if (collectInto(fresh))
+        snapshot_ = std::move(fresh);
+    // On cap/unreadable: keep the old snapshot rather than churning.
+}
+
+/// Single shared walk for timerCallback() and rebuildSnapshot(): same
+/// ignore rules, same error handling, hard entry cap. Returns false when
+/// the walk was capped or the root is unreadable (caller keeps old data).
+bool ExplorerPanel::FsPollTimer::collectInto(
+    std::map<std::string, std::uint64_t>& out) noexcept
+{
+    out.clear();
 
     if (!watchedDir_.isDirectory())
-        return;
+        return false;
 
     const auto rootPath = std::filesystem::path(watchedDir_.getFullPathName().toStdString());
     std::error_code ec;
 
     std::filesystem::recursive_directory_iterator it(rootPath, ec);
     if (ec)
-        return;
+        return false;
 
     std::filesystem::recursive_directory_iterator end;
 
@@ -389,27 +342,49 @@ void ExplorerPanel::FsPollTimer::rebuildSnapshot() noexcept
     {
         while (it != end)
         {
+            if (out.size() >= kMaxSnapshotEntries)
+                return false; // too big to track — keep old snapshot
             std::error_code ec2;
             const auto& p = it->path();
+            // Same ignore rules as TreeBuilder::isIgnoredDir (minus the
+            // managed-asset exemption, which only matters for display).
+            const std::string name = p.filename().string();
+            bool ignored = (name == ".git" || name == "node_modules"
+                            || name == ".hathor" || name == "DerivedData"
+                            || name == ".idea" || name == ".vscode"
+                            || name == "CMakeFiles" || name == "_deps"
+                            || (!name.empty() && name[0] == '.')
+                            || name.rfind("build", 0) == 0);
+            if (ignored)
+            {
+                // Never skip .hathor_assets here: baked instruments change
+                // on disk and the tree must notice.
+                if (name != ".hathor_assets")
+                {
+                    it.disable_recursion_pending();
+                    ++it;
+                    continue;
+                }
+            }
             const auto ftime = std::filesystem::last_write_time(p, ec2);
             if (!ec2)
             {
                 const auto epoch = std::chrono::duration_cast<std::chrono::seconds>(
                     ftime.time_since_epoch()).count();
-                snapshot_[p.string()] = static_cast<std::uint64_t>(epoch);
+                out[p.string()] = static_cast<std::uint64_t>(epoch);
             }
             ++it;
         }
     }
     catch (const std::exception& ex)
     {
-        // Guarded: rebuildSnapshot is noexcept (called from JUCE's timer
-        // thread), so an uncaught exception here would terminate the
-        // process.  A filesystem error on a restricted/odd path should
-        // only invalidate this poll cycle, not crash the IDE.
-        std::cerr << "[ExplorerPanel] FsPollTimer rebuildSnapshot error: "
+        // Guarded: noexcept (JUCE timer thread) — a filesystem error on a
+        // restricted/odd path invalidates this poll cycle, never the app.
+        std::cerr << "[ExplorerPanel] FsPollTimer walk error: "
                   << ex.what() << std::endl;
+        return false;
     }
+    return true;
 }
 
 void ExplorerPanel::showContextMenu(const juce::File& target, bool isDirectory)

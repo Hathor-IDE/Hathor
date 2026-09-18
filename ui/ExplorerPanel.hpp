@@ -137,10 +137,16 @@ private:
         void watch(const juce::File& dir) noexcept;
         void reset() noexcept;
     private:
+        /// Largest tracked tree (entries). Beyond this the watcher holds
+        /// its last snapshot instead of churning on untrackable trees.
+        static constexpr size_t kMaxSnapshotEntries = 50000;
         ExplorerPanel& owner_;
         juce::File watchedDir_;
         std::map<std::string, std::uint64_t> snapshot_;  // path -> write_time
         void rebuildSnapshot() noexcept;
+        /// Shared walk for the poll + snapshot paths (same ignores, same
+        /// error handling). False = capped/unreadable, keep old data.
+        bool collectInto(std::map<std::string, std::uint64_t>& out) noexcept;
     };
 
     //==========================================================================
