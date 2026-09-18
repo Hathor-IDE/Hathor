@@ -21,6 +21,7 @@
  */
 
 #include <juce_gui_basics/juce_gui_basics.h>
+#include <atomic>
 #include <functional>
 #include <map>
 #include <cstdint>
@@ -72,6 +73,9 @@ public:
     juce::File directory() const noexcept { return directory_; }
 
     /// Re-build the tree from the current directory.
+    /// The walk runs on a worker thread; results install on the message
+    /// thread (stale generations dropped). Synchronous only when no
+    /// message manager exists (tests).
     void refresh();
 
     /// Restore the last-saved root directory from ApplicationProperties.
@@ -114,6 +118,9 @@ private:
     // Tree root item — rebuilt on each refresh.
     void buildRootItem();
 
+    /// Install a worker-built tree on the message thread.
+    void installBuiltTree(FolderNode root);
+
     //==========================================================================
     // Filesystem refresh (B8-K5 §9, Wave 4.1 S7)
     // ---------------------------------------------------------------------------
@@ -142,6 +149,8 @@ private:
     // True once a real workspace root has been set. Replaces the old
     // home-directory sentinel so a workspace rooted at ~ works normally.
     bool                          hasWorkspace_{ false };
+    // Async refresh generation: stale worker builds drop themselves.
+    std::atomic<uint64_t>         refreshGeneration_{ 0 };
     TreeBuilder                   treeBuilder_;
     std::unique_ptr<FolderTreeItem> rootItem_;
     juce::TreeView                treeView_;

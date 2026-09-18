@@ -54,6 +54,7 @@ add_executable(hathor-ui-tests
        test_recently_closed_tabs.cpp
        test_navigation_history.cpp
        test_workspace_search_model.cpp
+       test_perf_budgets.cpp
        test_symbol_search_model.cpp
        test_lsp_jsonrpc_navigation.cpp
         test_action_registry.cpp

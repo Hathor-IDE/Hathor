@@ -121,10 +121,34 @@ void ExplorerPanel::refresh()
     if (!hasWorkspace_)
         return;
 
-    // Build the tree data via the recursive walker.
-    FolderNode root = treeBuilder_.buildTree(
-        std::filesystem::path(directory_.getFullPathName().toStdString()));
+    const std::string rootPath = directory_.getFullPathName().toStdString();
+    const uint64_t generation = ++refreshGeneration_;
 
+    // Tests run without a message manager: build synchronously there.
+    if (juce::MessageManager::getInstanceWithoutCreating() == nullptr)
+    {
+        installBuiltTree(treeBuilder_.buildTree(std::filesystem::path(rootPath)));
+        return;
+    }
+
+    // Walk off the message thread: large workspaces (even with ignored
+    // trees skipped) must never stall startup or input. The generation
+    // check drops stale builds after rapid re-roots.
+    juce::Component::SafePointer<ExplorerPanel> safeSelf(this);
+    std::thread([safeSelf, generation, rootPath]() {
+        TreeBuilder builder;
+        FolderNode root = builder.buildTree(std::filesystem::path(rootPath));
+        juce::MessageManager::callAsync([safeSelf, generation,
+                                         root = std::move(root)]() mutable {
+            if (auto* self = safeSelf.getComponent())
+                if (self->refreshGeneration_.load() == generation)
+                    self->installBuiltTree(std::move(root));
+        });
+    }).detach();
+}
+
+void ExplorerPanel::installBuiltTree(FolderNode root)
+{
     // Store the root data so the tree item has a stable owner.
     rootData_ = std::make_unique<FolderNode>(std::move(root));
 

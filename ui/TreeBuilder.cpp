@@ -26,6 +26,22 @@ static constexpr const char* kChuckInstrumentsSubdir = "chuck_instruments";
 
 static constexpr unsigned kMaxRecursionDepth = 32;
 
+/// Directories never descended into: version control, dependencies, build
+/// output, and IDE metadata. Walking them (notably build*/_deps, which can
+/// hold hundreds of thousands of files) freezes the message thread and can
+/// exhaust memory building nodes nobody will ever expand.
+bool TreeBuilder::isIgnoredDir(const std::filesystem::path& p) noexcept
+{
+    const std::string name = p.filename().string();
+    if (name == ".git" || name == "node_modules" || name == ".hathor"
+        || name == "DerivedData" || name == ".idea" || name == ".vscode"
+        || name == "CMakeFiles" || name == "_deps" || name == "DerivedData")
+        return true;
+    if (!name.empty() && name[0] == '.')
+        return true;
+    return name.rfind("build", 0) == 0;
+}
+
 // ---------------------------------------------------------------------------
 // TreeBuilder implementation
 // ---------------------------------------------------------------------------
@@ -119,6 +135,11 @@ void TreeBuilder::buildChildren(const std::filesystem::path& dir, FolderNode& ou
 
         const auto& p = entry.path();
         const FileType ft = classifyFile(p);
+
+        // Never descend into VCS/dependency/build/IDE trees — except the
+        // managed .hathor_assets dir, which collapses into logical nodes.
+        if (ft != FileType::ManagedDir && isIgnoredDir(p))
+            continue;
 
         if (ft == FileType::Folder)
         {

@@ -159,6 +159,10 @@ public:
     ///         @p rootDir is inaccessible.
     FolderNode buildTree(const std::filesystem::path& rootDir) noexcept;
 
+    /// True for directories the walker never descends into (VCS,
+    /// dependencies, build output, IDE metadata, dot-dirs).
+    static bool isIgnoredDir(const std::filesystem::path& p) noexcept;
+
 private:
     /// Recursively build children of @p dir into @p out.
     /// @p depth tracks recursion depth and is capped internally.
