@@ -128,20 +128,24 @@ TEST_CASE("ChatSessionState: rejects missing schemaVersion", "[chat][persistence
 // thread validation tests
 // ===========================================================================
 
-TEST_CASE("ChatSessionState: rejects thread missing title", "[chat][persistence]")
+TEST_CASE("ChatSessionState: skips thread missing title, keeps valid ones", "[chat][persistence]")
 {
     auto j = nlohmann::json::object();
     j["schemaVersion"] = ChatSessionState::kSchemaVersion;
-    j["activeIndex"] = 0;
+    j["activeIndex"] = 1;
     j["threads"] = nlohmann::json::array();
-    auto tab = j.at("threads").emplace_back();
-    tab["titleNumber"] = 42;
+    auto& bad = j.at("threads").emplace_back();
+    bad["titleNumber"] = 42;
+    auto& good = j.at("threads").emplace_back();
+    good["title"] = "Survivor";
 
     auto restored = ChatSessionState::fromJson(j.dump());
-    REQUIRE_FALSE(restored.has_value());
+    REQUIRE(restored.has_value());
+    REQUIRE(restored->threads.size() == 1);
+    REQUIRE(restored->threads[0].title == "Survivor");
 }
 
-TEST_CASE("ChatSessionState: rejects thread with wrong title type", "[chat][persistence]")
+TEST_CASE("ChatSessionState: skips thread with wrong title type", "[chat][persistence]")
 {
     auto j = nlohmann::json::object();
     j["schemaVersion"] = ChatSessionState::kSchemaVersion;
@@ -151,7 +155,8 @@ TEST_CASE("ChatSessionState: rejects thread with wrong title type", "[chat][pers
     tab["title"] = 12345;
 
     auto restored = ChatSessionState::fromJson(j.dump());
-    REQUIRE_FALSE(restored.has_value());
+    REQUIRE(restored.has_value());
+    REQUIRE(restored->threads.empty());
 }
 
 // ===========================================================================
