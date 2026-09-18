@@ -203,16 +203,29 @@ bool AgentRegistry::save() const
     }
 
     nlohmann::json j = nlohmann::json::array();
+    // Persist user presets plus bundled presets the user actually changed
+    // (compared against compiled-in defaults). Unchanged bundled presets
+    // ship in code and are skipped so disk copies can't shadow them — but
+    // a user's override of a bundled preset must survive a restart.
+    const auto defaults = defaultPresets();
+    auto findDefault = [&](const std::string& id) -> const Preset* {
+        for (const auto& d : defaults)
+            if (d.id == id)
+                return &d;
+        return nullptr;
+    };
     for (const auto& p : presets_)
     {
         // Don't persist the synthetic "__custom__" entry — it's a UI affordance.
         if (p.id == "__custom__")
             continue;
-        // Don't persist bundled presets either: they ship in code, and
-        // round-tripping them would let disk copies shadow (and un-bundle)
-        // the built-ins on the next load.
         if (p.isBundled)
-            continue;
+        {
+            const Preset* d = findDefault(p.id);
+            if (d != nullptr && d->name == p.name && d->argv == p.argv
+                && d->notes == p.notes)
+                continue; // unchanged built-in — ships in code
+        }
         nlohmann::json entry = nlohmann::json::object();
         entry["id"]          = p.id;
         entry["name"]        = p.name;
